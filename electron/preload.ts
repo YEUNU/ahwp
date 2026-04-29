@@ -1,4 +1,9 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
+import {
+  contextBridge,
+  ipcRenderer,
+  webUtils,
+  type IpcRendererEvent,
+} from 'electron';
 import type { AhwpApi, MenuAction, PingRequest } from '../shared/api';
 
 const api: AhwpApi = {
@@ -10,6 +15,12 @@ const api: AhwpApi = {
     return () => {
       ipcRenderer.off('menu:action', listener);
     };
+  },
+  file: {
+    open: () => ipcRenderer.invoke('file:open'),
+    openByPath: (filePath) => ipcRenderer.invoke('file:open-by-path', filePath),
+    listRecent: () => ipcRenderer.invoke('file:list-recent'),
+    getPathForFile: (file) => webUtils.getPathForFile(file),
   },
 };
 

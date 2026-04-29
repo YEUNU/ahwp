@@ -26,9 +26,33 @@ export type MenuAction =
   | 'file:save-as'
   | 'view:settings';
 
+export interface RecentFile {
+  path: string;
+  lastOpenedAt: number;
+}
+
+export interface FileOpenResult {
+  path: string;
+}
+
+export interface FileApi {
+  /** Show native open dialog. Returns null when the user cancels. */
+  open: () => Promise<FileOpenResult | null>;
+  /** Open a specific path (drag-drop, recent-list click). Returns null if rejected (e.g. wrong extension). */
+  openByPath: (path: string) => Promise<FileOpenResult | null>;
+  /** Most-recent-first list, capped to N entries. */
+  listRecent: () => Promise<RecentFile[]>;
+  /**
+   * Resolve a renderer-side File object to its absolute disk path.
+   * Wraps Electron's webUtils.getPathForFile (replacement for the removed File.path).
+   */
+  getPathForFile: (file: File) => string;
+}
+
 export interface AhwpApi {
   ping: (req: PingRequest) => Promise<PingResponse>;
   onMenuAction: (handler: (action: MenuAction) => void) => () => void;
+  file: FileApi;
 }
 
 declare global {

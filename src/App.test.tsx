@@ -13,6 +13,12 @@ describe('App', () => {
         electron: '33.0.0',
       }),
       onMenuAction: vi.fn().mockReturnValue(() => {}),
+      file: {
+        open: vi.fn().mockResolvedValue(null),
+        openByPath: vi.fn().mockResolvedValue(null),
+        listRecent: vi.fn().mockResolvedValue([]),
+        getPathForFile: vi.fn().mockReturnValue(''),
+      },
     };
     Object.defineProperty(window, 'api', {
       value: mockApi,
