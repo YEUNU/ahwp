@@ -3,14 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <!--
-      frame-src https://edwardkim.github.io: @rhwp/editor v0.7.x is an iframe
-      wrapper around rhwp-studio hosted at edwardkim.github.io. This is the
-      "BYOO" path documented in PROGRESS; Phase 4 packaging will bundle the
-      studio assets locally so this entry can be removed.
+      script-src 'wasm-unsafe-eval': required by @rhwp/core (WASM in renderer
+      via WebAssembly.instantiate). Narrower than 'unsafe-eval'.
+      frame-src https://edwardkim.github.io: @rhwp/editor v0.7.x iframe
+      wrapper. Removed in chunk 6 (StudioViewer fully replaces it).
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://localhost:* ws://localhost:*; frame-src https://edwardkim.github.io"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://localhost:* ws://localhost:*; frame-src https://edwardkim.github.io"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ahwp</title>

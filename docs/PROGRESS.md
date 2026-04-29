@@ -509,21 +509,59 @@ dist/assets/rhwp_bg-*.wasm      3.9M  ← @rhwp/core WASM이 content-hashed asse
 
 > 청크 1 비주얼 e2e 없음 (실제 렌더링은 청크 2부터). 기존 7 e2e가 회귀 게이트 역할.
 
+### 2026-04-29 — Phase 1-D (2차 청크) — 읽기 전용 StudioViewer + visual snapshot baseline
+
+**구현**
+
+- `src/features/studio/StudioViewer.tsx` — `forwardRef` + `useImperativeHandle`로 `RhwpViewerHandle` 공유 인터페이스. 단계: `mounting` → `reading` → `rendering` → `ready`. 각 단계 진단 로그
+  - `ensureRhwpCore()` (lazy WASM init)
+  - `window.api.file.read(path)` (HWPX 보장)
+  - `new HwpDocument(bytes)` + `new HwpViewer(doc)` + `renderPageSvg(0)`
+  - SVG 문자열을 컨테이너 div의 innerHTML로 마운트
+  - 정리: viewer.free() → doc.free() (역순. viewer가 doc 참조)
+- `src/app/AppShell.tsx`: `localStorage 'ahwp:use-studio'='1'`이면 `StudioViewer`, 아니면 기존 `RhwpViewer` (iframe). 둘 다 동일 `RhwpViewerHandle` 노출이라 `viewerRef` 재사용
+- `index.html` CSP: `script-src 'self' 'wasm-unsafe-eval'` 추가 — `WebAssembly.instantiate`가 차단되던 문제 해결. `'wasm-unsafe-eval'`은 `'unsafe-eval'`보다 좁은 권한 (eval 자체는 여전히 금지, WASM 컴파일만 허용)
+
+**E2E (신규 2개)**
+
+- `tests/e2e/studio-viewer.spec.ts`:
+  - `renders first page SVG for blank.hwpx` — localStorage flag + session.lastActivePath 시드 후 reload → SVG 마운트 검증
+  - `first-page visual snapshot — blank.hwpx` — `toHaveScreenshot('blank-hwpx-page-0.png')`. **darwin only** (Linux baseline은 추후 청크에서 — 폰트 결정성 검증 후)
+- 기존 7 e2e 회귀 없음 — **총 9/9 통과**
+- baseline `blank-hwpx-page-0-darwin.png` (768×1123 PNG) commit
+
+**디버그 진입점**
+
+- `localStorage.setItem('ahwp:use-studio', '1'); location.reload()` → studio 모드
+- `window.__rhwpProbe.ensure()` → 콘솔에서 ad-hoc WASM init
+
+**검증 결과**
+
+```
+✓ npm run typecheck
+✓ npm test             (단위 2/2)
+✓ npm run e2e          (9/9 — 기존 7 + 신규 2, 회귀 없음)
+✓ npm run lint         (0 errors, 2 shadcn warnings)
+✓ npm run format:check
+✓ npx vite build
+```
+
+> 진단 콘솔 로그: `[rhwp/core renderer] WASM init v0.7.8 in NN ms` + `[studio] read X.XX MB in NN ms` + `[studio] parse + render page 0 in NN ms (M pages)`
+
 ## 다음
 
-### Phase 1-D 청크 2 — 읽기 전용 viewer (POC)
+### Phase 1-D 청크 3 — 다중 페이지 + 스크롤 + 줌
 
 승인 대기 중. 산출물 예정:
 
-- `src/features/studio/StudioViewer.tsx` — `HwpViewer.renderPageSvg(0)`로 첫 페이지 렌더
-- AppShell에 viewer 토글 (env flag로 iframe ↔ studio 전환 가능)
-- 신규 e2e: "studio viewer renders first page" + **visual snapshot baseline**
+- 가상화된 스크롤 컨테이너 (보이는 페이지만 렌더, `HwpViewer.updateViewport`)
+- 줌 컨트롤 (50%/100%/맞춤)
+- 페이지 네비게이션 (현재 페이지 N/M 표시)
+- 신규 e2e: 모든 페이지 렌더 + 스크롤 + 줌 인터랙션
 
-### Phase 1-C — 보류 항목 (마이그레이션 후로 미뤄도 무방)
+### Phase 1-C — 보류 항목
 
-- `file:new` — Studio 마이그레이션 후 `HwpDocument.createBlankDocument`로 자연스럽게
-- `extractThumbnail` 활용 — FileList 미리보기
-- `exportHwpVerify` 활용 — 저장 시 검증 결과 표시
+- `file:new` / `extractThumbnail` / `exportHwpVerify` — 마이그레이션 후로
 
 ### Phase 1-B — 남은 항목 (낮은 우선순위)
 

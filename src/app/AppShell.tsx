@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import type { MenuAction, PingResponse } from '@shared/api';
 import { correctExtension } from '@shared/format';
@@ -7,10 +7,19 @@ import {
   type RhwpViewerHandle,
 } from '@/features/editor/RhwpViewer';
 import { FileList } from '@/features/files/FileList';
-// Studio migration chunk 1: ensure @rhwp/core is in the renderer bundle.
-// Lazy invocation comes in chunk 2 (StudioViewer). See docs/STUDIO_MIGRATION.md.
-import '@/lib/rhwp-core';
+import { StudioViewer } from '@/features/studio/StudioViewer';
 import { ThemeToggle } from './theme-toggle';
+
+const STUDIO_FLAG_KEY = 'ahwp:use-studio';
+
+function readStudioFlag(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.localStorage.getItem(STUDIO_FLAG_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
 
 export default function AppShell() {
   const [pingResult, setPingResult] = useState<PingResponse | null>(null);
@@ -19,6 +28,8 @@ export default function AppShell() {
   const [refreshTick, setRefreshTick] = useState(0);
   const viewerRef = useRef<RhwpViewerHandle | null>(null);
   const sessionRestoredRef = useRef(false);
+  const useStudio = useMemo(() => readStudioFlag(), []);
+  const ViewerComponent = useStudio ? StudioViewer : RhwpViewer;
 
   useEffect(() => {
     void (async () => {
@@ -172,7 +183,7 @@ export default function AppShell() {
           </div>
           <div className="flex-1 overflow-hidden">
             {activePath ? (
-              <RhwpViewer path={activePath} ref={viewerRef} />
+              <ViewerComponent path={activePath} ref={viewerRef} />
             ) : (
               <div className="flex h-full flex-col items-center justify-center gap-4 p-8">
                 <h1 className="text-2xl font-semibold">Hello, ahwp</h1>
