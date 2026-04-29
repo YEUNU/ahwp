@@ -99,5 +99,8 @@
       "oneClick": false,
       "allowToChangeInstallationDir": true
     }
+  },
+  "dependencies": {
+    "react-resizable-panels": "^2.1.9"
   }
 }
