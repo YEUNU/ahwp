@@ -14,7 +14,7 @@
   - 왼쪽: 작업 중인 한글 파일 리스트
   - 가운데: 현재 열린 한글 문서(편집 가능)
   - 오른쪽: AI 챗봇 (히스토리 / 채팅 2단 탭)
-- **멀티 AI 백엔드** — OpenAI · Anthropic · Google · Ollama · 사용자 지정 OpenAI 호환 엔드포인트
+- **멀티 AI 백엔드** — OpenAI · Anthropic · Google · NVIDIA NIM · Ollama · 사용자 지정 OpenAI 호환 엔드포인트
 - **세 가지 편집 경로**
   - **직접 편집**: AI 없이 rhwp 에디터로 마우스·키보드 직접 편집 (풀-피처 에디터)
   - **챗봇 Manual**: AI가 변경을 diff로 제안 → 사용자가 Accept/Reject
@@ -45,13 +45,27 @@ npm run build:all
 
 앱 실행 후 **Settings → AI Providers**에서 사용할 백엔드의 API 키를 입력합니다. 키는 `safeStorage`로 암호화되어 OS 자격증명 저장소에 보관됩니다.
 
-| Provider  | 필요 정보                                |
-| --------- | ---------------------------------------- |
-| OpenAI    | `OPENAI_API_KEY`                         |
-| Anthropic | `ANTHROPIC_API_KEY`                      |
-| Google    | `GOOGLE_API_KEY`                         |
-| Ollama    | Base URL (기본 `http://localhost:11434`) |
-| 커스텀    | OpenAI 호환 endpoint URL + 키            |
+| Provider   | 필요 정보                                                                                       |
+| ---------- | ----------------------------------------------------------------------------------------------- |
+| OpenAI     | `OPENAI_API_KEY`                                                                                |
+| Anthropic  | `ANTHROPIC_API_KEY`                                                                             |
+| Google     | `GOOGLE_API_KEY`                                                                                |
+| NVIDIA NIM | `NVIDIA_API_KEY` (호스티드: `https://integrate.api.nvidia.com/v1`) 또는 셀프호스트 NIM Base URL |
+| Ollama     | Base URL (기본 `http://localhost:11434`)                                                        |
+| 커스텀     | OpenAI 호환 endpoint URL + 키                                                                   |
+
+### 웹검색 지원
+
+각 provider가 **단일 API 호출**만으로 웹검색까지 수행할 수 있는지(외부 검색 서비스나 별도 RAG 파이프라인 없이):
+
+| Provider   | 단일 API 웹검색 | 비고                                                 |
+| ---------- | --------------- | ---------------------------------------------------- |
+| OpenAI     | ✅              | Responses API의 `web_search` 내장 tool               |
+| Anthropic  | ✅              | Messages API의 `web_search` server tool              |
+| Google     | ✅              | `googleSearch` grounding tool (Gemini 2.x)           |
+| NVIDIA NIM | ❌              | 추론 전용. 검색은 NeMo Retriever 등 별도 서비스 필요 |
+| Ollama     | ❌              | 로컬 추론 전용                                       |
+| 커스텀     | ❌ (기본)       | 엔드포인트 구현에 따라 다름 — 사용자 책임            |
 
 ## 기술 스택 요약
 

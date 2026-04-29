@@ -2,13 +2,14 @@
 
 ## 공급자 매트릭스
 
-| Provider  | SDK                            | 스트리밍 | Tool Use              | 비고                                                          |
-| --------- | ------------------------------ | -------- | --------------------- | ------------------------------------------------------------- |
-| OpenAI    | `openai`                       | ✅       | ✅ (function/tool)    | GPT-4o, GPT-5 등. 가장 안정                                   |
-| Anthropic | `@anthropic-ai/sdk`            | ✅       | ✅                    | Claude. 긴 문서 편집 강점                                     |
-| Google    | `@google/genai`                | ✅       | ✅ (function calling) | Gemini 2.x                                                    |
-| Ollama    | `fetch` (OpenAI 호환 endpoint) | ✅       | 모델별로 다름         | base URL 사용자 입력 (`http://localhost:11434/v1`)            |
-| 커스텀    | `fetch` (OpenAI 호환)          | ✅       | 모델별로 다름         | 사용자가 IP/포트/키 직접 입력 — vLLM, LM Studio, 사내 서빙 등 |
+| Provider   | SDK                            | 스트리밍 | Tool Use              | 단일 API 웹검색             | 비고                                                                                           |
+| ---------- | ------------------------------ | -------- | --------------------- | --------------------------- | ---------------------------------------------------------------------------------------------- |
+| OpenAI     | `openai`                       | ✅       | ✅ (function/tool)    | ✅ Responses `web_search`   | GPT-4o, GPT-5 등. 가장 안정                                                                    |
+| Anthropic  | `@anthropic-ai/sdk`            | ✅       | ✅                    | ✅ `web_search` server tool | Claude. 긴 문서 편집 강점                                                                      |
+| Google     | `@google/genai`                | ✅       | ✅ (function calling) | ✅ `googleSearch` grounding | Gemini 2.x                                                                                     |
+| NVIDIA NIM | `fetch` (OpenAI 호환 endpoint) | ✅       | 모델별로 다름         | ❌                          | 호스티드(`https://integrate.api.nvidia.com/v1`) 또는 셀프호스트 NIM 컨테이너. 검색은 외부 처리 |
+| Ollama     | `fetch` (OpenAI 호환 endpoint) | ✅       | 모델별로 다름         | ❌                          | base URL 사용자 입력 (`http://localhost:11434/v1`)                                             |
+| 커스텀     | `fetch` (OpenAI 호환)          | ✅       | 모델별로 다름         | ❌ (기본)                   | 사용자가 IP/포트/키 직접 입력 — vLLM, LM Studio, 사내 서빙 등                                  |
 
 ## 공통 인터페이스
 
@@ -47,6 +48,26 @@ export interface Provider {
   chat(req: ChatRequest, signal: AbortSignal): AsyncIterable<ChatStreamEvent>;
 }
 ```
+
+## 웹검색 (Built-in)
+
+"단일 API 호출만으로 모델이 웹을 검색하고 결과를 답변에 반영하는가"의 관점. 별도 검색 API(Serper, Tavily 등)나 RAG 파이프라인을 ahwp가 직접 호스트하지 않아도 되는 provider만 ✅.
+
+| Provider   | 활성화 방법                                                                                      |
+| ---------- | ------------------------------------------------------------------------------------------------ |
+| OpenAI     | Responses API의 `tools: [{ type: "web_search" }]` (또는 Chat Completions의 `web_search_preview`) |
+| Anthropic  | Messages API의 `tools: [{ type: "web_search_20250305", name: "web_search" }]` 서버 도구          |
+| Google     | `tools: [{ googleSearch: {} }]` grounding (Gemini 2.x)                                           |
+| NVIDIA NIM | 미지원 — 추론 전용. 필요 시 NeMo Retriever 등 별도 서비스로 검색 후 메시지에 컨텍스트로 주입     |
+| Ollama     | 미지원 — 로컬 추론 전용. 필요 시 사용자가 직접 검색 결과를 메시지에 첨부하거나 외부 도구 호출    |
+| 커스텀     | 엔드포인트 구현체에 따라 다름. 기본은 미지원으로 가정                                            |
+
+ahwp의 단일 채팅 인터페이스가 어디까지 책임지는지를 명확히 하기 위해 **MVP 범위에서는 외부 검색 서비스(Serper/Tavily/SerpAPI 등)를 직접 통합하지 않습니다.** 사용자가 "웹에서 찾아줘" 같은 요청을 했을 때:
+
+- ✅ 가능 provider(OpenAI/Anthropic/Google) 활성: 해당 SDK의 server tool을 켜고 결과를 일반 응답으로 받아 챗 패널에 출력 (인용 메타데이터는 별도 컴포넌트로 표시)
+- ❌ 미지원 provider 활성: 채팅창에 "현재 백엔드는 웹검색을 지원하지 않습니다. 다른 provider로 전환하거나, 검색 결과를 직접 첨부해 주세요" 안내
+
+설정 토글: provider별로 **"이 provider에서 웹검색 허용"** 체크박스(기본 off). 켜진 경우에만 SDK tool 정의에 검색 도구가 추가됨. 한 turn당 검색 호출 수 상한과 fetch 도메인 화이트리스트는 `agent` 모드의 안전 장치(아래 §Agent 모드)와 동일한 메커니즘 재사용.
 
 ## 키 관리
 

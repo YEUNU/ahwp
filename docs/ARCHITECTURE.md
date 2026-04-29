@@ -121,7 +121,13 @@ CREATE INDEX idx_conv_file ON conversations(file_id);
 ### 설정 스키마 (`electron-store`)
 
 ```ts
-type ProviderId = 'openai' | 'anthropic' | 'google' | 'ollama' | 'custom';
+type ProviderId =
+  | 'openai'
+  | 'anthropic'
+  | 'google'
+  | 'nvidia'
+  | 'ollama'
+  | 'custom';
 
 interface ProviderConfig {
   id: ProviderId;

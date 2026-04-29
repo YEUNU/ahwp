@@ -43,15 +43,16 @@
 
 ## AI 통합
 
-| 항목            | 선택                           | 이유                                                                                                                 |
-| --------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
-| 키 관리         | **BYOK only**                  | 사용자 결정. 서버 인프라 0                                                                                           |
-| 공급자 추상화   | **자체 `Provider` 인터페이스** | OpenAI SDK가 사실상 표준에 가깝지만 Anthropic·Google는 별도 SDK가 더 깔끔. Ollama·커스텀은 OpenAI 호환 라우트로 통일 |
-| OpenAI          | **`openai` 공식 SDK**          | tool use 안정성 검증됨                                                                                               |
-| Anthropic       | **`@anthropic-ai/sdk`**        | 긴 문서 편집 강점                                                                                                    |
-| Google          | **`@google/genai`**            | Gemini 2.x 지원                                                                                                      |
-| Ollama / 커스텀 | **`fetch`로 직접 호출**        | OpenAI 호환 endpoint(`/v1/chat/completions`)로 통일. base URL만 다름                                                 |
-| 스트리밍        | **SSE / chunked**              | 모든 SDK가 지원. Main → Renderer로 IPC 이벤트 중계                                                                   |
+| 항목            | 선택                           | 이유                                                                                                                                                               |
+| --------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 키 관리         | **BYOK only**                  | 사용자 결정. 서버 인프라 0                                                                                                                                         |
+| 공급자 추상화   | **자체 `Provider` 인터페이스** | OpenAI SDK가 사실상 표준에 가깝지만 Anthropic·Google는 별도 SDK가 더 깔끔. Ollama·커스텀은 OpenAI 호환 라우트로 통일                                               |
+| OpenAI          | **`openai` 공식 SDK**          | tool use 안정성 검증됨. `web_search` 내장 tool 단일 API 지원                                                                                                       |
+| Anthropic       | **`@anthropic-ai/sdk`**        | 긴 문서 편집 강점. `web_search` server tool 단일 API 지원                                                                                                          |
+| Google          | **`@google/genai`**            | Gemini 2.x 지원. `googleSearch` grounding 단일 API 지원                                                                                                            |
+| NVIDIA NIM      | **`fetch`로 직접 호출**        | OpenAI 호환(`/v1/chat/completions`)으로 Ollama·커스텀과 동일 어댑터 경로. 호스티드(`integrate.api.nvidia.com`) 또는 셀프호스트. 추론 전용 — 단일 API 웹검색 미지원 |
+| Ollama / 커스텀 | **`fetch`로 직접 호출**        | OpenAI 호환 endpoint(`/v1/chat/completions`)로 통일. base URL만 다름. 단일 API 웹검색 미지원                                                                       |
+| 스트리밍        | **SSE / chunked**              | 모든 SDK가 지원. Main → Renderer로 IPC 이벤트 중계                                                                                                                 |
 
 ## 도구·품질
 
