@@ -22,6 +22,10 @@ describe('App', () => {
         saveAs: vi.fn().mockResolvedValue(null),
         getPathForFile: vi.fn().mockReturnValue(''),
       },
+      session: {
+        get: vi.fn().mockResolvedValue({ lastActivePath: null }),
+        set: vi.fn().mockResolvedValue(undefined),
+      },
     };
     Object.defineProperty(window, 'api', {
       value: mockApi,

@@ -69,18 +69,27 @@ function patchPrototype(editor: RhwpEditor): void {
 }
 
 /**
- * Mounts @rhwp/editor (iframe → https://edwardkim.github.io/rhwp/) and loads
- * the file at `path` via file:read IPC. Parent triggers save by calling
- * `viewerRef.current.exportBytes()`.
+ * Mounts @rhwp/editor (iframe → https://edwardkim.github.io/rhwp/) once and
+ * reuses it across path changes — only `loadFile` is re-run when `path`
+ * changes. This avoids the iframe + WASM cold-start cost on every file open.
+ *
+ * Two effects:
+ *   1. Editor lifecycle (deps []): create iframe + WASM once on mount, destroy
+ *      on unmount. StrictMode dev double-invoke is safe via local `editor`
+ *      closure — the orphaned async chain self-destroys when its `cancelled`
+ *      flag flips.
+ *   2. File loading (deps [path, editorReady]): wait for editor, read bytes,
+ *      call loadFile.
  */
 export const RhwpViewer = forwardRef<RhwpViewerHandle, RhwpViewerProps>(
   function RhwpViewer({ path }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const editorRef = useRef<RhwpEditor | null>(null);
+    const [editorReady, setEditorReady] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [phase, setPhase] = useState<
-      'reading' | 'mounting' | 'parsing' | 'ready'
-    >('reading');
+    const [phase, setPhase] = useState<'mounting' | 'reading' | 'ready'>(
+      'mounting',
+    );
 
     useImperativeHandle(
       ref,
@@ -95,16 +104,57 @@ export const RhwpViewer = forwardRef<RhwpViewerHandle, RhwpViewerProps>(
       [],
     );
 
+    // Effect 1: editor lifecycle. Mount once, destroy on unmount.
     useEffect(() => {
       const container = containerRef.current;
       if (!container) return;
+
+      let cancelled = false;
+      let local: RhwpEditor | null = null;
+
+      (async () => {
+        try {
+          const t0 = performance.now();
+          const created = await createEditor(container);
+          if (cancelled) {
+            created.destroy();
+            return;
+          }
+          patchPrototype(created);
+          local = created;
+          editorRef.current = created;
+          setEditorReady(true);
+          console.info(
+            `[rhwp] iframe ready in ${(performance.now() - t0).toFixed(0)} ms`,
+          );
+        } catch (err) {
+          if (!cancelled) {
+            setError(err instanceof Error ? err.message : String(err));
+          }
+        }
+      })();
+
+      return () => {
+        cancelled = true;
+        local?.destroy();
+        if (editorRef.current === local) editorRef.current = null;
+        setEditorReady(false);
+        while (container.firstChild)
+          container.removeChild(container.firstChild);
+      };
+    }, []);
+
+    // Effect 2: load file when path changes (waits for editor to be ready).
+    useEffect(() => {
+      if (!editorReady) return;
+      const editor = editorRef.current;
+      if (!editor) return;
 
       let cancelled = false;
 
       (async () => {
         try {
           setError(null);
-
           setPhase('reading');
           const t0 = performance.now();
           const buffer = await window.api.file.read(path);
@@ -113,50 +163,39 @@ export const RhwpViewer = forwardRef<RhwpViewerHandle, RhwpViewerProps>(
             `[rhwp] read ${(buffer.byteLength / 1024 / 1024).toFixed(2)} MB in ${(performance.now() - t0).toFixed(0)} ms`,
           );
 
-          setPhase('mounting');
-          const t1 = performance.now();
-          const created = await createEditor(container);
-          if (cancelled) {
-            created.destroy();
-            return;
-          }
-          patchPrototype(created);
-          editorRef.current = created;
-          console.info(
-            `[rhwp] iframe ready in ${(performance.now() - t1).toFixed(0)} ms`,
-          );
-
-          setPhase('parsing');
-          const t2 = performance.now();
+          // v0.7.8 quirk: editor.loadFile()'s postMessage response often does
+          // NOT arrive back to our promise even though the iframe completes
+          // initDoc fully (we see [WasmBridge]/[CanvasView]/[initDoc 8. 완료]
+          // logs but no resolve). The iframe shows its own toolbar/canvas UI
+          // as soon as it's ready, so we hand off the bytes and immediately
+          // drop our overlay; iframe handles visual progress from here.
+          // We still track the promise in the background to surface errors.
           const fileName = path.split(/[/\\]/).pop() ?? 'document';
-          await created.loadFile(buffer, fileName);
-          if (cancelled) {
-            created.destroy();
-            editorRef.current = null;
-            return;
-          }
-          console.info(
-            `[rhwp] loadFile resolved in ${(performance.now() - t2).toFixed(0)} ms`,
+          const t1 = performance.now();
+          editor.loadFile(buffer, fileName).then(
+            () =>
+              console.info(
+                `[rhwp] loadFile resolved in ${(performance.now() - t1).toFixed(0)} ms`,
+              ),
+            (err) => {
+              console.warn('[rhwp] loadFile rejected:', err);
+              if (!cancelled) {
+                setError(err instanceof Error ? err.message : String(err));
+              }
+            },
           );
-
           setPhase('ready');
         } catch (err) {
           if (!cancelled) {
             setError(err instanceof Error ? err.message : String(err));
           }
-          editorRef.current?.destroy();
-          editorRef.current = null;
         }
       })();
 
       return () => {
         cancelled = true;
-        editorRef.current?.destroy();
-        editorRef.current = null;
-        while (container.firstChild)
-          container.removeChild(container.firstChild);
       };
-    }, [path]);
+    }, [path, editorReady]);
 
     return (
       <div className="relative h-full w-full">
@@ -165,11 +204,7 @@ export const RhwpViewer = forwardRef<RhwpViewerHandle, RhwpViewerProps>(
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background/60 backdrop-blur-sm">
             <Loader2 className="size-6 animate-spin text-muted-foreground" />
             <span className="text-xs text-muted-foreground">
-              {phase === 'reading'
-                ? '파일 읽는 중…'
-                : phase === 'mounting'
-                  ? '에디터 초기화 중…'
-                  : '문서 파싱 중… (대용량 파일은 시간이 걸릴 수 있습니다)'}
+              {phase === 'mounting' ? '에디터 초기화 중…' : '파일 읽는 중…'}
             </span>
           </div>
         )}

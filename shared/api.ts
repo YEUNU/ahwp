@@ -65,10 +65,21 @@ export interface FileApi {
   getPathForFile: (file: File) => string;
 }
 
+export interface SessionState {
+  /** Path of the document active when the renderer last persisted state. */
+  lastActivePath: string | null;
+}
+
+export interface SessionApi {
+  get: () => Promise<SessionState>;
+  set: (state: SessionState) => Promise<void>;
+}
+
 export interface AhwpApi {
   ping: (req: PingRequest) => Promise<PingResponse>;
   onMenuAction: (handler: (action: MenuAction) => void) => () => void;
   file: FileApi;
+  session: SessionApi;
 }
 
 declare global {

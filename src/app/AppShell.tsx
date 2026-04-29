@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import type { MenuAction, PingResponse } from '@shared/api';
+import { correctExtension, detectHwpFormat } from '@shared/format';
 import {
   RhwpViewer,
   type RhwpViewerHandle,
@@ -8,26 +9,13 @@ import {
 import { FileList } from '@/features/files/FileList';
 import { ThemeToggle } from './theme-toggle';
 
-/** Probe magic number to confirm scenario 1 (HWPX) vs 2 (HWP) on first save. */
-function logExportFormat(bytes: Uint8Array): void {
-  const head = Array.from(bytes.slice(0, 4))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-  const label =
-    head === '504b0304'
-      ? 'HWPX (zip) — scenario 1 ✓'
-      : head === 'd0cf11e0'
-        ? 'HWP (CFB) — scenario 2'
-        : `unknown (${head})`;
-  console.info(`[rhwp] export magic=${head} → ${label}`);
-}
-
 export default function AppShell() {
   const [pingResult, setPingResult] = useState<PingResponse | null>(null);
   const [pingError, setPingError] = useState<string | null>(null);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
   const viewerRef = useRef<RhwpViewerHandle | null>(null);
+  const sessionRestoredRef = useRef(false);
 
   useEffect(() => {
     void (async () => {
@@ -39,6 +27,30 @@ export default function AppShell() {
       }
     })();
   }, []);
+
+  // Workspace restoration: on first mount, auto-open the last active file.
+  useEffect(() => {
+    if (sessionRestoredRef.current) return;
+    sessionRestoredRef.current = true;
+    void (async () => {
+      const session = await window.api.session.get();
+      if (!session.lastActivePath) return;
+      const result = await window.api.file.openByPath(session.lastActivePath);
+      if (result) {
+        setActivePath(result.path);
+        setRefreshTick((n) => n + 1);
+      } else {
+        // Stale path (file moved/deleted). Clear so next launch starts blank.
+        await window.api.session.set({ lastActivePath: null });
+      }
+    })();
+  }, []);
+
+  // Persist activePath whenever it changes (after restoration ran once).
+  useEffect(() => {
+    if (!sessionRestoredRef.current) return;
+    void window.api.session.set({ lastActivePath: activePath });
+  }, [activePath]);
 
   const openFromDialog = useCallback(async () => {
     const result = await window.api.file.open();
@@ -56,17 +68,38 @@ export default function AppShell() {
     }
   }, []);
 
-  const saveCurrent = useCallback(async () => {
-    if (!viewerRef.current) return;
+  const exportAndProbe = useCallback(async (): Promise<{
+    bytes: Uint8Array;
+    format: ReturnType<typeof detectHwpFormat>;
+  } | null> => {
+    if (!viewerRef.current) return null;
     const t0 = performance.now();
     const bytes = await viewerRef.current.exportBytes();
-    logExportFormat(bytes);
+    const format = detectHwpFormat(bytes);
     console.info(
-      `[rhwp] export ${(bytes.byteLength / 1024 / 1024).toFixed(2)} MB in ${(performance.now() - t0).toFixed(0)} ms`,
+      `[ahwp] export format=${format} size=${(bytes.byteLength / 1024 / 1024).toFixed(2)}MB in ${(performance.now() - t0).toFixed(0)}ms`,
     );
+    return { bytes, format };
+  }, []);
+
+  const saveCurrent = useCallback(async () => {
+    const probe = await exportAndProbe();
+    if (!probe) return;
+    const { bytes, format } = probe;
 
     if (activePath) {
-      await window.api.file.save({ path: activePath, bytes });
+      // Auto-route extension to match exported format. The on-disk file's
+      // extension must match the bytes — otherwise reopens fail (format
+      // mismatch in studio's loadFile, observed as 60s timeout).
+      const target = correctExtension(activePath, format);
+      if (target !== activePath) {
+        console.info(`[ahwp] save auto-routing: ${activePath} → ${target}`);
+      }
+      const result = await window.api.file.save({ path: target, bytes });
+      if (result.path !== activePath) {
+        setActivePath(result.path);
+        setRefreshTick((n) => n + 1);
+      }
     } else {
       const result = await window.api.file.saveAs({ bytes });
       if (result) {
@@ -74,21 +107,21 @@ export default function AppShell() {
         setRefreshTick((n) => n + 1);
       }
     }
-  }, [activePath]);
+  }, [activePath, exportAndProbe]);
 
   const saveAsCurrent = useCallback(async () => {
-    if (!viewerRef.current) return;
-    const bytes = await viewerRef.current.exportBytes();
-    logExportFormat(bytes);
-    const result = await window.api.file.saveAs({
-      bytes,
-      defaultPath: activePath ?? undefined,
-    });
+    const probe = await exportAndProbe();
+    if (!probe) return;
+    const { bytes, format } = probe;
+    const defaultPath = activePath
+      ? correctExtension(activePath, format)
+      : undefined;
+    const result = await window.api.file.saveAs({ bytes, defaultPath });
     if (result) {
       setActivePath(result.path);
       setRefreshTick((n) => n + 1);
     }
-  }, [activePath]);
+  }, [activePath, exportAndProbe]);
 
   useEffect(() => {
     return window.api.onMenuAction((action: MenuAction) => {
@@ -145,7 +178,7 @@ export default function AppShell() {
           </div>
           <div className="flex-1 overflow-hidden">
             {activePath ? (
-              <RhwpViewer key={activePath} path={activePath} ref={viewerRef} />
+              <RhwpViewer path={activePath} ref={viewerRef} />
             ) : (
               <div className="flex h-full flex-col items-center justify-center gap-4 p-8">
                 <h1 className="text-2xl font-semibold">Hello, ahwp</h1>

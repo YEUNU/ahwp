@@ -25,6 +25,10 @@ const api: AhwpApi = {
     saveAs: (req) => ipcRenderer.invoke('file:save-as', req),
     getPathForFile: (file) => webUtils.getPathForFile(file),
   },
+  session: {
+    get: () => ipcRenderer.invoke('session:get'),
+    set: (state) => ipcRenderer.invoke('session:set', state),
+  },
 };
 
 contextBridge.exposeInMainWorld('api', api);

@@ -7,6 +7,7 @@ import type {
   FileSaveRequest,
   RecentFile,
 } from '../../shared/api';
+import { detectHwpFormat } from '../../shared/format';
 import { addRecent, listRecent } from '../store/recent';
 
 const ALLOWED_EXTENSIONS = ['.hwp', '.hwpx'] as const;
@@ -89,6 +90,7 @@ export function registerFileIpc(): void {
         throw new Error(`Unsupported extension: ${path.extname(req.path)}`);
       }
       const data = toUint8(req.bytes);
+      assertFormatMatchesPath(req.path, data);
       await writeAtomic(req.path, data);
       await addRecent(req.path);
       return { path: req.path };
@@ -116,11 +118,30 @@ export function registerFileIpc(): void {
         throw new Error(`Unsupported extension: ${path.extname(target)}`);
       }
       const data = toUint8(req.bytes);
+      assertFormatMatchesPath(target, data);
       await writeAtomic(target, data);
       await addRecent(target);
       return { path: target };
     },
   );
+}
+
+function assertFormatMatchesPath(filePath: string, data: Uint8Array): void {
+  const format = detectHwpFormat(data);
+  const ext = path.extname(filePath).toLowerCase();
+  if (format === 'hwpx' && ext === '.hwp') {
+    throw new Error(
+      'Format mismatch: bytes are HWPX (zip) but path has .hwp extension. ' +
+        'The renderer should auto-route to .hwpx — please re-save.',
+    );
+  }
+  if (format === 'hwp' && ext === '.hwpx') {
+    throw new Error(
+      'Format mismatch: bytes are HWP (CFB) but path has .hwpx extension. ' +
+        'The renderer should auto-route to .hwp — please re-save.',
+    );
+  }
+  // unknown format: be lenient (could be a future format / edge case).
 }
 
 function toUint8(input: ArrayBuffer | Uint8Array): Uint8Array {

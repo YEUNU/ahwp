@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, Menu } from 'electron';
 import path from 'node:path';
 import type { PingRequest, PingResponse } from '../shared/api';
 import { registerFileIpc } from './ipc/file';
+import { registerSessionIpc } from './ipc/session';
 import { buildAppMenu } from './menu';
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
@@ -45,6 +46,7 @@ function registerIpcHandlers(): void {
     };
   });
   registerFileIpc();
+  registerSessionIpc();
 }
 
 void app.whenReady().then(() => {
