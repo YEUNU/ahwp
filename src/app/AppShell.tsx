@@ -7,6 +7,9 @@ import {
   type RhwpViewerHandle,
 } from '@/features/editor/RhwpViewer';
 import { FileList } from '@/features/files/FileList';
+// Studio migration chunk 1: ensure @rhwp/core is in the renderer bundle.
+// Lazy invocation comes in chunk 2 (StudioViewer). See docs/STUDIO_MIGRATION.md.
+import '@/lib/rhwp-core';
 import { ThemeToggle } from './theme-toggle';
 
 export default function AppShell() {

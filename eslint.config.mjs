@@ -40,7 +40,12 @@ export default tseslint.config(
     },
   },
   {
-    files: ['electron/**/*.ts', 'shared/**/*.ts', 'vite.config.ts'],
+    files: [
+      'electron/**/*.ts',
+      'shared/**/*.ts',
+      'scripts/**/*.{js,mjs,ts}',
+      'vite.config.ts',
+    ],
     languageOptions: {
       ecmaVersion: 2022,
       globals: { ...globals.node },
