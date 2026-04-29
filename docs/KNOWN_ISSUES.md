@@ -53,17 +53,13 @@
 
 ---
 
-## L-003 — 한글 IME (composition) 입력 미지원
+## ✅ L-003 (Resolved) — 한글 IME (composition) 입력
 
-**상태**: chunk 4-B 진입 전 사전 명시. ASCII 입력만 우선 구현, IME는 별도 chunk
+**상태**: chunk 4-C에서 해결 (2026-04-30)
 
-**증상**: `keydown` 이벤트만 처리하면 한글 조합 중간 상태(자모 결합 등)가 누락됨. macOS 한글 IME, Windows MS-IME 모두 영향. 입력은 가능하지만 일부 조합이 깨질 수 있음
+**해결 방식**: `compositionstart` / `compositionend` 이벤트 핸들러 추가. `keydown` 핸들러는 `e.nativeEvent.isComposing` (또는 `keyCode === 229`)이면 무시 — IME가 조합 중인 키를 가로챔. `compositionend.data`에 최종 조합 문자열이 들어오면 `HwpDocument.insertText`로 삽입. e2e용 `__studioDebug.injectComposedText(text)` 헬퍼로 검증 (Playwright는 실제 IME 시뮬레이션 X)
 
-**우회**: chunk 4-B는 ASCII 전용. 한글 입력은 별도 chunk에서 `compositionstart` / `compositionupdate` / `compositionend` 이벤트 처리 + 임시 placeholder 렌더 추가
-
-**해결 조건**: 우리 구현. chunk 4-C 또는 별도 작업
-
-**관련 파일**: `src/features/studio/StudioViewer.tsx` (chunk 4-B 진입 시점)
+**남은 작업**: composition **중간**의 시각 피드백(언더라인 등) 부재. 사용자가 한자 후보를 보거나 자모 진행을 즉각 보지는 못함. 조합 완료 후 한 번에 삽입됨 — 기능적 OK, UX는 보통
 
 ---
 

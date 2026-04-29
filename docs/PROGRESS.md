@@ -786,15 +786,51 @@ ARCHITECTURE.md §B 갱신. 라이브러리 fix 출시 시 HWPX로 재전환 검
 ✓ npm run format:check
 ```
 
+### 2026-04-30 — Phase 1-D 청크 4-C — 한글 IME + 시각적 커서 + 화살표 네비
+
+**API 발견** (`scripts/check-hittest.mjs`)
+
+`HwpDocument.getCursorRect(s, p, c)` — logical caret → `{pageIndex, x, y, height}`. chunk 4-B 시점에 못 찾아 KNOWN_ISSUES에 "logical → visual 매핑 부재"로 박제했지만 실제로 존재. **시각적 커서 가능** ✅
+
+**구현**
+
+- **시각적 커서**:
+  - `cursorRect` state — 마운트/mutation/click/화살표 후 `getCursorRect`로 갱신
+  - 페이지 placeholder를 wrapper + SVG mount target + cursor overlay 자식으로 재구성. SVG `replaceChildren`이 cursor 안 지움 (sibling 관계)
+  - `<div data-testid="studio-cursor">` 절대 위치 + `animate-pulse`
+  - hitTest 결과의 `cursorRect`도 활용 — click 시 즉시 갱신
+- **한글 IME (L-003 해결)**:
+  - `compositionstart` / `compositionend` 핸들러
+  - `keydown`: `e.nativeEvent.isComposing` 또는 `keyCode === 229`면 무시
+  - `compositionend.data` → `insertText`
+  - e2e용 `__studioDebug.injectComposedText` 헬퍼 (Playwright IME 시뮬 X)
+- **화살표 / Home 캐럿 네비**:
+  - ArrowLeft / ArrowRight / Home — logical caret 자체 갱신, refreshCursorRect
+
+**E2E (chunk 4-C 신규 3, 총 26/26)**
+
+- `visual cursor mounts and moves with typing`
+- `ArrowLeft / ArrowRight / Home update caret without doc mutation` (경계 포함)
+- `Korean IME composition (synthetic) inserts the composed text`
+
+**남은 한계**
+
+- IME 조합 중간 시각 피드백 없음 (한자 후보·자모 진행 미표시)
+- ArrowUp/ArrowDown 미구현 (줄 높이 인지 필요, doc API 부족)
+
+L-003 KNOWN_ISSUES에서 **Resolved**로 이동.
+
+**검증 결과**
+
+```
+✓ npm run typecheck
+✓ npm test             (단위 2/2)
+✓ npm run e2e          (26/26 — 신규 input 3 + 기존 23)
+✓ npm run lint         (0 errors, 0 warnings)
+✓ npm run format:check
+```
+
 ## 다음
-
-### Phase 1-D 청크 4-C — 한글 IME + 시각적 커서
-
-승인 대기 중. 산출물 예정:
-
-- `compositionstart/update/end` 이벤트 처리. 조합 중 임시 placeholder + 완료 시 `insertText`
-- 시각적 커서 (DOM overlay) — logical caret → cursorRect 매핑 위해 클릭 시 cursorRect 캐시 + 추정
-- 화살표/Home/End 캐럿 네비게이션
 
 ### Phase 1-D 청크 5 — 툴바/메뉴 통합
 

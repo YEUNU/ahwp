@@ -27,4 +27,11 @@ doc.insertText(0, 0, 2, 'CD');
 console.log('after insert(0,0,2,"CD"):', doc.getCaretPosition());
 doc.deleteText(0, 0, 0, 1);
 console.log('after delete(0,0,0,1):', doc.getCaretPosition());
+
+console.log('--- getCursorRect(s,p,c) ---');
+console.log('(0,0,0):', doc.getCursorRect(0, 0, 0));
+console.log('(0,0,1):', doc.getCursorRect(0, 0, 1));
+console.log('(0,0,2):', doc.getCursorRect(0, 0, 2));
+console.log('(0,0,3):', doc.getCursorRect(0, 0, 3));
+console.log('(0,0,10):', doc.getCursorRect(0, 0, 10));
 doc.free();

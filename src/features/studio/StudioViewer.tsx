@@ -12,6 +12,7 @@ import {
   useImperativeHandle,
   useRef,
   useState,
+  type CompositionEvent as ReactCompositionEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from 'react';
@@ -85,17 +86,29 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
     const [zoom, setZoom] = useState(1);
     const [currentPage, setCurrentPage] = useState(0);
     const [dirty, setDirty] = useState(false);
+    // Visual cursor — pageIndex and SVG-space coords. Updated from
+    // doc.getCursorRect(s, p, c) after load/mutation, and from hitTest
+    // result after a click.
+    const [cursorRect, setCursorRect] = useState<{
+      pageIndex: number;
+      x: number;
+      y: number;
+      height: number;
+    } | null>(null);
     // Mirror dirty into a ref so callers that captured an older `__studioDebug`
     // closure (e.g. tests grabbing the reference once) read the latest value.
     const dirtyRef = useRef(false);
     // Caret state is read from doc.getCaretPosition() after every mutation;
     // we keep the last-known value here so handlers can act without re-fetching.
-    // Shape: { sectionIndex, paragraphIndex, charOffset } per @rhwp/core.
     const caretRef = useRef<{
       sectionIndex: number;
       paragraphIndex: number;
       charOffset: number;
     }>({ sectionIndex: 0, paragraphIndex: 0, charOffset: 0 });
+    // True between compositionstart and compositionend (Korean IME). keydown
+    // forwards any composing keystrokes back to the IME by ignoring them —
+    // composition* events deliver the final text on completion.
+    const composingRef = useRef(false);
 
     useImperativeHandle(
       ref,
@@ -174,6 +187,21 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
             ) as typeof caretRef.current;
           } catch {
             /* keep default 0,0,0 */
+          }
+          // Compute initial cursor rect for the visual cursor.
+          try {
+            const c = caretRef.current;
+            setCursorRect(
+              JSON.parse(
+                localDoc.getCursorRect(
+                  c.sectionIndex,
+                  c.paragraphIndex,
+                  c.charOffset,
+                ),
+              ),
+            );
+          } catch {
+            /* keep null */
           }
           setPageCount(total);
           setPageDims(dims);
@@ -274,6 +302,29 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
      * Also resyncs caretRef from doc.getCaretPosition() — the doc auto-tracks
      * caret across insert/delete (verified via scripts/check-hittest.mjs).
      */
+    /**
+     * Recompute the visual cursor rect for the current logical caret using
+     * `getCursorRect(s, p, c)`. Called after load / mutation / arrow nav.
+     */
+    const refreshCursorRect = useCallback((): void => {
+      const doc = docRef.current;
+      if (!doc) return;
+      try {
+        const c = caretRef.current;
+        const rect = JSON.parse(
+          doc.getCursorRect(c.sectionIndex, c.paragraphIndex, c.charOffset),
+        ) as {
+          pageIndex: number;
+          x: number;
+          y: number;
+          height: number;
+        };
+        setCursorRect(rect);
+      } catch {
+        /* keep previous */
+      }
+    }, []);
+
     const refreshAfterMutation = useCallback((): void => {
       cacheRef.current.clear();
       pageRefsRef.current.forEach((el, idx) => {
@@ -293,24 +344,56 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
           /* keep previous caret */
         }
       }
+      refreshCursorRect();
       dirtyRef.current = true;
       setDirty(true);
-    }, [renderPageInto]);
+    }, [renderPageInto, refreshCursorRect]);
 
     /**
-     * Keyboard input — chunk 4-B PoC.
-     *
-     * Scope: ASCII printable + Backspace + Enter. Korean IME (composition
-     * events) is L-003 in KNOWN_ISSUES — listening to keydown alone would
-     * lose mid-composition state, so multi-keystroke 한글 currently fails.
-     * Track L-003 and address with composition* events in a follow-up.
+     * Keyboard input. ASCII typing routes through here; Korean IME composition
+     * routes through `compositionend` (the browser delivers the final composed
+     * string in `event.data`). Caret nav (arrow keys / Home) is local to our
+     * caretRef — `@rhwp/core` has no public cursor-move API.
      */
     const handleKeyDown = useCallback(
       (e: ReactKeyboardEvent<HTMLDivElement>): void => {
+        // Skip composing keystrokes — the IME owns them, and compositionend
+        // will deliver the final text. keyCode 229 is the historical signal
+        // for "IME is processing this key" on browsers that haven't set
+        // isComposing yet.
+        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+
         const doc = docRef.current;
         if (!doc) return;
         const c = caretRef.current;
-        // Don't intercept browser shortcuts (Ctrl+S, Cmd+R, etc.) or modifier keys.
+
+        // Caret navigation — purely local. No doc API for cursor movement;
+        // we adjust charOffset and recompute cursorRect via getCursorRect.
+        if (e.key === 'ArrowLeft') {
+          if (c.charOffset > 0) {
+            caretRef.current = { ...c, charOffset: c.charOffset - 1 };
+            refreshCursorRect();
+          }
+          e.preventDefault();
+          return;
+        }
+        if (e.key === 'ArrowRight') {
+          // No upper bound check — getCursorRect clamps to end-of-paragraph
+          // (verified via scripts/check-hittest.mjs), so visual cursor stops
+          // moving naturally past EOL.
+          caretRef.current = { ...c, charOffset: c.charOffset + 1 };
+          refreshCursorRect();
+          e.preventDefault();
+          return;
+        }
+        if (e.key === 'Home') {
+          caretRef.current = { ...c, charOffset: 0 };
+          refreshCursorRect();
+          e.preventDefault();
+          return;
+        }
+
+        // Don't intercept browser shortcuts (Ctrl+S, Cmd+R, etc.).
         if (e.metaKey || e.ctrlKey || e.altKey) return;
 
         if (e.key === 'Backspace') {
@@ -325,7 +408,6 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
           }
           e.preventDefault();
         } else if (e.key === 'Delete') {
-          // Delete forward — best-effort. If deleteText fails (end-of-doc), ignore.
           try {
             doc.deleteText(c.sectionIndex, c.paragraphIndex, c.charOffset, 1);
             refreshAfterMutation();
@@ -338,15 +420,34 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
           refreshAfterMutation();
           e.preventDefault();
         } else if (e.key.length === 1) {
-          // Printable ASCII (single char, no modifier). Korean composition
-          // currently slips through here too — see L-003 — and produces
-          // partial jamo strings that don't compose properly.
+          // Single printable char, no modifier — ASCII fast path. Korean
+          // IME composition is handled by compositionend; we won't reach
+          // this branch with isComposing=true.
           doc.insertText(c.sectionIndex, c.paragraphIndex, c.charOffset, e.key);
           refreshAfterMutation();
           e.preventDefault();
         }
-        // Arrow keys / Home / End / Tab: ignored for now (caret nav not
-        // implemented).
+      },
+      [refreshAfterMutation, refreshCursorRect],
+    );
+
+    const handleCompositionStart = useCallback(() => {
+      composingRef.current = true;
+    }, []);
+
+    const handleCompositionEnd = useCallback(
+      (e: ReactCompositionEvent<HTMLDivElement>) => {
+        composingRef.current = false;
+        const text = e.data;
+        const doc = docRef.current;
+        if (!text || !doc) return;
+        const c = caretRef.current;
+        try {
+          doc.insertText(c.sectionIndex, c.paragraphIndex, c.charOffset, text);
+          refreshAfterMutation();
+        } catch (err) {
+          console.warn('[studio] compositionend insertText failed:', err);
+        }
       },
       [refreshAfterMutation],
     );
@@ -369,17 +470,28 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
             sectionIndex: number;
             paragraphIndex: number;
             charOffset: number;
+            cursorRect?: {
+              pageIndex: number;
+              x: number;
+              y: number;
+              height: number;
+            };
           };
           caretRef.current = {
             sectionIndex: result.sectionIndex,
             paragraphIndex: result.paragraphIndex,
             charOffset: result.charOffset,
           };
+          if (result.cursorRect) {
+            setCursorRect(result.cursorRect);
+          } else {
+            refreshCursorRect();
+          }
         } catch (err) {
           console.warn('[studio] hitTest failed:', err);
         }
       },
-      [zoom],
+      [zoom, refreshCursorRect],
     );
 
     /**
@@ -436,6 +548,43 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
         focusViewer: (): void => {
           scrollRef.current?.focus();
         },
+        // Synthetic Korean IME helper for e2e — Playwright's keyboard.type
+        // doesn't trigger real IME composition. This bypasses keydown to
+        // exercise the same code path compositionend uses.
+        injectComposedText: (text: string): void => {
+          const doc = docRef.current;
+          if (!doc) throw new Error('Document not loaded');
+          const c = caretRef.current;
+          doc.insertText(c.sectionIndex, c.paragraphIndex, c.charOffset, text);
+          // Mirror what handleCompositionEnd would do post-doc-mutation.
+          cacheRef.current.clear();
+          pageRefsRef.current.forEach((el, idx) => {
+            const target = el?.querySelector('svg');
+            if (target) {
+              el!.innerHTML = '';
+              renderPageInto(idx);
+            }
+          });
+          try {
+            caretRef.current = JSON.parse(
+              doc.getCaretPosition(),
+            ) as typeof caretRef.current;
+            const cc = caretRef.current;
+            setCursorRect(
+              JSON.parse(
+                doc.getCursorRect(
+                  cc.sectionIndex,
+                  cc.paragraphIndex,
+                  cc.charOffset,
+                ),
+              ),
+            );
+          } catch {
+            /* keep prev */
+          }
+          dirtyRef.current = true;
+          setDirty(true);
+        },
       };
       (window as Window & { __studioDebug?: typeof debug }).__studioDebug =
         debug;
@@ -443,7 +592,7 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
         delete (window as Window & { __studioDebug?: typeof debug })
           .__studioDebug;
       };
-    }, [phase, pageCount, refreshAfterMutation]);
+    }, [phase, pageCount, refreshAfterMutation, renderPageInto]);
 
     // Effect 2: IntersectionObserver — lazy render visible pages, track current.
     useEffect(() => {
@@ -590,6 +739,8 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
           data-testid="studio-scroll"
           tabIndex={0}
           onKeyDown={handleKeyDown}
+          onCompositionStart={handleCompositionStart}
+          onCompositionEnd={handleCompositionEnd}
         >
           {pageDims && pageCount > 0 && (
             <div
@@ -602,18 +753,37 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
               {Array.from({ length: pageCount }, (_, i) => (
                 <div
                   key={i}
-                  ref={(el) => {
-                    pageRefsRef.current[i] = el;
-                  }}
-                  data-testid="studio-viewer-page"
-                  data-page-idx={i}
-                  className="cursor-text bg-background shadow-md"
+                  className="relative cursor-text bg-background shadow-md"
                   style={{
                     width: pageDims.w * zoom,
                     height: pageDims.h * zoom,
                   }}
                   onClick={(e) => handlePageClick(i, e)}
-                />
+                >
+                  {/* SVG mount target — kept as a separate child so the
+                      cursor overlay survives renderPageInto's
+                      el.replaceChildren(adopted) call. */}
+                  <div
+                    ref={(el) => {
+                      pageRefsRef.current[i] = el;
+                    }}
+                    data-testid="studio-viewer-page"
+                    data-page-idx={i}
+                    className="absolute inset-0"
+                  />
+                  {cursorRect && cursorRect.pageIndex === i && (
+                    <div
+                      data-testid="studio-cursor"
+                      className="pointer-events-none absolute animate-pulse bg-foreground"
+                      style={{
+                        left: cursorRect.x * zoom,
+                        top: cursorRect.y * zoom,
+                        width: Math.max(1, zoom),
+                        height: cursorRect.height * zoom,
+                      }}
+                    />
+                  )}
+                </div>
               ))}
             </div>
           )}
