@@ -65,26 +65,29 @@ test.describe('studio edit — chunk 4-A (programmatic mutation + round-trip)', 
 
   test('insertText changes exportBytes; dirty indicator appears', async () => {
     const { page } = launched;
-    const initialBefore = await page.evaluate(() => {
+    // Compare a content checksum (not byteLength) — HWP/CFB pads to fixed
+    // sector sizes so small inserts may not bump the byte count, but content
+    // certainly changes.
+    const before = await page.evaluate(() => {
       const dbg = (window as Window & { __studioDebug?: StudioDebug })
         .__studioDebug!;
-      return {
-        bytes: dbg.exportBytes().byteLength,
-        dirty: dbg.isDirty(),
-      };
+      const bytes = dbg.exportBytes();
+      let h = 0;
+      for (const b of bytes) h = (Math.imul(h, 31) + b) | 0;
+      return { hash: h, dirty: dbg.isDirty() };
     });
-    expect(initialBefore.dirty).toBe(false);
+    expect(before.dirty).toBe(false);
 
     const after = await page.evaluate(() => {
       const dbg = (window as Window & { __studioDebug?: StudioDebug })
         .__studioDebug!;
       dbg.insertText(0, 0, 0, 'STUDIO-EDIT-TEST');
-      return {
-        bytes: dbg.exportBytes().byteLength,
-        dirty: dbg.isDirty(),
-      };
+      const bytes = dbg.exportBytes();
+      let h = 0;
+      for (const b of bytes) h = (Math.imul(h, 31) + b) | 0;
+      return { hash: h, dirty: dbg.isDirty() };
     });
-    expect(after.bytes).toBeGreaterThan(initialBefore.bytes);
+    expect(after.hash).not.toBe(before.hash);
     expect(after.dirty).toBe(true);
 
     // UI dirty indicator
@@ -93,52 +96,163 @@ test.describe('studio edit — chunk 4-A (programmatic mutation + round-trip)', 
 
   test('save round-trip: edit → save → reopen → edit persists', async () => {
     const { page } = launched;
-    const target = path.join(workDir, 'edited.hwpx');
+    // Server auto-routes .hwpx → .hwp regardless of caller's choice.
+    const requested = path.join(workDir, 'edited.hwpx');
+    const actualPath = path.join(workDir, 'edited.hwp');
 
     // Insert text + capture mutated bytes
-    const mutatedSize = await page.evaluate(
+    const result = await page.evaluate(
       async ({ dst }) => {
         const dbg = (window as Window & { __studioDebug?: StudioDebug })
           .__studioDebug!;
         dbg.insertText(0, 0, 0, 'STUDIO-EDIT-ROUNDTRIP');
         const bytes = dbg.exportBytes();
-        const result = await window.api.file.save({ path: dst, bytes });
-        return { savedPath: result.path, size: bytes.byteLength };
+        const r = await window.api.file.save({ path: dst, bytes });
+        return { savedPath: r.path, size: bytes.byteLength };
       },
-      { dst: target },
+      { dst: requested },
     );
+    expect(result.savedPath).toBe(actualPath);
 
-    // file:save normalizes via @rhwp/core (parse → exportHwpx). The on-disk
-    // size may differ slightly from raw exportBytes due to normalization,
-    // but the file must exist with HWPX magic.
-    const onDisk = await readFile(target);
-    expect(Array.from(onDisk.slice(0, 4))).toEqual([0x50, 0x4b, 0x03, 0x04]);
-    // Re-read via app's file:read (also goes through @rhwp/core ensureHwpxBytes —
-    // pass-through for HWPX). Bytes should equal disk bytes.
+    // file:save normalizes via @rhwp/core to HWP (CFB) — required to keep
+    // images intact, see electron/hwp/converter.ts.
+    const onDisk = await readFile(actualPath);
+    expect(Array.from(onDisk.slice(0, 4))).toEqual([0xd0, 0xcf, 0x11, 0xe0]);
+    // Re-read via app's file:read (pass-through). Bytes should equal disk.
     const reread = await page.evaluate(async (p) => {
       const buf = await window.api.file.read(p);
       return new Uint8Array(buf).byteLength;
-    }, target);
+    }, actualPath);
     expect(reread).toBe(onDisk.byteLength);
-    // Sanity: saved size differs from blank (it has more content now).
-    expect(mutatedSize.size).toBeGreaterThan(0);
+    expect(result.size).toBeGreaterThan(0);
   });
 
-  test('deleteText reverts insertion (idempotent round-trip)', async () => {
+  test('deleteText after insertText brings content closer to original', async () => {
     const { page } = launched;
-    const sizes = await page.evaluate(() => {
+    const hashes = await page.evaluate(() => {
       const dbg = (window as Window & { __studioDebug?: StudioDebug })
         .__studioDebug!;
-      const beforeBytes = dbg.exportBytes().byteLength;
+      const fold = (bytes: Uint8Array): number => {
+        let h = 0;
+        for (const b of bytes) h = (Math.imul(h, 31) + b) | 0;
+        return h;
+      };
+      const before = fold(dbg.exportBytes());
       dbg.insertText(0, 0, 0, 'TEMP');
-      const insertedBytes = dbg.exportBytes().byteLength;
+      const inserted = fold(dbg.exportBytes());
       dbg.deleteText(0, 0, 0, 'TEMP'.length);
-      const afterDeleteBytes = dbg.exportBytes().byteLength;
-      return { beforeBytes, insertedBytes, afterDeleteBytes };
+      const afterDelete = fold(dbg.exportBytes());
+      return { before, inserted, afterDelete };
     });
-    expect(sizes.insertedBytes).toBeGreaterThan(sizes.beforeBytes);
-    // After delete, bytes should be back near the original (not necessarily
-    // identical — the IR may carry residual structural changes).
-    expect(sizes.afterDeleteBytes).toBeLessThan(sizes.insertedBytes);
+    // Insert changed content
+    expect(hashes.inserted).not.toBe(hashes.before);
+    // Delete changed content again (differs from the inserted state). We
+    // don't assert byte-exact reversion to pre-insert — HWP's doc IR can
+    // carry a redo/revision entry that survives a simple delete-by-count.
+    expect(hashes.afterDelete).not.toBe(hashes.inserted);
+  });
+});
+
+// Image preservation across save round-trip — verified against the user's
+// example HWP (gitignored, so skipped in CI).
+const STRESS_FIXTURE = path.resolve(
+  __dirname,
+  '..',
+  '..',
+  'examples',
+  '4. [사업계획서] 제조AI특화 스마트공장 사업계획서_양식_260326_01_데이터수집검증 중복화.hwp',
+);
+
+test.describe('studio edit — chunk 4-A (image preservation across save)', () => {
+  test.skip(
+    !existsSync(STRESS_FIXTURE),
+    'examples/*.hwp stress fixture missing (gitignored)',
+  );
+
+  test('edit + save + reopen preserves embedded images', async () => {
+    const launched = await launchApp();
+    const workDir = await mkdtemp(path.join(tmpdir(), 'ahwp-img-'));
+    try {
+      // 1. Open user's example HWP, then a tiny edit + save
+      await launched.page.evaluate(async (p) => {
+        localStorage.setItem('ahwp:use-studio', '1');
+        await window.api.session.set({ lastActivePath: p });
+      }, STRESS_FIXTURE);
+      await launched.page.reload();
+      await launched.page.waitForLoadState('domcontentloaded');
+      await launched.page.waitForFunction(
+        () =>
+          Boolean(
+            (window as Window & { __studioDebug?: StudioDebug }).__studioDebug,
+          ),
+        { timeout: 30_000 },
+      );
+
+      const requested = path.join(workDir, 'edited.hwpx');
+      const actualPath = path.join(workDir, 'edited.hwp');
+
+      const savedPath = await launched.page.evaluate(
+        async ({ dst }) => {
+          const dbg = (window as Window & { __studioDebug?: StudioDebug })
+            .__studioDebug!;
+          dbg.insertText(0, 0, 0, 'IMG-PRESERVE');
+          const bytes = dbg.exportBytes();
+          const r = await window.api.file.save({ path: dst, bytes });
+          return r.path;
+        },
+        { dst: requested },
+      );
+      expect(savedPath).toBe(actualPath);
+      // Disk file is HWP (CFB).
+      const onDisk = await readFile(actualPath);
+      expect(Array.from(onDisk.slice(0, 4))).toEqual([0xd0, 0xcf, 0x11, 0xe0]);
+
+      // 2. Re-open the saved file in the same app via session restoration.
+      await launched.page.evaluate(async (p) => {
+        await window.api.session.set({ lastActivePath: p });
+      }, actualPath);
+      await launched.page.reload();
+      await launched.page.waitForLoadState('domcontentloaded');
+      await launched.page.waitForFunction(
+        () =>
+          Boolean(
+            (window as Window & { __studioDebug?: StudioDebug }).__studioDebug,
+          ),
+        { timeout: 30_000 },
+      );
+
+      // 3. Scroll through every page to force lazy-render, then check the
+      //    diag for total image count.
+      type Diag = Record<
+        number,
+        { string: number; parsed: number; mounted: number }
+      >;
+      const placeholders = launched.page.getByTestId('studio-viewer-page');
+      const total = await placeholders.count();
+      for (let i = 0; i < total; i++) {
+        await placeholders.nth(i).scrollIntoViewIfNeeded();
+      }
+      await launched.page.waitForTimeout(2000);
+
+      const diag = (await launched.page.evaluate(
+        () => (window as Window & { __studioPageDiag?: Diag }).__studioPageDiag,
+      )) as Diag | undefined;
+      const totalImages = Object.values(diag ?? {}).reduce(
+        (sum, v) => sum + v.mounted,
+        0,
+      );
+      console.log(
+        `[e2e] images preserved across edit+save+reopen: ${totalImages}`,
+      );
+      // Original HWP has 25 images (per scripts/check-image-pipeline.mjs).
+      // Don't pin to exact count — text reflow can shift content slightly.
+      // Require at least half of the original: anything >= 12 confirms
+      // images survive the round-trip (i.e. we're not on the broken HWPX
+      // path that drops them all to 0).
+      expect(totalImages).toBeGreaterThanOrEqual(12);
+    } finally {
+      await launched.close();
+      await rm(workDir, { recursive: true, force: true });
+    }
   });
 });

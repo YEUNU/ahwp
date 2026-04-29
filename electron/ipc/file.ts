@@ -8,7 +8,7 @@ import type {
   RecentFile,
 } from '../../shared/api';
 import { correctExtension } from '../../shared/format';
-import { ensureHwpxBytes, normalizeToHwpx } from '../hwp/converter';
+import { ensureHwpxBytes, normalizeToHwp } from '../hwp/converter';
 import { addRecent, listRecent } from '../store/recent';
 
 const ALLOWED_EXTENSIONS = ['.hwp', '.hwpx'] as const;
@@ -95,10 +95,12 @@ export function registerFileIpc(): void {
       if (!isAllowed(req.path)) {
         throw new Error(`Unsupported extension: ${path.extname(req.path)}`);
       }
-      const normalized = await normalizeToHwpx(toUint8(req.bytes));
-      // Output is always HWPX; route the path's extension to match. Caller's
-      // requested .hwp path becomes the sibling .hwpx; .hwpx passes through.
-      const target = correctExtension(req.path, 'hwpx');
+      // Normalize to HWP (CFB). HWPX round-trip drops images in @rhwp/core
+      // v0.7.8 — see electron/hwp/converter.ts.
+      const normalized = await normalizeToHwp(toUint8(req.bytes));
+      // Output is always HWP; route the path's extension to match. Caller's
+      // requested .hwpx path becomes the sibling .hwp; .hwp passes through.
+      const target = correctExtension(req.path, 'hwp');
       if (target !== req.path) {
         console.info(
           `[file:save] auto-routing extension ${req.path} → ${target}`,
@@ -119,7 +121,10 @@ export function registerFileIpc(): void {
         {
           title: '다른 이름으로 저장',
           defaultPath: req.defaultPath,
-          filters: [{ name: '한글 문서 (HWPX)', extensions: ['hwpx'] }],
+          // HWP-only filter — HWPX disabled until @rhwp/core fixes the image
+          // round-trip (KNOWN_ISSUES). Re-enable HWPX option once upstream
+          // ships the fix.
+          filters: [{ name: '한글 문서 (HWP)', extensions: ['hwp'] }],
         },
       );
       if (result.canceled || !result.filePath) return null;
@@ -127,10 +132,8 @@ export function registerFileIpc(): void {
       if (!isAllowed(picked)) {
         throw new Error(`Unsupported extension: ${path.extname(picked)}`);
       }
-      const normalized = await normalizeToHwpx(toUint8(req.bytes));
-      // Same auto-route guarantee — picked path is forced to .hwpx if user
-      // typed a .hwp name (the dialog filter discourages this anyway).
-      const target = correctExtension(picked, 'hwpx');
+      const normalized = await normalizeToHwp(toUint8(req.bytes));
+      const target = correctExtension(picked, 'hwp');
       if (target !== picked) {
         console.info(
           `[file:save-as] auto-routing extension ${picked} → ${target}`,

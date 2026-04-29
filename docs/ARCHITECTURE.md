@@ -181,13 +181,20 @@ interface AppSettings {
 
 ### B. 기존 파일 열기 흐름 (`file:open`)
 
-1. 사용자가 `.hwp` 또는 `.hwpx` 파일 선택
-2. Main이 확장자 감지
-3. `.hwp`인 경우 `@rhwp/core` 변환 함수로 `.hwpx`를 임시 디렉토리에 생성 (`hwpxPath`)
-4. 이후 모든 편집·AI 처리는 `.hwpx` 기준으로 진행
-5. 사용자가 저장 시 같은 위치에 `.hwpx`로 저장 (원본 `.hwp`는 보존, 사용자에게 안내)
+> ⚠️ **2026-04-30 정책 변경 — 내부 캐노니컬 HWPX → HWP**
+>
+> 원래 계획은 "HWP→HWPX 변환 후 모든 처리는 HWPX 기준"이었으나, `@rhwp/core` v0.7.8의 `exportHwpx → HwpDocument` 라운드트립이 이미지 IR 참조를 깨뜨리는 버그 발견 (`scripts/check-image-pipeline.mjs`로 검증). `exportHwp` 라운드트립은 정상 동작.
+>
+> 잠정적으로 **HWP를 캐노니컬 포맷으로 사용**. 라이브러리가 HWPX 라운드트립 fix 출시하면 HWPX로 전환 검토.
 
-> 결정 사항: 입력 `.hwp`는 변환 후 읽기 전용으로 취급. 같은 파일명에 `.hwpx` 확장자로 저장. 손실 방지를 위해 원본은 덮어쓰지 않음.
+1. 사용자가 `.hwp` 또는 `.hwpx` 파일 선택
+2. Main의 `file:read`는 raw bytes 그대로 반환 (매직 검증만)
+3. 렌더러의 `HwpDocument` 생성자가 HWP/HWPX 자동 감지하여 파싱
+4. 편집·AI 처리는 in-memory `HwpDocument` IR 기준
+5. 사용자가 저장 시 `HwpDocument.exportHwp()` → `.hwp`로 저장 (auto-route)
+6. `.hwpx` 입력이라도 저장은 `.hwp`로 라우팅 (다이얼로그 필터에서 HWPX 옵션 비활성)
+
+> 결정 사항: 손실 방지를 위해 원본 입력 파일은 덮어쓰지 않음 (다른 path로 저장). HWPX 입력 사용자가 명시적으로 HWPX 유지를 원하면 수동 변환 필요 (현재 미지원).
 
 ### Document 식별
 

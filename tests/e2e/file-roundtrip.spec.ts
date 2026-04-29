@@ -23,7 +23,7 @@ const EXAMPLE_HWP = path.resolve(
   '4. [사업계획서] 제조AI특화 스마트공장 사업계획서_양식_260326_01_데이터수집검증 중복화.hwp',
 );
 
-const HWPX_MAGIC = [0x50, 0x4b, 0x03, 0x04]; // "PK\x03\x04"
+const HWP_MAGIC = [0xd0, 0xcf, 0x11, 0xe0]; // CFB compound file magic
 
 test.describe('file round-trip', () => {
   test.skip(!existsSync(EXAMPLE_HWP), 'examples/*.hwp fixture not present');
@@ -55,9 +55,9 @@ test.describe('file round-trip', () => {
     expect(head).toEqual([0xd0, 0xcf, 0x11, 0xe0]);
   });
 
-  test('save round-trip: HWPX bytes survive write → read', async () => {
+  test('save round-trip: HWP bytes survive write → read', async () => {
     const { page } = launched;
-    const target = path.join(workDir, 'roundtrip.hwpx');
+    const target = path.join(workDir, 'roundtrip.hwp');
 
     const written = await page.evaluate(
       async ({ src, dst }) => {
@@ -70,10 +70,11 @@ test.describe('file round-trip', () => {
     expect(written).toBe(target);
 
     const onDisk = await readFile(target);
-    expect(Array.from(onDisk.slice(0, 4))).toEqual(HWPX_MAGIC);
+    // Save normalizes to HWP (CFB) — see electron/hwp/converter.ts on the
+    // image-loss bug forcing this choice over HWPX.
+    expect(Array.from(onDisk.slice(0, 4))).toEqual(HWP_MAGIC);
 
-    // file:read on HWPX is byte-exact pass-through (ensureHwpxBytes
-    // short-circuits HWPX), so the size must match disk.
+    // file:read is byte-exact pass-through, so size must match disk.
     const reread = await page.evaluate(async (p) => {
       const buf = await window.api.file.read(p);
       return new Uint8Array(buf).byteLength;
@@ -81,12 +82,12 @@ test.describe('file round-trip', () => {
     expect(reread).toBe(onDisk.byteLength);
   });
 
-  test('file:save auto-routes .hwp path to .hwpx (server normalizes to HWPX)', async () => {
+  test('file:save auto-routes .hwpx path to .hwp (server normalizes to HWP)', async () => {
     const { page } = launched;
-    // Caller naively passes the original .hwp path — server should rewrite
-    // to .hwpx since the on-disk format is always HWPX after normalization.
-    const requested = path.join(workDir, 'naive.hwp');
-    const expected = path.join(workDir, 'naive.hwpx');
+    // Caller naively requests .hwpx — server rewrites to .hwp since the
+    // on-disk format is now HWP after normalization.
+    const requested = path.join(workDir, 'naive.hwpx');
+    const expected = path.join(workDir, 'naive.hwp');
 
     const result = await page.evaluate(
       async ({ src, dst }) => {
@@ -97,9 +98,9 @@ test.describe('file round-trip', () => {
     );
     expect(result.path).toBe(expected);
 
-    // The .hwp name must NOT exist; the .hwpx sibling must.
+    // Only the .hwp file exists; the .hwpx name should not.
     const onDisk = await readFile(expected);
-    expect(Array.from(onDisk.slice(0, 4))).toEqual(HWPX_MAGIC);
+    expect(Array.from(onDisk.slice(0, 4))).toEqual(HWP_MAGIC);
     await expect(readFile(requested)).rejects.toThrow();
   });
 });

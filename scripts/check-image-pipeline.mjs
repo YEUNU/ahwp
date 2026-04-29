@@ -53,8 +53,6 @@ docB.free();
 // Stage C: also dump the HWPX zip member listing to see if image binaries
 // are present (BinData/ in HWPX)
 console.log('\n--- C: HWPX zip member list ---');
-const decoder = new TextDecoder();
-const sig = decoder.decode(hwpxBytes.slice(0, 4));
 console.log(`  zip magic (PK..): ${[...hwpxBytes.slice(0, 4)].map((b) => b.toString(16)).join(' ')}`);
 
 // Quick zip walk: scan central directory entries
@@ -65,7 +63,29 @@ const binDataMatches = [...text.matchAll(/BinData\/[^\x00\r\n]{1,80}/g)];
 console.log(`  BinData/* references: ${binDataMatches.length}`);
 binDataMatches.slice(0, 5).forEach((m) => console.log(`    ${m[0]}`));
 
+// Stage D: HWP → exportHwp → load → render. Verifies whether the round-trip
+// loss is exportHwpx-specific or affects exportHwp too.
+console.log('\n--- D: HWP → exportHwp round-trip → render ---');
+const docD0 = new mod.HwpDocument(hwp);
+const hwpRoundTrip = docD0.exportHwp();
+console.log(
+  `  HWP (round-trip) size: ${(hwpRoundTrip.byteLength / 1024 / 1024).toFixed(2)} MB`,
+);
+console.log(
+  `  CFB magic (D0 CF 11 E0): ${[...hwpRoundTrip.slice(0, 4)].map((b) => b.toString(16)).join(' ')}`,
+);
+docD0.free();
+const docD = new mod.HwpDocument(hwpRoundTrip);
+const totalD = docD.pageCount();
+let imgsD = 0;
+for (let p = 0; p < totalD; p++) {
+  imgsD += (docD.renderPageSvg(p).match(/<image\b/g) ?? []).length;
+}
+console.log(`  pages: ${totalD}, total <image>: ${imgsD}`);
+docD.free();
+
 console.log('\n--- summary ---');
-console.log(`  A (HWP direct):    ${imgsA} <image> across ${totalA} pages`);
-console.log(`  B (round-trip):    ${imgsB} <image> across ${totalB} pages`);
-console.log(`  C (BinData refs):  ${binDataMatches.length}`);
+console.log(`  A (HWP direct):       ${imgsA} <image> across ${totalA} pages`);
+console.log(`  B (HWP→HWPX→reload):  ${imgsB} <image> across ${totalB} pages`);
+console.log(`  D (HWP→HWP→reload):   ${imgsD} <image> across ${totalD} pages`);
+console.log(`  C (BinData refs in HWPX): ${binDataMatches.length}`);

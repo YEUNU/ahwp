@@ -23,6 +23,7 @@ interface RhwpCoreModule {
     module_or_path: Uint8Array | ArrayBuffer;
   }) => Promise<unknown>;
   HwpDocument: new (data: Uint8Array) => {
+    exportHwp(): Uint8Array;
     exportHwpx(): Uint8Array;
     getSourceFormat(): string;
     free(): void;
@@ -85,37 +86,34 @@ export async function ensureHwpxBytes(input: Uint8Array): Promise<Uint8Array> {
 }
 
 /**
- * Write-side normalization: parse via @rhwp/core then re-serialize as HWPX.
+ * Write-side normalization: parse via @rhwp/core then re-serialize as **HWP**.
  *
- * Why on every save (vs `ensureHwpxBytes` which short-circuits HWPX inputs):
- *   1. Studio (`@rhwp/editor` iframe) ships export bytes with quirks — its
- *      "자동 보정" / spec-compliance fixes may not be reflected in the
- *      iframe's own `exportHwp()` output. A core round-trip re-emits clean
- *      HWPX from the parsed IR, persisting fixes that survive parsing.
- *   2. Studio's `exportHwp` may return HWP (scenario 2) regardless of input;
- *      this guarantees HWPX on disk so the format/extension contract holds.
- *   3. Determinism for future versioning: same logical content → same
- *      serializer output (subject to core's own determinism).
+ * **Why HWP (CFB) and not HWPX (zip)**: `@rhwp/core` v0.7.8's `exportHwpx →
+ * HwpDocument` round-trip drops image references on the next load (see
+ * `ensureHwpxBytes` comment + scripts/check-image-pipeline.mjs). The
+ * `exportHwp` round-trip preserves images and even page count:
+ *
+ *   A) HWP direct:                  40 pages, 25 <image>
+ *   B) HWP→exportHwpx→reload:       53 pages,  0 <image>  ← bug
+ *   D) HWP→exportHwp→reload:        40 pages, 25 <image>  ← OK
+ *
+ * So we route saves through HWP. The disk format becomes `.hwp`. Internal
+ * canonical, originally HWPX (ARCHITECTURE.md §B), is **provisionally HWP**
+ * until @rhwp/core fixes the HWPX round-trip. Future versioning (HWPX zip
+ * member dedup) is deferred to that fix.
  *
  * Cost: full WASM parse + serialize per save. Multi-MB documents take a few
  * hundred ms.
  */
-export async function normalizeToHwpx(input: Uint8Array): Promise<Uint8Array> {
-  return roundTripHwpx(input, 'normalize');
-}
-
-async function roundTripHwpx(
-  input: Uint8Array,
-  label: string,
-): Promise<Uint8Array> {
+export async function normalizeToHwp(input: Uint8Array): Promise<Uint8Array> {
   const { HwpDocument } = await loadRhwpCore();
   const t0 = performance.now();
   const doc = new HwpDocument(input); // throws on invalid bytes
   try {
     const sourceFormat = doc.getSourceFormat(); // authoritative
-    const out = doc.exportHwpx();
+    const out = doc.exportHwp();
     console.info(
-      `[hwp/core] ${label} ${sourceFormat} → HWPX (${(input.byteLength / 1024 / 1024).toFixed(2)} MB → ${(out.byteLength / 1024 / 1024).toFixed(2)} MB) in ${(performance.now() - t0).toFixed(0)} ms`,
+      `[hwp/core] normalize ${sourceFormat} → HWP (${(input.byteLength / 1024 / 1024).toFixed(2)} MB → ${(out.byteLength / 1024 / 1024).toFixed(2)} MB) in ${(performance.now() - t0).toFixed(0)} ms`,
     );
     return out;
   } finally {

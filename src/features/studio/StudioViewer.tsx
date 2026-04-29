@@ -90,9 +90,13 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
     useImperativeHandle(
       ref,
       () => ({
+        // exportHwp (CFB), not exportHwpx — see electron/hwp/converter.ts:
+        // @rhwp/core v0.7.8's HWPX round-trip drops image references; HWP
+        // round-trip preserves them. Save flow accepts either format and
+        // routes the disk extension by the bytes' magic number.
         exportBytes: async () => {
           if (!docRef.current) throw new Error('Document not loaded');
-          return docRef.current.exportHwpx();
+          return docRef.current.exportHwp();
         },
       }),
       [],
@@ -302,7 +306,8 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
         exportBytes: (): Uint8Array => {
           const doc = docRef.current;
           if (!doc) throw new Error('Document not loaded');
-          return doc.exportHwpx();
+          // HWP, not HWPX — see imperative handle comment.
+          return doc.exportHwp();
         },
         getPageCount: (): number => pageCount,
         isDirty: (): boolean => dirtyRef.current,

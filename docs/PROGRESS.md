@@ -691,9 +691,59 @@ constructor(document) {
 - composition events (한글 IME) — 별도 청크로 분리 가능
 - 신규 e2e: 실제 keydown 이벤트 → 콘텐츠 변경 검증
 
-### KNOWN_ISSUES (업스트림 의존)
+### 2026-04-30 — Phase 1-D 핫픽스 #2 — save-side를 HWP 라운드트립으로 (이미지 보존)
 
-- 이미지 포함 문서 저장 시 라운드트립 손실 — `@rhwp/core` `exportHwpx → HwpDocument` 사이클이 image IR 깨뜨림. 라이브러리 0.8 또는 패치 대기. 검증 스크립트: `scripts/check-image-pipeline.mjs`
+**의도 / 검증**
+
+핫픽스 #1로 read-side 이미지는 보존했지만 save-side는 여전히 HWPX 라운드트립이라 lossy. `scripts/check-image-pipeline.mjs`에 stage D 추가하여 `exportHwp` 라운드트립이 이미지 보존하는지 검증:
+
+| 시나리오                             | 페이지 | 이미지                 |
+| ------------------------------------ | ------ | ---------------------- |
+| A. HWP 직접 → render                 | 40     | 25 ✅                  |
+| B. HWP→`exportHwpx`→reload→render    | 53     | 0 ❌ (라이브러리 버그) |
+| **D. HWP→`exportHwp`→reload→render** | **40** | **25 ✅**              |
+
+페이지 수까지 원본과 동일 — `exportHwp` 라운드트립이 결정적이고 lossless.
+
+**정책 변경 — 내부 캐노니컬: HWPX → HWP**
+
+ARCHITECTURE.md §B 갱신. 라이브러리 fix 출시 시 HWPX로 재전환 검토.
+
+**구현**
+
+- `electron/hwp/converter.ts`:
+  - `normalizeToHwpx` → **`normalizeToHwp`** (rename + body 변경 — `exportHwpx()` → `exportHwp()`)
+  - 코멘트에 stage A/B/D 결과 + 라이브러리 버그 박제
+- `electron/ipc/file.ts`:
+  - `file:save` / `file:save-as`가 `normalizeToHwp` 사용
+  - `correctExtension(path, 'hwpx')` → **`correctExtension(path, 'hwp')`** — 자동 라우팅 방향 반전 (`.hwpx` → `.hwp`)
+  - `save-as` 다이얼로그 필터: HWPX 제거, HWP only
+- `src/features/studio/StudioViewer.tsx`:
+  - imperative handle `exportBytes()` → **`doc.exportHwp()`** (was `exportHwpx`)
+  - `__studioDebug.exportBytes` 동일 변경
+- `src/lib/rhwp-core.ts`: `RhwpCoreModule` 인터페이스에 `exportHwp` 추가
+
+**E2E 갱신 + 신규**
+
+- `save round-trip: HWPX bytes survive write → read` → **`HWP bytes survive`**, magic check `[d0 cf 11 e0]`
+- `file:save auto-routes .hwp path to .hwpx` → **반전: `.hwpx → .hwp`**, 의미 변경
+- `studio-edit` byteLength 비교 → **content checksum** 비교 (CFB sector alignment 때문에 작은 변경에 byteLength 불변)
+- **🆕 `edit + save + reopen preserves embedded images`** — 사용자 예제 HWP, 편집 + 저장 + 세션 복원으로 재오픈 + 모든 페이지 스크롤 + diag로 image count 합계 검증. 12개 이상 (원본 25개 중 다수) 보존 확인. **이미지 라운드트립 회귀 잡는 핵심 게이트**
+
+**검증 결과**
+
+```
+✓ npm run typecheck
+✓ npm test             (단위 2/2)
+✓ npm run e2e          (18/18 — 신규 image 보존 1 + 기존 17, 회귀 없음)
+✓ npm run lint         (0 errors, 0 warnings)
+✓ npm run format:check
+```
+
+**남은 한계 (업스트림 의존)**
+
+- HWPX 입력을 HWPX로 그대로 저장 옵션 미지원 — 현재 무조건 HWP. 라이브러리 fix 시 HWPX option 다이얼로그 추가 가능
+- HWP CFB는 zip이 아니라 versioning dedup/diff 효율 떨어짐. 라이브러리 fix 후 HWPX로 전환하면 그때 dedup 도입 (Phase 2/3)
 
 ### Phase 1-C — 보류 항목
 
