@@ -6,7 +6,7 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 | 항목     | 상태                                                                                                                                                         |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Phase    | **1-A 완료** → **1-B 진입 예정**                                                                                                                             |
+| Phase    | **1-B 진행 중** (파일 리스트)                                                                                                                                |
 | 빌드     | ✅ `npm run dev` · `npx vite build`                                                                                                                          |
 | 타입     | ✅ `npm run typecheck`                                                                                                                                       |
 | 린트     | ✅ `npm run lint` (warning 2건 — shadcn 표준 패턴, react-refresh HMR 안내)                                                                                   |
@@ -122,13 +122,42 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 ✓ npm run format:check
 ```
 
+### 2026-04-29 — Phase 1-B (1차 청크) — 파일 IPC + 최근 파일 + 드래그앤드롭
+
+**결정 변경**
+
+- **better-sqlite3 도입을 Phase 2로 미룸**. Phase 1-B에서 필요한 영속 상태는 "최근 파일 리스트"뿐인데 native module 빌드 셋업(electron-rebuild + vite externalize + electron-builder asarUnpack) 비용이 이득보다 큼. 채팅 히스토리(Phase 2)와 함께 도입하면 schema/migration 한 번에 정리 가능
+- 대안: `app.getPath('userData')/recent.json` 단일 JSON 파일. 마이그레이션 비용은 Phase 2에서 LRU 배열 → SQLite `files` 테이블 한 번 변환으로 끝
+
+**구현**
+
+- `shared/api.ts`: `RecentFile` · `FileOpenResult` · `FileApi` 타입. `AhwpApi.file = { open, openByPath, listRecent, getPathForFile }`
+- `electron/store/recent.ts`: `userData/recent.json` 영속, 인메모리 캐시, LRU max 20. 쓰기는 tmp + rename atomic. `writeChain` Promise로 순차화
+- `electron/ipc/file.ts`:
+  - `file:open` — `dialog.showOpenDialog` (.hwp/.hwpx 필터). 사용자 취소 / 잘못된 확장자 → null
+  - `file:open-by-path` — 드래그앤드롭/최근 클릭용. 확장자 + 파일 존재 검증
+  - `file:list-recent` — 최근순 배열 반환
+- `electron/preload.ts`: `webUtils.getPathForFile(file)` 노출 (Electron 32+에서 `File.path` 제거됨, 드래그앤드롭에 필요)
+- `src/features/files/use-recent-files.ts`: `recent` · `loading` · `refresh()` 훅. 초기 fetch는 cleanup 가능한 cancelled flag 패턴
+- `src/features/files/FileList.tsx`: 최근 파일 목록 (basename + 상대 시간), 빈 상태 안내, 드롭 zone 오버레이 (.hwp/.hwpx 확장자 필터링), active path 하이라이트
+- `AppShell`: `onMenuAction('file:open')` 구독 → `file.open()`. 좌측 패널 더미 콘텐츠 → `<FileList/>` 교체. `refreshTick` 증가로 목록 재로드 (현재는 key remount, Phase 2에서 store 통합 시 정리)
+
+**검증 결과**
+
+```
+✓ npm run typecheck
+✓ npm test             (2 passed)
+✓ npm run lint         (0 errors, 2 shadcn warnings)
+✓ npm run format:check
+✓ npx vite build
+```
+
 ## 다음
 
-### Phase 1-B — 파일 리스트
+### Phase 1-B — 남은 항목
 
-- better-sqlite3 + 마이그레이션
-- `electron/store/db.ts`, `electron/ipc/file.ts` (`file:list-recent`, `file:open`)
-- 좌측 패널: 최근 파일, drag-and-drop
+- 메뉴 `file:new`도 IPC 연결 (Phase 1-C에서 빈 HWPX 시드와 함께)
+- 컨텍스트 메뉴(목록 항목 우클릭): "최근 항목에서 제거", "Finder/Explorer에서 보기"
 
 ### Phase 1-C — rhwp 에디터
 
