@@ -12,6 +12,8 @@ import {
   useImperativeHandle,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
 } from 'react';
 import { Button } from '@/components/ui/button';
 import type { RhwpViewerHandle } from '@/features/editor/RhwpViewer';
@@ -86,6 +88,14 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
     // Mirror dirty into a ref so callers that captured an older `__studioDebug`
     // closure (e.g. tests grabbing the reference once) read the latest value.
     const dirtyRef = useRef(false);
+    // Caret state is read from doc.getCaretPosition() after every mutation;
+    // we keep the last-known value here so handlers can act without re-fetching.
+    // Shape: { sectionIndex, paragraphIndex, charOffset } per @rhwp/core.
+    const caretRef = useRef<{
+      sectionIndex: number;
+      paragraphIndex: number;
+      charOffset: number;
+    }>({ sectionIndex: 0, paragraphIndex: 0, charOffset: 0 });
 
     useImperativeHandle(
       ref,
@@ -157,6 +167,14 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
 
           docRef.current = localDoc;
           cacheRef.current.set(0, svg0);
+          // Sync initial caret state from the doc.
+          try {
+            caretRef.current = JSON.parse(
+              localDoc.getCaretPosition(),
+            ) as typeof caretRef.current;
+          } catch {
+            /* keep default 0,0,0 */
+          }
           setPageCount(total);
           setPageDims(dims);
           setPhase('ready');
@@ -252,6 +270,9 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
      * are stale. Clear the cache and re-render any placeholders that were
      * already mounted; placeholders not yet mounted will lazy-render fresh
      * SVGs when the IntersectionObserver next visits them.
+     *
+     * Also resyncs caretRef from doc.getCaretPosition() — the doc auto-tracks
+     * caret across insert/delete (verified via scripts/check-hittest.mjs).
      */
     const refreshAfterMutation = useCallback((): void => {
       cacheRef.current.clear();
@@ -261,9 +282,105 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
           renderPageInto(idx);
         }
       });
+      const doc = docRef.current;
+      if (doc) {
+        try {
+          const parsed = JSON.parse(
+            doc.getCaretPosition(),
+          ) as typeof caretRef.current;
+          caretRef.current = parsed;
+        } catch {
+          /* keep previous caret */
+        }
+      }
       dirtyRef.current = true;
       setDirty(true);
     }, [renderPageInto]);
+
+    /**
+     * Keyboard input — chunk 4-B PoC.
+     *
+     * Scope: ASCII printable + Backspace + Enter. Korean IME (composition
+     * events) is L-003 in KNOWN_ISSUES — listening to keydown alone would
+     * lose mid-composition state, so multi-keystroke 한글 currently fails.
+     * Track L-003 and address with composition* events in a follow-up.
+     */
+    const handleKeyDown = useCallback(
+      (e: ReactKeyboardEvent<HTMLDivElement>): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        const c = caretRef.current;
+        // Don't intercept browser shortcuts (Ctrl+S, Cmd+R, etc.) or modifier keys.
+        if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+        if (e.key === 'Backspace') {
+          if (c.charOffset > 0) {
+            doc.deleteText(
+              c.sectionIndex,
+              c.paragraphIndex,
+              c.charOffset - 1,
+              1,
+            );
+            refreshAfterMutation();
+          }
+          e.preventDefault();
+        } else if (e.key === 'Delete') {
+          // Delete forward — best-effort. If deleteText fails (end-of-doc), ignore.
+          try {
+            doc.deleteText(c.sectionIndex, c.paragraphIndex, c.charOffset, 1);
+            refreshAfterMutation();
+          } catch {
+            /* ignore — past end */
+          }
+          e.preventDefault();
+        } else if (e.key === 'Enter') {
+          doc.insertText(c.sectionIndex, c.paragraphIndex, c.charOffset, '\n');
+          refreshAfterMutation();
+          e.preventDefault();
+        } else if (e.key.length === 1) {
+          // Printable ASCII (single char, no modifier). Korean composition
+          // currently slips through here too — see L-003 — and produces
+          // partial jamo strings that don't compose properly.
+          doc.insertText(c.sectionIndex, c.paragraphIndex, c.charOffset, e.key);
+          refreshAfterMutation();
+          e.preventDefault();
+        }
+        // Arrow keys / Home / End / Tab: ignored for now (caret nav not
+        // implemented).
+      },
+      [refreshAfterMutation],
+    );
+
+    /**
+     * Mouse click on a page → hitTest → caret moves.
+     * Translates screen coords to page-local SVG coords (account for zoom).
+     */
+    const handlePageClick = useCallback(
+      (idx: number, e: ReactMouseEvent<HTMLDivElement>): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        const target = e.currentTarget;
+        const rect = target.getBoundingClientRect();
+        // Page coords in SVG space (zoom applied to placeholder, so divide by zoom)
+        const x = (e.clientX - rect.left) / zoom;
+        const y = (e.clientY - rect.top) / zoom;
+        try {
+          const result = JSON.parse(doc.hitTest(idx, x, y)) as {
+            sectionIndex: number;
+            paragraphIndex: number;
+            charOffset: number;
+          };
+          caretRef.current = {
+            sectionIndex: result.sectionIndex,
+            paragraphIndex: result.paragraphIndex,
+            charOffset: result.charOffset,
+          };
+        } catch (err) {
+          console.warn('[studio] hitTest failed:', err);
+        }
+      },
+      [zoom],
+    );
 
     /**
      * Test/dev hook on `window.__studioDebug` so e2e specs can drive
@@ -311,6 +428,14 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
         },
         getPageCount: (): number => pageCount,
         isDirty: (): boolean => dirtyRef.current,
+        getCaret: (): {
+          sectionIndex: number;
+          paragraphIndex: number;
+          charOffset: number;
+        } => ({ ...caretRef.current }),
+        focusViewer: (): void => {
+          scrollRef.current?.focus();
+        },
       };
       (window as Window & { __studioDebug?: typeof debug }).__studioDebug =
         debug;
@@ -461,8 +586,10 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
 
         <div
           ref={scrollRef}
-          className="flex-1 overflow-auto bg-muted/30"
+          className="flex-1 overflow-auto bg-muted/30 outline-none"
           data-testid="studio-scroll"
+          tabIndex={0}
+          onKeyDown={handleKeyDown}
         >
           {pageDims && pageCount > 0 && (
             <div
@@ -480,11 +607,12 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
                   }}
                   data-testid="studio-viewer-page"
                   data-page-idx={i}
-                  className="bg-background shadow-md"
+                  className="cursor-text bg-background shadow-md"
                   style={{
                     width: pageDims.w * zoom,
                     height: pageDims.h * zoom,
                   }}
+                  onClick={(e) => handlePageClick(i, e)}
                 />
               ))}
             </div>

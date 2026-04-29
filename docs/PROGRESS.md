@@ -679,18 +679,6 @@ constructor(document) {
 ✓ npm run format:check
 ```
 
-## 다음
-
-### Phase 1-D 청크 4-B — 입력 UI
-
-승인 대기 중. 산출물 예정:
-
-- 키 입력 핸들러 (printable keys + Backspace + Delete + 엔터) → `HwpDocument.insertText` / `deleteText`
-- 마우스 클릭 → `HwpDocument.hitTest` 또는 동등 API → 캐럿 위치 결정
-- 커서 시각화 (DOM overlay div 또는 SVG `<line>` 마커)
-- composition events (한글 IME) — 별도 청크로 분리 가능
-- 신규 e2e: 실제 keydown 이벤트 → 콘텐츠 변경 검증
-
 ### 2026-04-30 — Phase 1-D 핫픽스 #2 — save-side를 HWP 라운드트립으로 (이미지 보존)
 
 **의도 / 검증**
@@ -740,10 +728,84 @@ ARCHITECTURE.md §B 갱신. 라이브러리 fix 출시 시 HWPX로 재전환 검
 ✓ npm run format:check
 ```
 
-**남은 한계 (업스트림 의존)**
+**남은 한계 (업스트림 의존)** — [docs/KNOWN_ISSUES.md](KNOWN_ISSUES.md) 참고
 
-- HWPX 입력을 HWPX로 그대로 저장 옵션 미지원 — 현재 무조건 HWP. 라이브러리 fix 시 HWPX option 다이얼로그 추가 가능
-- HWP CFB는 zip이 아니라 versioning dedup/diff 효율 떨어짐. 라이브러리 fix 후 HWPX로 전환하면 그때 dedup 도입 (Phase 2/3)
+- L-001: HWPX 라운드트립 image IR 손실 (우회 적용 — HWP 캐노니컬)
+- L-002: `@rhwp/editor` 외부 iframe 의존 (chunk 6에서 제거)
+- L-003: 한글 IME 입력 미지원 (chunk 4-C 예정)
+- L-004: 한컴 픽셀 정합성 베스트 에포트
+- L-005: visual snapshot CI Linux baseline 부재
+
+### 2026-04-30 — Phase 1-D 청크 4-B — 키보드 입력 + 마우스 hitTest
+
+**선행: KNOWN_ISSUES 정리**
+
+`docs/KNOWN_ISSUES.md` 신설. L-001~L-005 항목별 증상/검증/우회/해결조건 정리. PROGRESS의 임시 한계 메모 → 한 곳으로 통합.
+
+**API 정찰** (`scripts/check-hittest.mjs`)
+
+- `getCaretPosition()` → `{sectionIndex, paragraphIndex, charOffset}`
+- `hitTest(page, x, y)` → 위 + `cursorRect: {pageIndex, x, y, height}` (커서 좌표 포함)
+- mutation 후 `getCaretPosition()` 자동 추적 — 우리가 별도 트래킹 불필요
+
+**구현**
+
+- `StudioViewer`:
+  - `caretRef` — `getCaretPosition()`에서 가져온 logical 위치. 마운트/mutation 후 자동 동기화
+  - `handleKeyDown`:
+    - `Backspace` → `deleteText(c.s, c.p, c.charOffset - 1, 1)` (offset > 0일 때)
+    - `Delete` → 해당 위치 1자 삭제 (catch + 무시)
+    - `Enter` → `insertText('\n')`
+    - 단일 printable key → `insertText(e.key)`
+    - 메타/컨트롤/알트 modifier 있으면 무시 (단축키 보호)
+    - 화살표/Tab/Home/End는 무시 (caret 이동 추후)
+  - `handlePageClick(idx, e)` — 클릭 좌표 → page-local (zoom 보정) → `hitTest` → caret 갱신
+  - scroll 컨테이너에 `tabIndex={0}` + `outline-none`. 페이지 placeholder에 `cursor-text` + `onClick`
+- `__studioDebug` API에 `getCaret()` + `focusViewer()` 추가
+
+**한계 (KNOWN_ISSUES 박제)**
+
+- 시각적 커서 표시 없음 — logical → cursorRect 매핑 API 부재. 4-C에서 hitTest 트릭으로 추정
+- 한글 IME 조합 미지원 (L-003) — keydown만 처리하므로 자모 결합 누락. composition events 처리는 4-C
+
+**E2E (chunk 4-B 신규 5, 총 23)**
+
+- `typing ASCII advances caret and changes content` — `keyboard.type('HELLO')` → caret 0→5 + dirty=true
+- `Backspace removes the previous character` — `type('ABC')` + Backspace → 3→2
+- `Backspace at offset 0 is a no-op (not a crash)` — boundary
+- `Modifier shortcuts pass through (do not insert text)` — Cmd/Ctrl 단축키는 caret/dirty 미변경
+- `Click on a page calls hitTest and updates caret` — boundingBox + click → hitTest 호출 검증
+
+**검증 결과**
+
+```
+✓ npm run typecheck
+✓ npm test             (단위 2/2)
+✓ npm run e2e          (23/23 — 신규 input 5 + 기존 18, 회귀 없음)
+✓ npm run lint         (0 errors, 0 warnings)
+✓ npm run format:check
+```
+
+## 다음
+
+### Phase 1-D 청크 4-C — 한글 IME + 시각적 커서
+
+승인 대기 중. 산출물 예정:
+
+- `compositionstart/update/end` 이벤트 처리. 조합 중 임시 placeholder + 완료 시 `insertText`
+- 시각적 커서 (DOM overlay) — logical caret → cursorRect 매핑 위해 클릭 시 cursorRect 캐시 + 추정
+- 화살표/Home/End 캐럿 네비게이션
+
+### Phase 1-D 청크 5 — 툴바/메뉴 통합
+
+- 메뉴 `file:save` / `file:save-as` → StudioViewer.exportBytes 와이어링 (현재 RhwpViewer로 지정됨, studio mode에선 둘 다 호환)
+- 포맷 툴바 (Bold/Italic/Style 드롭다운) — `applyCharFormat` API
+- 단축키 (⌘B / ⌘I 등)
+
+### Phase 1-D 청크 6 — 정리
+
+- `RhwpViewer.tsx` (legacy iframe) 삭제 + `@rhwp/editor` dep 제거
+- `index.html` CSP `frame-src` 제거
 
 ### Phase 1-C — 보류 항목
 
