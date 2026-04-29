@@ -1,3 +1,54 @@
+# --- ahwp / Electron / Node ---
+
+# dependencies
+node_modules/
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# build outputs
+dist/
+dist-electron/
+out/
+release/
+*.tsbuildinfo
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# editor
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# env
+.env
+.env.local
+.env.*.local
+
+# test coverage
+coverage/
+
+# --- Python (legacy) ---
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
