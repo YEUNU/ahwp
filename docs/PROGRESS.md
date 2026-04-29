@@ -4,16 +4,16 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 ## 현재 스냅샷
 
-| 항목     | 상태                                                                                                                                                         |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Phase    | **1-C 진행 중** (rhwp 뷰어 + save 라운드트립)                                                                                                                |
-| 빌드     | ✅ `npm run dev` · `npx vite build`                                                                                                                          |
-| 타입     | ✅ `npm run typecheck`                                                                                                                                       |
-| 린트     | ✅ `npm run lint` (warning 2건 — shadcn 표준 패턴, react-refresh HMR 안내)                                                                                   |
-| 포맷     | ✅ `npm run format:check`                                                                                                                                    |
-| 테스트   | ✅ 2/2 (`App.test.tsx`)                                                                                                                                      |
-| Electron | 33.2 · sandbox=true · contextIsolation=true                                                                                                                  |
-| 의존성   | runtime: `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` |
+| 항목     | 상태                                                                                                                                                                                         |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Phase    | **1-C 진행 중** (rhwp 뷰어 + save 라운드트립)                                                                                                                                                |
+| 빌드     | ✅ `npm run dev` · `npx vite build`                                                                                                                                                          |
+| 타입     | ✅ `npm run typecheck`                                                                                                                                                                       |
+| 린트     | ✅ `npm run lint` (warning 2건 — shadcn 표준 패턴, react-refresh HMR 안내)                                                                                                                   |
+| 포맷     | ✅ `npm run format:check`                                                                                                                                                                    |
+| 테스트   | ✅ 2/2 (`App.test.tsx`)                                                                                                                                                                      |
+| Electron | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                  |
+| 의존성   | runtime: `@rhwp/core` · `@rhwp/editor` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` |
 
 ## 일지
 
@@ -285,14 +285,47 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 ✓ npx vite build
 ```
 
+### 2026-04-29 — Phase 1-C (4차 청크) — `@rhwp/core` HWP→HWPX 변환
+
+**구현**
+
+- `@rhwp/core@^0.7.8` 추가 (Rust + WASM, ~4.5MB). `electron/hwp/converter.ts`로 main 프로세스에 통합
+- `loadRhwpCore`: 동적 import + lazy WASM 초기화. 첫 변환 호출 시점에 한 번만 init. `import.meta.url` 기반 `createRequire`로 CJS 빌드 출력에서도 path 해석 동작
+- `ensureHwpxBytes(input)`: 매직넘버로 포맷 감지 → HWPX면 바이트 그대로 반환 (round-trip 회피, byte-exact 보존), HWP면 `new HwpDocument(input).exportHwpx()` 변환
+- `file:read` IPC를 모든 입력에 대해 HWPX 바이트 보장하도록 변경. 렌더러/스튜디오는 이제 항상 HWPX 받음 — `exportHwp() → save` 라운드트립 결정성 향상. ARCHITECTURE.md §B "내부 캐노니컬 = HWPX" 정책 구현 완성
+- `vite.config.ts`: 메인 빌드 `rollupOptions.external: ['@rhwp/core']` — WASM 자산 번들링 회피, Node가 `node_modules`에서 런타임 해석. electron-builder는 `dependencies`를 자동 패킹
+
+**알게 된 점**
+
+- `@rhwp/core` 0.7.8은 `"type": "module"` ESM-only. vite-plugin-electron 기본값은 main을 CJS로 번들 → Node 20(Electron 33의 런타임)은 ESM 패키지를 `require()` 시 `ERR_REQUIRE_ESM`. 우회: `await import('@rhwp/core')` 동적 import로 패키지를 ESM-aware하게 로드 (CJS bundle 안에서도 동작)
+- `BufferSource`는 DOM lib에만 있어서 Node tsconfig에서는 미정의. 시그니처를 `Uint8Array | ArrayBuffer`로 직접 명시
+
+**후속 작업 (Phase 2~3에서 활용)**
+
+- `file:new`: 동일 모듈에 `createBlankHwpx()` 추가 — `@rhwp/core`의 `HwpDocument.createBlankDocument()` 활용
+- AI 에이전트 편집: `applyCharFormat`/`applyParaFormat`/`createTable` 등 인스턴스 메서드 직접 호출 가능 (Phase 3 hwpctl 도구의 백엔드)
+- 버전 dedup (Phase 3+): HWPX zip 멤버 단위 객체 저장소로 마이그레이션 시 컨버터 결정성 검증 필요
+
+**검증 결과**
+
+```
+✓ npm run typecheck
+✓ npm test             (단위 2/2 passed)
+✓ npm run e2e          (E2E 2/2 passed)
+✓ npm run lint         (0 errors, 2 shadcn warnings)
+✓ npm run format:check
+✓ npx vite build
+```
+
+> 실제 HWP 파일 변환 검증은 사용자 테스트 라운드. 콘솔에 `[hwp/core] WASM init in NN ms` + `[hwp/core] HWP → HWPX (X.XX MB → Y.YY MB) in NN ms` 표시 예상
+
 ## 다음
 
 ### Phase 1-C — 남은 항목
 
-- `@rhwp/core` 도입 (HWP → HWPX 변환기 `electron/hwp/converter.ts`)
-- `file:new` (빈 HWPX 시드 — `@rhwp/core`로 직접 생성)
-- studio 자산 로컬 번들링 (Phase 4에서 본격, 1-C에서 PoC만)
-- E2E 추가 (file:open dialog 모킹, recent files, save 라운드트립 — fixture 필요)
+- `file:new` IPC + `@rhwp/core.createBlankDocument` 시드 → 빈 HWPX 임시 파일 → 메뉴 wiring
+- studio 자산 로컬 번들링 PoC (Phase 4에서 본격)
+- E2E 추가 (file:open dialog 모킹, recent files, save 라운드트립 — 작은 HWPX fixture 필요)
 
 ### Phase 1-B — 남은 항목 (낮은 우선순위)
 

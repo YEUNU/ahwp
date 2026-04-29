@@ -8,6 +8,7 @@ import type {
   RecentFile,
 } from '../../shared/api';
 import { detectHwpFormat } from '../../shared/format';
+import { ensureHwpxBytes } from '../hwp/converter';
 import { addRecent, listRecent } from '../store/recent';
 
 const ALLOWED_EXTENSIONS = ['.hwp', '.hwpx'] as const;
@@ -71,12 +72,17 @@ export function registerFileIpc(): void {
       if (!isAllowed(filePath)) {
         throw new Error(`Unsupported extension: ${path.extname(filePath)}`);
       }
-      const buffer = await fs.readFile(filePath);
-      // Return a fresh ArrayBuffer slice — Buffer's underlying pool may be larger.
-      return buffer.buffer.slice(
-        buffer.byteOffset,
-        buffer.byteOffset + buffer.byteLength,
+      const raw = await fs.readFile(filePath);
+      // Always hand HWPX bytes back to the renderer — converts HWP via
+      // @rhwp/core if needed. ARCHITECTURE.md §B: canonical internal = HWPX.
+      const hwpxBytes = await ensureHwpxBytes(
+        new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength),
       );
+      // Hand off as a fresh ArrayBuffer (renderer expects ArrayBuffer).
+      return hwpxBytes.buffer.slice(
+        hwpxBytes.byteOffset,
+        hwpxBytes.byteOffset + hwpxBytes.byteLength,
+      ) as ArrayBuffer;
     },
   );
 

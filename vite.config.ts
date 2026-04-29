@@ -13,6 +13,11 @@ export default defineConfig({
           build: {
             outDir: 'dist-electron',
             rollupOptions: {
+              // @rhwp/core ships a WASM binary alongside its JS — bundling it
+              // through Rollup loses the WASM asset. Keep external so Node
+              // resolves from node_modules at runtime (electron-builder copies
+              // dependencies into the packed app).
+              external: ['@rhwp/core'],
               output: {
                 entryFileNames: 'main.js',
               },

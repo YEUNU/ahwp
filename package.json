@@ -105,6 +105,7 @@
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.2.4",
+    "@rhwp/core": "^0.7.8",
     "@rhwp/editor": "^0.7.8",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
