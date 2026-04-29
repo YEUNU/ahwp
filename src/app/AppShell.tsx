@@ -1,15 +1,33 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import type { MenuAction, PingResponse } from '@shared/api';
-import { RhwpViewer } from '@/features/editor/RhwpViewer';
+import {
+  RhwpViewer,
+  type RhwpViewerHandle,
+} from '@/features/editor/RhwpViewer';
 import { FileList } from '@/features/files/FileList';
 import { ThemeToggle } from './theme-toggle';
+
+/** Probe magic number to confirm scenario 1 (HWPX) vs 2 (HWP) on first save. */
+function logExportFormat(bytes: Uint8Array): void {
+  const head = Array.from(bytes.slice(0, 4))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+  const label =
+    head === '504b0304'
+      ? 'HWPX (zip) — scenario 1 ✓'
+      : head === 'd0cf11e0'
+        ? 'HWP (CFB) — scenario 2'
+        : `unknown (${head})`;
+  console.info(`[rhwp] export magic=${head} → ${label}`);
+}
 
 export default function AppShell() {
   const [pingResult, setPingResult] = useState<PingResponse | null>(null);
   const [pingError, setPingError] = useState<string | null>(null);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
+  const viewerRef = useRef<RhwpViewerHandle | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -38,15 +56,52 @@ export default function AppShell() {
     }
   }, []);
 
+  const saveCurrent = useCallback(async () => {
+    if (!viewerRef.current) return;
+    const t0 = performance.now();
+    const bytes = await viewerRef.current.exportBytes();
+    logExportFormat(bytes);
+    console.info(
+      `[rhwp] export ${(bytes.byteLength / 1024 / 1024).toFixed(2)} MB in ${(performance.now() - t0).toFixed(0)} ms`,
+    );
+
+    if (activePath) {
+      await window.api.file.save({ path: activePath, bytes });
+    } else {
+      const result = await window.api.file.saveAs({ bytes });
+      if (result) {
+        setActivePath(result.path);
+        setRefreshTick((n) => n + 1);
+      }
+    }
+  }, [activePath]);
+
+  const saveAsCurrent = useCallback(async () => {
+    if (!viewerRef.current) return;
+    const bytes = await viewerRef.current.exportBytes();
+    logExportFormat(bytes);
+    const result = await window.api.file.saveAs({
+      bytes,
+      defaultPath: activePath ?? undefined,
+    });
+    if (result) {
+      setActivePath(result.path);
+      setRefreshTick((n) => n + 1);
+    }
+  }, [activePath]);
+
   useEffect(() => {
     return window.api.onMenuAction((action: MenuAction) => {
       if (action === 'file:open') {
         void openFromDialog();
+      } else if (action === 'file:save') {
+        void saveCurrent();
+      } else if (action === 'file:save-as') {
+        void saveAsCurrent();
       }
-      // file:new / file:save / file:save-as / view:settings
-      // are handled by Phase 1-C / 2.
+      // file:new / view:settings handled in later phases.
     });
-  }, [openFromDialog]);
+  }, [openFromDialog, saveCurrent, saveAsCurrent]);
 
   return (
     <PanelGroup
@@ -90,7 +145,7 @@ export default function AppShell() {
           </div>
           <div className="flex-1 overflow-hidden">
             {activePath ? (
-              <RhwpViewer key={activePath} path={activePath} />
+              <RhwpViewer key={activePath} path={activePath} ref={viewerRef} />
             ) : (
               <div className="flex h-full flex-col items-center justify-center gap-4 p-8">
                 <h1 className="text-2xl font-semibold">Hello, ahwp</h1>

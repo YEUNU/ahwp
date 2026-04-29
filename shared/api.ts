@@ -35,6 +35,16 @@ export interface FileOpenResult {
   path: string;
 }
 
+export interface FileSaveRequest {
+  path: string;
+  bytes: ArrayBuffer | Uint8Array;
+}
+
+export interface FileSaveAsRequest {
+  bytes: ArrayBuffer | Uint8Array;
+  defaultPath?: string;
+}
+
 export interface FileApi {
   /** Show native open dialog. Returns null when the user cancels. */
   open: () => Promise<FileOpenResult | null>;
@@ -44,6 +54,10 @@ export interface FileApi {
   listRecent: () => Promise<RecentFile[]>;
   /** Read raw bytes for a path. Throws if extension is not allowed or file is missing. */
   read: (path: string) => Promise<ArrayBuffer>;
+  /** Write bytes to an existing path. Atomic via tmp + rename. Updates recent. */
+  save: (req: FileSaveRequest) => Promise<FileOpenResult>;
+  /** Show native save dialog, write bytes, return chosen path. null if user cancels. */
+  saveAs: (req: FileSaveAsRequest) => Promise<FileOpenResult | null>;
   /**
    * Resolve a renderer-side File object to its absolute disk path.
    * Wraps Electron's webUtils.getPathForFile (replacement for the removed File.path).

@@ -1,7 +1,12 @@
 import { BrowserWindow, dialog, ipcMain } from 'electron';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import type { FileOpenResult, RecentFile } from '../../shared/api';
+import type {
+  FileOpenResult,
+  FileSaveAsRequest,
+  FileSaveRequest,
+  RecentFile,
+} from '../../shared/api';
 import { addRecent, listRecent } from '../store/recent';
 
 const ALLOWED_EXTENSIONS = ['.hwp', '.hwpx'] as const;
@@ -73,4 +78,59 @@ export function registerFileIpc(): void {
       );
     },
   );
+
+  ipcMain.handle(
+    'file:save',
+    async (_event, req: FileSaveRequest): Promise<FileOpenResult> => {
+      if (!req || typeof req.path !== 'string' || !req.path) {
+        throw new Error('file:save requires { path, bytes }');
+      }
+      if (!isAllowed(req.path)) {
+        throw new Error(`Unsupported extension: ${path.extname(req.path)}`);
+      }
+      const data = toUint8(req.bytes);
+      await writeAtomic(req.path, data);
+      await addRecent(req.path);
+      return { path: req.path };
+    },
+  );
+
+  ipcMain.handle(
+    'file:save-as',
+    async (event, req: FileSaveAsRequest): Promise<FileOpenResult | null> => {
+      const window = BrowserWindow.fromWebContents(event.sender);
+      const result = await dialog.showSaveDialog(
+        window ?? new BrowserWindow({ show: false }),
+        {
+          title: '다른 이름으로 저장',
+          defaultPath: req.defaultPath,
+          filters: [
+            { name: '한글 문서 (HWPX)', extensions: ['hwpx'] },
+            { name: '한글 문서 (HWP)', extensions: ['hwp'] },
+          ],
+        },
+      );
+      if (result.canceled || !result.filePath) return null;
+      const target = result.filePath;
+      if (!isAllowed(target)) {
+        throw new Error(`Unsupported extension: ${path.extname(target)}`);
+      }
+      const data = toUint8(req.bytes);
+      await writeAtomic(target, data);
+      await addRecent(target);
+      return { path: target };
+    },
+  );
+}
+
+function toUint8(input: ArrayBuffer | Uint8Array): Uint8Array {
+  if (input instanceof Uint8Array) return input;
+  return new Uint8Array(input);
+}
+
+async function writeAtomic(target: string, data: Uint8Array): Promise<void> {
+  // tmp + rename so a crash mid-write doesn't corrupt the target.
+  const tmp = `${target}.tmp-${process.pid}-${Date.now()}`;
+  await fs.writeFile(tmp, data);
+  await fs.rename(tmp, target);
 }

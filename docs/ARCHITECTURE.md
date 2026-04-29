@@ -116,7 +116,26 @@ CREATE TABLE messages (
 
 CREATE INDEX idx_msg_conv ON messages(conversation_id);
 CREATE INDEX idx_conv_file ON conversations(file_id);
+
+-- 버전 관리 (Phase 2 도입). 결정: 풀 카피 + HWPX BLOB.
+-- 멤버 단위 dedup / 정규화 / 패치 체인은 채택하지 않음.
+-- 이유: dedup 효율은 HWPX 직렬화 결정성에 좌우되고 정규화 레이어 정확성 비용이 큼.
+-- 단순 풀 카피로 출시 후, 사용 데이터 보고 필요 시 Phase 3+에서 dedup 마이그레이션.
+CREATE TABLE versions (
+  id INTEGER PRIMARY KEY,
+  file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+  parent_id INTEGER REFERENCES versions(id),
+  hwpx_blob BLOB NOT NULL,        -- 전체 HWPX 바이트
+  byte_size INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  label TEXT,                     -- 사용자 지정 이름 (수동 체크포인트)
+  is_pinned INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL            -- 'auto' | 'manual' | 'session-end'
+);
+CREATE INDEX idx_versions_file ON versions(file_id, created_at DESC);
 ```
+
+비용 추정: 2.85MB 문서 × 20 버전 ≈ 57MB. GC 정책으로 관리 — `is_pinned=0 AND source='auto'`이고 7일 이상 된 항목 또는 N개 초과분 자동 삭제. 실측 후 임계치 조정.
 
 ### 설정 스키마 (`electron-store`)
 

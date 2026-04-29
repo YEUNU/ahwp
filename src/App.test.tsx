@@ -18,6 +18,8 @@ describe('App', () => {
         openByPath: vi.fn().mockResolvedValue(null),
         listRecent: vi.fn().mockResolvedValue([]),
         read: vi.fn().mockResolvedValue(new ArrayBuffer(0)),
+        save: vi.fn().mockResolvedValue({ path: '' }),
+        saveAs: vi.fn().mockResolvedValue(null),
         getPathForFile: vi.fn().mockReturnValue(''),
       },
     };

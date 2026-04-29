@@ -6,7 +6,7 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 | 항목     | 상태                                                                                                                                                         |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Phase    | **1-C 진행 중** (rhwp 뷰어 통합)                                                                                                                             |
+| Phase    | **1-C 진행 중** (rhwp 뷰어 + save 라운드트립)                                                                                                                |
 | 빌드     | ✅ `npm run dev` · `npx vite build`                                                                                                                          |
 | 타입     | ✅ `npm run typecheck`                                                                                                                                       |
 | 린트     | ✅ `npm run lint` (warning 2건 — shadcn 표준 패턴, react-refresh HMR 안내)                                                                                   |
@@ -197,11 +197,59 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 ## 다음
 
+### 2026-04-29 — Phase 1-C (2차 청크) — file:save/save-as + 시나리오 1 검증
+
+**검증 결과 — 1차 청크의 뷰어 통합**
+
+- 사용자가 예제 HWP(2.85MB) 파일 정상 로드 확인. 편집(타이핑/서식)도 iframe 내부 studio UI에서 작동
+- 라이브러리 v0.7.8의 JS API는 viewer + import/export만 노출하지만 iframe studio 자체는 풀 에디터
+- 초기 timeout 이슈는 라이브러리의 10초 하드코딩 + `loadFile`의 `Array.from(new Uint8Array(...))` 비효율 조합. 60초로 monkey-patch해서 해결
+- 라이브러리 d.ts 버그 발견: `export declare class RhwpEditor` 선언하지만 실제 .js는 `createEditor`만 export → `import type`으로 회피하고 prototype 패치는 인스턴스 통해 수행. 업스트림 보고 후보
+
+**결정 — 버전 관리 방식 (Phase 2 도입 시)**
+
+- **풀 카피 + HWPX BLOB**으로 확정. 멤버 단위 dedup / 정규화 / 패치 체인 미채택
+- 이유: dedup 효율은 HWPX 직렬화 결정성에 좌우되고 정규화 레이어 정확성 비용이 큼. 단순 풀 카피로 출시 후 사용 데이터 보고 필요 시 Phase 3+에서 dedup 마이그레이션
+- 비용 추정: 2.85MB × 20 버전 ≈ 57MB/문서. GC 정책으로 관리 (`is_pinned=0 AND source='auto' AND age>7d` 또는 N개 초과분 삭제)
+- 스키마 `versions` 테이블 `docs/ARCHITECTURE.md` SQLite 섹션에 박제
+
+**결정 — 내부 캐노니컬 포맷**
+
+- 입력이 HWP든 HWPX든 **내부에서는 HWPX로 고정**. ARCHITECTURE.md §B 라이프사이클 그대로 유지
+- HWP 입력은 `@rhwp/core`(WASM) 변환기로 한 번 HWPX화 (Phase 1-C 후속 작업)
+
+**구현 — file:save / file:save-as**
+
+- `shared/api.ts`: `FileSaveRequest`, `FileSaveAsRequest`, `FileApi.save / saveAs` 추가
+- `electron/ipc/file.ts`:
+  - `file:save` — 지정된 path에 atomic write (tmp + rename), `addRecent` 갱신
+  - `file:save-as` — `dialog.showSaveDialog` (HWPX 우선 필터 + HWP) → atomic write
+  - `toUint8` 헬퍼 (`ArrayBuffer | Uint8Array` 정규화), `writeAtomic` 헬퍼
+- `RhwpViewer`: `forwardRef + useImperativeHandle`로 `RhwpViewerHandle = { exportBytes() }` 노출. 부모가 ref로 호출
+- `AppShell`:
+  - `viewerRef` 보유, `saveCurrent` / `saveAsCurrent` 콜백
+  - 메뉴 액션 `file:save` / `file:save-as` 구독 → 콜백 트리거
+  - **시나리오 1 검증 프로브** — 저장 시 `exportHwp()` 결과 첫 4바이트 매직넘버 콘솔 로깅 (`504b0304` = HWPX zip / `d0cf11e0` = HWP CFB). 사용자가 한 번 저장하면 결과 확정
+
+**검증 결과**
+
+```
+✓ npm run typecheck
+✓ npm test             (2 passed)
+✓ npm run lint         (0 errors, 2 shadcn warnings)
+✓ npm run format:check
+✓ npx vite build
+```
+
+> 매직넘버 검증은 다음 사용자 테스트 라운드. 시나리오 1이면 후속 작업 단순, 시나리오 2면 `@rhwp/core` 도입 우선순위 상향.
+
+## 다음
+
 ### Phase 1-C — 남은 항목
 
-- `file:save` IPC + `editor.exportHwp()` 라운드트립 → dirty 추적
-- `file:new` (빈 HWPX 시드 — `@rhwp/core`로 직접 생성하거나 빈 템플릿 자산 번들)
-- HWP → HWPX 변환기 (`electron/hwp/converter.ts`) — `@rhwp/core` 기반
+- `@rhwp/core` 도입 (HWP → HWPX 변환기 `electron/hwp/converter.ts`)
+- `file:new` (빈 HWPX 시드 — `@rhwp/core`로 직접 생성)
+- 워크스페이스 복원 (`session.json` + 다음 실행 시 마지막 파일 자동 오픈)
 - studio 자산 로컬 번들링 (Phase 4에서 본격, 1-C에서 PoC만)
 
 ### Phase 1-B — 남은 항목 (낮은 우선순위)
