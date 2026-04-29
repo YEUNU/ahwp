@@ -67,6 +67,8 @@ test.describe('file round-trip', () => {
     const onDisk = await readFile(target);
     expect(Array.from(onDisk.slice(0, 4))).toEqual(HWPX_MAGIC);
 
+    // file:read on HWPX is byte-exact pass-through (ensureHwpxBytes
+    // short-circuits HWPX), so the size must match disk.
     const reread = await page.evaluate(async (p) => {
       const buf = await window.api.file.read(p);
       return new Uint8Array(buf).byteLength;
@@ -74,23 +76,26 @@ test.describe('file round-trip', () => {
     expect(reread).toBe(onDisk.byteLength);
   });
 
-  test('file:save rejects format mismatch (HWPX bytes → .hwp path)', async () => {
+  test('file:save auto-routes .hwp path to .hwpx (server normalizes to HWPX)', async () => {
     const { page } = launched;
-    const wrongPath = path.join(workDir, 'mismatch.hwp');
+    // Caller naively passes the original .hwp path — server should rewrite
+    // to .hwpx since the on-disk format is always HWPX after normalization.
+    const requested = path.join(workDir, 'naive.hwp');
+    const expected = path.join(workDir, 'naive.hwpx');
 
-    const error = await page.evaluate(
+    const result = await page.evaluate(
       async ({ src, dst }) => {
         const bytes = await window.api.file.read(src);
-        try {
-          await window.api.file.save({ path: dst, bytes });
-          return null;
-        } catch (e) {
-          return e instanceof Error ? e.message : String(e);
-        }
+        return window.api.file.save({ path: dst, bytes });
       },
-      { src: EXAMPLE_HWP, dst: wrongPath },
+      { src: EXAMPLE_HWP, dst: requested },
     );
-    expect(error).toMatch(/Format mismatch/);
+    expect(result.path).toBe(expected);
+
+    // The .hwp name must NOT exist; the .hwpx sibling must.
+    const onDisk = await readFile(expected);
+    expect(Array.from(onDisk.slice(0, 4))).toEqual(HWPX_MAGIC);
+    await expect(readFile(requested)).rejects.toThrow();
   });
 });
 

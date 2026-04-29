@@ -360,11 +360,64 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 ## 다음
 
+### 2026-04-29 — Phase 1-C (6차 청크) — `@rhwp/core` 적극 활용 (저장 시 정규화)
+
+**의도**
+
+사용자 요청: "rhwp/core를 적극 활용". 4차 청크에선 read 시점에만 썼지만,
+**save 시점에도 라운드트립 정규화**를 추가해 studio의 미지속 보정 이슈를
+우리 측에서 결정적으로 처리.
+
+**가설 → 동작**
+
+studio의 `exportHwp()`는 자체 자동 보정 결과를 반영하지 못할 수 있음.
+@rhwp/core로 다시 파싱(`new HwpDocument(bytes)`) → 재직렬화(`exportHwpx()`)
+하면 IR 기반 클린 HWPX 출력이라 (1) 자동 보정/스펙 준수가 직렬화에 박힘
+(2) studio가 HWP를 export하더라도 디스크는 항상 HWPX (3) 향후 버전 dedup의
+결정성 기반.
+
+비용: 저장당 WASM 풀 파스+직렬화 (수백 ms 단위). 다중 MB 문서에서 체감 가능.
+
+**구현**
+
+- `electron/hwp/converter.ts`: `normalizeToHwpx(input)` 추가. `ensureHwpxBytes`와는 별개 — 후자는 HWPX를 byte-exact pass-through, 전자는 항상 HwpDocument 라운드트립
+- `electron/ipc/file.ts`:
+  - `file:save` — 받은 bytes를 `normalizeToHwpx`로 통과시킨 후 `correctExtension(path, 'hwpx')`로 강제 라우팅. 결과는 항상 .hwpx 경로 + HWPX 바이트
+  - `file:save-as` — 동일. 다이얼로그 필터에서 HWP 옵션 제거 (HWPX만)
+  - 기존 `assertFormatMatchesPath` 제거 — 서버가 항상 HWPX를 출력하므로 mismatch 자체가 발생 불가
+- `src/app/AppShell.tsx`: 렌더러 측 매직넘버 감지 제거. `exportBytes()`만 노출하고 라우팅은 서버가 결정. activePath는 서버가 반환한 `result.path`로 갱신 (자동 라우팅 발생 시 .hwpx로 변경됨)
+
+**E2E 갱신 + 추가**
+
+- `file:save rejects format mismatch` 케이스 → `file:save auto-routes .hwp path to .hwpx`로 변경. 의미 변환: 거부 대신 자동 라우팅
+- 검증: 사용자가 `naive.hwp`로 저장 요청해도 결과 path는 `naive.hwpx`, `.hwp` 파일은 디스크에 존재하지 않음
+
+**npm 신선도 점검**
+
+- `npm outdated` 결과: 직접 의존성은 모두 semver 범위 내 최신. 안 잡히는 건 메이저 버전 차이 (React 18→19, Tailwind 3→4, Electron 33→41, vite 6→8 등) — 별도 마이그레이션 프로젝트로 분리, 이번엔 defer
+- `@rhwp/core` / `@rhwp/editor` 모두 0.7.8 latest 유지 (publish 직후라 추가 갱신 없음)
+
+**검증 결과**
+
+```
+✓ npm run typecheck
+✓ npm test             (단위 2/2)
+✓ npm run e2e          (E2E 7/7 — auto-route 변경 포함)
+✓ npm run lint         (0 errors, 2 shadcn warnings)
+✓ npm run format:check
+✓ npx vite build
+```
+
+## 다음
+
 ### Phase 1-C — 남은 항목
 
-- `file:new` IPC + `@rhwp/core.createBlankDocument` 시드 → 빈 HWPX 임시 파일 → 메뉴 wiring
-- studio 자산 로컬 번들링 PoC (Phase 4에서 본격)
-- 추가 E2E: file:open dialog 모킹, save-as 다이얼로그
+- `file:new` — `createBlankDocument`은 인스턴스 메서드라 빈 시드 HWPX가 필요. 옵션 두 개 검토:
+  1. 사용자 첫 .hwpx 저장 시 캐시해서 이후 시드로 사용 (lazy)
+  2. 최소 HWPX 스켈레톤을 코드로 생성 (zip + 정해진 OWPML XML들)
+- `extractThumbnail`로 FileList 미리보기 (visible 폴리시)
+- studio 자산 로컬 번들링 PoC (Phase 4 본격)
+- studio 자체 동작 검증 — Phase 4 후 e2e 추가
 
 ### Phase 1-B — 남은 항목 (낮은 우선순위)
 

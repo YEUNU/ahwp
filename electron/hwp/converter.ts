@@ -50,9 +50,9 @@ async function loadRhwpCore(): Promise<RhwpCoreModule> {
 }
 
 /**
- * Returns HWPX bytes regardless of input format. Pass-through if input is
- * already HWPX (zip magic) — saves a round-trip through HwpDocument and
- * preserves the file byte-exactly.
+ * Read-side conversion: returns HWPX bytes regardless of input format.
+ * Pass-through if input is already HWPX (zip magic) — saves a round-trip
+ * through HwpDocument and preserves the file byte-exactly.
  */
 export async function ensureHwpxBytes(input: Uint8Array): Promise<Uint8Array> {
   const format = detectHwpFormat(input);
@@ -69,6 +69,44 @@ export async function ensureHwpxBytes(input: Uint8Array): Promise<Uint8Array> {
     const out = doc.exportHwpx();
     console.info(
       `[hwp/core] HWP → HWPX (${(input.byteLength / 1024 / 1024).toFixed(2)} MB → ${(out.byteLength / 1024 / 1024).toFixed(2)} MB) in ${(performance.now() - t0).toFixed(0)} ms`,
+    );
+    return out;
+  } finally {
+    doc.free();
+  }
+}
+
+/**
+ * Write-side normalization: parse via @rhwp/core then re-serialize as HWPX.
+ *
+ * Why we always do this on save (vs. ensureHwpxBytes which short-circuits
+ * HWPX inputs):
+ *   1. Studio (`@rhwp/editor` iframe) ships export bytes with quirks — its
+ *      "자동 보정" / spec-compliance fixes may not be reflected in the
+ *      iframe's own `exportHwp()` output. A core round-trip re-emits clean
+ *      HWPX from the parsed IR, persisting fixes that survive parsing.
+ *   2. Studio's `exportHwp` may return HWP (scenario 2) regardless of input;
+ *      this guarantees HWPX on disk so the format/extension contract holds.
+ *   3. Determinism for future versioning: same logical content → same
+ *      serializer output (subject to core's own determinism).
+ *
+ * Cost: full WASM parse + serialize per save. Multi-MB documents take a few
+ * hundred ms. The renderer's save UX should reflect this (busy state).
+ */
+export async function normalizeToHwpx(input: Uint8Array): Promise<Uint8Array> {
+  const format = detectHwpFormat(input);
+  if (format === 'unknown') {
+    throw new Error(
+      'Cannot normalize: bytes are neither HWP (CFB) nor HWPX (zip)',
+    );
+  }
+  const { HwpDocument } = await loadRhwpCore();
+  const t0 = performance.now();
+  const doc = new HwpDocument(input);
+  try {
+    const out = doc.exportHwpx();
+    console.info(
+      `[hwp/core] normalize ${format} → HWPX (${(input.byteLength / 1024 / 1024).toFixed(2)} MB → ${(out.byteLength / 1024 / 1024).toFixed(2)} MB) in ${(performance.now() - t0).toFixed(0)} ms`,
     );
     return out;
   } finally {

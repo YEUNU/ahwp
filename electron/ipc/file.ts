@@ -7,8 +7,8 @@ import type {
   FileSaveRequest,
   RecentFile,
 } from '../../shared/api';
-import { detectHwpFormat } from '../../shared/format';
-import { ensureHwpxBytes } from '../hwp/converter';
+import { correctExtension } from '../../shared/format';
+import { ensureHwpxBytes, normalizeToHwpx } from '../hwp/converter';
 import { addRecent, listRecent } from '../store/recent';
 
 const ALLOWED_EXTENSIONS = ['.hwp', '.hwpx'] as const;
@@ -95,11 +95,18 @@ export function registerFileIpc(): void {
       if (!isAllowed(req.path)) {
         throw new Error(`Unsupported extension: ${path.extname(req.path)}`);
       }
-      const data = toUint8(req.bytes);
-      assertFormatMatchesPath(req.path, data);
-      await writeAtomic(req.path, data);
-      await addRecent(req.path);
-      return { path: req.path };
+      const normalized = await normalizeToHwpx(toUint8(req.bytes));
+      // Output is always HWPX; route the path's extension to match. Caller's
+      // requested .hwp path becomes the sibling .hwpx; .hwpx passes through.
+      const target = correctExtension(req.path, 'hwpx');
+      if (target !== req.path) {
+        console.info(
+          `[file:save] auto-routing extension ${req.path} → ${target}`,
+        );
+      }
+      await writeAtomic(target, normalized);
+      await addRecent(target);
+      return { path: target };
     },
   );
 
@@ -112,42 +119,28 @@ export function registerFileIpc(): void {
         {
           title: '다른 이름으로 저장',
           defaultPath: req.defaultPath,
-          filters: [
-            { name: '한글 문서 (HWPX)', extensions: ['hwpx'] },
-            { name: '한글 문서 (HWP)', extensions: ['hwp'] },
-          ],
+          filters: [{ name: '한글 문서 (HWPX)', extensions: ['hwpx'] }],
         },
       );
       if (result.canceled || !result.filePath) return null;
-      const target = result.filePath;
-      if (!isAllowed(target)) {
-        throw new Error(`Unsupported extension: ${path.extname(target)}`);
+      const picked = result.filePath;
+      if (!isAllowed(picked)) {
+        throw new Error(`Unsupported extension: ${path.extname(picked)}`);
       }
-      const data = toUint8(req.bytes);
-      assertFormatMatchesPath(target, data);
-      await writeAtomic(target, data);
+      const normalized = await normalizeToHwpx(toUint8(req.bytes));
+      // Same auto-route guarantee — picked path is forced to .hwpx if user
+      // typed a .hwp name (the dialog filter discourages this anyway).
+      const target = correctExtension(picked, 'hwpx');
+      if (target !== picked) {
+        console.info(
+          `[file:save-as] auto-routing extension ${picked} → ${target}`,
+        );
+      }
+      await writeAtomic(target, normalized);
       await addRecent(target);
       return { path: target };
     },
   );
-}
-
-function assertFormatMatchesPath(filePath: string, data: Uint8Array): void {
-  const format = detectHwpFormat(data);
-  const ext = path.extname(filePath).toLowerCase();
-  if (format === 'hwpx' && ext === '.hwp') {
-    throw new Error(
-      'Format mismatch: bytes are HWPX (zip) but path has .hwp extension. ' +
-        'The renderer should auto-route to .hwpx — please re-save.',
-    );
-  }
-  if (format === 'hwp' && ext === '.hwpx') {
-    throw new Error(
-      'Format mismatch: bytes are HWP (CFB) but path has .hwpx extension. ' +
-        'The renderer should auto-route to .hwp — please re-save.',
-    );
-  }
-  // unknown format: be lenient (could be a future format / edge case).
 }
 
 function toUint8(input: ArrayBuffer | Uint8Array): Uint8Array {

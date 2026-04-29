@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import type { MenuAction, PingResponse } from '@shared/api';
-import { correctExtension, detectHwpFormat } from '@shared/format';
+import { correctExtension } from '@shared/format';
 import {
   RhwpViewer,
   type RhwpViewerHandle,
@@ -68,34 +68,24 @@ export default function AppShell() {
     }
   }, []);
 
-  const exportAndProbe = useCallback(async (): Promise<{
-    bytes: Uint8Array;
-    format: ReturnType<typeof detectHwpFormat>;
-  } | null> => {
+  const exportBytes = useCallback(async (): Promise<Uint8Array | null> => {
     if (!viewerRef.current) return null;
     const t0 = performance.now();
     const bytes = await viewerRef.current.exportBytes();
-    const format = detectHwpFormat(bytes);
     console.info(
-      `[ahwp] export format=${format} size=${(bytes.byteLength / 1024 / 1024).toFixed(2)}MB in ${(performance.now() - t0).toFixed(0)}ms`,
+      `[ahwp] export ${(bytes.byteLength / 1024 / 1024).toFixed(2)}MB in ${(performance.now() - t0).toFixed(0)}ms`,
     );
-    return { bytes, format };
+    return bytes;
   }, []);
 
+  // Save flow trusts the main process to normalize via @rhwp/core and route
+  // the on-disk extension to .hwpx. Renderer just hands over bytes and
+  // updates activePath if the server changed it (e.g., .hwp → .hwpx).
   const saveCurrent = useCallback(async () => {
-    const probe = await exportAndProbe();
-    if (!probe) return;
-    const { bytes, format } = probe;
-
+    const bytes = await exportBytes();
+    if (!bytes) return;
     if (activePath) {
-      // Auto-route extension to match exported format. The on-disk file's
-      // extension must match the bytes — otherwise reopens fail (format
-      // mismatch in studio's loadFile, observed as 60s timeout).
-      const target = correctExtension(activePath, format);
-      if (target !== activePath) {
-        console.info(`[ahwp] save auto-routing: ${activePath} → ${target}`);
-      }
-      const result = await window.api.file.save({ path: target, bytes });
+      const result = await window.api.file.save({ path: activePath, bytes });
       if (result.path !== activePath) {
         setActivePath(result.path);
         setRefreshTick((n) => n + 1);
@@ -107,21 +97,22 @@ export default function AppShell() {
         setRefreshTick((n) => n + 1);
       }
     }
-  }, [activePath, exportAndProbe]);
+  }, [activePath, exportBytes]);
 
   const saveAsCurrent = useCallback(async () => {
-    const probe = await exportAndProbe();
-    if (!probe) return;
-    const { bytes, format } = probe;
+    const bytes = await exportBytes();
+    if (!bytes) return;
+    // Suggest a sensible default path (.hwpx) for the dialog. Server will
+    // also enforce .hwpx on the result.
     const defaultPath = activePath
-      ? correctExtension(activePath, format)
+      ? correctExtension(activePath, 'hwpx')
       : undefined;
     const result = await window.api.file.saveAs({ bytes, defaultPath });
     if (result) {
       setActivePath(result.path);
       setRefreshTick((n) => n + 1);
     }
-  }, [activePath, exportAndProbe]);
+  }, [activePath, exportBytes]);
 
   useEffect(() => {
     return window.api.onMenuAction((action: MenuAction) => {
