@@ -321,11 +321,50 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 ## 다음
 
+### 2026-04-29 — Phase 1-C (5차 청크) — E2E 자동화로 매뉴얼 테스트 대체
+
+**배경**
+
+- 사용자 매뉴얼 검증 라운드 누적 (`자동 보정 → 저장 → 재오픈` 같은 플로우를 매번 사용자가 직접 확인) → 비효율
+- 사용자 요청: "너가 e2e로 진행해주면 안되?"
+- 해결: examples/ 디렉토리의 사용자 예제 HWP(2.85MB)를 fixture로 활용해 IPC + main 측 변환/영속 레이어를 자동 검증. studio iframe 의존하는 부분만 매뉴얼 테스트로 남김
+
+**구현**
+
+- `tests/e2e/file-roundtrip.spec.ts` 추가, 5개 케이스:
+  - `file:read auto-converts HWP input to HWPX bytes` — 4차 청크의 `@rhwp/core` 통합 검증. 매직넘버 `504b0304` 확인
+  - `save round-trip: HWPX bytes survive write → read` — file:read → file:save → readFile 라운드트립
+  - `file:save rejects format mismatch` — 서버 측 `assertFormatMatchesPath` 검증
+  - `session restoration: lastActivePath persists across app restarts` — 같은 `userDataDir`로 두 번 launch, 자동 재오픈 + 헤더 path 표시 검증
+  - `recent files: openByPath populates listRecent` — LRU 갱신 검증
+- `existsSync(EXAMPLE_HWP)`로 fixture 부재 시 자동 skip → CI에서도 안전 (예제 파일은 gitignore)
+- `/// <reference lib="dom" />`로 page.evaluate 콜백 안의 `window`/`Uint8Array` 등 DOM 타입 활성화 (tsconfig.node 변경 없이 파일 단위 처리)
+- 기존 smoke 2개와 합쳐 **총 7 E2E**, 모두 통과
+
+**검증 결과**
+
+```
+✓ npm run typecheck
+✓ npm test             (단위 2/2 passed)
+✓ npm run e2e          (E2E 7/7 passed)
+✓ npm run lint         (0 errors, 2 shadcn warnings)
+✓ npm run format:check
+✓ npx vite build
+```
+
+**얻은 것**
+
+- 매뉴얼 테스트 라운드 제거 — 사용자에게 "콘솔 로그 확인" 요청할 일이 줄어듦
+- 회귀 자동 감지 — 다음에 누가 file:read를 건드려도 즉시 깨짐 표면화
+- 향후 `@rhwp/core`/`file:new` 작업의 안전망
+
+## 다음
+
 ### Phase 1-C — 남은 항목
 
 - `file:new` IPC + `@rhwp/core.createBlankDocument` 시드 → 빈 HWPX 임시 파일 → 메뉴 wiring
 - studio 자산 로컬 번들링 PoC (Phase 4에서 본격)
-- E2E 추가 (file:open dialog 모킹, recent files, save 라운드트립 — 작은 HWPX fixture 필요)
+- 추가 E2E: file:open dialog 모킹, save-as 다이얼로그
 
 ### Phase 1-B — 남은 항목 (낮은 우선순위)
 
