@@ -1,7 +1,8 @@
 /**
- * HWP/HWPX magic-number detection. Used by both renderer (to pick the right
- * extension when saving export bytes) and main (to refuse format mismatches
- * server-side as a safety net).
+ * HWP/HWPX magic-byte sniff. **Cheap pre-parse heuristic** — used as a
+ * fast-path optimizer (e.g. skip a WASM round-trip when input is already
+ * HWPX). For authoritative format identification post-parse, defer to
+ * `@rhwp/core`'s `HwpDocument.getSourceFormat()`.
  */
 
 export type HwpFormat = 'hwpx' | 'hwp' | 'unknown';

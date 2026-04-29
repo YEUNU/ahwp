@@ -5,15 +5,15 @@ import { detectHwpFormat } from '../../shared/format';
 /**
  * @rhwp/core (Rust + WASM, ~4.5 MB) integration in the main process.
  *
- * Use case in this phase: turn HWP (CFB) bytes into HWPX (zip) bytes at the
- * file:read boundary so the renderer / studio always sees HWPX. That makes
- * the `exportHwp() → save` round-trip deterministic and aligns with
- * ARCHITECTURE.md §B (internal canonical = HWPX).
+ * Audit policy: any HWP/HWPX content manipulation defers to @rhwp/core.
+ * Our `detectHwpFormat` (magic-byte sniff in shared/format.ts) is the one
+ * exception — kept as a cheap pre-parse optimizer for the HWPX pass-through
+ * path (saves ~hundreds of ms per `file:read` of an already-HWPX file). For
+ * authoritative format identification post-parse, use `HwpDocument.getSourceFormat()`.
  *
- * Why dynamic import: @rhwp/core is published as "type": "module" (ESM-only)
- * but vite-plugin-electron bundles main as CJS by default. Node 20 (Electron
- * 33's runtime) cannot `require()` an ESM-only package — it throws
- * ERR_REQUIRE_ESM. `await import()` works from CJS without that restriction.
+ * Future @rhwp/core uses: extractThumbnail (FileList previews), exportHwpVerify
+ * (validation UI), HwpViewer (self-hosted viewer to drop the iframe dep),
+ * HwpDocument.applyXxx (Phase 3 AI agent edits).
  */
 
 const require = createRequire(import.meta.url);
@@ -24,8 +24,11 @@ interface RhwpCoreModule {
   }) => Promise<unknown>;
   HwpDocument: new (data: Uint8Array) => {
     exportHwpx(): Uint8Array;
+    getSourceFormat(): string;
     free(): void;
   };
+  init_panic_hook: () => void;
+  version: () => string;
 }
 
 let modulePromise: Promise<RhwpCoreModule> | null = null;
@@ -36,13 +39,15 @@ async function loadRhwpCore(): Promise<RhwpCoreModule> {
     const t0 = performance.now();
     // Dynamic import — bypasses the CJS `require` ESM restriction.
     const mod = (await import('@rhwp/core')) as unknown as RhwpCoreModule;
-    // resolve the WASM file shipped with @rhwp/core (no `exports` field, so
-    // subpath resolution falls back to file lookup).
+    // Resolve the WASM file shipped with @rhwp/core.
     const wasmPath = require.resolve('@rhwp/core/rhwp_bg.wasm');
     const bytes = await fs.readFile(wasmPath);
     await mod.default({ module_or_path: bytes });
+    // Activate WASM panic hook so Rust panics surface as throw'd Errors with
+    // stacks (otherwise they're opaque). One-shot per WASM instance.
+    mod.init_panic_hook();
     console.info(
-      `[hwp/core] WASM init in ${(performance.now() - t0).toFixed(0)} ms`,
+      `[hwp/core] WASM init v${mod.version()} in ${(performance.now() - t0).toFixed(0)} ms`,
     );
     return mod;
   })();
@@ -51,36 +56,21 @@ async function loadRhwpCore(): Promise<RhwpCoreModule> {
 
 /**
  * Read-side conversion: returns HWPX bytes regardless of input format.
- * Pass-through if input is already HWPX (zip magic) — saves a round-trip
- * through HwpDocument and preserves the file byte-exactly.
+ * Pass-through if input is already HWPX (zip magic, fast path) — saves a
+ * round-trip through HwpDocument and preserves the file byte-exactly.
+ *
+ * Invalid input (neither HWP nor HWPX) is reported by @rhwp/core's
+ * HwpDocument constructor, not pre-validated by us.
  */
 export async function ensureHwpxBytes(input: Uint8Array): Promise<Uint8Array> {
-  const format = detectHwpFormat(input);
-  if (format === 'hwpx') return input;
-  if (format === 'unknown') {
-    throw new Error(
-      'Unsupported input: bytes are neither HWP (CFB) nor HWPX (zip)',
-    );
-  }
-  const { HwpDocument } = await loadRhwpCore();
-  const t0 = performance.now();
-  const doc = new HwpDocument(input);
-  try {
-    const out = doc.exportHwpx();
-    console.info(
-      `[hwp/core] HWP → HWPX (${(input.byteLength / 1024 / 1024).toFixed(2)} MB → ${(out.byteLength / 1024 / 1024).toFixed(2)} MB) in ${(performance.now() - t0).toFixed(0)} ms`,
-    );
-    return out;
-  } finally {
-    doc.free();
-  }
+  if (detectHwpFormat(input) === 'hwpx') return input;
+  return roundTripHwpx(input, 'read');
 }
 
 /**
  * Write-side normalization: parse via @rhwp/core then re-serialize as HWPX.
  *
- * Why we always do this on save (vs. ensureHwpxBytes which short-circuits
- * HWPX inputs):
+ * Why on every save (vs `ensureHwpxBytes` which short-circuits HWPX inputs):
  *   1. Studio (`@rhwp/editor` iframe) ships export bytes with quirks — its
  *      "자동 보정" / spec-compliance fixes may not be reflected in the
  *      iframe's own `exportHwp()` output. A core round-trip re-emits clean
@@ -91,22 +81,24 @@ export async function ensureHwpxBytes(input: Uint8Array): Promise<Uint8Array> {
  *      serializer output (subject to core's own determinism).
  *
  * Cost: full WASM parse + serialize per save. Multi-MB documents take a few
- * hundred ms. The renderer's save UX should reflect this (busy state).
+ * hundred ms.
  */
 export async function normalizeToHwpx(input: Uint8Array): Promise<Uint8Array> {
-  const format = detectHwpFormat(input);
-  if (format === 'unknown') {
-    throw new Error(
-      'Cannot normalize: bytes are neither HWP (CFB) nor HWPX (zip)',
-    );
-  }
+  return roundTripHwpx(input, 'normalize');
+}
+
+async function roundTripHwpx(
+  input: Uint8Array,
+  label: string,
+): Promise<Uint8Array> {
   const { HwpDocument } = await loadRhwpCore();
   const t0 = performance.now();
-  const doc = new HwpDocument(input);
+  const doc = new HwpDocument(input); // throws on invalid bytes
   try {
+    const sourceFormat = doc.getSourceFormat(); // authoritative
     const out = doc.exportHwpx();
     console.info(
-      `[hwp/core] normalize ${format} → HWPX (${(input.byteLength / 1024 / 1024).toFixed(2)} MB → ${(out.byteLength / 1024 / 1024).toFixed(2)} MB) in ${(performance.now() - t0).toFixed(0)} ms`,
+      `[hwp/core] ${label} ${sourceFormat} → HWPX (${(input.byteLength / 1024 / 1024).toFixed(2)} MB → ${(out.byteLength / 1024 / 1024).toFixed(2)} MB) in ${(performance.now() - t0).toFixed(0)} ms`,
     );
     return out;
   } finally {
