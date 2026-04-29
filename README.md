@@ -25,7 +25,7 @@
 
 ## 빠른 시작
 
-> 현재 **Phase 0(부트스트랩) 완료**. Electron 셸 + 3-Pane 더미 레이아웃 + IPC 핑이 동작합니다. 자세한 진행 상황은 [docs/PROGRESS.md](docs/PROGRESS.md).
+> 현재 **Phase 1-C 진행 중**. 리사이저블 3-Pane 레이아웃, 다크/라이트 테마, 네이티브 메뉴, 파일 열기/저장 + 워크스페이스 복원, `@rhwp/core` 라운드트립 정규화 동작. AI 챗봇은 Phase 2부터. 자세한 진행 상황은 [docs/PROGRESS.md](docs/PROGRESS.md).
 
 ```bash
 # 의존성 설치
@@ -33,6 +33,12 @@ npm install
 
 # 개발 모드 실행
 npm run dev
+
+# 단위 테스트 (vitest)
+npm test
+
+# E2E 테스트 (Playwright + Electron)
+npm run e2e
 
 # 프로덕션 빌드 (현재 OS용)
 npm run build
@@ -92,29 +98,43 @@ npm run build:all
 
 전체 체크리스트는 [docs/ROADMAP.md](docs/ROADMAP.md) 참고.
 
-## 디렉토리 구조 (예정)
+## 디렉토리 구조
+
+현재 구조 (Phase 1-C 기준). Phase 2+에서 `electron/ai/`, `src/features/chat/`, `electron/store/db.ts` 등이 추가됩니다.
 
 ```
 ahwp/
 ├── electron/              메인 프로세스 (Node)
-│   ├── main.ts            엔트리, BrowserWindow 생성
-│   ├── preload.ts         contextBridge로 IPC 노출
-│   ├── ipc/               IPC 핸들러 (file, ai, settings)
-│   ├── ai/                provider별 어댑터
-│   ├── hwp/               rhwp core 래퍼, HWP→HWPX 변환
-│   └── store/             SQLite, electron-store
+│   ├── main.ts            엔트리, BrowserWindow 생성, IPC 등록
+│   ├── preload.ts         contextBridge로 window.api 노출
+│   ├── menu.ts            네이티브 앱 메뉴 (File / Edit / View / Window / Help)
+│   ├── ipc/
+│   │   ├── file.ts        file:open / open-by-path / read / save / save-as / list-recent
+│   │   └── session.ts     session:get / set
+│   ├── hwp/
+│   │   └── converter.ts   @rhwp/core 래퍼 — HWP→HWPX 변환 + 라운드트립 정규화
+│   └── store/
+│       ├── recent.ts      userData/recent.json — LRU max 20
+│       └── session.ts     userData/session.json — lastActivePath
 ├── src/                   렌더러 (React)
-│   ├── app/               라우트, 레이아웃
+│   ├── App.tsx
+│   ├── main.tsx
+│   ├── app/
+│   │   ├── AppShell.tsx   3-Pane 레이아웃, 메뉴 액션 핸들링
+│   │   ├── theme-provider.tsx   light/dark/system, prefers-color-scheme 구독
+│   │   └── theme-toggle.tsx
 │   ├── features/
-│   │   ├── files/         좌측 파일 리스트
-│   │   ├── editor/        가운데 rhwp 에디터
-│   │   └── chat/          우측 챗봇 (history / chat 탭)
-│   ├── components/ui/     shadcn/ui
-│   ├── hooks/
-│   └── lib/
-├── shared/                main↔renderer 공유 타입
-├── docs/
-└── resources/             아이콘, 빌드 자산
+│   │   ├── files/         FileList + use-recent-files 훅 (드래그앤드롭 zone)
+│   │   └── editor/        RhwpViewer (iframe + @rhwp/editor 래퍼 + 라이브러리 quirks 패치)
+│   ├── components/ui/     shadcn/ui (Button, ...)
+│   └── lib/utils.ts       cn() 헬퍼
+├── shared/
+│   ├── api.ts             IPC 계약 (AhwpApi, FileApi, SessionApi, MenuAction, ...)
+│   └── format.ts          HWP/HWPX 매직바이트 sniff + 확장자 보정
+├── tests/e2e/             Playwright + Electron (smoke + file round-trip + session)
+├── docs/                  ARCHITECTURE / AI_INTEGRATION / TECH_STACK / ROADMAP / PROGRESS
+├── examples/              사용자 supplied HWP fixtures (gitignore)
+└── style_example/         초기 디자인 목업 (gitignore — 빌드 무관)
 ```
 
 ## 브랜치
