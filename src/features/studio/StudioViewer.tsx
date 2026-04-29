@@ -15,7 +15,7 @@ import {
 } from 'react';
 import { Button } from '@/components/ui/button';
 import type { RhwpViewerHandle } from '@/features/editor/RhwpViewer';
-import { ensureRhwpCore, HwpDocument, HwpViewer } from '@/lib/rhwp-core';
+import { ensureRhwpCore, HwpDocument } from '@/lib/rhwp-core';
 
 interface StudioViewerProps {
   path: string;
@@ -24,7 +24,6 @@ interface StudioViewerProps {
 type Phase = 'mounting' | 'reading' | 'rendering' | 'ready';
 
 type RhwpDoc = InstanceType<typeof HwpDocument>;
-type RhwpView = InstanceType<typeof HwpViewer>;
 
 interface PageDims {
   w: number;
@@ -74,7 +73,6 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
   function StudioViewer({ path }, ref) {
     const scrollRef = useRef<HTMLDivElement>(null);
     const docRef = useRef<RhwpDoc | null>(null);
-    const viewerRef = useRef<RhwpView | null>(null);
     const pageRefsRef = useRef<(HTMLDivElement | null)[]>([]);
     const cacheRef = useRef<Map<number, string>>(new Map());
 
@@ -84,6 +82,10 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
     const [pageDims, setPageDims] = useState<PageDims | null>(null);
     const [zoom, setZoom] = useState(1);
     const [currentPage, setCurrentPage] = useState(0);
+    const [dirty, setDirty] = useState(false);
+    // Mirror dirty into a ref so callers that captured an older `__studioDebug`
+    // closure (e.g. tests grabbing the reference once) read the latest value.
+    const dirtyRef = useRef(false);
 
     useImperativeHandle(
       ref,
@@ -100,7 +102,6 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
     useEffect(() => {
       let cancelled = false;
       let localDoc: RhwpDoc | null = null;
-      let localViewer: RhwpView | null = null;
 
       // Capture refs for cleanup — react-hooks/exhaustive-deps wants explicit
       // capture even though these are non-DOM refs (Map / array).
@@ -110,6 +111,8 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
       // Reset everything for a fresh path.
       cache.clear();
       pageRefs.current = [];
+      dirtyRef.current = false;
+      setDirty(false);
 
       (async () => {
         try {
@@ -128,10 +131,15 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
 
           setPhase('rendering');
           const tParse = performance.now();
+          // We use HwpDocument's render/page-count methods directly. We don't
+          // construct HwpViewer — its constructor consumes the HwpDocument
+          // (`document.__destroy_into_raw()`), zeroing the doc's internal
+          // pointer and breaking subsequent exportHwpx() / insertText() calls.
+          // The doc itself exposes everything we need (pageCount,
+          // renderPageSvg, renderPageHtml).
           localDoc = new HwpDocument(new Uint8Array(buffer));
-          localViewer = new HwpViewer(localDoc);
-          const total = localViewer.pageCount();
-          const svg0 = localViewer.renderPageSvg(0);
+          const total = localDoc.pageCount();
+          const svg0 = localDoc.renderPageSvg(0);
           const dims = parsePageDimensions(svg0);
           if (!dims) throw new Error('Could not parse page-0 dimensions');
           console.info(
@@ -139,13 +147,11 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
           );
 
           if (cancelled) {
-            localViewer.free();
             localDoc.free();
             return;
           }
 
           docRef.current = localDoc;
-          viewerRef.current = localViewer;
           cacheRef.current.set(0, svg0);
           setPageCount(total);
           setPageDims(dims);
@@ -154,16 +160,13 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
           if (!cancelled) {
             setError(err instanceof Error ? err.message : String(err));
           }
-          localViewer?.free();
           localDoc?.free();
         }
       })();
 
       return () => {
         cancelled = true;
-        viewerRef.current?.free();
         docRef.current?.free();
-        viewerRef.current = null;
         docRef.current = null;
         cache.clear();
         pageRefs.current = [];
@@ -178,10 +181,10 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
       if (el.firstElementChild?.tagName.toLowerCase() === 'svg') return;
       let svg = cacheRef.current.get(idx);
       if (!svg) {
-        const viewer = viewerRef.current;
-        if (!viewer) return;
+        const doc = docRef.current;
+        if (!doc) return;
         try {
-          svg = viewer.renderPageSvg(idx);
+          svg = doc.renderPageSvg(idx);
           cacheRef.current.set(idx, svg);
         } catch (err) {
           console.error(`[studio] render page ${idx} failed:`, err);
@@ -200,6 +203,78 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
         svgEl.style.display = 'block';
       }
     }, []);
+
+    /**
+     * After a HwpDocument mutation (insert / delete / etc.), the cached SVGs
+     * are stale. Clear the cache and re-render any placeholders that were
+     * already mounted; placeholders not yet mounted will lazy-render fresh
+     * SVGs when the IntersectionObserver next visits them.
+     */
+    const refreshAfterMutation = useCallback((): void => {
+      cacheRef.current.clear();
+      pageRefsRef.current.forEach((el, idx) => {
+        if (el?.firstElementChild?.tagName.toLowerCase() === 'svg') {
+          el.innerHTML = '';
+          renderPageInto(idx);
+        }
+      });
+      dirtyRef.current = true;
+      setDirty(true);
+    }, [renderPageInto]);
+
+    /**
+     * Test/dev hook on `window.__studioDebug` so e2e specs can drive
+     * mutations + read state without going through real input UI (which
+     * lands in chunk 4-B). Production builds also keep this — the surface
+     * is small and non-destructive.
+     */
+    useEffect(() => {
+      if (phase !== 'ready') return;
+      const debug = {
+        insertText: (
+          sectionIdx: number,
+          paraIdx: number,
+          charOffset: number,
+          text: string,
+        ): string => {
+          const doc = docRef.current;
+          if (!doc) throw new Error('Document not loaded');
+          const result = doc.insertText(sectionIdx, paraIdx, charOffset, text);
+          refreshAfterMutation();
+          return result;
+        },
+        deleteText: (
+          sectionIdx: number,
+          paraIdx: number,
+          charOffset: number,
+          count: number,
+        ): string => {
+          const doc = docRef.current;
+          if (!doc) throw new Error('Document not loaded');
+          const result = doc.deleteText(sectionIdx, paraIdx, charOffset, count);
+          refreshAfterMutation();
+          return result;
+        },
+        getCaretPosition: (): string => {
+          const doc = docRef.current;
+          if (!doc) throw new Error('Document not loaded');
+          return doc.getCaretPosition();
+        },
+        exportBytes: (): Uint8Array => {
+          const doc = docRef.current;
+          if (!doc) throw new Error('Document not loaded');
+          return doc.exportHwpx();
+        },
+        getPageCount: (): number => pageCount,
+        isDirty: (): boolean => dirtyRef.current,
+      };
+      (window as Window & { __studioDebug?: typeof debug }).__studioDebug =
+        debug;
+      return () => {
+        delete (window as Window & { __studioDebug?: typeof debug })
+          .__studioDebug;
+      };
+    }, [phase, pageCount, refreshAfterMutation]);
 
     // Effect 2: IntersectionObserver — lazy render visible pages, track current.
     useEffect(() => {
@@ -318,8 +393,21 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
             >
               <Maximize2 className="size-4" />
             </Button>
+            {dirty && (
+              <span
+                className="ml-auto mr-2 text-amber-500"
+                data-testid="studio-dirty-indicator"
+                title="저장되지 않은 변경사항"
+              >
+                ●
+              </span>
+            )}
             <span
-              className="ml-auto text-muted-foreground"
+              className={
+                dirty
+                  ? 'text-muted-foreground'
+                  : 'ml-auto text-muted-foreground'
+              }
               data-testid="studio-page-indicator"
             >
               {currentPage + 1} / {pageCount}

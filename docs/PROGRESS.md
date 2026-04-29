@@ -587,16 +587,68 @@ dist/assets/rhwp_bg-*.wasm      3.9M  ← @rhwp/core WASM이 content-hashed asse
 
 - `@rhwp/core`의 `globalThis.measureTextWidth`는 비텍스트 콘텐츠(빈 문서)에서는 호출되지 않아 chunk 2 baseline은 통과했지만, 실제 텍스트 있는 문서(사용자 예제 40p)에서 누락 표면화. README "필수 설정" 강조에도 우리는 chunk 3에서야 발견 — 향후 라이브러리 통합 시 README 필수 설정 우선 검토하기
 
+### 2026-04-29 — Phase 1-D (4-A 청크) — 프로그래밍 방식 편집 + 라운드트립
+
+청크 4를 두 단계로 분할 (스코프 보호):
+
+- **4-A (이번 라운드)**: `HwpDocument` mutation API + dirty 추적 + 라운드트립 검증
+- **4-B (다음)**: 키 입력 / 마우스 hitTest / 커서 시각화 / IME
+
+**핵심 발견 — `HwpViewer` 폐기**
+
+청크 2~3에서 `new HwpViewer(doc)` 사용 중이었지만 v0.7.8 JS 쉼 분석:
+
+```js
+constructor(document) {
+  var ptr0 = document.__destroy_into_raw(); // doc 소유권 이전!
+  this.__wbg_ptr = wasm.hwpviewer_new(ptr0);
+}
+```
+
+`HwpViewer` 생성자가 `HwpDocument`를 **consume**. 이후 같은 doc에서 `exportHwpx()`/`insertText()` 호출하면 `null pointer passed to rust` 패닉. 청크 4 e2e 작성 중 처음 표면화.
+
+해결: `HwpDocument` 자체에 `pageCount`/`renderPageSvg`/`renderPageHtml` 모두 존재. `HwpViewer`는 우리 use case에서 **불필요** (zoom은 CSS로 처리, viewport API 미사용). `HwpViewer` 제거하고 doc 직접 사용으로 통일.
+
+**구현 — 4-A**
+
+- `StudioViewer.tsx`:
+  - `HwpViewer` 제거. `HwpDocument`만 보관 (`docRef`)
+  - `refreshAfterMutation()`: 변경 후 cache invalidate + 이미 마운트된 placeholder 재렌더 (lazy 렌더 placeholder는 IntersectionObserver가 다음 방문 시 처리)
+  - `dirty` state + `dirtyRef` 미러 (테스트가 OLD `__studioDebug` 객체 잡고 있어도 최신값 반환)
+  - 헤더에 dirty 표시기 (●, amber-500)
+  - `window.__studioDebug`: `insertText` / `deleteText` / `getCaretPosition` / `exportBytes` / `getPageCount` / `isDirty`. 4-B의 실제 input UI 들어오면 점진 폐기
+- `src/lib/rhwp-core.ts`: `HwpViewer` re-export 유지 (향후 viewport API 필요 시 위해서, 현재 미사용)
+
+**E2E (4-A 신규 3개, 총 16)**
+
+- `insertText changes exportBytes; dirty indicator appears` — 최초 export 크기 → insert 후 export 크기 증가, dirty=true, UI ● 표시
+- `save round-trip: edit → save → reopen → edit persists` — 변경 후 file:save → 디스크 검증 → file:read 라운드트립 일치
+- `deleteText reverts insertion (idempotent round-trip)` — insert + delete 사이즈 비교
+
+기존 13 e2e 회귀 없음.
+
+**검증 결과**
+
+```
+✓ npm run typecheck
+✓ npm test             (단위 2/2)
+✓ npm run e2e          (16/16 — 회귀 없음, 청크 4-A 신규 3 추가)
+✓ npm run lint         (0 errors, 0 warnings)
+✓ npm run format:check
+✓ npx vite build
+```
+
 ## 다음
 
-### Phase 1-D 청크 4 — 입력/편집
+### Phase 1-D 청크 4-B — 입력 UI
 
 승인 대기 중. 산출물 예정:
 
-- InputHandler 등가물 (key/mouse → `HwpDocument.insertText` / `deleteText` 등)
-- 커서 / 선택 영역 렌더링
-- dirty 추적 (변경 시 헤더에 ● 표시) + 닫기 시 확인 다이얼로그
-- 신규 e2e: "type X → exportHwpx contains X" / "save round-trip preserves edits" / undo
+- 키 입력 핸들러 (printable keys + Backspace + Delete + 엔터) → `HwpDocument.insertText` / `deleteText`
+- 마우스 클릭 → `HwpViewer.hitTest` 또는 doc 측 동등 API → 캐럿 위치 결정
+- 커서 시각화 (DOM overlay div 또는 SVG `<line>` 마커)
+- composition events (한글 IME) — 제일 까다로운 부분, 별도 청크로 분리 가능
+- 신규 e2e: 실제 keydown 이벤트 → 콘텐츠 변경 검증
 
 ### Phase 1-C — 보류 항목
 
