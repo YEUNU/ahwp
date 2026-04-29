@@ -1,6 +1,7 @@
 import { Monitor, Moon, Sun } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useTheme, type Theme } from './theme-provider';
+import { type Theme } from './theme-context';
+import { useTheme } from './use-theme';
 
 const ORDER: Theme[] = ['system', 'light', 'dark'];
 const LABELS: Record<Theme, string> = {
