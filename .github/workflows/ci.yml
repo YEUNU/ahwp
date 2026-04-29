@@ -3,8 +3,7 @@ name: CI
 on:
   pull_request:
     branches: [dev, main]
-  push:
-    branches: [dev]
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -20,10 +19,14 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
+        # HUSKY=0 skips the `prepare` hook in CI — git hooks are useless on
+        # ephemeral runners and husky 9 sometimes fails on detached checkouts.
+        env:
+          HUSKY: '0'
         run: npm ci
 
       - name: Lint
