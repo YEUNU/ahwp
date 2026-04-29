@@ -548,16 +548,55 @@ dist/assets/rhwp_bg-*.wasm      3.9M  ← @rhwp/core WASM이 content-hashed asse
 
 > 진단 콘솔 로그: `[rhwp/core renderer] WASM init v0.7.8 in NN ms` + `[studio] read X.XX MB in NN ms` + `[studio] parse + render page 0 in NN ms (M pages)`
 
+### 2026-04-29 — Phase 1-D (3차 청크) — 다중 페이지 + 스크롤 + 줌
+
+**구현**
+
+- `src/features/studio/StudioViewer.tsx` 확장:
+  - **다중 페이지 placeholder** — 페이지 0의 SVG에서 `parsePageDimensions()`로 width/height 추출, N개 placeholder div를 동일 dims로 렌더
+  - **IntersectionObserver 기반 lazy 렌더링** — `rootMargin: 400px`로 viewport 근처만 즉시 렌더. `Map<idx, svg>` 캐시로 재방문 시 재파싱 X
+  - **줌 컨트롤** — 50% 단위(0.5/0.75/1/1.25/1.5/2). 입력 dim × zoom으로 placeholder 크기 결정. 내부 SVG는 `width:100%/height:100%`로 부모에 맞춤. 줌 변경 시 SVG 재파싱 불필요
+  - **너비 맞춤 (fit)** — `clientWidth - padding`으로 동적 계산
+  - **페이지 인디케이터** — `intersectionRatio` 가장 큰 페이지를 현재 페이지로
+  - 툴바 (`ZoomOut` / `level%` / `ZoomIn` / `100%` / `Maximize2(fit)` / `N / M`)
+- `src/lib/rhwp-core.ts` — **`globalThis.measureTextWidth` 등록** (WASM init 전). Canvas 2D `measureText()` 사용. README 명시 "필수 설정". 누락 시 텍스트 있는 문서 렌더 시 `is not a function` 에러
+- `parsePageDimensions(svg)` — `width`/`height` 속성 → `viewBox` 폴백
+
+**E2E (chunk 3 신규 4개, 총 13)**
+
+| 카테고리                          | 케이스                                                                                           |
+| --------------------------------- | ------------------------------------------------------------------------------------------------ |
+| chunk 2 (read-only POC)           | renders first page SVG / first-page visual snapshot                                              |
+| chunk 3 (multi-page + zoom)       | placeholder count matches pageCount / zoom in/reset cycles dims / fit-to-width matches container |
+| chunk 3 (stress, 사용자 예제 40p) | scrolling triggers SVG render in later page (lazy rendering 검증)                                |
+
+기존 9 e2e 회귀 없음.
+
+**검증 결과**
+
+```
+✓ npm run typecheck
+✓ npm test             (단위 2/2)
+✓ npm run e2e          (13/13 — chunk 3 신규 4 + chunk 2 신규 2 + 기존 7)
+✓ npm run lint         (0 errors, 2 shadcn warnings)
+✓ npm run format:check
+✓ npx vite build
+```
+
+**알게 된 것**
+
+- `@rhwp/core`의 `globalThis.measureTextWidth`는 비텍스트 콘텐츠(빈 문서)에서는 호출되지 않아 chunk 2 baseline은 통과했지만, 실제 텍스트 있는 문서(사용자 예제 40p)에서 누락 표면화. README "필수 설정" 강조에도 우리는 chunk 3에서야 발견 — 향후 라이브러리 통합 시 README 필수 설정 우선 검토하기
+
 ## 다음
 
-### Phase 1-D 청크 3 — 다중 페이지 + 스크롤 + 줌
+### Phase 1-D 청크 4 — 입력/편집
 
 승인 대기 중. 산출물 예정:
 
-- 가상화된 스크롤 컨테이너 (보이는 페이지만 렌더, `HwpViewer.updateViewport`)
-- 줌 컨트롤 (50%/100%/맞춤)
-- 페이지 네비게이션 (현재 페이지 N/M 표시)
-- 신규 e2e: 모든 페이지 렌더 + 스크롤 + 줌 인터랙션
+- InputHandler 등가물 (key/mouse → `HwpDocument.insertText` / `deleteText` 등)
+- 커서 / 선택 영역 렌더링
+- dirty 추적 (변경 시 헤더에 ● 표시) + 닫기 시 확인 다이얼로그
+- 신규 e2e: "type X → exportHwpx contains X" / "save round-trip preserves edits" / undo
 
 ### Phase 1-C — 보류 항목
 

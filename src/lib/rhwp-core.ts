@@ -18,10 +18,41 @@ import init, {
 
 let initPromise: Promise<void> | null = null;
 
+/**
+ * Register the host-side text-measurement callback @rhwp/core requires for
+ * line wrapping / alignment in the WASM renderer (see node_modules/@rhwp/core/
+ * README — "필수 설정: measureTextWidth"). Must be installed BEFORE init().
+ *
+ * Canvas-based: cache the 2D context and the last `font` string to avoid the
+ * surprisingly costly `ctx.font = ...` assignment per call (it parses the
+ * font shorthand) when the same font is used many times in a row.
+ */
+function installMeasureTextWidth(): void {
+  type MeasureFn = (font: string, text: string) => number;
+  const target = globalThis as unknown as {
+    measureTextWidth?: MeasureFn;
+  };
+  if (typeof target.measureTextWidth === 'function') return;
+  let ctx: CanvasRenderingContext2D | null = null;
+  let lastFont = '';
+  target.measureTextWidth = (font, text) => {
+    if (!ctx) {
+      ctx = document.createElement('canvas').getContext('2d');
+      if (!ctx) return text.length * 7; // fallback heuristic
+    }
+    if (font !== lastFont) {
+      ctx.font = font;
+      lastFont = font;
+    }
+    return ctx.measureText(text).width;
+  };
+}
+
 export async function ensureRhwpCore(): Promise<void> {
   if (initPromise) return initPromise;
   initPromise = (async () => {
     const t0 = performance.now();
+    installMeasureTextWidth();
     // Vite resolves the WASM URL automatically when no argument is passed
     // (uses `new URL('rhwp_bg.wasm', import.meta.url)` inside the package).
     await init();
