@@ -13,6 +13,8 @@ export default tseslint.config(
       'release',
       'node_modules',
       'coverage',
+      'style_example',
+      'examples',
       '*.config.cjs',
       '**/*.d.ts',
     ],

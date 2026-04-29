@@ -101,6 +101,12 @@
     }
   },
   "dependencies": {
-    "react-resizable-panels": "^2.1.9"
+    "@radix-ui/react-slot": "^1.2.4",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.14.0",
+    "react-resizable-panels": "^2.1.9",
+    "tailwind-merge": "^3.5.0",
+    "tailwindcss-animate": "^1.0.7"
   }
 }

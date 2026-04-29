@@ -4,16 +4,16 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 ## 현재 스냅샷
 
-| 항목     | 상태                                                     |
-| -------- | -------------------------------------------------------- |
-| Phase    | **1-A 진행 중** (레이아웃 토대)                          |
-| 빌드     | ✅ `npm run dev` · `npx vite build`                      |
-| 타입     | ✅ `npm run typecheck`                                   |
-| 린트     | ✅ `npm run lint`                                        |
-| 포맷     | ✅ `npm run format:check`                                |
-| 테스트   | ✅ 2/2 (`App.test.tsx`)                                  |
-| Electron | 33.2 · sandbox=true · contextIsolation=true              |
-| 의존성   | ~733 packages — runtime: `react-resizable-panels@^2.1.7` |
+| 항목     | 상태                                                                                                                                                         |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Phase    | **1-A 완료** → **1-B 진입 예정**                                                                                                                             |
+| 빌드     | ✅ `npm run dev` · `npx vite build`                                                                                                                          |
+| 타입     | ✅ `npm run typecheck`                                                                                                                                       |
+| 린트     | ✅ `npm run lint` (warning 2건 — shadcn 표준 패턴, react-refresh HMR 안내)                                                                                   |
+| 포맷     | ✅ `npm run format:check`                                                                                                                                    |
+| 테스트   | ✅ 2/2 (`App.test.tsx`)                                                                                                                                      |
+| Electron | 33.2 · sandbox=true · contextIsolation=true                                                                                                                  |
+| 의존성   | runtime: `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` |
 
 ## 일지
 
@@ -90,13 +90,39 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 ✓ npm run format:check
 ```
 
+### 2026-04-29 — Phase 1-A (2차 청크) — 메뉴 / shadcn / 테마
+
+**구현**
+
+- `electron/menu.ts`: 플랫폼 인지(macOS 별도 앱 메뉴) `Menu.buildFromTemplate`. 파일/편집/보기/윈도우/도움말 메뉴. File 액션(New/Open/Save/Save As)과 Settings는 `webContents.send('menu:action', ...)`로 렌더러에 이벤트 발행 — 실제 핸들러는 Phase 1-B/C에서 연결
+- `shared/api.ts`: `MenuAction` 유니언 + `onMenuAction(handler)` 구독 API 추가. `preload.ts`가 `ipcRenderer.on('menu:action', ...)` 래핑 후 unsubscribe 함수 반환
+- `electron/main.ts`: `Menu.setApplicationMenu(buildAppMenu(() => mainWindow))` 등록
+- shadcn/ui 수동 셋업 (CLI는 인터랙티브):
+  - `components.json` (style=default, baseColor=zinc, cssVariables=true)
+  - `src/lib/utils.ts` `cn()` 헬퍼 (`clsx` + `tailwind-merge`)
+  - `tailwind.config.ts` 토큰 확장 (border/background/foreground/primary/...) + `tailwindcss-animate`
+  - `src/index.css` `:root` / `.dark` CSS 변수 (light=흰 배경 / dark=현행 zinc-950 톤 보존)
+  - `src/components/ui/button.tsx` (cva 6 variants × 4 sizes, asChild via Radix Slot)
+  - 신규 deps: `clsx`, `tailwind-merge`, `class-variance-authority`, `lucide-react`, `tailwindcss-animate`, `@radix-ui/react-slot`
+- 테마: `src/app/theme-provider.tsx` (light/dark/system, localStorage `ahwp:theme`, `matchMedia('prefers-color-scheme: dark')` 구독). `src/app/theme-toggle.tsx` (system→light→dark 사이클, lucide 아이콘). `App.tsx`에서 `<ThemeProvider>`로 감싸고, `AppShell` 헤더에 `<ThemeToggle/>` 마운트
+- `AppShell.tsx`를 토큰 기반(`bg-background`/`bg-card`/`border-border`/`text-muted-foreground` 등)으로 리팩터. 메뉴 액션 디버그 표시 패널 임시 추가 (Phase 1-B에서 실제 핸들러 연결되면 제거)
+
+**부수 정리**
+
+- `vitest.setup.ts`: jsdom의 `matchMedia` 미구현 폴리필 (theme-provider가 의존)
+- `src/App.test.tsx`: mockApi에 `onMenuAction` 추가
+- `style_example/`, `examples/`를 prettier/eslint ignore에 추가 — 디자인 목업/샘플 파일이 포맷 대상에 포함되던 문제 해결
+
+**검증 결과**
+
+```
+✓ npm run typecheck
+✓ npm test             (2 passed)
+✓ npm run lint         (warning 2건: shadcn buttonVariants / theme useTheme — react-refresh HMR 안내)
+✓ npm run format:check
+```
+
 ## 다음
-
-### Phase 1-A — 남은 항목
-
-- shadcn/ui CLI 초기화 + Button / Tabs / ScrollArea / Resizable / Dialog
-- 다크/라이트 테마 토글 (system 감지)
-- 메뉴바 골격 (File / View / Help)
 
 ### Phase 1-B — 파일 리스트
 

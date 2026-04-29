@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
-import type { PingResponse } from '@shared/api';
+import type { MenuAction, PingResponse } from '@shared/api';
+import { ThemeToggle } from './theme-toggle';
 
 export default function AppShell() {
   const [pingResult, setPingResult] = useState<PingResponse | null>(null);
   const [pingError, setPingError] = useState<string | null>(null);
+  const [lastMenuAction, setLastMenuAction] = useState<MenuAction | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -17,11 +19,17 @@ export default function AppShell() {
     })();
   }, []);
 
+  useEffect(() => {
+    return window.api.onMenuAction((action) => {
+      setLastMenuAction(action);
+    });
+  }, []);
+
   return (
     <PanelGroup
       direction="horizontal"
       autoSaveId="ahwp:shell"
-      className="h-screen"
+      className="h-screen bg-background text-foreground"
     >
       <Panel
         id="files"
@@ -29,46 +37,66 @@ export default function AppShell() {
         defaultSize={18}
         minSize={12}
         maxSize={40}
-        className="bg-zinc-950 text-zinc-200"
+        className="border-r border-border bg-card"
       >
-        <aside className="h-full overflow-auto p-4">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">
-            파일
-          </h2>
-          <p className="text-xs text-zinc-500">아직 열린 파일이 없습니다.</p>
+        <aside className="flex h-full flex-col">
+          <div className="flex h-12 items-center border-b border-border px-4">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              파일
+            </h2>
+          </div>
+          <div className="flex-1 overflow-auto p-4">
+            <p className="text-xs text-muted-foreground">
+              아직 열린 파일이 없습니다.
+            </p>
+          </div>
         </aside>
       </Panel>
 
-      <PanelResizeHandle className="w-px bg-zinc-800 transition-colors hover:bg-zinc-700 data-[resize-handle-state=drag]:bg-zinc-600" />
+      <PanelResizeHandle className="w-px bg-border transition-colors hover:bg-ring data-[resize-handle-state=drag]:bg-ring" />
 
       <Panel id="editor" order={2} defaultSize={56} minSize={30}>
-        <main className="flex h-full flex-col bg-zinc-900 text-zinc-100">
-          <div className="border-b border-zinc-800 px-6 py-3 text-sm text-zinc-400">
-            ahwp · Phase 1-A 레이아웃
+        <main className="flex h-full flex-col">
+          <div className="flex h-12 items-center justify-between border-b border-border px-6">
+            <span className="text-sm text-muted-foreground">
+              ahwp · Phase 1-A 레이아웃
+            </span>
+            <ThemeToggle />
           </div>
           <div className="flex flex-1 flex-col items-center justify-center gap-4 overflow-auto p-8">
             <h1 className="text-2xl font-semibold">Hello, ahwp</h1>
-            <p className="text-sm text-zinc-400">
+            <p className="text-sm text-muted-foreground">
               Electron + Vite + React + TypeScript 부트스트랩이 동작합니다.
             </p>
 
-            <div className="mt-6 w-full max-w-lg rounded-lg border border-zinc-800 bg-zinc-950 p-4 text-xs">
-              <div className="mb-2 font-mono text-zinc-500">ipc:ping</div>
+            <div className="mt-6 w-full max-w-lg rounded-lg border border-border bg-card p-4 text-xs">
+              <div className="mb-2 font-mono text-muted-foreground">
+                ipc:ping
+              </div>
               {pingError ? (
-                <pre className="text-red-400">{pingError}</pre>
+                <pre className="text-destructive">{pingError}</pre>
               ) : pingResult ? (
-                <pre className="text-emerald-400">
+                <pre className="text-emerald-500 dark:text-emerald-400">
                   {JSON.stringify(pingResult, null, 2)}
                 </pre>
               ) : (
-                <span className="text-zinc-600">호출 중…</span>
+                <span className="text-muted-foreground">호출 중…</span>
               )}
+            </div>
+
+            <div className="w-full max-w-lg rounded-lg border border-border bg-card p-4 text-xs">
+              <div className="mb-2 font-mono text-muted-foreground">
+                menu:action
+              </div>
+              <span className="text-muted-foreground">
+                {lastMenuAction ?? '아직 메뉴 액션을 받지 않았습니다.'}
+              </span>
             </div>
           </div>
         </main>
       </Panel>
 
-      <PanelResizeHandle className="w-px bg-zinc-800 transition-colors hover:bg-zinc-700 data-[resize-handle-state=drag]:bg-zinc-600" />
+      <PanelResizeHandle className="w-px bg-border transition-colors hover:bg-ring data-[resize-handle-state=drag]:bg-ring" />
 
       <Panel
         id="chat"
@@ -76,13 +104,19 @@ export default function AppShell() {
         defaultSize={26}
         minSize={18}
         maxSize={50}
-        className="bg-zinc-950 text-zinc-200"
+        className="border-l border-border bg-card"
       >
-        <aside className="h-full overflow-auto p-4">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">
-            챗봇
-          </h2>
-          <p className="text-xs text-zinc-500">Phase 2에서 활성화됩니다.</p>
+        <aside className="flex h-full flex-col">
+          <div className="flex h-12 items-center border-b border-border px-4">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              챗봇
+            </h2>
+          </div>
+          <div className="flex-1 overflow-auto p-4">
+            <p className="text-xs text-muted-foreground">
+              Phase 2에서 활성화됩니다.
+            </p>
+          </div>
         </aside>
       </Panel>
     </PanelGroup>
