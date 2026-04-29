@@ -12,12 +12,26 @@ import { ThemeToggle } from './theme-toggle';
 
 const STUDIO_FLAG_KEY = 'ahwp:use-studio';
 
+/**
+ * StudioViewer (`@rhwp/core` direct) is now the default viewer. The legacy
+ * iframe-based `RhwpViewer` is opt-in via `localStorage 'ahwp:use-studio'='0'`
+ * so we can still A/B compare during the migration. Default flip happened
+ * because the iframe (cross-origin `edwardkim.github.io`) intercepts ⌘S /
+ * ⌘O before our menu handler and tries to call the File System Access API,
+ * which a cross-origin sub-frame cannot use — it surfaces as a SecurityError
+ * "Cross origin sub frames aren't allowed to show a file picker".
+ *
+ * The iframe wrapper is scheduled for full removal in Studio migration
+ * chunk 6; this flip is the final UX prep before that.
+ */
 function readStudioFlag(): boolean {
-  if (typeof window === 'undefined') return false;
+  if (typeof window === 'undefined') return true;
   try {
-    return window.localStorage.getItem(STUDIO_FLAG_KEY) === '1';
+    const v = window.localStorage.getItem(STUDIO_FLAG_KEY);
+    if (v === null) return true; // default: studio
+    return v !== '0';
   } catch {
-    return false;
+    return true;
   }
 }
 
