@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import type { MenuAction, PingResponse } from '@shared/api';
+import { RhwpViewer } from '@/features/editor/RhwpViewer';
 import { FileList } from '@/features/files/FileList';
 import { ThemeToggle } from './theme-toggle';
 
@@ -83,32 +84,35 @@ export default function AppShell() {
         <main className="flex h-full flex-col">
           <div className="flex h-12 items-center justify-between border-b border-border px-6">
             <span className="truncate text-sm text-muted-foreground">
-              {activePath ?? 'ahwp · Phase 1-B'}
+              {activePath ?? 'ahwp · Phase 1-C'}
             </span>
             <ThemeToggle />
           </div>
-          <div className="flex flex-1 flex-col items-center justify-center gap-4 overflow-auto p-8">
-            <h1 className="text-2xl font-semibold">Hello, ahwp</h1>
-            <p className="text-sm text-muted-foreground">
-              {activePath
-                ? '에디터는 Phase 1-C에서 활성화됩니다.'
-                : '메뉴 → 파일 → 열기 또는 좌측 패널에 파일을 끌어 놓으세요.'}
-            </p>
-
-            <div className="mt-6 w-full max-w-lg rounded-lg border border-border bg-card p-4 text-xs">
-              <div className="mb-2 font-mono text-muted-foreground">
-                ipc:ping
+          <div className="flex-1 overflow-hidden">
+            {activePath ? (
+              <RhwpViewer key={activePath} path={activePath} />
+            ) : (
+              <div className="flex h-full flex-col items-center justify-center gap-4 p-8">
+                <h1 className="text-2xl font-semibold">Hello, ahwp</h1>
+                <p className="text-sm text-muted-foreground">
+                  메뉴 → 파일 → 열기 또는 좌측 패널에 파일을 끌어 놓으세요.
+                </p>
+                <div className="mt-6 w-full max-w-lg rounded-lg border border-border bg-card p-4 text-xs">
+                  <div className="mb-2 font-mono text-muted-foreground">
+                    ipc:ping
+                  </div>
+                  {pingError ? (
+                    <pre className="text-destructive">{pingError}</pre>
+                  ) : pingResult ? (
+                    <pre className="text-emerald-500 dark:text-emerald-400">
+                      {JSON.stringify(pingResult, null, 2)}
+                    </pre>
+                  ) : (
+                    <span className="text-muted-foreground">호출 중…</span>
+                  )}
+                </div>
               </div>
-              {pingError ? (
-                <pre className="text-destructive">{pingError}</pre>
-              ) : pingResult ? (
-                <pre className="text-emerald-500 dark:text-emerald-400">
-                  {JSON.stringify(pingResult, null, 2)}
-                </pre>
-              ) : (
-                <span className="text-muted-foreground">호출 중…</span>
-              )}
-            </div>
+            )}
           </div>
         </main>
       </Panel>

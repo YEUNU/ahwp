@@ -42,6 +42,8 @@ export interface FileApi {
   openByPath: (path: string) => Promise<FileOpenResult | null>;
   /** Most-recent-first list, capped to N entries. */
   listRecent: () => Promise<RecentFile[]>;
+  /** Read raw bytes for a path. Throws if extension is not allowed or file is missing. */
+  read: (path: string) => Promise<ArrayBuffer>;
   /**
    * Resolve a renderer-side File object to its absolute disk path.
    * Wraps Electron's webUtils.getPathForFile (replacement for the removed File.path).

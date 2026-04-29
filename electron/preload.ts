@@ -20,6 +20,7 @@ const api: AhwpApi = {
     open: () => ipcRenderer.invoke('file:open'),
     openByPath: (filePath) => ipcRenderer.invoke('file:open-by-path', filePath),
     listRecent: () => ipcRenderer.invoke('file:list-recent'),
+    read: (filePath) => ipcRenderer.invoke('file:read', filePath),
     getPathForFile: (file) => webUtils.getPathForFile(file),
   },
 };

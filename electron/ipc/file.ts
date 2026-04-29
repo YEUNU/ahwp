@@ -55,4 +55,22 @@ export function registerFileIpc(): void {
   ipcMain.handle('file:list-recent', async (): Promise<RecentFile[]> => {
     return listRecent();
   });
+
+  ipcMain.handle(
+    'file:read',
+    async (_event, filePath: string): Promise<ArrayBuffer> => {
+      if (typeof filePath !== 'string' || !filePath) {
+        throw new Error('file:read requires a path');
+      }
+      if (!isAllowed(filePath)) {
+        throw new Error(`Unsupported extension: ${path.extname(filePath)}`);
+      }
+      const buffer = await fs.readFile(filePath);
+      // Return a fresh ArrayBuffer slice — Buffer's underlying pool may be larger.
+      return buffer.buffer.slice(
+        buffer.byteOffset,
+        buffer.byteOffset + buffer.byteLength,
+      );
+    },
+  );
 }

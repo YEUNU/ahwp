@@ -6,7 +6,7 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 | 항목     | 상태                                                                                                                                                         |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Phase    | **1-B 진행 중** (파일 리스트)                                                                                                                                |
+| Phase    | **1-C 진행 중** (rhwp 뷰어 통합)                                                                                                                             |
 | 빌드     | ✅ `npm run dev` · `npx vite build`                                                                                                                          |
 | 타입     | ✅ `npm run typecheck`                                                                                                                                       |
 | 린트     | ✅ `npm run lint` (warning 2건 — shadcn 표준 패턴, react-refresh HMR 안내)                                                                                   |
@@ -152,11 +152,60 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 ✓ npx vite build
 ```
 
+### 2026-04-29 — Phase 1-C (1차 청크) — rhwp 뷰어 통합
+
+**조사 결과 — `@rhwp/editor` v0.7.8**
+
+- npm 등록됨 (6시간 전 published, by tangokorea). 14KB 얇은 래퍼
+- 본질은 **iframe** — 기본적으로 `https://edwardkim.github.io/rhwp/`를 로드하고 `postMessage`로 RPC. `studioUrl` 옵션으로 자체 호스팅 URL 주입 가능
+- API: `loadFile(buffer, name)` · `pageCount()` · `getPageSvg(page)` · `exportHwp()` · `destroy()`. **편집 메서드 없음** — v0.7.x 기준 사실상 뷰어 + import/export
+- 함께 게시된 `@rhwp/core` v0.7.8 (4.5MB Rust+WASM)에는 진짜 편집 API 존재 (`HwpDocument.applyCharFormat` / `applyParaFormat` / `addBookmark` / `HwpViewer.renderPageSvg` 등). 정식 편집은 Phase 2~3에서 core를 직접 import
+
+**범위 결정**
+
+- 1차 청크는 **iframe 기반 뷰어 임베드**까지. file:read → ArrayBuffer → editor.loadFile 라운드트립이 동작하면 milestone
+- `@rhwp/core` 직접 통합은 Manual/Agent 편집 모드(Phase 2~3) 합류 시 진행 — 그때 자체 viewer/edit UI를 짜는 방향도 같이 검토
+- 외부 iframe URL 의존 — README의 "local-first" 약속과 충돌. Phase 4 패키징에서 studio 정적 자산 번들 + 자체 protocol(`app://`) 호스팅으로 전환 예정. 현재는 이 트레이드오프 명시
+
+**구현**
+
+- `npm install @rhwp/editor` (core는 아직 미설치 — viewer 단계엔 불필요)
+- `shared/api.ts`: `FileApi.read(path) => Promise<ArrayBuffer>` 추가
+- `electron/ipc/file.ts`: `file:read` 핸들러. 확장자 검증 + `fs.readFile` → `ArrayBuffer.slice` (Buffer 풀의 일부만 슬라이스해 정확한 길이 반환)
+- `electron/preload.ts`: `file.read` 노출
+- `src/features/editor/RhwpViewer.tsx`: `useEffect([path])`에서 read → createEditor → loadFile 순차 실행. 로딩 상태(`reading` / `mounting` / `ready`) 분기 + 에러 표시. unmount/path 변경 시 `editor.destroy()` + 컨테이너 자식 제거
+- `AppShell`: `activePath`가 있으면 `<RhwpViewer key={activePath} path={activePath} />` 마운트, 없으면 시작 안내. `key`로 강제 remount해 path 전환 시 protocol 잔여 상태 제거
+- `index.html` CSP: `frame-src https://edwardkim.github.io` 추가
+
+**알려진 제약**
+
+- 첫 로드 시 외부에서 iframe + WASM 다운로드 (~수 MB) — 인터넷 필요
+- `@rhwp/editor`의 `_request` postMessage 타임아웃 10초 — 느린 회선에서 큰 문서 로딩 실패 가능
+- 편집 불가 (뷰어 단계). Save/Save As 메뉴 항목은 menu:action을 발행하지만 실제 핸들러 없음
+
+**검증 결과**
+
+```
+✓ npm run typecheck
+✓ npm test             (2 passed)
+✓ npm run lint         (0 errors, 2 shadcn warnings)
+✓ npm run format:check
+✓ npx vite build
+```
+
+> 실제 HWP 파일 렌더링 검증은 다음 라운드에 `examples/[샘플].hwp`로 수행 예정.
+
 ## 다음
 
-### Phase 1-B — 남은 항목
+### Phase 1-C — 남은 항목
 
-- 메뉴 `file:new`도 IPC 연결 (Phase 1-C에서 빈 HWPX 시드와 함께)
+- `file:save` IPC + `editor.exportHwp()` 라운드트립 → dirty 추적
+- `file:new` (빈 HWPX 시드 — `@rhwp/core`로 직접 생성하거나 빈 템플릿 자산 번들)
+- HWP → HWPX 변환기 (`electron/hwp/converter.ts`) — `@rhwp/core` 기반
+- studio 자산 로컬 번들링 (Phase 4에서 본격, 1-C에서 PoC만)
+
+### Phase 1-B — 남은 항목 (낮은 우선순위)
+
 - 컨텍스트 메뉴(목록 항목 우클릭): "최근 항목에서 제거", "Finder/Explorer에서 보기"
 
 ### Phase 1-C — rhwp 에디터

@@ -2,9 +2,15 @@
 <html lang="ko">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      frame-src https://edwardkim.github.io: @rhwp/editor v0.7.x is an iframe
+      wrapper around rhwp-studio hosted at edwardkim.github.io. This is the
+      "BYOO" path documented in PROGRESS; Phase 4 packaging will bundle the
+      studio assets locally so this entry can be removed.
+    -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://localhost:* ws://localhost:*"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://localhost:* ws://localhost:*; frame-src https://edwardkim.github.io"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ahwp</title>
