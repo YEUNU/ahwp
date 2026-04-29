@@ -12,6 +12,7 @@ describe('App', () => {
         platform: 'win32',
         electron: '33.0.0',
       }),
+      onMenuAction: vi.fn().mockReturnValue(() => {}),
     };
     Object.defineProperty(window, 'api', {
       value: mockApi,

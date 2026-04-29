@@ -1,6 +1,7 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu } from 'electron';
 import path from 'node:path';
 import type { PingRequest, PingResponse } from '../shared/api';
+import { buildAppMenu } from './menu';
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
 
@@ -46,6 +47,7 @@ function registerIpcHandlers(): void {
 
 void app.whenReady().then(() => {
   registerIpcHandlers();
+  Menu.setApplicationMenu(buildAppMenu(() => mainWindow));
   createWindow();
 
   app.on('activate', () => {
