@@ -243,14 +243,56 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 > 매직넘버 검증은 다음 사용자 테스트 라운드. 시나리오 1이면 후속 작업 단순, 시나리오 2면 `@rhwp/core` 도입 우선순위 상향.
 
+### 2026-04-29 — Phase 1-C (3차 청크) — 자동 라우팅 / 세션 복원 / E2E
+
+**1차 사용자 테스트 발견사항**
+
+- `@rhwp/editor` v0.7.8 `loadFile`의 postMessage 응답이 iframe의 initDoc 완료 후에도 호출자 promise까지 도달하지 않음 (사용자 콘솔 로그로 확인). 우회: await 안 하고 fire-and-forget + .catch로 에러만 추적, 'ready' phase는 즉시 전환
+- iframe을 path 변경마다 재생성하면 매번 WASM 콜드 스타트 → iframe 평생주기와 file load를 분리한 두 effect 패턴으로 변경
+- `자동 보정` 후 저장하고 reload 시 같은 경고가 다시 표시되는 문제 — 두 가지 원인 추정:
+  1. cmd+R 후 사용자가 잘못된(원본) 파일을 다시 열고 있음 (워크스페이스 복원 부재)
+  2. 저장된 .hwp 파일에 HWPX 바이트가 들어가 있는 등 포맷 불일치 (확장자 자동 라우팅 부재)
+
+**구현 — 포맷 감지 + 자동 라우팅**
+
+- `shared/format.ts`: `detectHwpFormat(bytes)` (zip → 'hwpx' / CFB → 'hwp' / 'unknown') + `correctExtension(path, format)` 헬퍼
+- `AppShell.saveCurrent`/`saveAsCurrent`: export bytes 매직넘버 검사 → activePath 확장자가 매칭되지 않으면 `.hwp` ↔ `.hwpx` 사이에서 자동 보정. 저장 후 activePath 갱신
+- `electron/ipc/file.ts`: 서버 측 방어 — 매직넘버와 확장자가 어긋나면 `file:save`/`file:save-as` 거부 (defense in depth)
+
+**구현 — 워크스페이스 복원**
+
+- `shared/api.ts`: `SessionState { lastActivePath }` + `SessionApi { get, set }` 추가
+- `electron/store/session.ts`: `userData/session.json` 영속, atomic write, writeChain 직렬화
+- `electron/ipc/session.ts`: `session:get` / `session:set` 핸들러
+- `AppShell`: 마운트 시 `session:get` → 마지막 활성 파일 자동 재오픈. `activePath` 변경 시 `session:set`. cmd+R / 앱 재시작 시 컨텍스트 보존. 파일이 이동/삭제됐으면 stale 경로 자동 정리
+
+**구현 — Playwright E2E**
+
+- `@playwright/test` 도입. `playwright.config.ts` (직렬, 1 worker — Electron 단일 인스턴스)
+- `tests/e2e/launch.ts`: 격리된 임시 `userData` 디렉토리로 `_electron.launch` 헬퍼. recent.json/session.json 격리
+- `tests/e2e/smoke.spec.ts`: 2 케이스 — (1) 3-pane 부팅 + ipc:ping 응답 검증, (2) 테마 토글 system→light→dark 전환 시 `<html>.dark` 클래스 변화
+- `npm run e2e` 스크립트 (vite build 후 playwright test). `npm run e2e:headed` 옵션
+- 현재 단계 e2e는 외부 iframe(rhwp studio) 의존하지 않는 항목만. 뷰어 자체 e2e는 Phase 4 패키징(자산 로컬 번들링) 후
+
+**검증 결과**
+
+```
+✓ npm run typecheck
+✓ npm test             (단위 2/2 passed)
+✓ npm run e2e          (E2E 2/2 passed)
+✓ npm run lint         (0 errors, 2 shadcn warnings)
+✓ npm run format:check
+✓ npx vite build
+```
+
 ## 다음
 
 ### Phase 1-C — 남은 항목
 
 - `@rhwp/core` 도입 (HWP → HWPX 변환기 `electron/hwp/converter.ts`)
 - `file:new` (빈 HWPX 시드 — `@rhwp/core`로 직접 생성)
-- 워크스페이스 복원 (`session.json` + 다음 실행 시 마지막 파일 자동 오픈)
 - studio 자산 로컬 번들링 (Phase 4에서 본격, 1-C에서 PoC만)
+- E2E 추가 (file:open dialog 모킹, recent files, save 라운드트립 — fixture 필요)
 
 ### Phase 1-B — 남은 항목 (낮은 우선순위)
 

@@ -57,6 +57,11 @@ __pycache__/
 # C extensions
 *.so
 
+# Playwright
+/test-results/
+/playwright-report/
+/playwright/.cache/
+
 # Distribution / packaging (Python — anchored to repo root so src/lib/ is not ignored)
 .Python
 /build/
