@@ -166,4 +166,54 @@ test.describe('studio viewer — chunk 3 (multi-page stress)', () => {
     await last.scrollIntoViewIfNeeded();
     await expect(last.locator('svg').first()).toBeVisible({ timeout: 15_000 });
   });
+
+  test('embedded images render — at least one page has visible <image> with data: href', async () => {
+    const { page } = launched;
+    const placeholders = page.getByTestId('studio-viewer-page');
+    const total = await placeholders.count();
+    expect(total).toBeGreaterThan(5);
+
+    // Force lazy-render of every page by scrolling each into view. The
+    // renderer's text reflow can place images on different pages than a
+    // bare-bones Node-side inspection (measureTextWidth differs), so we
+    // scan instead of guessing a fixed page.
+    for (let i = 0; i < total; i++) {
+      await placeholders.nth(i).scrollIntoViewIfNeeded();
+    }
+    // Let the IntersectionObserver + render pass settle.
+    await page.waitForTimeout(1500);
+
+    type Diag = Record<
+      number,
+      { string: number; parsed: number; mounted: number }
+    >;
+    const diag = (await page.evaluate(
+      () => (window as Window & { __studioPageDiag?: Diag }).__studioPageDiag,
+    )) as Diag | undefined;
+    console.log('[e2e] studio page diag:', JSON.stringify(diag, null, 2));
+
+    const pagesWithImages = Object.entries(diag ?? {}).filter(
+      ([, v]) => v.mounted > 0,
+    );
+    if (pagesWithImages.length === 0) {
+      throw new Error(
+        `No page rendered any <image>. Per-page string/parsed/mounted:\n${JSON.stringify(diag, null, 2)}`,
+      );
+    }
+
+    // Verify the first page that has images
+    const [idxStr] = pagesWithImages[0];
+    const target = placeholders.nth(Number(idxStr));
+    await target.scrollIntoViewIfNeeded();
+    const images = target.locator('svg image');
+    expect(await images.count()).toBeGreaterThan(0);
+    const href =
+      (await images.first().getAttribute('href')) ??
+      (await images.first().getAttribute('xlink:href'));
+    expect(href).toMatch(/^data:image\//);
+    const box = await images.first().boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.width).toBeGreaterThan(0);
+    expect(box!.height).toBeGreaterThan(0);
+  });
 });

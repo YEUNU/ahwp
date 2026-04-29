@@ -191,16 +191,55 @@ export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
           return;
         }
       }
-      el.innerHTML = svg;
-      const svgEl = el.querySelector('svg');
-      if (svgEl) {
-        // Strip fixed dims so CSS controls size; preserve aspect via viewBox.
-        svgEl.removeAttribute('width');
-        svgEl.removeAttribute('height');
-        svgEl.setAttribute('preserveAspectRatio', 'xMidYMid meet');
-        svgEl.style.width = '100%';
-        svgEl.style.height = '100%';
-        svgEl.style.display = 'block';
+      // Parse via DOMParser (image/svg+xml) — guarantees the SVG namespace
+      // is established for `<image>` (otherwise the HTML parser may treat it
+      // ambiguously) and that xlink:href / href on embedded images resolve
+      // correctly. innerHTML works for many SVGs but is unreliable when the
+      // payload contains <image>, <use href>, or namespace-prefixed attrs.
+      const parser = new DOMParser();
+      const parsed = parser.parseFromString(svg, 'image/svg+xml');
+      const root = parsed.documentElement;
+      // Surface parse errors (DOMParser doesn't throw — it returns a
+      // <parsererror> document instead).
+      if (root.tagName.toLowerCase() === 'parsererror') {
+        console.error(
+          `[studio] page ${idx} SVG parse error:`,
+          root.textContent,
+        );
+        return;
+      }
+      const adopted = document.importNode(
+        root,
+        true,
+      ) as unknown as SVGSVGElement;
+      // Strip fixed dims so CSS controls size; preserve aspect via viewBox.
+      adopted.removeAttribute('width');
+      adopted.removeAttribute('height');
+      adopted.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+      adopted.style.width = '100%';
+      adopted.style.height = '100%';
+      adopted.style.display = 'block';
+      el.replaceChildren(adopted);
+      // Diagnostic: track image counts per page for debugging.
+      const stringCount = (svg.match(/<image\b/g) ?? []).length;
+      const parsedCount = parsed.querySelectorAll('image').length;
+      const mountedCount = el.querySelectorAll('image').length;
+      const diag = window as Window & {
+        __studioPageDiag?: Record<
+          number,
+          { string: number; parsed: number; mounted: number }
+        >;
+      };
+      diag.__studioPageDiag ??= {};
+      diag.__studioPageDiag[idx] = {
+        string: stringCount,
+        parsed: parsedCount,
+        mounted: mountedCount,
+      };
+      if (stringCount !== mountedCount) {
+        console.warn(
+          `[studio] page ${idx} image count mismatch: string=${stringCount} parsed=${parsedCount} mounted=${mountedCount}`,
+        );
       }
     }, []);
 

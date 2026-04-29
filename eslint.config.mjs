@@ -15,6 +15,8 @@ export default tseslint.config(
       'coverage',
       'style_example',
       'examples',
+      'scripts/inspect-*.mjs',
+      'scripts/check-*.mjs',
       '*.config.cjs',
       '**/*.d.ts',
     ],

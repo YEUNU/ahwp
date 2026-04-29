@@ -41,13 +41,18 @@ test.describe('file round-trip', () => {
     await rm(workDir, { recursive: true, force: true });
   });
 
-  test('file:read auto-converts HWP input to HWPX bytes', async () => {
+  test('file:read returns raw bytes (HWP magic preserved)', async () => {
+    // We used to pre-convert HWP→HWPX in main, but @rhwp/core v0.7.8 drops
+    // image references in that round-trip (see electron/hwp/converter.ts).
+    // file:read now returns bytes verbatim; the renderer's HwpDocument
+    // auto-detects HWP vs HWPX and parses each correctly.
     const { page } = launched;
     const head = await page.evaluate(async (p) => {
       const buf = await window.api.file.read(p);
       return Array.from(new Uint8Array(buf).slice(0, 4));
     }, EXAMPLE_HWP);
-    expect(head).toEqual(HWPX_MAGIC);
+    // HWP CFB magic: D0 CF 11 E0
+    expect(head).toEqual([0xd0, 0xcf, 0x11, 0xe0]);
   });
 
   test('save round-trip: HWPX bytes survive write → read', async () => {

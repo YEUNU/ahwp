@@ -55,16 +55,33 @@ async function loadRhwpCore(): Promise<RhwpCoreModule> {
 }
 
 /**
- * Read-side conversion: returns HWPX bytes regardless of input format.
- * Pass-through if input is already HWPX (zip magic, fast path) — saves a
- * round-trip through HwpDocument and preserves the file byte-exactly.
+ * Read-side: returns the input bytes verbatim.
  *
- * Invalid input (neither HWP nor HWPX) is reported by @rhwp/core's
- * HwpDocument constructor, not pre-validated by us.
+ * **Why no longer pre-converting HWP→HWPX**: `@rhwp/core` v0.7.8's
+ * `HwpDocument(hwp).exportHwpx() → HwpDocument(...)` round-trip drops image
+ * references — `BinData/*` blobs land in the zip but the IR can't relocate
+ * them on the subsequent load. Verified via scripts/check-image-pipeline.mjs:
+ *   A) HWP direct load → renderPageSvg: 25 <image> across 40 pages
+ *   B) HWP → exportHwpx → re-load → renderPageSvg: 0 <image> across 53 pages
+ *   C) HWPX zip from (B) still contains 46 BinData/* references
+ * Reported upstream. Until fixed, the renderer loads HWP/HWPX bytes directly
+ * via HwpDocument's auto-detect, which preserves image rendering on read.
+ *
+ * Save-side `normalizeToHwpx` still round-trips because we have no choice —
+ * the point of save is to serialize the in-memory edits. That means **save
+ * is currently lossy for documents with embedded images** (KNOWN_ISSUES).
+ *
+ * We keep the magic-byte gate so unsupported formats (PDF dropped on the
+ * viewer, etc.) fail fast with a clear message instead of a WASM panic.
  */
 export async function ensureHwpxBytes(input: Uint8Array): Promise<Uint8Array> {
-  if (detectHwpFormat(input) === 'hwpx') return input;
-  return roundTripHwpx(input, 'read');
+  const format = detectHwpFormat(input);
+  if (format === 'unknown') {
+    throw new Error(
+      'Unsupported input: bytes are neither HWP (CFB) nor HWPX (zip)',
+    );
+  }
+  return input;
 }
 
 /**

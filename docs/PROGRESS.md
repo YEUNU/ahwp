@@ -638,6 +638,47 @@ constructor(document) {
 ✓ npx vite build
 ```
 
+### 2026-04-30 — Phase 1-D 핫픽스 — 이미지 렌더링 복구
+
+**버그 보고 (사용자)**: "기존 파일 내부 이미지 렌더링 못함"
+
+**원인 — `scripts/check-image-pipeline.mjs`로 확정**:
+
+| 시나리오                                         | 결과                           |
+| ------------------------------------------------ | ------------------------------ |
+| A. HWP 직접 로드 → `renderPageSvg`               | 40 페이지, **25 `<image>`** ✅ |
+| B. HWP → `exportHwpx` → 재로드 → `renderPageSvg` | 53 페이지, **0 `<image>`** ❌  |
+| C. HWPX zip 내부 BinData 멤버                    | **46개 참조 (zip엔 들어있음)** |
+
+`@rhwp/core` v0.7.8의 **`exportHwpx → HwpDocument` 라운드트립이 이미지 IR 참조를 깨뜨림**. zip엔 `BinData/*.bmp` 등 바이너리가 그대로 들어가지만 doc IR에서 못 찾아 `renderPageSvg`가 image 태그를 안 만듦. 라이브러리 측 이슈 (업스트림 보고 후보).
+
+**핫픽스**
+
+- `electron/hwp/converter.ts`: `ensureHwpxBytes` → 매직 검증만 하고 **bytes 그대로 통과**. `HwpDocument` 생성자가 HWP/HWPX 자동 감지하므로 사전 변환 불필요. 코멘트에 검증 출처 박제
+- `src/features/studio/StudioViewer.tsx`: `el.innerHTML = svg` → `DOMParser('image/svg+xml')` + `importNode` + `replaceChildren`. SVG 네임스페이스 안전 마운트. `<parsererror>` 결과 명시적 보고. 진단용 `window.__studioPageDiag[idx] = { string, parsed, mounted }` 노출
+
+**Tradeoff**: ARCHITECTURE.md §B "내부 캐노니컬 = HWPX" 정책이 read 단계에서 부분 후퇴. save는 여전히 `normalizeToHwpx` 라운드트립 (lossy) — 이미지 포함 문서를 편집/저장하면 다음 번 열 때 이미지 손실. 라이브러리 fix 대기.
+
+**E2E (신규 1, 회귀 0)**
+
+- `embedded images render — at least one page has visible <image> with data: href`: 모든 페이지 스크롤 후 진단 dict로 image 페이지 식별. 페이지 36(2개), 38(10개) 등에서 정상 렌더 확인. 총 **17/17**
+- `file:read auto-converts ...` → `file:read returns raw bytes (HWP magic preserved)`로 의미 변경
+
+**진단 스크립트** (일회성, eslint ignore 추가)
+
+- `scripts/check-image-pipeline.mjs` — A/B/C 비교
+- `scripts/inspect-images.mjs` / `inspect-image-tag.mjs` — image 태그 dump
+
+**검증 결과**
+
+```
+✓ npm run typecheck
+✓ npm test             (단위 2/2)
+✓ npm run e2e          (17/17 — 신규 image 1 + 기존 16, 회귀 없음)
+✓ npm run lint         (0 errors, 0 warnings)
+✓ npm run format:check
+```
+
 ## 다음
 
 ### Phase 1-D 청크 4-B — 입력 UI
@@ -645,10 +686,14 @@ constructor(document) {
 승인 대기 중. 산출물 예정:
 
 - 키 입력 핸들러 (printable keys + Backspace + Delete + 엔터) → `HwpDocument.insertText` / `deleteText`
-- 마우스 클릭 → `HwpViewer.hitTest` 또는 doc 측 동등 API → 캐럿 위치 결정
+- 마우스 클릭 → `HwpDocument.hitTest` 또는 동등 API → 캐럿 위치 결정
 - 커서 시각화 (DOM overlay div 또는 SVG `<line>` 마커)
-- composition events (한글 IME) — 제일 까다로운 부분, 별도 청크로 분리 가능
+- composition events (한글 IME) — 별도 청크로 분리 가능
 - 신규 e2e: 실제 keydown 이벤트 → 콘텐츠 변경 검증
+
+### KNOWN_ISSUES (업스트림 의존)
+
+- 이미지 포함 문서 저장 시 라운드트립 손실 — `@rhwp/core` `exportHwpx → HwpDocument` 사이클이 image IR 깨뜨림. 라이브러리 0.8 또는 패치 대기. 검증 스크립트: `scripts/check-image-pipeline.mjs`
 
 ### Phase 1-C — 보류 항목
 
