@@ -17,8 +17,8 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react';
 import { Button } from '@/components/ui/button';
-import type { RhwpViewerHandle } from '@/features/editor/RhwpViewer';
 import { ensureRhwpCore, HwpDocument } from '@/lib/rhwp-core';
+import type { ViewerHandle } from './types';
 
 interface StudioViewerProps {
   path: string;
@@ -72,7 +72,7 @@ function parsePageDimensions(svg: string): PageDims | null {
  *
  * See docs/STUDIO_MIGRATION.md.
  */
-export const StudioViewer = forwardRef<RhwpViewerHandle, StudioViewerProps>(
+export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
   function StudioViewer({ path }, ref) {
     const scrollRef = useRef<HTMLDivElement>(null);
     const docRef = useRef<RhwpDoc | null>(null);

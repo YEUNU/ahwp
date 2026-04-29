@@ -6,7 +6,7 @@
 
 ## 핵심 기능
 
-- **HWP/HWPX 뷰어·에디터** — `@rhwp/editor`를 임베드해 한글 문서를 보고 수정
+- **HWP/HWPX 뷰어·에디터** — `@rhwp/core`를 직접 사용한 자체 viewer(Studio)로 한글 문서를 보고 수정 (오프라인 동작, 외부 iframe 의존 없음)
 - **두 가지 시작 방식**
   - **빈 새 문서**: 0부터 작성. "보고서 양식 만들어줘"처럼 AI에게 처음부터 맡기거나, 사용자가 직접 작성하면서 부분적으로 AI 도움 받기
   - **기존 문서**: `.hwp/.hwpx` 파일을 열어 편집. AI에게 단락 다듬기·표 정리·문체 변경 등 부분 수정 요청
@@ -81,7 +81,7 @@ npm run build:all
 | 렌더러   | React 18 + Vite + TypeScript                                                  |
 | UI       | shadcn/ui + Tailwind CSS                                                      |
 | 상태     | Zustand                                                                       |
-| HWP 코어 | `@rhwp/editor` (메인) + `@rhwp/core` (보조)                                   |
+| HWP 코어 | `@rhwp/core` 직접 사용 (Rust+WASM, 자체 Studio viewer/editor)                 |
 | 저장소   | better-sqlite3 (히스토리), electron-store (설정)                              |
 | AI SDK   | `openai` · `@anthropic-ai/sdk` · `@google/genai` · 직접 fetch (Ollama·커스텀) |
 
@@ -125,7 +125,7 @@ ahwp/
 │   │   └── theme-toggle.tsx
 │   ├── features/
 │   │   ├── files/         FileList + use-recent-files 훅 (드래그앤드롭 zone)
-│   │   └── editor/        RhwpViewer (iframe + @rhwp/editor 래퍼 + 라이브러리 quirks 패치)
+│   │   └── studio/        StudioViewer (@rhwp/core 직접 — 멀티 페이지 lazy SVG, 키보드/마우스/IME, dirty 추적)
 │   ├── components/ui/     shadcn/ui (Button, ...)
 │   └── lib/utils.ts       cn() 헬퍼
 ├── shared/

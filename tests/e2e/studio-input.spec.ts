@@ -32,8 +32,8 @@ interface StudioDebug {
 }
 
 async function activateStudio(page: Page, fixture: string): Promise<void> {
+  // Studio is the default viewer (chunk 6 — `@rhwp/editor` iframe removed).
   await page.evaluate(async (p) => {
-    localStorage.setItem('ahwp:use-studio', '1');
     await window.api.session.set({ lastActivePath: p });
   }, fixture);
   await page.reload();

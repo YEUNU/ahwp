@@ -1,49 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import type { MenuAction, PingResponse } from '@shared/api';
 import { correctExtension } from '@shared/format';
-import {
-  RhwpViewer,
-  type RhwpViewerHandle,
-} from '@/features/editor/RhwpViewer';
 import { FileList } from '@/features/files/FileList';
 import { StudioViewer } from '@/features/studio/StudioViewer';
+import type { ViewerHandle } from '@/features/studio/types';
 import { ThemeToggle } from './theme-toggle';
-
-const STUDIO_FLAG_KEY = 'ahwp:use-studio';
-
-/**
- * StudioViewer (`@rhwp/core` direct) is now the default viewer. The legacy
- * iframe-based `RhwpViewer` is opt-in via `localStorage 'ahwp:use-studio'='0'`
- * so we can still A/B compare during the migration. Default flip happened
- * because the iframe (cross-origin `edwardkim.github.io`) intercepts ⌘S /
- * ⌘O before our menu handler and tries to call the File System Access API,
- * which a cross-origin sub-frame cannot use — it surfaces as a SecurityError
- * "Cross origin sub frames aren't allowed to show a file picker".
- *
- * The iframe wrapper is scheduled for full removal in Studio migration
- * chunk 6; this flip is the final UX prep before that.
- */
-function readStudioFlag(): boolean {
-  if (typeof window === 'undefined') return true;
-  try {
-    const v = window.localStorage.getItem(STUDIO_FLAG_KEY);
-    if (v === null) return true; // default: studio
-    return v !== '0';
-  } catch {
-    return true;
-  }
-}
 
 export default function AppShell() {
   const [pingResult, setPingResult] = useState<PingResponse | null>(null);
   const [pingError, setPingError] = useState<string | null>(null);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
-  const viewerRef = useRef<RhwpViewerHandle | null>(null);
+  const viewerRef = useRef<ViewerHandle | null>(null);
   const sessionRestoredRef = useRef(false);
-  const useStudio = useMemo(() => readStudioFlag(), []);
-  const ViewerComponent = useStudio ? StudioViewer : RhwpViewer;
 
   useEffect(() => {
     void (async () => {
@@ -197,7 +167,7 @@ export default function AppShell() {
           </div>
           <div className="flex-1 overflow-hidden">
             {activePath ? (
-              <ViewerComponent path={activePath} ref={viewerRef} />
+              <StudioViewer path={activePath} ref={viewerRef} />
             ) : (
               <div className="flex h-full flex-col items-center justify-center gap-4 p-8">
                 <h1 className="text-2xl font-semibold">Hello, ahwp</h1>

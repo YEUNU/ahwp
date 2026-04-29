@@ -54,8 +54,8 @@
 
 ### 1-C. 에디터 (중앙) — 진행 중
 
-- [x] `@rhwp/editor` 임베드 방식 채택 — iframe 기반, postMessage RPC. `@rhwp/core`는 main에서 변환/정규화 전용
-- [x] `RhwpViewer.tsx` 컴포넌트 — `forwardRef`+`useImperativeHandle`로 `exportBytes` 노출. 라이브러리 quirks 워크어라운드 (10s timeout 패치, fire-and-forget loadFile)
+- [x] ~~`@rhwp/editor` 임베드 방식~~ → **자체 Studio viewer로 전환** (chunk 6 — STUDIO_MIGRATION.md). `@rhwp/core` 직접 사용
+- [x] `StudioViewer.tsx` (`src/features/studio/`) — 멀티 페이지 lazy SVG, 키보드/마우스/IME, dirty 추적, 시각 커서. `forwardRef`+`useImperativeHandle`로 `exportBytes` 노출
 - [x] **워크스페이스 복원** — `userData/session.json`에 `lastActivePath`. 앱 재시작 시 자동 재오픈
 - [x] 파일 열기 IPC: `file:open` (다이얼로그) / `file:open-by-path` (DnD/recent) / `file:list-recent` / `file:read`
 - [x] HWP → HWPX 변환기 (`electron/hwp/converter.ts`) — `@rhwp/core` 동적 import + WASM lazy init + `init_panic_hook`/`version()` 로깅

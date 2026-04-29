@@ -31,7 +31,6 @@ interface StudioDebug {
 
 async function activateStudio(page: Page, fixture: string): Promise<void> {
   await page.evaluate(async (p) => {
-    localStorage.setItem('ahwp:use-studio', '1');
     await window.api.session.set({ lastActivePath: p });
   }, fixture);
   await page.reload();
@@ -175,7 +174,6 @@ test.describe('studio edit — chunk 4-A (image preservation across save)', () =
     try {
       // 1. Open user's example HWP, then a tiny edit + save
       await launched.page.evaluate(async (p) => {
-        localStorage.setItem('ahwp:use-studio', '1');
         await window.api.session.set({ lastActivePath: p });
       }, STRESS_FIXTURE);
       await launched.page.reload();

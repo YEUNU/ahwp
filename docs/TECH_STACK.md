@@ -6,7 +6,7 @@
 
 | 항목          | 선택                         | 이유                                                                                                                       |
 | ------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| 데스크탑 셸   | **Electron** (latest stable) | 사용자가 명시. Mac/Win/Linux 동시 지원. Chromium 기반이라 `@rhwp/editor`(Vite/TS) 임베드가 자연스러움                      |
+| 데스크탑 셸   | **Electron** (latest stable) | 사용자가 명시. Mac/Win/Linux 동시 지원. Chromium 기반이라 `@rhwp/core`(Rust+WASM) WebAssembly 실행이 자연스러움            |
 | 패키징·배포   | **electron-builder**         | 자동 업데이트(`electron-updater`), 코드 사이닝, 다년간 표준. electron-forge보다 멀티 OS 빌드 매트릭스가 명확               |
 | 패키지 매니저 | **npm**                      | Node 기본 포함, 추가 설치 불필요. single package 구조라 pnpm 워크스페이스 이점 미미. (corepack 권한 이슈로 pnpm 대신 채택) |
 
@@ -26,11 +26,11 @@
 
 ## HWP 코어
 
-| 항목      | 선택                           | 이유                                                         |
-| --------- | ------------------------------ | ------------------------------------------------------------ |
-| 메인 통합 | **`@rhwp/editor`** iframe/내장 | 사용자 결정: 하이브리드. 빠른 MVP. 에디터 영역 통째로 마운트 |
-| 보조 통합 | **`@rhwp/core`**               | 변환·렌더·tool API. 사이드바·툴바 자체 구현 시 호출          |
-| 통신      | postMessage / 직접 import      | rhwp 패키지 노출 API 형태에 따라 선택 (Phase 1 R&D)          |
+| 항목     | 선택                                 | 이유                                                                                                                                 |
+| -------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 코어     | **`@rhwp/core`** (직접 사용)         | Rust+WASM. HwpDocument로 IR 직접 조작. 라이브러리 v0.7.x 활발 개발 중                                                                |
+| Viewer   | **자체 Studio (`StudioViewer.tsx`)** | Phase 1-D chunk 6에서 `@rhwp/editor` iframe 폐기. 멀티 페이지 lazy SVG, 키보드/마우스/IME, dirty 추적 모두 자체 구현 (오프라인 동작) |
+| 캐노니컬 | **HWP (CFB)**                        | `@rhwp/core` v0.7.8 HWPX 라운드트립이 이미지 IR 깨뜨림 (KNOWN_ISSUES L-001). 라이브러리 fix 시 HWPX로 복귀                           |
 
 ## 저장소
 
@@ -67,7 +67,7 @@
 
 ## 채택하지 않은 것 (이유 메모)
 
-- **Tauri**: Rust 기반에 번들 가벼움이 매력적이나 `@rhwp/editor`(npm 패키지)와의 통합 비용·React 생태계 활용도 측면에서 Electron이 우위. 다국어·알림 등 OS 통합도 Electron 쪽이 더 검증됨
+- **Tauri**: Rust 기반에 번들 가벼움이 매력적이나 React 생태계 활용도·multi-platform 패키징 검증성 측면에서 Electron이 우위. 다국어·알림 등 OS 통합도 Electron 쪽이 더 검증됨. (HOP은 Tauri 채택 — 비교 검토는 STUDIO_MIGRATION.md 참고)
 - **Next.js**: 데스크탑 앱에 SSR 불필요. Vite로 충분
 - **Redux Toolkit**: Zustand로 상태 규모 충분
 - **자체 프록시 서버**: BYOK로 결정. 트래픽·과금 부담 회피

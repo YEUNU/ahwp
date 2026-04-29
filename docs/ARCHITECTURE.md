@@ -5,7 +5,7 @@
 ahwp는 Electron 표준 2-프로세스 모델을 따릅니다.
 
 - **Main Process** (Node.js): 파일 I/O, AI provider 호출, SQLite, 키체인 접근, rhwp 코어 호출
-- **Renderer Process** (Chromium): React UI, `@rhwp/editor` 호스팅, 채팅 UI
+- **Renderer Process** (Chromium): React UI, `@rhwp/core` 직접 사용 (자체 viewer/editor — Studio), 채팅 UI
 
 렌더러는 노드 통합 없이 격리되며, `preload.ts`의 `contextBridge`로 노출된 좁은 API만 사용합니다.
 
@@ -13,8 +13,8 @@ ahwp는 Electron 표준 2-프로세스 모델을 따릅니다.
 ┌────────────────────────────────────────────────────────────┐
 │                      Renderer (React)                      │
 │  ┌──────────┐ ┌──────────────────┐ ┌─────────────────────┐ │
-│  │ FileList │ │  rhwp/editor     │ │  Chat (History/     │ │
-│  │ (left)   │ │  (center)        │ │  Chat tabs, right)  │ │
+│  │ FileList │ │ Studio (rhwp/    │ │  Chat (History/     │ │
+│  │ (left)   │ │ core viewer)     │ │  Chat tabs, right)  │ │
 │  └──────────┘ └──────────────────┘ └─────────────────────┘ │
 │         ▲              ▲                       ▲           │
 │         └──────────────┼───────────────────────┘           │
@@ -53,14 +53,14 @@ ahwp는 Electron 표준 2-프로세스 모델을 따릅니다.
 
 ### Renderer Process
 
-| 모듈                                 | 역할                                      |
-| ------------------------------------ | ----------------------------------------- |
-| `src/app/AppShell.tsx`               | 3-Pane 레이아웃, 리사이저블               |
-| `src/features/files/`                | 파일 리스트, 최근 항목, drag-and-drop     |
-| `src/features/editor/RhwpEditor.tsx` | `@rhwp/editor` 마운트, 변경 이벤트 브릿지 |
-| `src/features/chat/ChatPanel.tsx`    | 탭(History/Chat), 메시지 스트림           |
-| `src/features/chat/Modes.tsx`        | Manual/Agent 토글, diff 뷰어              |
-| `src/lib/ipc.ts`                     | `window.api.*` 타입 안전 래퍼             |
+| 모듈                                   | 역할                                                                             |
+| -------------------------------------- | -------------------------------------------------------------------------------- |
+| `src/app/AppShell.tsx`                 | 3-Pane 레이아웃, 리사이저블                                                      |
+| `src/features/files/`                  | 파일 리스트, 최근 항목, drag-and-drop                                            |
+| `src/features/studio/StudioViewer.tsx` | `@rhwp/core` 직접 마운트, 멀티 페이지 lazy render, 키보드/마우스/IME, dirty 추적 |
+| `src/features/chat/ChatPanel.tsx`      | 탭(History/Chat), 메시지 스트림                                                  |
+| `src/features/chat/Modes.tsx`          | Manual/Agent 토글, diff 뷰어                                                     |
+| `src/lib/ipc.ts`                       | `window.api.*` 타입 안전 래퍼                                                    |
 
 ## IPC 채널 설계
 

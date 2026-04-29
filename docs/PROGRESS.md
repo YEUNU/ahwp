@@ -4,16 +4,16 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 ## 현재 스냅샷
 
-| 항목     | 상태                                                                                                                                                                                         |
-| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Phase    | **1-D 진행 중** (Studio 마이그레이션 — `@rhwp/editor` iframe → `@rhwp/core` 직접)                                                                                                            |
-| 빌드     | ✅ `npm run dev` · `npx vite build`                                                                                                                                                          |
-| 타입     | ✅ `npm run typecheck`                                                                                                                                                                       |
-| 린트     | ✅ `npm run lint` (warning 2건 — shadcn 표준 패턴, react-refresh HMR 안내)                                                                                                                   |
-| 포맷     | ✅ `npm run format:check`                                                                                                                                                                    |
-| 테스트   | ✅ 2/2 (`App.test.tsx`)                                                                                                                                                                      |
-| Electron | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                  |
-| 의존성   | runtime: `@rhwp/core` · `@rhwp/editor` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` |
+| 항목     | 상태                                                                                                                                                                                                          |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Phase    | **1-D 진행 중** (Studio 마이그레이션 청크 1~4 + 6 완료 — 청크 5 툴바 남음)                                                                                                                                    |
+| 빌드     | ✅ `npm run dev` · `npx vite build`                                                                                                                                                                           |
+| 타입     | ✅ `npm run typecheck`                                                                                                                                                                                        |
+| 린트     | ✅ `npm run lint` (warning 2건 — shadcn 표준 패턴, react-refresh HMR 안내)                                                                                                                                    |
+| 포맷     | ✅ `npm run format:check`                                                                                                                                                                                     |
+| 테스트   | ✅ 2/2 (`App.test.tsx`)                                                                                                                                                                                       |
+| Electron | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                                   |
+| 의존성   | runtime: `@rhwp/core` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` (chunk 6에서 `@rhwp/editor` 제거) |
 
 ## 일지
 
@@ -826,6 +826,39 @@ L-003 KNOWN_ISSUES에서 **Resolved**로 이동.
 ✓ npm run typecheck
 ✓ npm test             (단위 2/2)
 ✓ npm run e2e          (26/26 — 신규 input 3 + 기존 23)
+✓ npm run lint         (0 errors, 0 warnings)
+✓ npm run format:check
+```
+
+### 2026-04-30 — Phase 1-D 청크 6 — legacy iframe 완전 제거
+
+**의도**
+
+청크 4-A/B/C로 자체 viewer가 키보드/마우스/IME/시각 커서까지 커버. iframe RhwpViewer는 default flip 후 사실상 사용 안 됨. legacy 코드/의존성/CSP 정리.
+
+**변경**
+
+- `src/features/editor/RhwpViewer.tsx` 삭제 + 빈 dir 제거
+- `src/features/studio/types.ts` 신설 — `ViewerHandle` (이전 `RhwpViewerHandle`). legacy 컴포넌트와 결합 끊기
+- `StudioViewer` 가 `ViewerHandle`을 forwardRef
+- `AppShell`:
+  - `readStudioFlag` / `useStudio` / `ViewerComponent` 토글 제거 — `StudioViewer` 직접 사용
+  - `viewerRef` 타입 `ViewerHandle`로
+  - `useMemo` import 제거
+- `index.html` CSP에서 `frame-src https://edwardkim.github.io` 제거 — 외부 의존 0
+- `npm uninstall @rhwp/editor`
+- 3개 e2e spec의 `localStorage.setItem('ahwp:use-studio', '1')` 제거 (의미 없음)
+
+**KNOWN_ISSUES**
+
+L-002 → **Resolved**로 이동. 이제 README의 "local-first" 약속 진짜로 충족 (오프라인 OK, 외부 호스팅 의존 0).
+
+**검증 결과**
+
+```
+✓ npm run typecheck
+✓ npm test             (단위 2/2)
+✓ npm run e2e          (26/26 — 회귀 없음)
 ✓ npm run lint         (0 errors, 0 warnings)
 ✓ npm run format:check
 ```

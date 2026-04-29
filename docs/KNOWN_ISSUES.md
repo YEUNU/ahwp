@@ -34,23 +34,27 @@
 
 ---
 
-## L-002 — `@rhwp/editor` v0.7.8 외부 iframe 의존 (기본 비활성화 + 청크 6에서 완전 제거)
+## ✅ L-002 (Resolved) — `@rhwp/editor` 외부 iframe 의존
 
-**상태**: 2026-04-30 — **기본 비활성화**로 전환. localStorage `ahwp:use-studio` 기본값이 studio 모드. iframe 모드는 explicit `=0`으로만 유지 (회귀 비교용)
+**상태**: 2026-04-30 — chunk 6에서 완전 제거. iframe·CSP `frame-src`·`@rhwp/editor` 패키지·localStorage flag 모두 삭제
 
-**증상**: `@rhwp/editor` v0.7.8은 `https://edwardkim.github.io/rhwp/`를 iframe으로 임베드. 첫 로드 시 인터넷 필요. 라이브러리 자체에 quirks 누적:
+**해결 방식**:
 
-- `_request` postMessage 10초 하드코딩 타임아웃
-- `loadFile`이 iframe 측 작업 완료 후에도 우리 promise까지 응답 미도달
-- `index.d.ts`가 `RhwpEditor` 클래스를 export 선언하지만 실제 .js는 `createEditor`만 export
-- `loadFile`이 `Array.from(new Uint8Array(...))`로 큰 바이너리를 number array 변환
-- **단축키 충돌** — iframe이 ⌘S/⌘O 등을 자체 처리해 우리 메뉴 IPC를 가로챔. cross-origin이라 `showSaveFilePicker` 호출 시 `SecurityError: Cross origin sub frames aren't allowed to show a file picker` 발생, 폴백으로 download 다이얼로그가 떠 사용자에게 "다른 이름으로 저장이 기본"으로 보임 — 이게 default flip의 직접적 트리거
+- `src/features/editor/RhwpViewer.tsx` 삭제 + 빈 디렉토리 제거
+- `src/features/studio/types.ts`에 `ViewerHandle` 타입 신설 (legacy 컴포넌트와의 결합 끊기)
+- `AppShell`이 `StudioViewer` 직접 사용. `readStudioFlag` / `useStudio` / `ViewerComponent` 토글 제거
+- `index.html` CSP에서 `frame-src https://edwardkim.github.io` 제거 — 외부 의존 0
+- `npm uninstall @rhwp/editor`
+- e2e의 `localStorage.setItem('ahwp:use-studio', '1')` 제거 (의미 없어짐)
 
-**우회 (현재)**: `src/features/studio/StudioViewer.tsx`가 default. iframe RhwpViewer 사용은 explicit `localStorage.setItem('ahwp:use-studio', '0')`로만
+**얻은 것**:
 
-**해결 조건**: 청크 6에서 RhwpViewer + `@rhwp/editor` 패키지 완전 제거 + CSP `frame-src` 항목 삭제
+- 인터넷 필요 없음 (오프라인 OK) — README "local-first" 약속 충족
+- 단축키 충돌 해결 (이전 SecurityError 사라짐)
+- 라이브러리 quirks 누적 종결 (10초 timeout, loadFile 응답 미도달, d.ts 거짓말 등 모두 무관)
+- 외부 호스팅 가용성 의존 종결
 
-**관련 파일**: `src/features/editor/RhwpViewer.tsx` (deprecated, 청크 6 삭제 예정), `src/features/studio/StudioViewer.tsx` (default), `src/app/AppShell.tsx::readStudioFlag`, `index.html` (CSP), `docs/STUDIO_MIGRATION.md`
+검증: e2e 26/26, 회귀 없음.
 
 ---
 
