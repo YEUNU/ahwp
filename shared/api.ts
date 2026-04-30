@@ -87,9 +87,46 @@ export interface ClipboardApi {
   writeText: (text: string) => Promise<void>;
 }
 
+/**
+ * One immediate child of a folder. Returned by `folder:list`. Stat errors
+ * (permission denied, dangling symlink) are silently dropped — the user
+ * shouldn't see broken entries in the tree.
+ */
+export interface FolderEntry {
+  name: string;
+  path: string;
+  isDirectory: boolean;
+}
+
+/**
+ * Push event fired when chokidar notices a change inside the watched
+ * root. The renderer uses `parent` to decide which already-expanded
+ * folder to refresh; full-tree refetch is unnecessary.
+ */
+export interface FolderChangeEvent {
+  type: 'add' | 'addDir' | 'unlink' | 'unlinkDir' | 'change';
+  path: string;
+  parent: string;
+}
+
+export interface FolderApi {
+  /** Native dialog → returns absolute path or null on cancel. */
+  pick: () => Promise<string | null>;
+  /** List immediate children of `path`, sorted: folders first, alphabetical. */
+  list: (path: string) => Promise<FolderEntry[]>;
+  /** Start chokidar watcher on a root. Replaces any existing watcher. */
+  watch: (rootPath: string) => Promise<void>;
+  /** Stop the active watcher. No-op if none. */
+  unwatch: () => Promise<void>;
+  /** Subscribe to change events from the watcher. Returns an unsubscriber. */
+  onChange: (handler: (event: FolderChangeEvent) => void) => () => void;
+}
+
 export interface SessionState {
+  /** Path of the folder the user has open in the left panel. */
+  lastFolderPath?: string | null;
   /** Path of the document active when the renderer last persisted state. */
-  lastActivePath: string | null;
+  lastActivePath?: string | null;
 }
 
 export interface SessionApi {
@@ -103,6 +140,7 @@ export interface AhwpApi {
   file: FileApi;
   session: SessionApi;
   clipboard: ClipboardApi;
+  folder: FolderApi;
 }
 
 declare global {

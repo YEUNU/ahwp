@@ -31,6 +31,13 @@ describe('App', () => {
         readText: vi.fn().mockResolvedValue(''),
         writeText: vi.fn().mockResolvedValue(undefined),
       },
+      folder: {
+        pick: vi.fn().mockResolvedValue(null),
+        list: vi.fn().mockResolvedValue([]),
+        watch: vi.fn().mockResolvedValue(undefined),
+        unwatch: vi.fn().mockResolvedValue(undefined),
+        onChange: vi.fn().mockReturnValue(() => {}),
+      },
     };
     Object.defineProperty(window, 'api', {
       value: mockApi,

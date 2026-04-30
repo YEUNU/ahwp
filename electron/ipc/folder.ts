@@ -1,0 +1,136 @@
+import {
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  type IpcMainInvokeEvent,
+} from 'electron';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import chokidar, { type FSWatcher } from 'chokidar';
+import type { FolderChangeEvent, FolderEntry } from '../../shared/api';
+
+/**
+ * Folder tree IPC.
+ *
+ * - `folder:pick` shows the native folder dialog
+ * - `folder:list` returns immediate children only (lazy expand model in
+ *   the renderer)
+ * - `folder:watch` starts a chokidar watcher rooted at the given path
+ *   and pushes events to the calling window via `folder:changed`
+ *
+ * Single active watcher per process. Picking a new root or calling
+ * `folder:unwatch` tears down the previous one.
+ */
+
+let activeWatcher: FSWatcher | null = null;
+let watcherWindow: BrowserWindow | null = null;
+
+async function listChildren(folderPath: string): Promise<FolderEntry[]> {
+  let entries: import('node:fs').Dirent[];
+  try {
+    entries = await fs.readdir(folderPath, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const out: FolderEntry[] = [];
+  for (const e of entries) {
+    if (e.name.startsWith('.')) continue; // skip dotfiles
+    const full = path.join(folderPath, e.name);
+    let isDirectory: boolean;
+    if (e.isSymbolicLink()) {
+      // Resolve symlinks so the tree shows folder/file behavior correctly,
+      // but swallow stat errors (dangling links) — drop the entry.
+      try {
+        const stat = await fs.stat(full);
+        isDirectory = stat.isDirectory();
+      } catch {
+        continue;
+      }
+    } else {
+      isDirectory = e.isDirectory();
+    }
+    out.push({ name: e.name, path: full, isDirectory });
+  }
+  // Folders first, then files, both alphabetically (locale-aware Korean).
+  out.sort((a, b) => {
+    if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+    return a.name.localeCompare(b.name, 'ko');
+  });
+  return out;
+}
+
+function teardownWatcher(): Promise<void> {
+  const w = activeWatcher;
+  activeWatcher = null;
+  watcherWindow = null;
+  return w ? w.close() : Promise.resolve();
+}
+
+export function registerFolderIpc(): void {
+  ipcMain.handle('folder:pick', async (event): Promise<string | null> => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showOpenDialog(
+      window ?? new BrowserWindow({ show: false }),
+      {
+        title: '폴더 열기',
+        properties: ['openDirectory'],
+      },
+    );
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
+  });
+
+  ipcMain.handle(
+    'folder:list',
+    async (_event, folderPath: string): Promise<FolderEntry[]> => {
+      if (typeof folderPath !== 'string' || !folderPath) return [];
+      return listChildren(folderPath);
+    },
+  );
+
+  ipcMain.handle(
+    'folder:watch',
+    async (event: IpcMainInvokeEvent, rootPath: string): Promise<void> => {
+      if (typeof rootPath !== 'string' || !rootPath) return;
+      await teardownWatcher();
+      const window = BrowserWindow.fromWebContents(event.sender);
+      if (!window) return;
+      watcherWindow = window;
+      // Watch the whole tree but lightly: ignore dotfiles, don't fire
+      // initial scan events (would flood the renderer for big trees),
+      // tighten depth to the OS limit chokidar picks.
+      const w = chokidar.watch(rootPath, {
+        ignored: /(^|[\\/])\../,
+        ignoreInitial: true,
+        persistent: true,
+        awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 },
+      });
+      const emit = (
+        type: FolderChangeEvent['type'],
+        changedPath: string,
+      ): void => {
+        if (!watcherWindow || watcherWindow.isDestroyed()) return;
+        const parent = path.dirname(changedPath);
+        const evt: FolderChangeEvent = { type, path: changedPath, parent };
+        watcherWindow.webContents.send('folder:changed', evt);
+      };
+      w.on('add', (p) => emit('add', p));
+      w.on('addDir', (p) => emit('addDir', p));
+      w.on('unlink', (p) => emit('unlink', p));
+      w.on('unlinkDir', (p) => emit('unlinkDir', p));
+      w.on('change', (p) => emit('change', p));
+      activeWatcher = w;
+    },
+  );
+
+  ipcMain.handle('folder:unwatch', async (): Promise<void> => {
+    await teardownWatcher();
+  });
+}
+
+/**
+ * Called from main during shutdown to release native watchers.
+ */
+export async function shutdownFolderIpc(): Promise<void> {
+  await teardownWatcher();
+}

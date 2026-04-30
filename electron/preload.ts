@@ -4,7 +4,12 @@ import {
   webUtils,
   type IpcRendererEvent,
 } from 'electron';
-import type { AhwpApi, MenuAction, PingRequest } from '../shared/api';
+import type {
+  AhwpApi,
+  FolderChangeEvent,
+  MenuAction,
+  PingRequest,
+} from '../shared/api';
 
 const api: AhwpApi = {
   ping: (req: PingRequest) => ipcRenderer.invoke('ipc:ping', req),
@@ -33,6 +38,20 @@ const api: AhwpApi = {
   clipboard: {
     readText: () => ipcRenderer.invoke('clipboard:read-text'),
     writeText: (text) => ipcRenderer.invoke('clipboard:write-text', text),
+  },
+  folder: {
+    pick: () => ipcRenderer.invoke('folder:pick'),
+    list: (path) => ipcRenderer.invoke('folder:list', path),
+    watch: (rootPath) => ipcRenderer.invoke('folder:watch', rootPath),
+    unwatch: () => ipcRenderer.invoke('folder:unwatch'),
+    onChange: (handler) => {
+      const listener = (_event: IpcRendererEvent, event: FolderChangeEvent) =>
+        handler(event);
+      ipcRenderer.on('folder:changed', listener);
+      return () => {
+        ipcRenderer.off('folder:changed', listener);
+      };
+    },
   },
 };
 

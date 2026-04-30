@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { PingRequest, PingResponse } from '../shared/api';
 import { registerClipboardIpc } from './ipc/clipboard';
 import { registerFileIpc } from './ipc/file';
+import { registerFolderIpc, shutdownFolderIpc } from './ipc/folder';
 import { registerSessionIpc } from './ipc/session';
 import { buildAppMenu } from './menu';
 
@@ -49,6 +50,7 @@ function registerIpcHandlers(): void {
   registerFileIpc();
   registerSessionIpc();
   registerClipboardIpc();
+  registerFolderIpc();
 }
 
 void app.whenReady().then(() => {
@@ -63,4 +65,14 @@ void app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('will-quit', (e) => {
+  // Release the chokidar watcher before exit. This is async so we
+  // gate the quit with `e.preventDefault()` and re-call `app.quit()`
+  // once teardown finishes.
+  e.preventDefault();
+  void shutdownFolderIpc().finally(() => {
+    app.exit(0);
+  });
 });
