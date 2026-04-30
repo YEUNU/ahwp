@@ -270,6 +270,16 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       >
     >({});
     const findInputRef = useRef<HTMLInputElement>(null);
+    /**
+     * Cached lowercased paragraph text for Find. Built lazily on the
+     * first non-empty search; keyed by `${sec}:${para}` so multi-section
+     * docs don't collide. `runFindSearch` reuses this on subsequent
+     * keystrokes — without the cache, every keystroke re-issued
+     * getTextRange across all paragraphs (4ms × N para per keystroke).
+     * Invalidated by `refreshAfterMutation` since edits change paragraph
+     * text and break the offsets we'd return as match positions.
+     */
+    const findTextCacheRef = useRef<Map<string, string> | null>(null);
     // Active formatting state on the caret's paragraph — drives toolbar
     // pressed-state. Recomputed after every mutation / caret move.
     const [activeFormat, setActiveFormat] = useState<{
@@ -310,6 +320,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       historyRef.current = { entries: [], index: -1 };
       setCanUndo(false);
       setCanRedo(false);
+      findTextCacheRef.current = null;
 
       (async () => {
         try {
@@ -852,6 +863,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           }
         }
         cacheRef.current.clear();
+        // Mutations change paragraph text → drop the find text cache so
+        // subsequent searches re-extract from the doc.
+        findTextCacheRef.current = null;
         pageRefsRef.current.forEach((el, idx) => {
           if (el?.firstElementChild?.tagName.toLowerCase() === 'svg') {
             el.innerHTML = '';
@@ -1143,6 +1157,26 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         setFindHighlightsByPage({});
         return;
       }
+      // Build the paragraph text cache on first run after the doc loads
+      // (or after a mutation cleared it). Entries are stored already-
+      // lowercased so the inner loop only needs indexOf on a primitive.
+      if (!findTextCacheRef.current) {
+        const cache = new Map<string, string>();
+        try {
+          const sectionCount = doc.getSectionCount();
+          for (let s = 0; s < sectionCount; s++) {
+            const paraCount = doc.getParagraphCount(s);
+            for (let p = 0; p < paraCount; p++) {
+              const text = doc.getTextRange(s, p, 0, 1_000_000);
+              if (!text) continue;
+              cache.set(`${s}:${p}`, text.toLowerCase());
+            }
+          }
+        } catch (err) {
+          console.warn('[studio] find cache build failed:', err);
+        }
+        findTextCacheRef.current = cache;
+      }
       const lc = query.toLowerCase();
       const matches: {
         sectionIndex: number;
@@ -1150,30 +1184,23 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         offset: number;
         length: number;
       }[] = [];
-      try {
-        const sectionCount = doc.getSectionCount();
-        for (let s = 0; s < sectionCount; s++) {
-          const paraCount = doc.getParagraphCount(s);
-          for (let p = 0; p < paraCount; p++) {
-            const text = doc.getTextRange(s, p, 0, 1_000_000);
-            if (!text) continue;
-            const haystack = text.toLowerCase();
-            let from = 0;
-            while (from <= haystack.length - lc.length) {
-              const idx = haystack.indexOf(lc, from);
-              if (idx === -1) break;
-              matches.push({
-                sectionIndex: s,
-                paragraphIndex: p,
-                offset: idx,
-                length: query.length,
-              });
-              from = idx + Math.max(1, lc.length);
-            }
-          }
+      const cache = findTextCacheRef.current;
+      for (const [key, haystack] of cache) {
+        const colon = key.indexOf(':');
+        const s = Number(key.slice(0, colon));
+        const p = Number(key.slice(colon + 1));
+        let from = 0;
+        while (from <= haystack.length - lc.length) {
+          const idx = haystack.indexOf(lc, from);
+          if (idx === -1) break;
+          matches.push({
+            sectionIndex: s,
+            paragraphIndex: p,
+            offset: idx,
+            length: query.length,
+          });
+          from = idx + Math.max(1, lc.length);
         }
-      } catch (err) {
-        console.warn('[studio] find iteration failed:', err);
       }
       setFindMatches(matches);
       setFindIndex(0);
