@@ -1574,6 +1574,29 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           return;
         }
         if (e.key === 'Home') {
+          // Cmd/Ctrl + Home → jump to start of document (chunk 12).
+          if (e.metaKey || e.ctrlKey) {
+            const nextCaret = {
+              sectionIndex: 0,
+              paragraphIndex: 0,
+              charOffset: 0,
+            };
+            caretRef.current = nextCaret;
+            if (e.shiftKey) {
+              const sel = sel0 ?? { anchor: c, focus: c };
+              const next = { ...sel, focus: nextCaret };
+              setSelection(next);
+              refreshSelectionRects(next);
+            } else if (sel0) {
+              clearSelection();
+            }
+            refreshCursorRect();
+            refreshActiveFormat();
+            scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+            e.preventDefault();
+            return;
+          }
+          // Plain Home → start of current line/paragraph.
           const nextCaret = { ...c, charOffset: 0 };
           caretRef.current = nextCaret;
           if (e.shiftKey) {
@@ -1585,6 +1608,78 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             clearSelection();
           }
           refreshCursorRect();
+          e.preventDefault();
+          return;
+        }
+        if (e.key === 'End') {
+          // Cmd/Ctrl + End → jump to end of document.
+          if (e.metaKey || e.ctrlKey) {
+            try {
+              const lastSec = doc.getSectionCount() - 1;
+              const lastPara = doc.getParagraphCount(lastSec) - 1;
+              const lastOffset = doc.getParagraphLength(lastSec, lastPara);
+              const nextCaret = {
+                sectionIndex: lastSec,
+                paragraphIndex: lastPara,
+                charOffset: lastOffset,
+              };
+              caretRef.current = nextCaret;
+              if (e.shiftKey) {
+                const sel = sel0 ?? { anchor: c, focus: c };
+                const next = { ...sel, focus: nextCaret };
+                setSelection(next);
+                refreshSelectionRects(next);
+              } else if (sel0) {
+                clearSelection();
+              }
+              refreshCursorRect();
+              refreshActiveFormat();
+              const scroll = scrollRef.current;
+              if (scroll) {
+                scroll.scrollTo({
+                  top: scroll.scrollHeight,
+                  behavior: 'smooth',
+                });
+              }
+            } catch (err) {
+              console.warn('[studio] cmd+end nav failed:', err);
+            }
+            e.preventDefault();
+            return;
+          }
+          // Plain End → end of current paragraph.
+          try {
+            const len = doc.getParagraphLength(
+              c.sectionIndex,
+              c.paragraphIndex,
+            );
+            const nextCaret = { ...c, charOffset: len };
+            caretRef.current = nextCaret;
+            if (e.shiftKey) {
+              const sel = sel0 ?? { anchor: c, focus: c };
+              const next = { ...sel, focus: nextCaret };
+              setSelection(next);
+              refreshSelectionRects(next);
+            } else if (sel0) {
+              clearSelection();
+            }
+            refreshCursorRect();
+          } catch {
+            /* keep caret */
+          }
+          e.preventDefault();
+          return;
+        }
+        if (e.key === 'PageUp' || e.key === 'PageDown') {
+          // Page Up/Down — scroll the viewer by one viewport height. We
+          // don't try to move the caret in lockstep (text-flow heuristics
+          // would be needed); the user can click to reposition after.
+          const scroll = scrollRef.current;
+          if (scroll) {
+            const delta =
+              e.key === 'PageDown' ? scroll.clientHeight : -scroll.clientHeight;
+            scroll.scrollBy({ top: delta, behavior: 'smooth' });
+          }
           e.preventDefault();
           return;
         }
@@ -1723,6 +1818,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       [
         refreshAfterMutation,
         refreshCursorRect,
+        refreshActiveFormat,
         toggleCharFormat,
         clearSelection,
         refreshSelectionRects,
@@ -2037,8 +2133,12 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           refreshActiveFormat();
         },
         getSelection: () => {
-          if (!selection) return null;
-          const r = sortRange(selection.anchor, selection.focus);
+          // Read from the ref so multiple synchronous setSelection calls
+          // (e.g. e2e loops) see the latest value without waiting for
+          // React to flush state updates.
+          const sel = selectionRef.current;
+          if (!sel) return null;
+          const r = sortRange(sel.anchor, sel.focus);
           return r.empty ? null : r;
         },
         clearSelection: (): void => {
