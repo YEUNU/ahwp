@@ -1083,15 +1083,31 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               return;
             }
           }
-          // No selection — fall back to whole-paragraph at caret.
+          // No selection — fall back to whole-paragraph at caret. When
+          // the caret is in a cell, route via applyCharFormatInCell so
+          // bold/italic/underline land on the cell text (cell selection
+          // model is a v3).
           const c = caretRef.current;
-          doc.applyCharFormat(
-            c.sectionIndex,
-            c.paragraphIndex,
-            0,
-            PARAGRAPH_END_SENTINEL,
-            propsJson,
-          );
+          if (c.cell) {
+            doc.applyCharFormatInCell(
+              c.sectionIndex,
+              c.cell.parentParaIndex,
+              c.cell.controlIndex,
+              c.cell.cellIndex,
+              c.cell.cellParaIndex,
+              0,
+              PARAGRAPH_END_SENTINEL,
+              propsJson,
+            );
+          } else {
+            doc.applyCharFormat(
+              c.sectionIndex,
+              c.paragraphIndex,
+              0,
+              PARAGRAPH_END_SENTINEL,
+              propsJson,
+            );
+          }
           refreshAfterMutation({ syncCaret: false });
         } catch (err) {
           console.warn('[studio] applyCharFormat failed:', err);
@@ -1188,7 +1204,18 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             }
           } else {
             const c = caretRef.current;
-            doc.applyParaFormat(c.sectionIndex, c.paragraphIndex, propsJson);
+            if (c.cell) {
+              doc.applyParaFormatInCell(
+                c.sectionIndex,
+                c.cell.parentParaIndex,
+                c.cell.controlIndex,
+                c.cell.cellIndex,
+                c.cell.cellParaIndex,
+                propsJson,
+              );
+            } else {
+              doc.applyParaFormat(c.sectionIndex, c.paragraphIndex, propsJson);
+            }
           }
           refreshAfterMutation({ syncCaret: false });
         } catch (err) {
@@ -1246,13 +1273,26 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             }
           }
           const c = caretRef.current;
-          doc.applyCharFormat(
-            c.sectionIndex,
-            c.paragraphIndex,
-            0,
-            PARAGRAPH_END_SENTINEL,
-            propsJson,
-          );
+          if (c.cell) {
+            doc.applyCharFormatInCell(
+              c.sectionIndex,
+              c.cell.parentParaIndex,
+              c.cell.controlIndex,
+              c.cell.cellIndex,
+              c.cell.cellParaIndex,
+              0,
+              PARAGRAPH_END_SENTINEL,
+              propsJson,
+            );
+          } else {
+            doc.applyCharFormat(
+              c.sectionIndex,
+              c.paragraphIndex,
+              0,
+              PARAGRAPH_END_SENTINEL,
+              propsJson,
+            );
+          }
           refreshAfterMutation({ syncCaret: false });
         } catch (err) {
           console.warn('[studio] applyCharProps failed:', err);
@@ -2162,6 +2202,41 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             e.preventDefault();
             return;
           }
+        }
+
+        // Tab / Shift+Tab — when the caret is inside a table cell, jump
+        // to the next / previous cell. Outside a cell we let the default
+        // (focus traversal) happen.
+        if (
+          e.key === 'Tab' &&
+          c.cell &&
+          !e.metaKey &&
+          !e.ctrlKey &&
+          !e.altKey
+        ) {
+          const dir = e.shiftKey ? -1 : 1;
+          try {
+            const dims = JSON.parse(
+              doc.getTableDimensions(
+                c.sectionIndex,
+                c.cell.parentParaIndex,
+                c.cell.controlIndex,
+              ),
+            ) as { rowCount: number; colCount: number; cellCount: number };
+            const total = dims.cellCount;
+            const next = (((c.cell.cellIndex + dir) % total) + total) % total;
+            const nextCaret = {
+              ...c,
+              charOffset: 0,
+              cell: { ...c.cell, cellIndex: next, cellParaIndex: 0 },
+            };
+            caretRef.current = nextCaret;
+            refreshCursorRect();
+          } catch {
+            /* table not available — fall through */
+          }
+          e.preventDefault();
+          return;
         }
 
         // Don't intercept other browser shortcuts (Ctrl+S, Cmd+R, etc.).

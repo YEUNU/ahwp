@@ -69,39 +69,43 @@ ahwp는 Electron 표준 2-프로세스 모델을 따릅니다.
 
 명명 규칙: `domain:action` (kebab-case 안에 콜론 구분)
 
-| Channel                  | 방향        | 페이로드                                 | 응답                                               |
-| ------------------------ | ----------- | ---------------------------------------- | -------------------------------------------------- |
-| `file:new`               | R→M         | `void`                                   | `{ path }` (임시 blank `.hwp` 파일 경로)           |
-| `file:open`              | R→M         | `void`                                   | `{ path }` 또는 `null`                             |
-| `file:open-by-path`      | R→M         | `{ path }`                               | `{ path }` 또는 `null`                             |
-| `file:read`              | R→M         | `{ path }`                               | `ArrayBuffer`                                      |
-| `file:save`              | R→M         | `{ path, bytes }`                        | `{ path }` (.hwpx → .hwp 자동 라우팅)              |
-| `file:save-as`           | R→M         | `{ bytes, defaultPath? }`                | `{ path }` 또는 `null`                             |
-| `file:list-recent`       | R→M         | `void`                                   | `RecentFile[]` (legacy, 새 UI 미사용)              |
-| `folder:pick`            | R→M         | `void`                                   | `string` 또는 `null`                               |
-| `folder:list`            | R→M         | `path`                                   | `FolderEntry[]` (즉시 자식, 폴더 우선 한국어 정렬) |
-| `folder:watch`           | R→M         | `rootPath`                               | `void` (chokidar watcher 시작)                     |
-| `folder:unwatch`         | R→M         | `void`                                   | `void`                                             |
-| `folder:changed`         | M→R (event) | `{ type, path, parent }`                 | watcher 이벤트                                     |
-| `folder:create-file`     | R→M         | `parentPath, name`                       | `string` (생성된 절대 경로)                        |
-| `folder:create-folder`   | R→M         | `parentPath, name`                       | `string`                                           |
-| `folder:rename`          | R→M         | `oldPath, newPath`                       | `void` (이동에도 사용)                             |
-| `folder:trash`           | R→M         | `path`                                   | `void` (`shell.trashItem`)                         |
-| `folder:reveal`          | R→M         | `path`                                   | `void` (`shell.showItemInFolder`)                  |
-| `clipboard:read-text`    | R→M         | `void`                                   | `string`                                           |
-| `clipboard:write-text`   | R→M         | `text`                                   | `void`                                             |
-| `session:get`            | R→M         | `void`                                   | `SessionState`                                     |
-| `session:set`            | R→M         | `SessionState`                           | `void`                                             |
-| `menu:action`            | M→R (event) | `MenuAction`                             | (`file:new` / `edit:undo` / `format:bold` 등)      |
-| `ipc:ping`               | R→M         | `{ message }`                            | `{ pong, at, platform, electron }` (헬스체크)      |
-| `ai:chat-stream`         | R→M (event) | `{ provider, messages, mode }` (Phase 2) | 스트림 이벤트 (`token`, `tool-call`, `done`)       |
-| `ai:apply-diff`          | R→M         | `{ docId, patch }` (Phase 2)             | `{ ok, newRevision }`                              |
-| `settings:set-secret`    | R→M         | `{ provider, key }` (Phase 2)            | `{ ok }`                                           |
-| `settings:get-providers` | R→M         | `void` (Phase 2)                         | `ProviderConfig[]`                                 |
-| `history:list`           | R→M         | `{ filePath }` (Phase 2)                 | `Conversation[]`                                   |
-| `history:append`         | R→M         | `{ filePath, message }` (Phase 2)        | `{ ok }`                                           |
+| Channel                  | 방향        | 페이로드                                              | 응답                                                                                          |
+| ------------------------ | ----------- | ----------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `file:new`               | R→M         | `void`                                                | `{ path }` (임시 blank `.hwp` 파일 경로)                                                      |
+| `file:open`              | R→M         | `void`                                                | `{ path }` 또는 `null`                                                                        |
+| `file:open-by-path`      | R→M         | `{ path }`                                            | `{ path }` 또는 `null`                                                                        |
+| `file:read`              | R→M         | `{ path }`                                            | `ArrayBuffer`                                                                                 |
+| `file:save`              | R→M         | `{ path, bytes }`                                     | `{ path }` (.hwpx → .hwp 자동 라우팅)                                                         |
+| `file:save-as`           | R→M         | `{ bytes, defaultPath? }`                             | `{ path }` 또는 `null`                                                                        |
+| `file:list-recent`       | R→M         | `void`                                                | `RecentFile[]` (legacy, 새 UI 미사용)                                                         |
+| `folder:pick`            | R→M         | `void`                                                | `string` 또는 `null`                                                                          |
+| `folder:list`            | R→M         | `path`                                                | `FolderEntry[]` (즉시 자식, 폴더 우선 한국어 정렬)                                            |
+| `folder:watch`           | R→M         | `rootPath`                                            | `void` (chokidar watcher 시작)                                                                |
+| `folder:unwatch`         | R→M         | `void`                                                | `void`                                                                                        |
+| `folder:changed`         | M→R (event) | `{ type, path, parent }`                              | watcher 이벤트                                                                                |
+| `folder:create-file`     | R→M         | `parentPath, name`                                    | `string` (생성된 절대 경로)                                                                   |
+| `folder:create-folder`   | R→M         | `parentPath, name`                                    | `string`                                                                                      |
+| `folder:rename`          | R→M         | `oldPath, newPath`                                    | `void` (이동에도 사용)                                                                        |
+| `folder:trash`           | R→M         | `path`                                                | `void` (`shell.trashItem`)                                                                    |
+| `folder:reveal`          | R→M         | `path`                                                | `void` (`shell.showItemInFolder`)                                                             |
+| `clipboard:read-text`    | R→M         | `void`                                                | `string`                                                                                      |
+| `clipboard:write-text`   | R→M         | `text`                                                | `void`                                                                                        |
+| `session:get`            | R→M         | `void`                                                | `SessionState`                                                                                |
+| `session:set`            | R→M         | `SessionState`                                        | `void`                                                                                        |
+| `menu:action`            | M→R (event) | `MenuAction`                                          | (`file:new` / `edit:undo` / `format:bold` 등)                                                 |
+| `ipc:ping`               | R→M         | `{ message }`                                         | `{ pong, at, platform, electron }` (헬스체크)                                                 |
+| `ai:chat-start`          | R→M         | `{ reqId, ctx, mode, messages, webSearch }` (Phase 2) | `{ ok }` (즉시 ack, 결과는 `ai:chat-stream`)                                                  |
+| `ai:chat-cancel`         | R→M         | `{ reqId }` (Phase 2)                                 | `void` (AbortSignal 트리거)                                                                   |
+| `ai:chat-stream`         | M→R (event) | `{ reqId, event: ChatStreamEvent }` (Phase 2)         | 스트림 이벤트 (`token`/`tool-call`/`tool-result`/`edit-proposal`/`web-search`/`done`/`error`) |
+| `ai:tool-execute`        | M→R (event) | `{ reqId, callId, name, args }` (Phase 3)             | (렌더러 ToolRouter가 `ai:tool-result`로 회신)                                                 |
+| `ai:tool-result`         | R→M         | `{ reqId, callId, ok, value?, error? }` (Phase 3)     | `void`                                                                                        |
+| `ai:apply-diff`          | R→M         | `{ docId, patch }` (Phase 2)                          | `{ ok, newRevision }`                                                                         |
+| `settings:set-secret`    | R→M         | `{ provider, key }` (Phase 2)                         | `{ ok }`                                                                                      |
+| `settings:get-providers` | R→M         | `void` (Phase 2)                                      | `ProviderConfig[]`                                                                            |
+| `history:list`           | R→M         | `{ filePath }` (Phase 2)                              | `Conversation[]`                                                                              |
+| `history:append`         | R→M         | `{ filePath, message }` (Phase 2)                     | `{ ok }`                                                                                      |
 
-스트리밍은 `ipcRenderer.on(channel, ...)` 이벤트 + 요청 ID로 구분.
+스트리밍은 `ipcRenderer.on(channel, ...)` 이벤트 + `reqId`로 매칭. 한 turn 안의 병렬 tool 호출은 추가로 `callId`로 구분 (`docs/AI_INTEGRATION.md` §멀티 다큐먼트 모델).
 
 ## 데이터 모델
 

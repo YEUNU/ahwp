@@ -185,6 +185,72 @@ test.describe('table cell editing — v1', () => {
     ).toBe('OMEGA');
   });
 
+  test('Tab from cell 0 lands in cell 1 (and Shift+Tab returns)', async () => {
+    const { page } = launched;
+    await page.evaluate(() => {
+      const dbg = (window as Window & { __studioDebug?: StudioDebug })
+        .__studioDebug!;
+      dbg.enterCell(0, 5, 0, 0, 0);
+      dbg.focusViewer();
+    });
+    // Type something to disambiguate which cell we land on after Tab.
+    await page.keyboard.type('A');
+    await page.keyboard.press('Tab');
+    await page.keyboard.type('B');
+    expect(
+      await page.evaluate(() =>
+        (
+          window as Window & { __studioDebug?: StudioDebug }
+        ).__studioDebug!.getCellText(0, 5, 0, 0, 0),
+      ),
+    ).toBe('A');
+    expect(
+      await page.evaluate(() =>
+        (
+          window as Window & { __studioDebug?: StudioDebug }
+        ).__studioDebug!.getCellText(0, 5, 0, 1, 0),
+      ),
+    ).toBe('B');
+    // Shift+Tab back to cell 0.
+    await page.keyboard.press('Shift+Tab');
+    await page.keyboard.type('X');
+    // Cell 0 now starts with 'X' (caret was at position 0 after Tab back).
+    expect(
+      await page.evaluate(() =>
+        (
+          window as Window & { __studioDebug?: StudioDebug }
+        ).__studioDebug!.getCellText(0, 5, 0, 0, 0),
+      ),
+    ).toBe('XA');
+  });
+
+  test('B/I/U in cell renders bold via SVG (applyCharFormatInCell)', async () => {
+    const { page } = launched;
+    await page.evaluate(() => {
+      const dbg = (window as Window & { __studioDebug?: StudioDebug })
+        .__studioDebug!;
+      dbg.enterCell(0, 5, 0, 0, 0);
+      dbg.focusViewer();
+    });
+    await page.keyboard.type('BOLDTEST');
+    // ⌘B in a cell should call applyCharFormatInCell on the cell's
+    // paragraph. Verify by checking the rendered SVG contains
+    // font-weight="bold" somewhere on the page.
+    const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
+    await page.keyboard.press(`${mod}+b`);
+    // The cell is on page index from getTableBBox; for our fixture it's
+    // page 1 or 2 depending on flow. Scan all mounted pages.
+    await expect
+      .poll(async () =>
+        page
+          .locator(
+            '[data-testid="studio-viewer-page"] svg [font-weight="bold"]',
+          )
+          .count(),
+      )
+      .toBeGreaterThan(0);
+  });
+
   test('exitCell drops cell from caret; subsequent typing goes outside', async () => {
     const { page } = launched;
     await page.evaluate(() => {
