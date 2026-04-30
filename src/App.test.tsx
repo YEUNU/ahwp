@@ -48,7 +48,8 @@ describe('App', () => {
 
   it('renders three-pane layout', () => {
     render(<App />);
-    expect(screen.getByText('파일')).toBeInTheDocument();
+    // No folder selected → left panel header shows "폴더" placeholder.
+    expect(screen.getByText('폴더')).toBeInTheDocument();
     expect(screen.getByText('챗봇')).toBeInTheDocument();
     expect(screen.getByText('Hello, ahwp')).toBeInTheDocument();
   });

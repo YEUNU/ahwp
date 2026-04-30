@@ -34,6 +34,16 @@ import type { CharFormatKey, ViewerHandle } from './types';
 
 interface StudioViewerProps {
   path: string;
+  /**
+   * Tabs (chunk: tab system). Only the active viewer attaches its
+   * `__studioDebug` surface to window; inactive viewers stay mounted
+   * (preserving their HwpDocument + edit history) but don't claim the
+   * global debug ref. Defaults to true so single-viewer callers keep
+   * working unchanged.
+   */
+  isActive?: boolean;
+  /** Notifies the parent whenever the doc's dirty state flips. */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 type Phase = 'mounting' | 'reading' | 'rendering' | 'ready';
@@ -126,7 +136,7 @@ function parsePageDimensions(svg: string): PageDims | null {
  * See docs/STUDIO_MIGRATION.md.
  */
 export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
-  function StudioViewer({ path }, ref) {
+  function StudioViewer({ path, isActive = true, onDirtyChange }, ref) {
     const scrollRef = useRef<HTMLDivElement>(null);
     const docRef = useRef<RhwpDoc | null>(null);
     const pageRefsRef = useRef<(HTMLDivElement | null)[]>([]);
@@ -139,6 +149,15 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     const [zoom, setZoom] = useState(1);
     const [currentPage, setCurrentPage] = useState(0);
     const [dirty, setDirty] = useState(false);
+    // Stash the latest onDirtyChange in a ref so the dirty-notify effect
+    // doesn't re-run every time the parent passes a new function identity.
+    const onDirtyChangeRef = useRef(onDirtyChange);
+    useEffect(() => {
+      onDirtyChangeRef.current = onDirtyChange;
+    }, [onDirtyChange]);
+    useEffect(() => {
+      onDirtyChangeRef.current?.(dirty);
+    }, [dirty]);
     // Visual cursor — pageIndex and SVG-space coords. Updated from
     // doc.getCursorRect(s, p, c) after load/mutation, and from hitTest
     // result after a click.
@@ -1402,6 +1421,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         applyAlignment: (a: ParaAlignment) => applyAlignment(a),
         applyFontSizePt: (pt: number) => applyFontSizePt(pt),
         applyTextColor: (hex: string) => applyTextColor(hex),
+        isDirty: () => dirtyRef.current,
       }),
       [
         toggleCharFormat,
@@ -2052,6 +2072,11 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
      */
     useEffect(() => {
       if (phase !== 'ready') return;
+      // With multiple StudioViewers mounted (tab system), only the active
+      // one claims `window.__studioDebug` — otherwise N viewers race to
+      // overwrite a single global and tests / DevTools see nondeterministic
+      // state.
+      if (!isActive) return;
       const debug = {
         insertText: (
           sectionIdx: number,
@@ -2279,6 +2304,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       };
     }, [
       phase,
+      isActive,
       pageCount,
       refreshAfterMutation,
       renderPageInto,

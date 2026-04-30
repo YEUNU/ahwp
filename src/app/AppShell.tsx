@@ -1,20 +1,158 @@
 import { FolderInput } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefCallback,
+} from 'react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import type { MenuAction, PingResponse } from '@shared/api';
 import { correctExtension } from '@shared/format';
 import { FolderTree } from '@/features/files/FolderTree';
 import { StudioViewer } from '@/features/studio/StudioViewer';
+import { TabBar, type TabDescriptor } from '@/features/studio/TabBar';
 import type { ViewerHandle } from '@/features/studio/types';
 import { ThemeToggle } from './theme-toggle';
+
+/**
+ * Multi-tab editor shell.
+ *
+ * - One StudioViewer mounts per tab. Inactive tabs are hidden via CSS
+ *   (`display:none`) rather than unmounted, so each tab keeps its
+ *   HwpDocument + undo history while the user switches around.
+ * - Only the active tab claims `window.__studioDebug` (StudioViewer's
+ *   `isActive` prop gates that effect).
+ * - Per-tab dirty state lives in `tabsState`; viewers push updates via
+ *   the `onDirtyChange` prop.
+ * - Session.openTabPaths persists the tab list; on launch each is
+ *   re-mounted and `lastActivePath` is the activated tab.
+ */
+
+interface TabState extends TabDescriptor {
+  /** Stable React key — survives re-orderings (tabs aren't reorderable
+   * yet, but this also distinguishes two tabs at the same path which we
+   * disallow today). */
+  key: string;
+}
+
+let tabKeyCounter = 0;
+function makeTabKey(): string {
+  tabKeyCounter += 1;
+  return `tab-${tabKeyCounter}`;
+}
 
 export default function AppShell() {
   const [pingResult, setPingResult] = useState<PingResponse | null>(null);
   const [pingError, setPingError] = useState<string | null>(null);
-  const [activePath, setActivePath] = useState<string | null>(null);
+  const [tabsState, setTabsState] = useState<TabState[]>([]);
+  const [activeIndex, setActiveIndex] = useState(-1);
   const [folderRoot, setFolderRoot] = useState<string | null>(null);
-  const viewerRef = useRef<ViewerHandle | null>(null);
+  // viewerRef per tab (by key). The active tab's viewer is what menu /
+  // shortcut actions target.
+  const viewerRefsRef = useRef<Map<string, ViewerHandle | null>>(new Map());
   const sessionRestoredRef = useRef(false);
+
+  const activeTab: TabState | null =
+    activeIndex >= 0 && activeIndex < tabsState.length
+      ? tabsState[activeIndex]
+      : null;
+
+  const activeViewerRef = useCallback((): ViewerHandle | null => {
+    if (!activeTab) return null;
+    return viewerRefsRef.current.get(activeTab.key) ?? null;
+  }, [activeTab]);
+
+  // Add a new tab for `path` (or focus an existing one). Returns the
+  // index of the resulting active tab.
+  const openTab = useCallback((path: string): void => {
+    setTabsState((prev) => {
+      const existing = prev.findIndex((t) => t.path === path);
+      if (existing >= 0) {
+        setActiveIndex(existing);
+        return prev;
+      }
+      const next: TabState[] = [
+        ...prev,
+        { path, dirty: false, key: makeTabKey() },
+      ];
+      setActiveIndex(next.length - 1);
+      return next;
+    });
+  }, []);
+
+  // Replace the path of a tab — used after Save As or after the main
+  // process auto-routes the extension (.hwpx → .hwp). Doesn't open a
+  // new tab; the underlying viewer keeps its mounted state.
+  const replaceTabPath = useCallback(
+    (oldPath: string, newPath: string): void => {
+      if (oldPath === newPath) return;
+      setTabsState((prev) =>
+        prev.map((t) => (t.path === oldPath ? { ...t, path: newPath } : t)),
+      );
+    },
+    [],
+  );
+
+  // Close a tab. If dirty, prompt the user first.
+  const closeTab = useCallback((index: number): void => {
+    setTabsState((prev) => {
+      const tab = prev[index];
+      if (!tab) return prev;
+      if (tab.dirty) {
+        const ok = window.confirm(
+          '저장하지 않은 변경사항이 있습니다. 정말로 닫으시겠습니까?',
+        );
+        if (!ok) return prev;
+      }
+      viewerRefsRef.current.delete(tab.key);
+      const next = prev.filter((_, i) => i !== index);
+      // Activate the previous tab (or the next one if we closed the first).
+      setActiveIndex((curIdx) => {
+        if (next.length === 0) return -1;
+        if (curIdx > index) return curIdx - 1;
+        if (curIdx === index) return Math.min(index, next.length - 1);
+        return curIdx;
+      });
+      return next;
+    });
+  }, []);
+
+  const handleDirtyChange = useCallback((key: string, dirty: boolean): void => {
+    setTabsState((prev) => {
+      const idx = prev.findIndex((t) => t.key === key);
+      if (idx < 0) return prev;
+      if (prev[idx].dirty === dirty) return prev;
+      const next = [...prev];
+      next[idx] = { ...next[idx], dirty };
+      return next;
+    });
+  }, []);
+
+  // Stable ref-callback factory per tab key. Each StudioViewer's ref
+  // funnels into our Map.
+  const refCallbackFor = useCallback(
+    (key: string): RefCallback<ViewerHandle> =>
+      (handle) => {
+        if (handle) {
+          viewerRefsRef.current.set(key, handle);
+        } else {
+          viewerRefsRef.current.delete(key);
+        }
+      },
+    [],
+  );
+
+  // Memoized dirty-change callback per tab key (avoids re-attaching on
+  // every parent render).
+  const dirtyCallbacks = useMemo(() => {
+    const m = new Map<string, (dirty: boolean) => void>();
+    for (const t of tabsState) {
+      m.set(t.key, (dirty) => handleDirtyChange(t.key, dirty));
+    }
+    return m;
+  }, [tabsState, handleDirtyChange]);
 
   useEffect(() => {
     void (async () => {
@@ -27,59 +165,79 @@ export default function AppShell() {
     })();
   }, []);
 
-  // Workspace restoration: on first mount, auto-open the last active file
-  // and (separately) the last folder root.
+  // Workspace restoration.
   useEffect(() => {
     if (sessionRestoredRef.current) return;
     sessionRestoredRef.current = true;
     void (async () => {
       const session = await window.api.session.get();
       if (session.lastFolderPath) {
-        // Verify the folder still exists by listing it; fs throws on
-        // missing dirs but folder.list returns [] on error. We also pick
-        // up the case where the user's last folder was on an unmounted
-        // drive — set the root anyway and let FolderTree show "비어 있음".
         setFolderRoot(session.lastFolderPath);
       }
-      if (session.lastActivePath) {
-        const result = await window.api.file.openByPath(session.lastActivePath);
-        if (result) {
-          setActivePath(result.path);
-        } else {
-          await window.api.session.set({ lastActivePath: null });
+      const open = (session.openTabPaths ?? []).filter(Boolean);
+      if (open.length > 0) {
+        // Verify each path; drop any that are gone.
+        const verified: string[] = [];
+        for (const p of open) {
+          const r = await window.api.file.openByPath(p);
+          if (r) verified.push(r.path);
+        }
+        const restored: TabState[] = verified.map((p) => ({
+          path: p,
+          dirty: false,
+          key: makeTabKey(),
+        }));
+        if (restored.length > 0) {
+          setTabsState(restored);
+          // Pick the previously active path; fallback to the first tab.
+          const activePath = session.lastActivePath ?? null;
+          const activeIdx =
+            activePath != null
+              ? Math.max(
+                  0,
+                  restored.findIndex((t) => t.path === activePath),
+                )
+              : 0;
+          setActiveIndex(activeIdx);
+        }
+      } else if (session.lastActivePath) {
+        // Legacy session (pre-tabs) — promote it into a single tab.
+        const r = await window.api.file.openByPath(session.lastActivePath);
+        if (r) {
+          setTabsState([{ path: r.path, dirty: false, key: makeTabKey() }]);
+          setActiveIndex(0);
         }
       }
     })();
   }, []);
 
-  // Persist active path + folder root whenever either changes (after
-  // restoration ran once).
+  // Persist session whenever the tab set / active index / folder changes.
   useEffect(() => {
     if (!sessionRestoredRef.current) return;
     void window.api.session.set({
-      lastActivePath: activePath,
+      lastActivePath: activeTab?.path ?? null,
       lastFolderPath: folderRoot,
+      openTabPaths: tabsState.map((t) => t.path),
     });
-  }, [activePath, folderRoot]);
+  }, [tabsState, activeTab, folderRoot]);
 
   const openFromDialog = useCallback(async () => {
     const result = await window.api.file.open();
-    if (result) {
-      setActivePath(result.path);
-    }
-  }, []);
+    if (result) openTab(result.path);
+  }, [openTab]);
 
-  const openByPath = useCallback(async (path: string) => {
-    const result = await window.api.file.openByPath(path);
-    if (result) {
-      setActivePath(result.path);
-    }
-  }, []);
+  const openByPath = useCallback(
+    async (path: string) => {
+      const result = await window.api.file.openByPath(path);
+      if (result) openTab(result.path);
+    },
+    [openTab],
+  );
 
   const newDocument = useCallback(async () => {
     const result = await window.api.file.new();
-    setActivePath(result.path);
-  }, []);
+    openTab(result.path);
+  }, [openTab]);
 
   const openFolder = useCallback(async () => {
     const picked = await window.api.folder.pick();
@@ -87,50 +245,58 @@ export default function AppShell() {
   }, []);
 
   const exportBytes = useCallback(async (): Promise<Uint8Array | null> => {
-    if (!viewerRef.current) return null;
+    const handle = activeViewerRef();
+    if (!handle) return null;
     const t0 = performance.now();
-    const bytes = await viewerRef.current.exportBytes();
+    const bytes = await handle.exportBytes();
     console.info(
       `[ahwp] export ${(bytes.byteLength / 1024 / 1024).toFixed(2)}MB in ${(performance.now() - t0).toFixed(0)}ms`,
     );
     return bytes;
-  }, []);
+  }, [activeViewerRef]);
 
-  // Save flow trusts the main process to normalize via @rhwp/core and route
-  // the on-disk extension to .hwpx. Renderer just hands over bytes and
-  // updates activePath if the server changed it (e.g., .hwp → .hwpx).
   const saveCurrent = useCallback(async () => {
+    const tab = activeTab;
+    if (!tab) return;
     const bytes = await exportBytes();
     if (!bytes) return;
-    if (activePath) {
-      const result = await window.api.file.save({ path: activePath, bytes });
-      if (result.path !== activePath) {
-        setActivePath(result.path);
-      }
-    } else {
-      const result = await window.api.file.saveAs({ bytes });
-      if (result) {
-        setActivePath(result.path);
-      }
-    }
-  }, [activePath, exportBytes]);
+    const result = await window.api.file.save({ path: tab.path, bytes });
+    if (result.path !== tab.path) replaceTabPath(tab.path, result.path);
+  }, [activeTab, exportBytes, replaceTabPath]);
 
   const saveAsCurrent = useCallback(async () => {
+    const tab = activeTab;
     const bytes = await exportBytes();
     if (!bytes) return;
-    // Suggest a sensible default path (.hwpx) for the dialog. Server will
-    // also enforce .hwpx on the result.
-    const defaultPath = activePath
-      ? correctExtension(activePath, 'hwpx')
-      : undefined;
+    const defaultPath = tab ? correctExtension(tab.path, 'hwpx') : undefined;
     const result = await window.api.file.saveAs({ bytes, defaultPath });
     if (result) {
-      setActivePath(result.path);
+      if (tab) replaceTabPath(tab.path, result.path);
+      else openTab(result.path);
     }
-  }, [activePath, exportBytes]);
+  }, [activeTab, exportBytes, replaceTabPath, openTab]);
+
+  // ⌘W / Ctrl+W: close the active tab. Bound at the document level
+  // because the StudioViewer's keydown handler doesn't run when the
+  // user's focus is outside the scroll container (e.g. on a tab button).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
+        if (e.key.toLowerCase() === 'w') {
+          if (activeIndex >= 0) {
+            closeTab(activeIndex);
+            e.preventDefault();
+          }
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [activeIndex, closeTab]);
 
   useEffect(() => {
     return window.api.onMenuAction((action: MenuAction) => {
+      const handle = activeViewerRef();
       if (action === 'file:new') {
         void newDocument();
       } else if (action === 'file:open') {
@@ -140,28 +306,33 @@ export default function AppShell() {
       } else if (action === 'file:save-as') {
         void saveAsCurrent();
       } else if (action === 'edit:undo') {
-        viewerRef.current?.undo();
+        handle?.undo();
       } else if (action === 'edit:redo') {
-        viewerRef.current?.redo();
+        handle?.redo();
       } else if (action === 'edit:copy') {
-        void viewerRef.current?.copy();
+        void handle?.copy();
       } else if (action === 'edit:cut') {
-        void viewerRef.current?.cut();
+        void handle?.cut();
       } else if (action === 'edit:paste') {
-        void viewerRef.current?.paste();
+        void handle?.paste();
       } else if (action === 'edit:find') {
-        viewerRef.current?.openFind();
+        handle?.openFind();
       } else if (
         action === 'format:bold' ||
         action === 'format:italic' ||
         action === 'format:underline'
       ) {
         const key = action.split(':')[1] as 'bold' | 'italic' | 'underline';
-        viewerRef.current?.toggleCharFormat(key);
+        handle?.toggleCharFormat(key);
       }
-      // view:settings handled in later phases.
     });
-  }, [newDocument, openFromDialog, saveCurrent, saveAsCurrent]);
+  }, [
+    activeViewerRef,
+    newDocument,
+    openFromDialog,
+    saveCurrent,
+    saveAsCurrent,
+  ]);
 
   return (
     <PanelGroup
@@ -201,7 +372,7 @@ export default function AppShell() {
             {folderRoot ? (
               <FolderTree
                 rootPath={folderRoot}
-                activePath={activePath}
+                activePath={activeTab?.path ?? null}
                 onOpenPath={openByPath}
               />
             ) : (
@@ -227,14 +398,20 @@ export default function AppShell() {
         <main className="flex h-full flex-col">
           <div className="flex h-12 items-center justify-between border-b border-border px-6">
             <span className="truncate text-sm text-muted-foreground">
-              {activePath ?? 'ahwp · Phase 1-C'}
+              {activeTab?.path ?? 'ahwp'}
             </span>
             <ThemeToggle />
           </div>
-          <div className="flex-1 overflow-hidden">
-            {activePath ? (
-              <StudioViewer path={activePath} ref={viewerRef} />
-            ) : (
+          {tabsState.length > 0 && (
+            <TabBar
+              tabs={tabsState}
+              activeIndex={activeIndex}
+              onActivate={setActiveIndex}
+              onClose={closeTab}
+            />
+          )}
+          <div className="relative flex-1 overflow-hidden">
+            {tabsState.length === 0 ? (
               <div className="flex h-full flex-col items-center justify-center gap-4 p-8">
                 <h1 className="text-2xl font-semibold">Hello, ahwp</h1>
                 <p className="text-sm text-muted-foreground">
@@ -269,6 +446,34 @@ export default function AppShell() {
                   </span>
                 )}
               </div>
+            ) : (
+              tabsState.map((tab, idx) => {
+                const isActive = idx === activeIndex;
+                return (
+                  <div
+                    key={tab.key}
+                    // Mount every tab; hide inactive ones with display:none
+                    // so they keep their HwpDocument + edit state. We use
+                    // `style.display` rather than `hidden` because some
+                    // children rely on layout (refs/sizes) computed at mount.
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      display: isActive ? 'block' : 'none',
+                    }}
+                    data-testid="studio-tab-pane"
+                    data-tab-key={tab.key}
+                    data-tab-active={isActive ? 'true' : 'false'}
+                  >
+                    <StudioViewer
+                      path={tab.path}
+                      isActive={isActive}
+                      onDirtyChange={dirtyCallbacks.get(tab.key)}
+                      ref={refCallbackFor(tab.key)}
+                    />
+                  </div>
+                );
+              })
             )}
           </div>
         </main>

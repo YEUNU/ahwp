@@ -34,4 +34,6 @@ export interface ViewerHandle {
   applyFontSizePt: (pt: number) => void;
   /** Apply text color in #RRGGBB hex. */
   applyTextColor: (hex: string) => void;
+  /** Whether the doc has unsaved changes (mirrors internal dirtyRef). */
+  isDirty: () => boolean;
 }

@@ -127,6 +127,11 @@ export interface SessionState {
   lastFolderPath?: string | null;
   /** Path of the document active when the renderer last persisted state. */
   lastActivePath?: string | null;
+  /**
+   * Paths of all open tabs in display order (chunk: tabs). On restore the
+   * shell mounts a viewer for each and activates `lastActivePath`.
+   */
+  openTabPaths?: string[];
 }
 
 export interface SessionApi {
