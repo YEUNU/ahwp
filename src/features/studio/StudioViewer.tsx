@@ -1,7 +1,10 @@
 import {
   AlertTriangle,
+  Bold,
+  Italic,
   Loader2,
   Maximize2,
+  Underline,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
@@ -18,7 +21,7 @@ import {
 } from 'react';
 import { Button } from '@/components/ui/button';
 import { ensureRhwpCore, HwpDocument } from '@/lib/rhwp-core';
-import type { ViewerHandle } from './types';
+import type { CharFormatKey, ViewerHandle } from './types';
 
 interface StudioViewerProps {
   path: string;
@@ -32,6 +35,32 @@ interface PageDims {
   w: number;
   h: number;
 }
+
+interface StyleListItem {
+  id: number;
+  name: string;
+  englishName: string;
+  type: number;
+  paraShapeId: number;
+  charShapeId: number;
+}
+
+interface CharProps {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  fontSize?: number;
+  fontFamily?: string;
+}
+
+/**
+ * applyCharFormat requires a [start, end) char range. We have no selection
+ * model in chunk 5 — the toolbar/shortcut applies the toggle to the entire
+ * current paragraph. Native applyCharFormat clamps to the paragraph length
+ * silently when end_offset overshoots (verified via scripts/check-charformat.mjs),
+ * so passing this sentinel covers any paragraph.
+ */
+const PARAGRAPH_END_SENTINEL = 1_000_000_000;
 
 const ZOOM_LEVELS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 const ZOOM_MIN = 0.25;
@@ -109,21 +138,16 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     // forwards any composing keystrokes back to the IME by ignoring them —
     // composition* events deliver the final text on completion.
     const composingRef = useRef(false);
-
-    useImperativeHandle(
-      ref,
-      () => ({
-        // exportHwp (CFB), not exportHwpx — see electron/hwp/converter.ts:
-        // @rhwp/core v0.7.8's HWPX round-trip drops image references; HWP
-        // round-trip preserves them. Save flow accepts either format and
-        // routes the disk extension by the bytes' magic number.
-        exportBytes: async () => {
-          if (!docRef.current) throw new Error('Document not loaded');
-          return docRef.current.exportHwp();
-        },
-      }),
-      [],
-    );
+    // Style list for the toolbar dropdown (loaded once after doc parse).
+    const [styleList, setStyleList] = useState<StyleListItem[]>([]);
+    // Active formatting state on the caret's paragraph — drives toolbar
+    // pressed-state. Recomputed after every mutation / caret move.
+    const [activeFormat, setActiveFormat] = useState<{
+      bold: boolean;
+      italic: boolean;
+      underline: boolean;
+      styleId: number;
+    }>({ bold: false, italic: false, underline: false, styleId: 0 });
 
     // Effect 1: load doc, render page 0 to learn dimensions, prime cache.
     useEffect(() => {
@@ -202,6 +226,37 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             );
           } catch {
             /* keep null */
+          }
+          // Load style list (paragraph styles) for toolbar dropdown +
+          // initial active format from caret's paragraph CharShape.
+          try {
+            const list = JSON.parse(localDoc.getStyleList()) as StyleListItem[];
+            // Only show 본문 styles (type=0) — type=1 is system styles
+            // like 쪽 번호 which aren't user-applicable to body paragraphs.
+            setStyleList(list.filter((s) => s.type === 0));
+          } catch {
+            setStyleList([]);
+          }
+          try {
+            const c = caretRef.current;
+            const cp = JSON.parse(
+              localDoc.getCharPropertiesAt(
+                c.sectionIndex,
+                c.paragraphIndex,
+                c.charOffset,
+              ),
+            ) as CharProps;
+            const at = JSON.parse(
+              localDoc.getStyleAt(c.sectionIndex, c.paragraphIndex),
+            ) as { id: number };
+            setActiveFormat({
+              bold: !!cp.bold,
+              italic: !!cp.italic,
+              underline: !!cp.underline,
+              styleId: at.id,
+            });
+          } catch {
+            /* keep defaults */
           }
           setPageCount(total);
           setPageDims(dims);
@@ -325,7 +380,53 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       }
     }, []);
 
+    /**
+     * Read the *effective* character formatting at the caret position via
+     * getCharPropertiesAt — this reflects applyCharFormat overrides on top
+     * of the paragraph style's CharShape. getStyleAt+getStyleDetail only
+     * gives the style template, which doesn't update when applyCharFormat
+     * runs. Paragraph styleId comes from getStyleAt (paragraph-level).
+     */
+    const refreshActiveFormat = useCallback((): void => {
+      const doc = docRef.current;
+      if (!doc) return;
+      const c = caretRef.current;
+      try {
+        const cp = JSON.parse(
+          doc.getCharPropertiesAt(
+            c.sectionIndex,
+            c.paragraphIndex,
+            c.charOffset,
+          ),
+        ) as CharProps;
+        const at = JSON.parse(
+          doc.getStyleAt(c.sectionIndex, c.paragraphIndex),
+        ) as { id: number };
+        setActiveFormat({
+          bold: !!cp.bold,
+          italic: !!cp.italic,
+          underline: !!cp.underline,
+          styleId: at.id,
+        });
+      } catch {
+        /* keep previous */
+      }
+    }, []);
+
     const refreshAfterMutation = useCallback((): void => {
+      const doc = docRef.current;
+      if (doc) {
+        // Force lineseg reflow before re-rendering. The auto-reflow path
+        // covers empty line_segs + empty text, but not empty line_segs +
+        // text-just-inserted (issue #177 in upstream). Without this, an
+        // insertText into a fresh blank.hwpx paragraph mutates the IR but
+        // the SVG output stays empty.
+        try {
+          doc.reflowLinesegs();
+        } catch {
+          /* ignore — unsupported on older library versions */
+        }
+      }
       cacheRef.current.clear();
       pageRefsRef.current.forEach((el, idx) => {
         if (el?.firstElementChild?.tagName.toLowerCase() === 'svg') {
@@ -333,7 +434,6 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           renderPageInto(idx);
         }
       });
-      const doc = docRef.current;
       if (doc) {
         try {
           const parsed = JSON.parse(
@@ -345,9 +445,71 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         }
       }
       refreshCursorRect();
+      refreshActiveFormat();
       dirtyRef.current = true;
       setDirty(true);
-    }, [renderPageInto, refreshCursorRect]);
+    }, [renderPageInto, refreshCursorRect, refreshActiveFormat]);
+
+    /**
+     * Toggle a character format on the entire current paragraph. Reads the
+     * inverse of the current state (so two presses are a no-op) and applies
+     * via applyCharFormat — which clamps end_offset to paragraph length
+     * (probe in scripts/check-charformat.mjs).
+     */
+    const toggleCharFormat = useCallback(
+      (key: CharFormatKey): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        const c = caretRef.current;
+        const next = !activeFormat[key];
+        const props: CharProps = { [key]: next };
+        try {
+          doc.applyCharFormat(
+            c.sectionIndex,
+            c.paragraphIndex,
+            0,
+            PARAGRAPH_END_SENTINEL,
+            JSON.stringify(props),
+          );
+          refreshAfterMutation();
+        } catch (err) {
+          console.warn('[studio] applyCharFormat failed:', err);
+        }
+      },
+      [activeFormat, refreshAfterMutation],
+    );
+
+    const applyParagraphStyle = useCallback(
+      (styleId: number): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        const c = caretRef.current;
+        try {
+          doc.applyStyle(c.sectionIndex, c.paragraphIndex, styleId);
+          refreshAfterMutation();
+        } catch (err) {
+          console.warn('[studio] applyStyle failed:', err);
+        }
+      },
+      [refreshAfterMutation],
+    );
+
+    useImperativeHandle(
+      ref,
+      () => ({
+        // exportHwp (CFB), not exportHwpx — see electron/hwp/converter.ts:
+        // @rhwp/core v0.7.8's HWPX round-trip drops image references; HWP
+        // round-trip preserves them.
+        exportBytes: async () => {
+          if (!docRef.current) throw new Error('Document not loaded');
+          return docRef.current.exportHwp();
+        },
+        toggleCharFormat: (key: CharFormatKey) => {
+          toggleCharFormat(key);
+        },
+      }),
+      [toggleCharFormat],
+    );
 
     /**
      * Keyboard input. ASCII typing routes through here; Korean IME composition
@@ -393,7 +555,20 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           return;
         }
 
-        // Don't intercept browser shortcuts (Ctrl+S, Cmd+R, etc.).
+        // Format shortcuts: Cmd/Ctrl + B/I/U toggle the current paragraph.
+        // Must come before the generic modifier early-return.
+        if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
+          const k = e.key.toLowerCase();
+          if (k === 'b' || k === 'i' || k === 'u') {
+            toggleCharFormat(
+              k === 'b' ? 'bold' : k === 'i' ? 'italic' : 'underline',
+            );
+            e.preventDefault();
+            return;
+          }
+        }
+
+        // Don't intercept other browser shortcuts (Ctrl+S, Cmd+R, etc.).
         if (e.metaKey || e.ctrlKey || e.altKey) return;
 
         if (e.key === 'Backspace') {
@@ -428,7 +603,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           e.preventDefault();
         }
       },
-      [refreshAfterMutation, refreshCursorRect],
+      [refreshAfterMutation, refreshCursorRect, toggleCharFormat],
     );
 
     const handleCompositionStart = useCallback(() => {
@@ -487,11 +662,14 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           } else {
             refreshCursorRect();
           }
+          // Click can move the caret into a different paragraph with
+          // different formatting — sync toolbar pressed-state.
+          refreshActiveFormat();
         } catch (err) {
           console.warn('[studio] hitTest failed:', err);
         }
       },
-      [zoom, refreshCursorRect],
+      [zoom, refreshCursorRect, refreshActiveFormat],
     );
 
     /**
@@ -548,6 +726,14 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         focusViewer: (): void => {
           scrollRef.current?.focus();
         },
+        toggleCharFormat: (key: CharFormatKey): void => {
+          toggleCharFormat(key);
+        },
+        applyStyle: (styleId: number): void => {
+          applyParagraphStyle(styleId);
+        },
+        getActiveFormat: () => ({ ...activeFormat }),
+        getStyleList: () => [...styleList],
         // Synthetic Korean IME helper for e2e — Playwright's keyboard.type
         // doesn't trigger real IME composition. This bypasses keydown to
         // exercise the same code path compositionend uses.
@@ -592,7 +778,16 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         delete (window as Window & { __studioDebug?: typeof debug })
           .__studioDebug;
       };
-    }, [phase, pageCount, refreshAfterMutation, renderPageInto]);
+    }, [
+      phase,
+      pageCount,
+      refreshAfterMutation,
+      renderPageInto,
+      toggleCharFormat,
+      applyParagraphStyle,
+      activeFormat,
+      styleList,
+    ]);
 
     // Effect 2: IntersectionObserver — lazy render visible pages, track current.
     useEffect(() => {
@@ -694,6 +889,53 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             >
               <ZoomIn className="size-4" />
             </Button>
+            <span className="mx-2 h-5 w-px bg-border" aria-hidden="true" />
+            <Button
+              size="sm"
+              variant={activeFormat.bold ? 'secondary' : 'ghost'}
+              onClick={() => toggleCharFormat('bold')}
+              aria-label="진하게"
+              aria-pressed={activeFormat.bold}
+              data-testid="studio-format-bold"
+            >
+              <Bold className="size-4" />
+            </Button>
+            <Button
+              size="sm"
+              variant={activeFormat.italic ? 'secondary' : 'ghost'}
+              onClick={() => toggleCharFormat('italic')}
+              aria-label="기울임"
+              aria-pressed={activeFormat.italic}
+              data-testid="studio-format-italic"
+            >
+              <Italic className="size-4" />
+            </Button>
+            <Button
+              size="sm"
+              variant={activeFormat.underline ? 'secondary' : 'ghost'}
+              onClick={() => toggleCharFormat('underline')}
+              aria-label="밑줄"
+              aria-pressed={activeFormat.underline}
+              data-testid="studio-format-underline"
+            >
+              <Underline className="size-4" />
+            </Button>
+            {styleList.length > 0 && (
+              <select
+                className="ml-1 h-7 rounded border border-input bg-background px-2 text-xs"
+                value={activeFormat.styleId}
+                onChange={(e) => applyParagraphStyle(Number(e.target.value))}
+                aria-label="문단 스타일"
+                data-testid="studio-style-select"
+              >
+                {styleList.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            )}
+            <span className="mx-2 h-5 w-px bg-border" aria-hidden="true" />
             <Button
               size="sm"
               variant="ghost"

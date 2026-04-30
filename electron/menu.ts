@@ -60,6 +60,27 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
     ],
   };
 
+  const formatMenu: MenuItemConstructorOptions = {
+    label: '서식',
+    submenu: [
+      {
+        label: '진하게',
+        accelerator: 'CmdOrCtrl+B',
+        click: () => send(getWindow(), 'format:bold'),
+      },
+      {
+        label: '기울임',
+        accelerator: 'CmdOrCtrl+I',
+        click: () => send(getWindow(), 'format:italic'),
+      },
+      {
+        label: '밑줄',
+        accelerator: 'CmdOrCtrl+U',
+        click: () => send(getWindow(), 'format:underline'),
+      },
+    ],
+  };
+
   const viewMenu: MenuItemConstructorOptions = {
     label: '보기',
     submenu: [
@@ -137,11 +158,12 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
         },
         fileMenu,
         editMenu,
+        formatMenu,
         viewMenu,
         windowMenu,
         helpMenu,
       ]
-    : [fileMenu, editMenu, viewMenu, windowMenu, helpMenu];
+    : [fileMenu, editMenu, formatMenu, viewMenu, windowMenu, helpMenu];
 
   return Menu.buildFromTemplate(template);
 }

@@ -120,6 +120,13 @@ export default function AppShell() {
         void saveCurrent();
       } else if (action === 'file:save-as') {
         void saveAsCurrent();
+      } else if (
+        action === 'format:bold' ||
+        action === 'format:italic' ||
+        action === 'format:underline'
+      ) {
+        const key = action.split(':')[1] as 'bold' | 'italic' | 'underline';
+        viewerRef.current?.toggleCharFormat(key);
       }
       // file:new / view:settings handled in later phases.
     });

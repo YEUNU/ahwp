@@ -24,6 +24,9 @@ export type MenuAction =
   | 'file:open'
   | 'file:save'
   | 'file:save-as'
+  | 'format:bold'
+  | 'format:italic'
+  | 'format:underline'
   | 'view:settings';
 
 export interface RecentFile {
