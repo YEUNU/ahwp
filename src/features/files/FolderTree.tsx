@@ -3,10 +3,24 @@ import {
   ChevronDown,
   ChevronRight,
   File,
+  FilePlus,
   Folder,
   FolderOpen,
+  FolderPlus,
+  Pencil,
+  Search,
+  Trash2,
 } from 'lucide-react';
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type DragEvent as ReactDragEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+} from 'react';
 import type { FolderEntry } from '@shared/api';
 
 /**
@@ -15,9 +29,11 @@ import type { FolderEntry } from '@shared/api';
  * - Single root opened via `folder:pick` (parent supplies `rootPath`).
  * - Children fetched lazily on first expand (`folder:list`).
  * - chokidar events refresh the affected parent's child list only.
- * - Show every entry (folders + files), no extension filtering.
- * - Click a file → `onOpenPath` (parent decides what to do; for non-hwp
- *   files this no-ops).
+ * - Selection state is tracked locally; `activePath` (the file shown in
+ *   the editor) is highlighted distinctly.
+ * - Right-click → context menu with create/rename/trash/reveal.
+ * - Inline rename + new file/folder inputs.
+ * - Drag-to-move via HTML5 DnD (chunk 65 — wired here, fs.rename in main).
  */
 
 interface FolderTreeProps {
@@ -33,11 +49,41 @@ interface NodeProps {
   childrenByPath: Map<string, FolderEntry[]>;
   loadingPaths: Set<string>;
   activePath: string | null;
+  selectedPath: string | null;
+  renamingPath: string | null;
+  pendingNew: PendingNew | null;
+  draggingPath: string | null;
+  dropTargetPath: string | null;
   onToggle: (path: string) => void | Promise<void>;
   onOpenPath: (path: string) => void | Promise<void>;
+  onSelect: (path: string) => void;
+  onContextMenu: (e: ReactMouseEvent, entry: FolderEntry) => void;
+  onCommitRename: (path: string, newName: string) => void | Promise<void>;
+  onCancelRename: () => void;
+  onCommitNew: (
+    parentPath: string,
+    kind: 'file' | 'folder',
+    name: string,
+  ) => void | Promise<void>;
+  onCancelNew: () => void;
+  onDragStart: (e: ReactDragEvent, entry: FolderEntry) => void;
+  onDragOver: (e: ReactDragEvent, entry: FolderEntry) => void;
+  onDragLeave: () => void;
+  onDrop: (e: ReactDragEvent, entry: FolderEntry) => void;
 }
 
 const INDENT_PX = 12;
+
+interface ContextMenuState {
+  x: number;
+  y: number;
+  entry: FolderEntry;
+}
+
+interface PendingNew {
+  parentPath: string;
+  kind: 'file' | 'folder';
+}
 
 const TreeNode = memo(function TreeNode({
   entry,
@@ -46,15 +92,37 @@ const TreeNode = memo(function TreeNode({
   childrenByPath,
   loadingPaths,
   activePath,
+  selectedPath,
+  renamingPath,
+  pendingNew,
+  draggingPath,
+  dropTargetPath,
   onToggle,
   onOpenPath,
+  onSelect,
+  onContextMenu,
+  onCommitRename,
+  onCancelRename,
+  onCommitNew,
+  onCancelNew,
+  onDragStart,
+  onDragOver,
+  onDragLeave,
+  onDrop,
 }: NodeProps) {
   const isExpanded = expanded.has(entry.path);
   const isActive = activePath === entry.path;
+  const isSelected = selectedPath === entry.path;
   const isLoading = loadingPaths.has(entry.path);
   const children = childrenByPath.get(entry.path);
+  const isRenaming = renamingPath === entry.path;
+  const isDropTarget = dropTargetPath === entry.path;
+  const isBeingDragged = draggingPath === entry.path;
+  const showInlineNew =
+    entry.isDirectory && pendingNew?.parentPath === entry.path;
 
   const handleClick = (): void => {
+    onSelect(entry.path);
     if (entry.isDirectory) {
       void onToggle(entry.path);
     } else {
@@ -62,46 +130,98 @@ const TreeNode = memo(function TreeNode({
     }
   };
 
+  const className =
+    'flex w-full items-center gap-1 px-2 py-0.5 text-left text-xs hover:bg-muted ' +
+    (isActive ? 'bg-muted font-medium ' : isSelected ? 'bg-muted ' : '') +
+    (isDropTarget
+      ? 'outline outline-2 outline-offset-[-2px] outline-ring '
+      : '') +
+    (isBeingDragged ? 'opacity-50 ' : '');
+
   return (
     <div>
-      <button
-        type="button"
-        onClick={handleClick}
-        className={
-          'flex w-full items-center gap-1 px-2 py-0.5 text-left text-xs hover:bg-muted ' +
-          (isActive ? 'bg-muted font-medium' : '')
-        }
-        style={{ paddingLeft: 8 + depth * INDENT_PX }}
-        title={entry.path}
-        data-testid={
-          entry.isDirectory ? 'folder-tree-folder' : 'folder-tree-file'
-        }
-        data-path={entry.path}
-      >
-        {entry.isDirectory ? (
-          <>
-            {isExpanded ? (
-              <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
-            ) : (
-              <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
-            )}
-            {isExpanded ? (
-              <FolderOpen className="size-4 shrink-0 text-amber-500" />
-            ) : (
+      {isRenaming ? (
+        <InlineNameInput
+          initial={entry.name}
+          depth={depth}
+          icon={
+            entry.isDirectory ? (
               <Folder className="size-4 shrink-0 text-amber-500" />
-            )}
-          </>
-        ) : (
-          <>
-            {/* spacer where the chevron would be, keeps file names aligned */}
-            <span className="size-3 shrink-0" aria-hidden="true" />
-            <File className="size-4 shrink-0 text-muted-foreground" />
-          </>
-        )}
-        <span className="truncate">{entry.name}</span>
-      </button>
+            ) : (
+              <File className="size-4 shrink-0 text-muted-foreground" />
+            )
+          }
+          onCommit={(name) => onCommitRename(entry.path, name)}
+          onCancel={onCancelRename}
+          dataTestid="folder-tree-rename-input"
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={handleClick}
+          onContextMenu={(e) => onContextMenu(e, entry)}
+          draggable
+          onDragStart={(e) => onDragStart(e, entry)}
+          onDragOver={(e) => onDragOver(e, entry)}
+          onDragLeave={onDragLeave}
+          onDrop={(e) => onDrop(e, entry)}
+          className={className}
+          style={{ paddingLeft: 8 + depth * INDENT_PX }}
+          title={entry.path}
+          data-testid={
+            entry.isDirectory ? 'folder-tree-folder' : 'folder-tree-file'
+          }
+          data-path={entry.path}
+        >
+          {entry.isDirectory ? (
+            <>
+              {isExpanded ? (
+                <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
+              )}
+              {isExpanded ? (
+                <FolderOpen className="size-4 shrink-0 text-amber-500" />
+              ) : (
+                <Folder className="size-4 shrink-0 text-amber-500" />
+              )}
+            </>
+          ) : (
+            <>
+              <span className="size-3 shrink-0" aria-hidden="true" />
+              <File className="size-4 shrink-0 text-muted-foreground" />
+            </>
+          )}
+          <span className="truncate">{entry.name}</span>
+        </button>
+      )}
       {entry.isDirectory && isExpanded && (
         <div>
+          {showInlineNew && pendingNew && (
+            <InlineNameInput
+              initial=""
+              depth={depth + 1}
+              icon={
+                pendingNew.kind === 'folder' ? (
+                  <Folder className="size-4 shrink-0 text-amber-500" />
+                ) : (
+                  <File className="size-4 shrink-0 text-muted-foreground" />
+                )
+              }
+              placeholder={
+                pendingNew.kind === 'folder' ? '폴더 이름' : '파일 이름'
+              }
+              onCommit={(name) =>
+                onCommitNew(pendingNew.parentPath, pendingNew.kind, name)
+              }
+              onCancel={onCancelNew}
+              dataTestid={
+                pendingNew.kind === 'folder'
+                  ? 'folder-tree-new-folder-input'
+                  : 'folder-tree-new-file-input'
+              }
+            />
+          )}
           {isLoading && !children ? (
             <div
               className="px-2 py-0.5 text-xs text-muted-foreground"
@@ -109,7 +229,7 @@ const TreeNode = memo(function TreeNode({
             >
               로딩 중…
             </div>
-          ) : children && children.length === 0 ? (
+          ) : children && children.length === 0 && !showInlineNew ? (
             <div
               className="px-2 py-0.5 text-xs text-muted-foreground"
               style={{ paddingLeft: 8 + (depth + 1) * INDENT_PX }}
@@ -126,8 +246,23 @@ const TreeNode = memo(function TreeNode({
                 childrenByPath={childrenByPath}
                 loadingPaths={loadingPaths}
                 activePath={activePath}
+                selectedPath={selectedPath}
+                renamingPath={renamingPath}
+                pendingNew={pendingNew}
+                draggingPath={draggingPath}
+                dropTargetPath={dropTargetPath}
                 onToggle={onToggle}
                 onOpenPath={onOpenPath}
+                onSelect={onSelect}
+                onContextMenu={onContextMenu}
+                onCommitRename={onCommitRename}
+                onCancelRename={onCancelRename}
+                onCommitNew={onCommitNew}
+                onCancelNew={onCancelNew}
+                onDragStart={onDragStart}
+                onDragOver={onDragOver}
+                onDragLeave={onDragLeave}
+                onDrop={onDrop}
               />
             ))
           )}
@@ -136,6 +271,208 @@ const TreeNode = memo(function TreeNode({
     </div>
   );
 });
+
+interface InlineInputProps {
+  initial: string;
+  depth: number;
+  icon: React.ReactNode;
+  placeholder?: string;
+  onCommit: (name: string) => void | Promise<void>;
+  onCancel: () => void;
+  dataTestid: string;
+}
+
+function InlineNameInput({
+  initial,
+  depth,
+  icon,
+  placeholder,
+  onCommit,
+  onCancel,
+  dataTestid,
+}: InlineInputProps): React.ReactElement {
+  const [value, setValue] = useState(initial);
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.focus();
+    // Select the basename without extension so Enter immediately overwrites
+    // the name without forcing the user to clear it. For empty initial
+    // (new file), this is a no-op.
+    if (initial) {
+      const dot = initial.lastIndexOf('.');
+      const end = dot > 0 ? dot : initial.length;
+      el.setSelectionRange(0, end);
+    }
+  }, [initial]);
+
+  const handleKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>): void => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const name = value.trim();
+      if (name) void onCommit(name);
+      else onCancel();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      onCancel();
+    }
+  };
+
+  return (
+    <div
+      className="flex w-full items-center gap-1 px-2 py-0.5 text-xs"
+      style={{ paddingLeft: 8 + depth * INDENT_PX }}
+    >
+      <span className="size-3 shrink-0" aria-hidden="true" />
+      {icon}
+      <input
+        ref={ref}
+        type="text"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={handleKeyDown}
+        onBlur={() => onCancel()}
+        placeholder={placeholder}
+        className="h-5 min-w-0 flex-1 rounded border border-input bg-background px-1 text-xs"
+        data-testid={dataTestid}
+      />
+    </div>
+  );
+}
+
+interface ContextMenuProps {
+  state: ContextMenuState;
+  onClose: () => void;
+  onRename: () => void;
+  onTrash: () => void;
+  onReveal: () => void;
+  onNewFile: () => void;
+  onNewFolder: () => void;
+}
+
+function TreeContextMenu({
+  state,
+  onClose,
+  onRename,
+  onTrash,
+  onReveal,
+  onNewFile,
+  onNewFolder,
+}: ContextMenuProps): React.ReactElement {
+  const menuRef = useRef<HTMLDivElement>(null);
+  // Close on outside mousedown (NOT click — click can fire after the
+  // contextmenu event in some test runners) + Escape.
+  useEffect(() => {
+    const onDown = (e: MouseEvent): void => {
+      if (
+        menuRef.current &&
+        e.target instanceof Node &&
+        menuRef.current.contains(e.target)
+      ) {
+        return;
+      }
+      onClose();
+    };
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose();
+    };
+    // Defer attaching mousedown so the contextmenu's own mousedown that
+    // opened the menu doesn't immediately close it.
+    const t = window.setTimeout(() => {
+      document.addEventListener('mousedown', onDown);
+    }, 0);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      window.clearTimeout(t);
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      ref={menuRef}
+      role="menu"
+      className="fixed z-50 min-w-[10rem] rounded-md border border-border bg-popover py-1 text-xs shadow-md"
+      style={{ left: state.x, top: state.y }}
+      data-testid="folder-tree-context-menu"
+    >
+      {state.entry.isDirectory && (
+        <>
+          <MenuItem
+            icon={<FilePlus className="size-3.5" />}
+            label="새 파일"
+            onClick={onNewFile}
+            testid="ctx-new-file"
+          />
+          <MenuItem
+            icon={<FolderPlus className="size-3.5" />}
+            label="새 폴더"
+            onClick={onNewFolder}
+            testid="ctx-new-folder"
+          />
+          <hr className="my-1 border-border" />
+        </>
+      )}
+      <MenuItem
+        icon={<Pencil className="size-3.5" />}
+        label="이름 변경"
+        onClick={onRename}
+        testid="ctx-rename"
+      />
+      <MenuItem
+        icon={<Trash2 className="size-3.5" />}
+        label="휴지통으로 이동"
+        onClick={onTrash}
+        testid="ctx-trash"
+      />
+      <hr className="my-1 border-border" />
+      <MenuItem
+        icon={<Search className="size-3.5" />}
+        label="파일 관리자에서 보기"
+        onClick={onReveal}
+        testid="ctx-reveal"
+      />
+    </div>
+  );
+}
+
+function MenuItem({
+  icon,
+  label,
+  onClick,
+  testid,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  testid: string;
+}): React.ReactElement {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-muted"
+      data-testid={testid}
+    >
+      <span className="text-muted-foreground">{icon}</span>
+      <span>{label}</span>
+    </button>
+  );
+}
+
+function dirOf(p: string): string {
+  const sep = p.includes('\\') ? '\\' : '/';
+  const i = p.lastIndexOf(sep);
+  return i >= 0 ? p.slice(0, i) : p;
+}
+
+function joinPath(parent: string, name: string): string {
+  const sep = parent.includes('\\') ? '\\' : '/';
+  return parent.endsWith(sep) ? parent + name : `${parent}${sep}${name}`;
+}
 
 export function FolderTree({
   rootPath,
@@ -148,16 +485,21 @@ export function FolderTree({
   >(new Map());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set());
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [renamingPath, setRenamingPath] = useState<string | null>(null);
+  const [pendingNew, setPendingNew] = useState<PendingNew | null>(null);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [draggingPath, setDraggingPath] = useState<string | null>(null);
+  const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const expandedRef = useRef<Set<string>>(new Set());
-  // Mirror `expanded` into a ref via effect — avoids "ref read during
-  // render" lint and lets the watcher's onChange callback see the latest
-  // expansion set without re-subscribing on every render.
+  const selectedPathRef = useRef<string | null>(null);
   useEffect(() => {
     expandedRef.current = expanded;
   }, [expanded]);
+  useEffect(() => {
+    selectedPathRef.current = selectedPath;
+  }, [selectedPath]);
 
-  // Fetch a folder's immediate children. Skips when a fetch is already
-  // in flight for the same path.
   const loadChildren = useCallback(
     async (folderPath: string): Promise<FolderEntry[]> => {
       setLoadingPaths((prev) => {
@@ -184,16 +526,17 @@ export function FolderTree({
     [],
   );
 
-  // Initial root load + watcher attach. Re-runs when rootPath changes.
+  // Initial root load + watcher attach.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      // Reset state asynchronously so we don't hit
-      // react-hooks/set-state-in-effect on the synchronous fall-through.
       setRootChildren([]);
       setChildrenByPath(new Map());
       setExpanded(new Set());
       setLoadingPaths(new Set());
+      setSelectedPath(null);
+      setRenamingPath(null);
+      setPendingNew(null);
       const items = await window.api.folder.list(rootPath);
       if (cancelled) return;
       setRootChildren(items);
@@ -206,9 +549,6 @@ export function FolderTree({
     })();
 
     const unsubscribe = window.api.folder.onChange((event) => {
-      // Refetch the parent dir's children. We only refresh dirs that are
-      // either the root or currently expanded — collapsed dirs will
-      // re-fetch when next opened.
       const parent = event.parent;
       if (parent === rootPath) {
         void window.api.folder.list(rootPath).then((items) => {
@@ -260,12 +600,286 @@ export function FolderTree({
     [expanded, childrenByPath, loadChildren],
   );
 
+  const handleSelect = useCallback((p: string) => setSelectedPath(p), []);
+
+  const handleContextMenu = useCallback(
+    (e: ReactMouseEvent, entry: FolderEntry): void => {
+      e.preventDefault();
+      // Stop propagation so the root-container's onContextMenu doesn't
+      // overwrite our entry-specific menu state.
+      e.stopPropagation();
+      setSelectedPath(entry.path);
+      setContextMenu({ x: e.clientX, y: e.clientY, entry });
+    },
+    [],
+  );
+
+  const findEntryByPath = useCallback(
+    (p: string): FolderEntry | undefined => {
+      // Search root + all loaded children for a matching entry.
+      for (const e of rootChildren) {
+        if (e.path === p) return e;
+      }
+      for (const list of childrenByPath.values()) {
+        for (const e of list) {
+          if (e.path === p) return e;
+        }
+      }
+      return undefined;
+    },
+    [rootChildren, childrenByPath],
+  );
+
+  const startRename = useCallback((p: string) => {
+    setContextMenu(null);
+    setRenamingPath(p);
+  }, []);
+
+  const commitRename = useCallback(
+    async (oldPath: string, newName: string): Promise<void> => {
+      const newPath = joinPath(dirOf(oldPath), newName);
+      if (newPath === oldPath) {
+        setRenamingPath(null);
+        return;
+      }
+      try {
+        await window.api.folder.rename(oldPath, newPath);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        window.alert(`이름 변경 실패: ${msg}`);
+      } finally {
+        setRenamingPath(null);
+      }
+    },
+    [],
+  );
+
+  const cancelRename = useCallback(() => setRenamingPath(null), []);
+
+  const startNew = useCallback(
+    (parentPath: string, kind: 'file' | 'folder') => {
+      setContextMenu(null);
+      // If creating inside a closed folder, expand it first so the input
+      // is visible.
+      if (parentPath !== rootPath && !expanded.has(parentPath)) {
+        setExpanded((prev) => new Set(prev).add(parentPath));
+        if (!childrenByPath.has(parentPath)) {
+          void loadChildren(parentPath);
+        }
+      }
+      setPendingNew({ parentPath, kind });
+    },
+    [rootPath, expanded, childrenByPath, loadChildren],
+  );
+
+  const commitNew = useCallback(
+    async (
+      parentPath: string,
+      kind: 'file' | 'folder',
+      name: string,
+    ): Promise<void> => {
+      try {
+        if (kind === 'file') {
+          await window.api.folder.createFile(parentPath, name);
+        } else {
+          await window.api.folder.createFolder(parentPath, name);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        window.alert(`생성 실패: ${msg}`);
+      } finally {
+        setPendingNew(null);
+      }
+    },
+    [],
+  );
+
+  const cancelNew = useCallback(() => setPendingNew(null), []);
+
+  const trashPath = useCallback(async (p: string): Promise<void> => {
+    setContextMenu(null);
+    const ok = window.confirm(`정말 휴지통으로 이동하시겠습니까?\n\n${p}`);
+    if (!ok) return;
+    try {
+      await window.api.folder.trash(p);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      window.alert(`삭제 실패: ${msg}`);
+    }
+  }, []);
+
+  const revealPath = useCallback((p: string) => {
+    setContextMenu(null);
+    void window.api.folder.reveal(p);
+  }, []);
+
+  // Drag and drop handlers (chunk 65). Minimal HTML5 DnD: we ferry the
+  // dragged path via dataTransfer and call rename on drop.
+  const handleDragStart = useCallback(
+    (e: ReactDragEvent, entry: FolderEntry): void => {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('application/x-ahwp-path', entry.path);
+      setDraggingPath(entry.path);
+    },
+    [],
+  );
+
+  const handleDragOver = useCallback(
+    (e: ReactDragEvent, entry: FolderEntry): void => {
+      // Drop only allowed onto folders. Don't hilight the dragged item
+      // itself or anything inside it (no self-move; only parent change).
+      if (!entry.isDirectory) return;
+      const src = e.dataTransfer.getData('application/x-ahwp-path');
+      if (src && (src === entry.path || entry.path.startsWith(src + '/'))) {
+        return;
+      }
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      setDropTargetPath(entry.path);
+    },
+    [],
+  );
+
+  const handleDragLeave = useCallback((): void => {
+    setDropTargetPath(null);
+  }, []);
+
+  const handleDrop = useCallback(
+    async (e: ReactDragEvent, entry: FolderEntry): Promise<void> => {
+      e.preventDefault();
+      const src = e.dataTransfer.getData('application/x-ahwp-path');
+      setDraggingPath(null);
+      setDropTargetPath(null);
+      if (!src || !entry.isDirectory) return;
+      // Disallow moving into self / a descendant of self.
+      if (src === entry.path) return;
+      if (entry.path.startsWith(src + '/')) return;
+      const name = src.split(/[\\/]/).pop() ?? '';
+      if (!name) return;
+      const dest = joinPath(entry.path, name);
+      if (dest === src) return;
+      try {
+        await window.api.folder.rename(src, dest);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        window.alert(`이동 실패: ${msg}`);
+      }
+    },
+    [],
+  );
+
+  const handleRootDragOver = useCallback(
+    (e: ReactDragEvent): void => {
+      const src = e.dataTransfer.getData('application/x-ahwp-path');
+      if (src && dirOf(src) === rootPath) return; // already in root
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+    },
+    [rootPath],
+  );
+
+  const handleRootDrop = useCallback(
+    async (e: ReactDragEvent): Promise<void> => {
+      e.preventDefault();
+      const src = e.dataTransfer.getData('application/x-ahwp-path');
+      setDraggingPath(null);
+      setDropTargetPath(null);
+      if (!src) return;
+      if (dirOf(src) === rootPath) return;
+      const name = src.split(/[\\/]/).pop() ?? '';
+      if (!name) return;
+      const dest = joinPath(rootPath, name);
+      if (dest === src) return;
+      try {
+        await window.api.folder.rename(src, dest);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        window.alert(`이동 실패: ${msg}`);
+      }
+    },
+    [rootPath],
+  );
+
+  // Tree-level keyboard handler: F2 rename, Delete trash, Enter open/toggle.
+  const handleKeyDown = useCallback(
+    (e: ReactKeyboardEvent<HTMLDivElement>): void => {
+      const sel = selectedPathRef.current;
+      if (!sel) return;
+      if (renamingPath || pendingNew) return; // input owns these keys
+      const entry = findEntryByPath(sel);
+      if (!entry) return;
+      if (e.key === 'F2') {
+        e.preventDefault();
+        startRename(sel);
+        return;
+      }
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        void trashPath(sel);
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (entry.isDirectory) void handleToggle(entry.path);
+        else void onOpenPath(entry.path);
+      }
+    },
+    [
+      renamingPath,
+      pendingNew,
+      findEntryByPath,
+      startRename,
+      trashPath,
+      handleToggle,
+      onOpenPath,
+    ],
+  );
+
   return (
     <div
-      className="flex h-full flex-col overflow-auto"
+      className="flex h-full flex-col overflow-auto outline-none"
       data-testid="folder-tree"
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
+      onDragOver={handleRootDragOver}
+      onDrop={handleRootDrop}
+      onContextMenu={(e) => {
+        // Right-click on the empty area of the panel → show menu rooted at
+        // the root folder so users can create top-level files/folders.
+        e.preventDefault();
+        setSelectedPath(null);
+        setContextMenu({
+          x: e.clientX,
+          y: e.clientY,
+          entry: { path: rootPath, name: rootPath, isDirectory: true },
+        });
+      }}
     >
-      {rootChildren.length === 0 ? (
+      {/* Inline new-file/folder input at root level when pending */}
+      {pendingNew && pendingNew.parentPath === rootPath && (
+        <InlineNameInput
+          initial=""
+          depth={0}
+          icon={
+            pendingNew.kind === 'folder' ? (
+              <Folder className="size-4 shrink-0 text-amber-500" />
+            ) : (
+              <File className="size-4 shrink-0 text-muted-foreground" />
+            )
+          }
+          placeholder={pendingNew.kind === 'folder' ? '폴더 이름' : '파일 이름'}
+          onCommit={(name) =>
+            commitNew(pendingNew.parentPath, pendingNew.kind, name)
+          }
+          onCancel={cancelNew}
+          dataTestid={
+            pendingNew.kind === 'folder'
+              ? 'folder-tree-new-folder-input'
+              : 'folder-tree-new-file-input'
+          }
+        />
+      )}
+      {rootChildren.length === 0 && !pendingNew ? (
         <div className="px-3 py-4 text-xs text-muted-foreground">(빈 폴더)</div>
       ) : (
         rootChildren.map((entry) => (
@@ -277,10 +891,50 @@ export function FolderTree({
             childrenByPath={childrenByPath}
             loadingPaths={loadingPaths}
             activePath={activePath}
+            selectedPath={selectedPath}
+            renamingPath={renamingPath}
+            pendingNew={pendingNew}
+            draggingPath={draggingPath}
+            dropTargetPath={dropTargetPath}
             onToggle={handleToggle}
             onOpenPath={onOpenPath}
+            onSelect={handleSelect}
+            onContextMenu={handleContextMenu}
+            onCommitRename={commitRename}
+            onCancelRename={cancelRename}
+            onCommitNew={commitNew}
+            onCancelNew={cancelNew}
+            onDragStart={handleDragStart}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
           />
         ))
+      )}
+      {contextMenu && (
+        <TreeContextMenu
+          state={contextMenu}
+          onClose={() => setContextMenu(null)}
+          onRename={() => startRename(contextMenu.entry.path)}
+          onTrash={() => void trashPath(contextMenu.entry.path)}
+          onReveal={() => revealPath(contextMenu.entry.path)}
+          onNewFile={() =>
+            startNew(
+              contextMenu.entry.isDirectory
+                ? contextMenu.entry.path
+                : dirOf(contextMenu.entry.path),
+              'file',
+            )
+          }
+          onNewFolder={() =>
+            startNew(
+              contextMenu.entry.isDirectory
+                ? contextMenu.entry.path
+                : dirOf(contextMenu.entry.path),
+              'folder',
+            )
+          }
+        />
       )}
     </div>
   );

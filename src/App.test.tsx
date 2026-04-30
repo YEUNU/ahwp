@@ -37,6 +37,11 @@ describe('App', () => {
         watch: vi.fn().mockResolvedValue(undefined),
         unwatch: vi.fn().mockResolvedValue(undefined),
         onChange: vi.fn().mockReturnValue(() => {}),
+        createFile: vi.fn().mockResolvedValue(''),
+        createFolder: vi.fn().mockResolvedValue(''),
+        rename: vi.fn().mockResolvedValue(undefined),
+        trash: vi.fn().mockResolvedValue(undefined),
+        reveal: vi.fn().mockResolvedValue(undefined),
       },
     };
     Object.defineProperty(window, 'api', {

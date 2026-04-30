@@ -52,6 +52,14 @@ const api: AhwpApi = {
         ipcRenderer.off('folder:changed', listener);
       };
     },
+    createFile: (parentPath, name) =>
+      ipcRenderer.invoke('folder:create-file', parentPath, name),
+    createFolder: (parentPath, name) =>
+      ipcRenderer.invoke('folder:create-folder', parentPath, name),
+    rename: (oldPath, newPath) =>
+      ipcRenderer.invoke('folder:rename', oldPath, newPath),
+    trash: (path) => ipcRenderer.invoke('folder:trash', path),
+    reveal: (path) => ipcRenderer.invoke('folder:reveal', path),
   },
 };
 

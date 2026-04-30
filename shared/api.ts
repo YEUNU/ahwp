@@ -120,6 +120,27 @@ export interface FolderApi {
   unwatch: () => Promise<void>;
   /** Subscribe to change events from the watcher. Returns an unsubscriber. */
   onChange: (handler: (event: FolderChangeEvent) => void) => () => void;
+  /**
+   * Create an empty file at `parentPath/name`. Throws if a file already
+   * exists at the target path. Returns the resulting absolute path.
+   */
+  createFile: (parentPath: string, name: string) => Promise<string>;
+  /**
+   * Create a directory at `parentPath/name`. Throws on collision.
+   */
+  createFolder: (parentPath: string, name: string) => Promise<string>;
+  /**
+   * fs.rename — also handles move-to-different-parent. Throws if the
+   * destination already exists.
+   */
+  rename: (oldPath: string, newPath: string) => Promise<void>;
+  /**
+   * Move to OS trash (Electron `shell.trashItem`). Recoverable; does not
+   * permanently delete. Throws if the path can't be reached.
+   */
+  trash: (path: string) => Promise<void>;
+  /** Open the OS file manager with `path` selected. */
+  reveal: (path: string) => Promise<void>;
 }
 
 export interface SessionState {

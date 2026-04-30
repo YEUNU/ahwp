@@ -2,6 +2,7 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  shell,
   type IpcMainInvokeEvent,
 } from 'electron';
 import { promises as fs } from 'node:fs';
@@ -126,6 +127,78 @@ export function registerFolderIpc(): void {
   ipcMain.handle('folder:unwatch', async (): Promise<void> => {
     await teardownWatcher();
   });
+
+  ipcMain.handle(
+    'folder:create-file',
+    async (_event, parentPath: string, name: string): Promise<string> => {
+      validateNameOrThrow(name);
+      const target = path.join(parentPath, name);
+      // 'wx' = write, fail if exists. Defends against races + accidental
+      // overwrites.
+      const fh = await fs.open(target, 'wx');
+      await fh.close();
+      return target;
+    },
+  );
+
+  ipcMain.handle(
+    'folder:create-folder',
+    async (_event, parentPath: string, name: string): Promise<string> => {
+      validateNameOrThrow(name);
+      const target = path.join(parentPath, name);
+      // mkdir without recursive — fails if exists, which is what we want.
+      await fs.mkdir(target);
+      return target;
+    },
+  );
+
+  ipcMain.handle(
+    'folder:rename',
+    async (_event, oldPath: string, newPath: string): Promise<void> => {
+      // Defend against accidental overwrite — only call rename when the
+      // destination doesn't already exist. fs.rename overwrites silently
+      // on macOS/Linux which would clobber a same-named file.
+      try {
+        await fs.access(newPath);
+        throw new Error(`destination already exists: ${newPath}`);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      }
+      await fs.rename(oldPath, newPath);
+    },
+  );
+
+  ipcMain.handle(
+    'folder:trash',
+    async (_event, target: string): Promise<void> => {
+      // Electron's shell.trashItem moves to OS trash; recoverable.
+      await shell.trashItem(target);
+    },
+  );
+
+  ipcMain.handle(
+    'folder:reveal',
+    async (_event, target: string): Promise<void> => {
+      // showItemInFolder opens the parent and highlights the item.
+      shell.showItemInFolder(target);
+    },
+  );
+}
+
+/**
+ * Allow user-typed names that fs accepts. Reject empties, separators,
+ * and reserved names like "." / ".."
+ */
+function validateNameOrThrow(name: string): void {
+  if (typeof name !== 'string' || name.length === 0) {
+    throw new Error('name must be a non-empty string');
+  }
+  if (name === '.' || name === '..') {
+    throw new Error(`reserved name: ${name}`);
+  }
+  if (name.includes('/') || name.includes('\\')) {
+    throw new Error(`name must not contain path separators: ${name}`);
+  }
 }
 
 /**
