@@ -2340,61 +2340,30 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       stepWordOffset,
     ]);
 
-    // Effect 2: IntersectionObserver — lazy render visible pages.
-    // Note: the page indicator was previously updated here too, but the
-    // observer's `entries` callback only contains pages whose visibility
-    // *changed*, so picking "most visible" inside the batch could pin
-    // the indicator on a page whose ratio happened to drop while the
-    // truly visible page wasn't in the batch. Indicator now tracks via
-    // an onScroll handler against scrollTop (effect 3 below).
-    useEffect(() => {
-      if (phase !== 'ready' || !pageDims || pageCount === 0) return;
-
-      const scrollEl = scrollRef.current;
-      const pageRefs = pageRefsRef;
-      let observer: IntersectionObserver | null = null;
-
-      const raf = requestAnimationFrame(() => {
-        observer = new IntersectionObserver(
-          (entries) => {
-            for (const entry of entries) {
-              const idx = Number(
-                entry.target.getAttribute('data-page-idx') ?? '-1',
-              );
-              if (idx < 0) continue;
-              if (entry.isIntersecting) {
-                renderPageInto(idx);
-              }
-            }
-          },
-          { root: scrollEl, rootMargin: '400px', threshold: [0] },
-        );
-
-        pageRefs.current.forEach((el) => {
-          if (el && observer) observer.observe(el);
-        });
-
-        // Force-render page 0 immediately (in case observer doesn't fire yet).
-        renderPageInto(0);
-      });
-
-      return () => {
-        cancelAnimationFrame(raf);
-        observer?.disconnect();
-      };
-    }, [phase, pageDims, pageCount, renderPageInto]);
-
-    // Effect 3: page indicator — picks the page whose top edge is closest
-    // to the upper third of the visible viewport. rAF-throttled so it
-    // doesn't run on every scroll tick.
+    // Effect 2: page indicator + mount window. On every scroll (rAF-
+    // throttled) we (a) pick the topmost-visible page for the indicator
+    // and (b) ensure SVGs are mounted only for pages within
+    // ±VIEWPORT_BUFFER_PAGES of that page. Pages outside the window
+    // have their SVG cleared (their cached SVG string stays in
+    // cacheRef so re-mount on scroll-back is just a DOM parse, no
+    // WASM `renderPageSvg` call).
+    //
+    // Inactive tab guard: when the viewer's container is `display:none`
+    // (background tab), getBoundingClientRect returns all-zero rects.
+    // Without this guard, every inactive tab would mount 11 pages on
+    // first render — opening 30 tabs would mean 330 page renders.
     useEffect(() => {
       if (phase !== 'ready' || pageCount === 0) return;
       const scrollEl = scrollRef.current;
       if (!scrollEl) return;
 
+      const VIEWPORT_BUFFER_PAGES = 5;
+
       let pending = false;
       const update = (): void => {
         pending = false;
+        // Skip when the tab isn't visible — its layout isn't real.
+        if (scrollEl.clientHeight === 0) return;
         const refs = pageRefsRef.current;
         const scrollRect = scrollEl.getBoundingClientRect();
         const probeY = scrollRect.top + scrollEl.clientHeight * 0.33;
@@ -2403,23 +2372,37 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           const el = refs[i];
           if (!el) continue;
           const r = el.getBoundingClientRect();
-          if (r.top > probeY) break; // pages are stacked top-to-bottom
+          if (r.top > probeY) break;
           best = i;
         }
         setCurrentPage(best);
+
+        const lo = Math.max(0, best - VIEWPORT_BUFFER_PAGES);
+        const hi = Math.min(refs.length - 1, best + VIEWPORT_BUFFER_PAGES);
+        for (let i = 0; i < refs.length; i++) {
+          const el = refs[i];
+          if (!el) continue;
+          const inWindow = i >= lo && i <= hi;
+          const hasSvg = el.firstElementChild?.tagName.toLowerCase() === 'svg';
+          if (inWindow && !hasSvg) {
+            renderPageInto(i);
+          } else if (!inWindow && hasSvg) {
+            // Clear DOM but keep cacheRef[i] so re-mount is fast.
+            el.innerHTML = '';
+          }
+        }
       };
       const onScroll = (): void => {
         if (pending) return;
         pending = true;
         requestAnimationFrame(update);
       };
-      // Initial sync (e.g. after restoring scroll position on tab switch).
       update();
       scrollEl.addEventListener('scroll', onScroll, { passive: true });
       return () => {
         scrollEl.removeEventListener('scroll', onScroll);
       };
-    }, [phase, pageCount, pageDims, zoom]);
+    }, [phase, pageCount, pageDims, zoom, renderPageInto, isActive]);
 
     const setZoomFit = useCallback(() => {
       if (!pageDims || !scrollRef.current) return;

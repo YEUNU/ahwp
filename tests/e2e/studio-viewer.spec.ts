@@ -231,12 +231,14 @@ test.describe('studio viewer — chunk 3 (multi-page stress)', () => {
       );
     }
 
-    // Verify the first page that has images
+    // Verify the first page that has images. The mount window is
+    // rAF-throttled, so scrolling to the target page doesn't
+    // synchronously remount its SVG — poll instead of single read.
     const [idxStr] = pagesWithImages[0];
     const target = placeholders.nth(Number(idxStr));
     await target.scrollIntoViewIfNeeded();
     const images = target.locator('svg image');
-    expect(await images.count()).toBeGreaterThan(0);
+    await expect.poll(async () => images.count()).toBeGreaterThan(0);
     const href =
       (await images.first().getAttribute('href')) ??
       (await images.first().getAttribute('xlink:href'));

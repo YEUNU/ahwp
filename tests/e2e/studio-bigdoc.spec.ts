@@ -83,22 +83,38 @@ test.describe('studio big doc — 144-page load profile', () => {
     expect(total).toBeLessThanOrEqual(154);
   });
 
-  test('lazy render — only the first few pages mounted at load', async () => {
+  test('mount window — only ±5 pages from the active page have SVG mounted', async () => {
     const { page } = launched;
-    // Wait for first page to fully render.
     await expect(
       page.getByTestId('studio-viewer-page').first().locator('svg').first(),
     ).toBeVisible({ timeout: 30_000 });
-    // Count placeholder divs vs ones with mounted SVGs.
     const total = await page.getByTestId('studio-viewer-page').count();
     expect(total).toBeGreaterThan(100);
     const mounted = await page
       .getByTestId('studio-viewer-page')
       .locator('svg')
       .count();
-    // IntersectionObserver pre-loads about a viewport's worth (rootMargin
-    // 400px). For 144 pages with default zoom we expect <~10 mounted.
-    expect(mounted).toBeLessThan(20);
+    // VIEWPORT_BUFFER_PAGES = 5 → max 11 mounted (current ±5).
+    expect(mounted).toBeLessThanOrEqual(12);
+  });
+
+  test('scrolling to the bottom unmounts top pages', async () => {
+    const { page } = launched;
+    const placeholders = page.getByTestId('studio-viewer-page');
+    const total = await placeholders.count();
+    // Initially, page 0 is mounted.
+    await expect(placeholders.first().locator('svg')).toHaveCount(1);
+    // Scroll to last page.
+    await placeholders.nth(total - 1).scrollIntoViewIfNeeded();
+    // Wait for the rAF-throttled scroll handler to settle.
+    await page.waitForTimeout(200);
+    // Page 0 should now be UNMOUNTED (out of the ±5 window from the
+    // bottom of a 144-page doc).
+    await expect
+      .poll(async () => placeholders.first().locator('svg').count())
+      .toBe(0);
+    // Last page is mounted.
+    await expect(placeholders.nth(total - 1).locator('svg')).toHaveCount(1);
   });
 
   test('scroll to last page triggers lazy render', async () => {

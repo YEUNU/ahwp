@@ -92,8 +92,12 @@ test.describe('scroll behavior — folder tree + tab bar', () => {
     const root = await mkdtemp(path.join(tmpdir(), 'ahwp-scroll-tabs-'));
     try {
       await mkdir(root, { recursive: true });
-      // 30 copies of the stress fixture — each opens cleanly.
-      for (let i = 0; i < 30; i++) {
+      // 12 tabs is enough to overflow the bar at the default panel
+      // width (each tab is ≤16rem wide). Lower count keeps the test
+      // fast — opening real CFB documents through the studio path is
+      // dominated by per-file parse + initial render.
+      const TAB_COUNT = 12;
+      for (let i = 0; i < TAB_COUNT; i++) {
         await copyFile(
           STRESS_FIXTURE,
           path.join(root, `tab_${String(i).padStart(2, '0')}.hwp`),
@@ -106,13 +110,14 @@ test.describe('scroll behavior — folder tree + tab bar', () => {
         }, root);
         await launched.page.reload();
         await launched.page.waitForLoadState('domcontentloaded');
-        // Click each file in the folder tree to open as a tab.
         const files = launched.page.getByTestId('folder-tree-file');
-        await expect(files).toHaveCount(30);
-        for (let i = 0; i < 30; i++) {
+        await expect(files).toHaveCount(TAB_COUNT);
+        for (let i = 0; i < TAB_COUNT; i++) {
           await files.nth(i).click();
         }
-        await expect(launched.page.getByTestId('studio-tab')).toHaveCount(30);
+        await expect(launched.page.getByTestId('studio-tab')).toHaveCount(
+          TAB_COUNT,
+        );
         const dims = await readDims(launched.page, 'studio-tabbar');
         // Horizontal overflow: scrollWidth greater than clientWidth.
         expect(dims.scrollWidth).toBeGreaterThan(dims.clientWidth);
