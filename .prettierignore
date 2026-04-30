@@ -13,3 +13,4 @@ LICENSE
 # Playwright artifacts
 /test-results/
 /playwright-report/
+electron/hwp/blank-seed.ts

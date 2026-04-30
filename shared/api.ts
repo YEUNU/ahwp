@@ -49,6 +49,12 @@ export interface FileSaveAsRequest {
 }
 
 export interface FileApi {
+  /**
+   * Create a blank HWP document and write it to a per-session temp path.
+   * Returns the path so the viewer can open it like any other file. The
+   * temp file is excluded from the Recent list until the user runs Save As.
+   */
+  new: () => Promise<FileOpenResult>;
   /** Show native open dialog. Returns null when the user cancels. */
   open: () => Promise<FileOpenResult | null>;
   /** Open a specific path (drag-drop, recent-list click). Returns null if rejected (e.g. wrong extension). */

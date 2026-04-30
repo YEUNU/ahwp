@@ -14,6 +14,7 @@ describe('App', () => {
       }),
       onMenuAction: vi.fn().mockReturnValue(() => {}),
       file: {
+        new: vi.fn().mockResolvedValue({ path: '/tmp/new.hwp' }),
         open: vi.fn().mockResolvedValue(null),
         openByPath: vi.fn().mockResolvedValue(null),
         listRecent: vi.fn().mockResolvedValue([]),
@@ -41,15 +42,18 @@ describe('App', () => {
     expect(screen.getByText('Hello, ahwp')).toBeInTheDocument();
   });
 
-  it('calls ipc:ping on mount and renders the response', async () => {
+  it('calls ipc:ping on mount', async () => {
     render(<App />);
     await waitFor(() => {
       expect(window.api.ping).toHaveBeenCalledWith({
         message: 'hello from renderer',
       });
     });
-    await waitFor(() => {
-      expect(screen.getByText(/hello from renderer/)).toBeInTheDocument();
-    });
+  });
+
+  it('renders new-document and open buttons on welcome view', () => {
+    render(<App />);
+    expect(screen.getByTestId('welcome-new-doc')).toBeInTheDocument();
+    expect(screen.getByTestId('welcome-open')).toBeInTheDocument();
   });
 });

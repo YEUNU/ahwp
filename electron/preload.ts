@@ -17,6 +17,7 @@ const api: AhwpApi = {
     };
   },
   file: {
+    new: () => ipcRenderer.invoke('file:new'),
     open: () => ipcRenderer.invoke('file:open'),
     openByPath: (filePath) => ipcRenderer.invoke('file:open-by-path', filePath),
     listRecent: () => ipcRenderer.invoke('file:list-recent'),

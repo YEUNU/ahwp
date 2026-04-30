@@ -1,4 +1,4 @@
-import { BrowserWindow, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type {
@@ -8,7 +8,11 @@ import type {
   RecentFile,
 } from '../../shared/api';
 import { correctExtension } from '../../shared/format';
-import { ensureHwpxBytes, normalizeToHwp } from '../hwp/converter';
+import {
+  createBlankHwpBytes,
+  ensureHwpxBytes,
+  normalizeToHwp,
+} from '../hwp/converter';
 import { addRecent, listRecent } from '../store/recent';
 
 const ALLOWED_EXTENSIONS = ['.hwp', '.hwpx'] as const;
@@ -28,6 +32,19 @@ async function exists(filePath: string): Promise<boolean> {
 }
 
 export function registerFileIpc(): void {
+  ipcMain.handle('file:new', async (): Promise<FileOpenResult> => {
+    // Build a fresh blank HWP via @rhwp/core's createEmpty + exportHwp,
+    // write to a per-session temp path, and hand the path back. The
+    // viewer treats it like any other open file. Until the user runs
+    // Save As, the file lives in `userData/temp` — never added to recent.
+    const bytes = await createBlankHwpBytes();
+    const dir = path.join(app.getPath('userData'), 'temp');
+    await fs.mkdir(dir, { recursive: true });
+    const target = path.join(dir, `new-${Date.now()}.hwp`);
+    await writeAtomic(target, bytes);
+    return { path: target };
+  });
+
   ipcMain.handle('file:open', async (event): Promise<FileOpenResult | null> => {
     const window = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showOpenDialog(

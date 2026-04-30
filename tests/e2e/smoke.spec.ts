@@ -11,13 +11,14 @@ test.afterEach(async () => {
   await launched.close();
 });
 
-test('app boots with three-pane layout and ipc:ping resolves', async () => {
+test('app boots with three-pane layout and welcome view', async () => {
   const { page } = launched;
   await expect(page.getByText('파일').first()).toBeVisible();
   await expect(page.getByText('챗봇').first()).toBeVisible();
   await expect(page.getByText('Hello, ahwp')).toBeVisible();
-  // ipc:ping renders as JSON; pong text should appear.
-  await expect(page.getByText(/hello from renderer/)).toBeVisible();
+  // Welcome view exposes the new-doc and open buttons.
+  await expect(page.getByTestId('welcome-new-doc')).toBeVisible();
+  await expect(page.getByTestId('welcome-open')).toBeVisible();
 });
 
 test('theme toggle cycles system → light → dark on html element', async () => {

@@ -60,8 +60,8 @@
 - [x] 파일 열기 IPC: `file:open` (다이얼로그) / `file:open-by-path` (DnD/recent) / `file:list-recent` / `file:read`
 - [x] HWP → HWPX 변환기 (`electron/hwp/converter.ts`) — `@rhwp/core` 동적 import + WASM lazy init + `init_panic_hook`/`version()` 로깅
 - [x] Save (Cmd+S) / Save As (Cmd+Shift+S) IPC — `@rhwp/core` 라운드트립 정규화 + 항상 `.hwpx` 자동 라우팅 (확장자 어긋나면 보정)
-- [ ] **새 문서 생성** (`file:new`) — `createBlankDocument`은 인스턴스 메서드라 빈 시드 HWPX 필요. 옵션 검토 중
-- [ ] **시작 화면 (Welcome view)** — `activePath=null` 상태 디자인 (현재는 ipc:ping 데모)
+- [x] **새 문서 생성** (`file:new`) — base64-임베드 blank seed → 인스턴스 `createBlankDocument` → exportHwp → `userData/temp/new-*.hwp`
+- [x] **시작 화면 (Welcome view)** — "새 문서" / "파일 열기" 버튼 (`activePath=null` 상태)
 - [ ] dirty 상태 추적 + 저장 안 된 채 닫기 시 확인 (라이브러리에 변경 이벤트 미노출 — exportHwp 해시 비교 방식 검토 중)
 - [ ] 여러 문서 동시 열기 (단일 활성 + 좌측 리스트 전환은 동작, 탭은 미정)
 - [ ] studio 자산 로컬 번들링 (Phase 4와 같이)

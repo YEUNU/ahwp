@@ -140,6 +140,49 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     const composingRef = useRef(false);
     // Style list for the toolbar dropdown (loaded once after doc parse).
     const [styleList, setStyleList] = useState<StyleListItem[]>([]);
+    // Selection (chunk 5b). null = no selection, the doc is in caret-only
+    // mode. anchor = where the selection started (mousedown / first
+    // shift+arrow). focus = where the caret currently is. The actual
+    // [start, end] range is derived by sorting these by (para, offset).
+    const [selection, setSelectionState] = useState<{
+      anchor: {
+        sectionIndex: number;
+        paragraphIndex: number;
+        charOffset: number;
+      };
+      focus: {
+        sectionIndex: number;
+        paragraphIndex: number;
+        charOffset: number;
+      };
+    } | null>(null);
+    // Mirror selection state into a ref so keyboard / mouse handlers see
+    // the latest value even before React re-renders. Useful when an
+    // external test driver calls setSelection then immediately presses a
+    // key — the handleKeyDown closure may still hold the previous value.
+    const selectionRef = useRef<typeof selection>(null);
+    const setSelection = useCallback(
+      (
+        next: typeof selection | ((prev: typeof selection) => typeof selection),
+      ): void => {
+        setSelectionState((prev) => {
+          const resolved =
+            typeof next === 'function'
+              ? (next as (p: typeof selection) => typeof selection)(prev)
+              : next;
+          selectionRef.current = resolved;
+          return resolved;
+        });
+      },
+      [],
+    );
+    // Per-page selection rect arrays for the highlight overlay. Recomputed
+    // from getSelectionRects after every selection change.
+    const [selectionRectsByPage, setSelectionRectsByPage] = useState<
+      Record<number, { x: number; y: number; width: number; height: number }[]>
+    >({});
+    // True while the user is mouse-dragging — mousemove updates focus.
+    const draggingRef = useRef(false);
     // Active formatting state on the caret's paragraph — drives toolbar
     // pressed-state. Recomputed after every mutation / caret move.
     const [activeFormat, setActiveFormat] = useState<{
@@ -381,6 +424,128 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     }, []);
 
     /**
+     * Sort anchor/focus by (paragraphIndex, charOffset) to produce a
+     * canonical [start, end] range. Same-section assumption — multi-section
+     * selection is a future chunk.
+     */
+    const sortRange = useCallback(
+      (
+        a: { paragraphIndex: number; charOffset: number },
+        b: { paragraphIndex: number; charOffset: number },
+      ): {
+        startPara: number;
+        startOffset: number;
+        endPara: number;
+        endOffset: number;
+        empty: boolean;
+      } => {
+        const aFirst =
+          a.paragraphIndex < b.paragraphIndex ||
+          (a.paragraphIndex === b.paragraphIndex &&
+            a.charOffset <= b.charOffset);
+        const start = aFirst ? a : b;
+        const end = aFirst ? b : a;
+        return {
+          startPara: start.paragraphIndex,
+          startOffset: start.charOffset,
+          endPara: end.paragraphIndex,
+          endOffset: end.charOffset,
+          empty:
+            start.paragraphIndex === end.paragraphIndex &&
+            start.charOffset === end.charOffset,
+        };
+      },
+      [],
+    );
+
+    /**
+     * Recompute the visual selection rects from the doc's getSelectionRects.
+     * No-op (clears) when selection is null or empty.
+     */
+    const refreshSelectionRects = useCallback(
+      (sel: typeof selection): void => {
+        const doc = docRef.current;
+        if (!doc || !sel) {
+          setSelectionRectsByPage({});
+          return;
+        }
+        const r = sortRange(sel.anchor, sel.focus);
+        if (r.empty) {
+          setSelectionRectsByPage({});
+          return;
+        }
+        try {
+          const rects = JSON.parse(
+            doc.getSelectionRects(
+              sel.anchor.sectionIndex,
+              r.startPara,
+              r.startOffset,
+              r.endPara,
+              r.endOffset,
+            ),
+          ) as {
+            pageIndex: number;
+            x: number;
+            y: number;
+            width: number;
+            height: number;
+          }[];
+          const grouped: Record<
+            number,
+            { x: number; y: number; width: number; height: number }[]
+          > = {};
+          for (const rect of rects) {
+            (grouped[rect.pageIndex] ??= []).push({
+              x: rect.x,
+              y: rect.y,
+              width: rect.width,
+              height: rect.height,
+            });
+          }
+          setSelectionRectsByPage(grouped);
+        } catch (err) {
+          console.warn('[studio] getSelectionRects failed:', err);
+          setSelectionRectsByPage({});
+        }
+      },
+      [sortRange],
+    );
+
+    const clearSelection = useCallback((): void => {
+      setSelection(null);
+      setSelectionRectsByPage({});
+    }, [setSelection]);
+
+    /**
+     * Returns true if there was a non-empty selection that we deleted.
+     * Caller should NOT then proceed with its own delete/insert at the
+     * caret; the deleteRange already moved the caret to the start of the
+     * deleted range. Caller must call refreshAfterMutation afterward.
+     */
+    const deleteSelectionIfAny = useCallback((): boolean => {
+      const doc = docRef.current;
+      const sel = selectionRef.current;
+      if (!doc || !sel) return false;
+      const r = sortRange(sel.anchor, sel.focus);
+      if (r.empty) return false;
+      try {
+        doc.deleteRange(
+          sel.anchor.sectionIndex,
+          r.startPara,
+          r.startOffset,
+          r.endPara,
+          r.endOffset,
+        );
+        setSelection(null);
+        setSelectionRectsByPage({});
+        return true;
+      } catch (err) {
+        console.warn('[studio] deleteRange failed:', err);
+        return false;
+      }
+    }, [setSelection, sortRange]);
+
+    /**
      * Read the *effective* character formatting at the caret position via
      * getCharPropertiesAt — this reflects applyCharFormat overrides on top
      * of the paragraph style's CharShape. getStyleAt+getStyleDetail only
@@ -446,37 +611,91 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       }
       refreshCursorRect();
       refreshActiveFormat();
+      // Selection survives format-only mutations — recompute rects against
+      // the (possibly reflowed) layout. setSelection in delete paths has
+      // already cleared selection there, so this is a no-op when sel=null.
+      setSelection((prev) => {
+        refreshSelectionRects(prev);
+        return prev;
+      });
       dirtyRef.current = true;
       setDirty(true);
-    }, [renderPageInto, refreshCursorRect, refreshActiveFormat]);
+    }, [
+      renderPageInto,
+      refreshCursorRect,
+      refreshActiveFormat,
+      refreshSelectionRects,
+      setSelection,
+    ]);
 
     /**
-     * Toggle a character format on the entire current paragraph. Reads the
-     * inverse of the current state (so two presses are a no-op) and applies
-     * via applyCharFormat — which clamps end_offset to paragraph length
+     * Toggle a character format. With an active selection, applies to the
+     * selected range (across multiple paragraphs if needed). Without a
+     * selection, applies to the caret's whole paragraph (chunk 5 fallback).
+     * applyCharFormat clamps end_offset to paragraph length silently
      * (probe in scripts/check-charformat.mjs).
      */
     const toggleCharFormat = useCallback(
       (key: CharFormatKey): void => {
         const doc = docRef.current;
         if (!doc) return;
-        const c = caretRef.current;
         const next = !activeFormat[key];
-        const props: CharProps = { [key]: next };
+        const propsJson = JSON.stringify({ [key]: next } satisfies CharProps);
+        const sel = selectionRef.current;
         try {
+          if (sel) {
+            const r = sortRange(sel.anchor, sel.focus);
+            if (!r.empty) {
+              const sec = sel.anchor.sectionIndex;
+              if (r.startPara === r.endPara) {
+                doc.applyCharFormat(
+                  sec,
+                  r.startPara,
+                  r.startOffset,
+                  r.endOffset,
+                  propsJson,
+                );
+              } else {
+                // Multi-paragraph selection: head paragraph from startOffset
+                // to EOL, full middle paragraphs, tail paragraph from 0 to
+                // endOffset.
+                doc.applyCharFormat(
+                  sec,
+                  r.startPara,
+                  r.startOffset,
+                  PARAGRAPH_END_SENTINEL,
+                  propsJson,
+                );
+                for (let p = r.startPara + 1; p < r.endPara; p++) {
+                  doc.applyCharFormat(
+                    sec,
+                    p,
+                    0,
+                    PARAGRAPH_END_SENTINEL,
+                    propsJson,
+                  );
+                }
+                doc.applyCharFormat(sec, r.endPara, 0, r.endOffset, propsJson);
+              }
+              refreshAfterMutation();
+              return;
+            }
+          }
+          // No selection — fall back to whole-paragraph at caret.
+          const c = caretRef.current;
           doc.applyCharFormat(
             c.sectionIndex,
             c.paragraphIndex,
             0,
             PARAGRAPH_END_SENTINEL,
-            JSON.stringify(props),
+            propsJson,
           );
           refreshAfterMutation();
         } catch (err) {
           console.warn('[studio] applyCharFormat failed:', err);
         }
       },
-      [activeFormat, refreshAfterMutation],
+      [activeFormat, refreshAfterMutation, sortRange],
     );
 
     const applyParagraphStyle = useCallback(
@@ -531,25 +750,57 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
 
         // Caret navigation — purely local. No doc API for cursor movement;
         // we adjust charOffset and recompute cursorRect via getCursorRect.
+        // Shift+arrow extends selection (creates one if none), plain arrow
+        // collapses any selection to the new caret position.
+        // Read from selectionRef rather than the closure'd state so we
+        // see updates from external drivers (e2e debug API) before the
+        // next render attaches a fresh handler.
+        const sel0 = selectionRef.current;
         if (e.key === 'ArrowLeft') {
           if (c.charOffset > 0) {
-            caretRef.current = { ...c, charOffset: c.charOffset - 1 };
+            const nextCaret = { ...c, charOffset: c.charOffset - 1 };
+            caretRef.current = nextCaret;
+            if (e.shiftKey) {
+              const sel = sel0 ?? { anchor: c, focus: c };
+              const next = { ...sel, focus: nextCaret };
+              setSelection(next);
+              refreshSelectionRects(next);
+            } else if (sel0) {
+              clearSelection();
+            }
             refreshCursorRect();
+          } else if (!e.shiftKey && sel0) {
+            clearSelection();
           }
           e.preventDefault();
           return;
         }
         if (e.key === 'ArrowRight') {
-          // No upper bound check — getCursorRect clamps to end-of-paragraph
-          // (verified via scripts/check-hittest.mjs), so visual cursor stops
-          // moving naturally past EOL.
-          caretRef.current = { ...c, charOffset: c.charOffset + 1 };
+          const nextCaret = { ...c, charOffset: c.charOffset + 1 };
+          caretRef.current = nextCaret;
+          if (e.shiftKey) {
+            const sel = sel0 ?? { anchor: c, focus: c };
+            const next = { ...sel, focus: nextCaret };
+            setSelection(next);
+            refreshSelectionRects(next);
+          } else if (sel0) {
+            clearSelection();
+          }
           refreshCursorRect();
           e.preventDefault();
           return;
         }
         if (e.key === 'Home') {
-          caretRef.current = { ...c, charOffset: 0 };
+          const nextCaret = { ...c, charOffset: 0 };
+          caretRef.current = nextCaret;
+          if (e.shiftKey) {
+            const sel = sel0 ?? { anchor: c, focus: c };
+            const next = { ...sel, focus: nextCaret };
+            setSelection(next);
+            refreshSelectionRects(next);
+          } else if (sel0) {
+            clearSelection();
+          }
           refreshCursorRect();
           e.preventDefault();
           return;
@@ -572,7 +823,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         if (e.metaKey || e.ctrlKey || e.altKey) return;
 
         if (e.key === 'Backspace') {
-          if (c.charOffset > 0) {
+          if (deleteSelectionIfAny()) {
+            refreshAfterMutation();
+          } else if (c.charOffset > 0) {
             doc.deleteText(
               c.sectionIndex,
               c.paragraphIndex,
@@ -583,27 +836,74 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           }
           e.preventDefault();
         } else if (e.key === 'Delete') {
-          try {
-            doc.deleteText(c.sectionIndex, c.paragraphIndex, c.charOffset, 1);
+          if (deleteSelectionIfAny()) {
             refreshAfterMutation();
-          } catch {
-            /* ignore — past end */
+          } else {
+            try {
+              doc.deleteText(c.sectionIndex, c.paragraphIndex, c.charOffset, 1);
+              refreshAfterMutation();
+            } catch {
+              /* ignore — past end */
+            }
           }
           e.preventDefault();
         } else if (e.key === 'Enter') {
-          doc.insertText(c.sectionIndex, c.paragraphIndex, c.charOffset, '\n');
+          if (deleteSelectionIfAny()) {
+            // After delete, caret is at the start of the previous selection.
+            const cc = JSON.parse(
+              doc.getCaretPosition(),
+            ) as typeof caretRef.current;
+            doc.insertText(
+              cc.sectionIndex,
+              cc.paragraphIndex,
+              cc.charOffset,
+              '\n',
+            );
+          } else {
+            doc.insertText(
+              c.sectionIndex,
+              c.paragraphIndex,
+              c.charOffset,
+              '\n',
+            );
+          }
           refreshAfterMutation();
           e.preventDefault();
         } else if (e.key.length === 1) {
           // Single printable char, no modifier — ASCII fast path. Korean
           // IME composition is handled by compositionend; we won't reach
           // this branch with isComposing=true.
-          doc.insertText(c.sectionIndex, c.paragraphIndex, c.charOffset, e.key);
+          if (deleteSelectionIfAny()) {
+            const cc = JSON.parse(
+              doc.getCaretPosition(),
+            ) as typeof caretRef.current;
+            doc.insertText(
+              cc.sectionIndex,
+              cc.paragraphIndex,
+              cc.charOffset,
+              e.key,
+            );
+          } else {
+            doc.insertText(
+              c.sectionIndex,
+              c.paragraphIndex,
+              c.charOffset,
+              e.key,
+            );
+          }
           refreshAfterMutation();
           e.preventDefault();
         }
       },
-      [refreshAfterMutation, refreshCursorRect, toggleCharFormat],
+      [
+        refreshAfterMutation,
+        refreshCursorRect,
+        toggleCharFormat,
+        clearSelection,
+        refreshSelectionRects,
+        deleteSelectionIfAny,
+        setSelection,
+      ],
     );
 
     const handleCompositionStart = useCallback(() => {
@@ -616,32 +916,62 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         const text = e.data;
         const doc = docRef.current;
         if (!text || !doc) return;
-        const c = caretRef.current;
         try {
-          doc.insertText(c.sectionIndex, c.paragraphIndex, c.charOffset, text);
+          if (deleteSelectionIfAny()) {
+            const cc = JSON.parse(
+              doc.getCaretPosition(),
+            ) as typeof caretRef.current;
+            doc.insertText(
+              cc.sectionIndex,
+              cc.paragraphIndex,
+              cc.charOffset,
+              text,
+            );
+          } else {
+            const c = caretRef.current;
+            doc.insertText(
+              c.sectionIndex,
+              c.paragraphIndex,
+              c.charOffset,
+              text,
+            );
+          }
           refreshAfterMutation();
         } catch (err) {
           console.warn('[studio] compositionend insertText failed:', err);
         }
       },
-      [refreshAfterMutation],
+      [refreshAfterMutation, deleteSelectionIfAny],
     );
 
     /**
-     * Mouse click on a page → hitTest → caret moves.
-     * Translates screen coords to page-local SVG coords (account for zoom).
+     * hitTest the click coords (page-local SVG space, zoom-adjusted) and
+     * return the resulting caret. Returns null if the test failed.
      */
-    const handlePageClick = useCallback(
-      (idx: number, e: ReactMouseEvent<HTMLDivElement>): void => {
+    const hitTestAt = useCallback(
+      (
+        idx: number,
+        clientX: number,
+        clientY: number,
+        target: HTMLElement,
+      ): {
+        sectionIndex: number;
+        paragraphIndex: number;
+        charOffset: number;
+        cursorRect?: {
+          pageIndex: number;
+          x: number;
+          y: number;
+          height: number;
+        };
+      } | null => {
         const doc = docRef.current;
-        if (!doc) return;
-        const target = e.currentTarget;
+        if (!doc) return null;
         const rect = target.getBoundingClientRect();
-        // Page coords in SVG space (zoom applied to placeholder, so divide by zoom)
-        const x = (e.clientX - rect.left) / zoom;
-        const y = (e.clientY - rect.top) / zoom;
+        const x = (clientX - rect.left) / zoom;
+        const y = (clientY - rect.top) / zoom;
         try {
-          const result = JSON.parse(doc.hitTest(idx, x, y)) as {
+          return JSON.parse(doc.hitTest(idx, x, y)) as {
             sectionIndex: number;
             paragraphIndex: number;
             charOffset: number;
@@ -652,25 +982,85 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               height: number;
             };
           };
-          caretRef.current = {
-            sectionIndex: result.sectionIndex,
-            paragraphIndex: result.paragraphIndex,
-            charOffset: result.charOffset,
-          };
-          if (result.cursorRect) {
-            setCursorRect(result.cursorRect);
-          } else {
-            refreshCursorRect();
-          }
-          // Click can move the caret into a different paragraph with
-          // different formatting — sync toolbar pressed-state.
-          refreshActiveFormat();
         } catch (err) {
           console.warn('[studio] hitTest failed:', err);
+          return null;
         }
       },
-      [zoom, refreshCursorRect, refreshActiveFormat],
+      [zoom],
     );
+
+    /**
+     * mousedown on a page: hitTest → set caret + clear any prior selection
+     * + start drag. anchor/focus both initialized to the clicked caret;
+     * mousemove updates focus.
+     */
+    const handlePageMouseDown = useCallback(
+      (idx: number, e: ReactMouseEvent<HTMLDivElement>): void => {
+        if (e.button !== 0) return; // primary only
+        const result = hitTestAt(idx, e.clientX, e.clientY, e.currentTarget);
+        if (!result) return;
+        const caret = {
+          sectionIndex: result.sectionIndex,
+          paragraphIndex: result.paragraphIndex,
+          charOffset: result.charOffset,
+        };
+        caretRef.current = caret;
+        if (result.cursorRect) {
+          setCursorRect(result.cursorRect);
+        } else {
+          refreshCursorRect();
+        }
+        refreshActiveFormat();
+        // Reset selection — anchor at click, drag will extend focus.
+        setSelection({ anchor: caret, focus: caret });
+        setSelectionRectsByPage({});
+        draggingRef.current = true;
+      },
+      [hitTestAt, refreshCursorRect, refreshActiveFormat, setSelection],
+    );
+
+    const handlePageMouseMove = useCallback(
+      (idx: number, e: ReactMouseEvent<HTMLDivElement>): void => {
+        if (!draggingRef.current) return;
+        const result = hitTestAt(idx, e.clientX, e.clientY, e.currentTarget);
+        if (!result) return;
+        const focus = {
+          sectionIndex: result.sectionIndex,
+          paragraphIndex: result.paragraphIndex,
+          charOffset: result.charOffset,
+        };
+        caretRef.current = focus;
+        if (result.cursorRect) {
+          setCursorRect(result.cursorRect);
+        }
+        setSelection((prev) => {
+          if (!prev) return null;
+          const next = { ...prev, focus };
+          refreshSelectionRects(next);
+          return next;
+        });
+      },
+      [hitTestAt, refreshSelectionRects, setSelection],
+    );
+
+    const handlePageMouseUp = useCallback((): void => {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+      // If the drag never moved (anchor === focus), drop the empty selection
+      // so caret-only behaviors don't accidentally trip the selection path.
+      setSelection((prev) => {
+        if (!prev) return null;
+        const empty =
+          prev.anchor.paragraphIndex === prev.focus.paragraphIndex &&
+          prev.anchor.charOffset === prev.focus.charOffset;
+        if (empty) {
+          setSelectionRectsByPage({});
+          return null;
+        }
+        return prev;
+      });
+    }, [setSelection]);
 
     /**
      * Test/dev hook on `window.__studioDebug` so e2e specs can drive
@@ -734,6 +1124,40 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         },
         getActiveFormat: () => ({ ...activeFormat }),
         getStyleList: () => [...styleList],
+        // Selection helpers (chunk 5b). Set anchor and focus directly so
+        // tests can drive range ops without simulating mouse drag.
+        setSelection: (
+          anchorPara: number,
+          anchorOff: number,
+          focusPara: number,
+          focusOff: number,
+        ): void => {
+          const sel = {
+            anchor: {
+              sectionIndex: 0,
+              paragraphIndex: anchorPara,
+              charOffset: anchorOff,
+            },
+            focus: {
+              sectionIndex: 0,
+              paragraphIndex: focusPara,
+              charOffset: focusOff,
+            },
+          };
+          caretRef.current = sel.focus;
+          setSelection(sel);
+          refreshSelectionRects(sel);
+          refreshCursorRect();
+          refreshActiveFormat();
+        },
+        getSelection: () => {
+          if (!selection) return null;
+          const r = sortRange(selection.anchor, selection.focus);
+          return r.empty ? null : r;
+        },
+        clearSelection: (): void => {
+          clearSelection();
+        },
         // Synthetic Korean IME helper for e2e — Playwright's keyboard.type
         // doesn't trigger real IME composition. This bypasses keydown to
         // exercise the same code path compositionend uses.
@@ -787,6 +1211,13 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       applyParagraphStyle,
       activeFormat,
       styleList,
+      selection,
+      sortRange,
+      refreshSelectionRects,
+      refreshActiveFormat,
+      refreshCursorRect,
+      clearSelection,
+      setSelection,
     ]);
 
     // Effect 2: IntersectionObserver — lazy render visible pages, track current.
@@ -1000,7 +1431,10 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                     width: pageDims.w * zoom,
                     height: pageDims.h * zoom,
                   }}
-                  onClick={(e) => handlePageClick(i, e)}
+                  onMouseDown={(e) => handlePageMouseDown(i, e)}
+                  onMouseMove={(e) => handlePageMouseMove(i, e)}
+                  onMouseUp={handlePageMouseUp}
+                  onMouseLeave={handlePageMouseUp}
                 >
                   {/* SVG mount target — kept as a separate child so the
                       cursor overlay survives renderPageInto's
@@ -1013,6 +1447,22 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                     data-page-idx={i}
                     className="absolute inset-0"
                   />
+                  {/* Selection highlight overlay — one rect per visible
+                      line in the selection range, computed via
+                      getSelectionRects. */}
+                  {(selectionRectsByPage[i] ?? []).map((r, ri) => (
+                    <div
+                      key={ri}
+                      data-testid="studio-selection-rect"
+                      className="pointer-events-none absolute bg-primary/25"
+                      style={{
+                        left: r.x * zoom,
+                        top: r.y * zoom,
+                        width: r.width * zoom,
+                        height: r.height * zoom,
+                      }}
+                    />
+                  ))}
                   {cursorRect && cursorRect.pageIndex === i && (
                     <div
                       data-testid="studio-cursor"

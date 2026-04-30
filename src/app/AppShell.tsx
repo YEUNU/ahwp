@@ -66,6 +66,12 @@ export default function AppShell() {
     }
   }, []);
 
+  const newDocument = useCallback(async () => {
+    const result = await window.api.file.new();
+    setActivePath(result.path);
+    setRefreshTick((n) => n + 1);
+  }, []);
+
   const exportBytes = useCallback(async (): Promise<Uint8Array | null> => {
     if (!viewerRef.current) return null;
     const t0 = performance.now();
@@ -114,7 +120,9 @@ export default function AppShell() {
 
   useEffect(() => {
     return window.api.onMenuAction((action: MenuAction) => {
-      if (action === 'file:open') {
+      if (action === 'file:new') {
+        void newDocument();
+      } else if (action === 'file:open') {
         void openFromDialog();
       } else if (action === 'file:save') {
         void saveCurrent();
@@ -128,9 +136,9 @@ export default function AppShell() {
         const key = action.split(':')[1] as 'bold' | 'italic' | 'underline';
         viewerRef.current?.toggleCharFormat(key);
       }
-      // file:new / view:settings handled in later phases.
+      // view:settings handled in later phases.
     });
-  }, [openFromDialog, saveCurrent, saveAsCurrent]);
+  }, [newDocument, openFromDialog, saveCurrent, saveAsCurrent]);
 
   return (
     <PanelGroup
@@ -179,22 +187,36 @@ export default function AppShell() {
               <div className="flex h-full flex-col items-center justify-center gap-4 p-8">
                 <h1 className="text-2xl font-semibold">Hello, ahwp</h1>
                 <p className="text-sm text-muted-foreground">
-                  메뉴 → 파일 → 열기 또는 좌측 패널에 파일을 끌어 놓으세요.
+                  새 문서를 만들거나 좌측 패널에 파일을 끌어 놓으세요.
                 </p>
-                <div className="mt-6 w-full max-w-lg rounded-lg border border-border bg-card p-4 text-xs">
-                  <div className="mb-2 font-mono text-muted-foreground">
-                    ipc:ping
-                  </div>
-                  {pingError ? (
-                    <pre className="text-destructive">{pingError}</pre>
-                  ) : pingResult ? (
-                    <pre className="text-emerald-500 dark:text-emerald-400">
-                      {JSON.stringify(pingResult, null, 2)}
-                    </pre>
-                  ) : (
-                    <span className="text-muted-foreground">호출 중…</span>
-                  )}
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => void newDocument()}
+                    className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                    data-testid="welcome-new-doc"
+                  >
+                    새 문서
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void openFromDialog()}
+                    className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
+                    data-testid="welcome-open"
+                  >
+                    파일 열기
+                  </button>
                 </div>
+                {pingError && (
+                  <pre className="mt-4 max-w-md text-xs text-destructive">
+                    {pingError}
+                  </pre>
+                )}
+                {!pingError && !pingResult && (
+                  <span className="mt-4 text-xs text-muted-foreground">
+                    초기화 중…
+                  </span>
+                )}
               </div>
             )}
           </div>

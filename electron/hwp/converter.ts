@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import { createRequire } from 'node:module';
 import { detectHwpFormat } from '../../shared/format';
+import { BLANK_HWPX_BASE64 } from './blank-seed';
 
 /**
  * @rhwp/core (Rust + WASM, ~4.5 MB) integration in the main process.
@@ -18,16 +19,24 @@ import { detectHwpFormat } from '../../shared/format';
 
 const require = createRequire(import.meta.url);
 
+interface RhwpDocLike {
+  exportHwp(): Uint8Array;
+  exportHwpx(): Uint8Array;
+  getSourceFormat(): string;
+  createBlankDocument(): string;
+  free(): void;
+}
+
+interface RhwpDocCtor {
+  new (data: Uint8Array): RhwpDocLike;
+  createEmpty(): RhwpDocLike;
+}
+
 interface RhwpCoreModule {
   default: (init?: {
     module_or_path: Uint8Array | ArrayBuffer;
   }) => Promise<unknown>;
-  HwpDocument: new (data: Uint8Array) => {
-    exportHwp(): Uint8Array;
-    exportHwpx(): Uint8Array;
-    getSourceFormat(): string;
-    free(): void;
-  };
+  HwpDocument: RhwpDocCtor;
   init_panic_hook: () => void;
   version: () => string;
 }
@@ -116,6 +125,29 @@ export async function normalizeToHwp(input: Uint8Array): Promise<Uint8Array> {
       `[hwp/core] normalize ${sourceFormat} → HWP (${(input.byteLength / 1024 / 1024).toFixed(2)} MB → ${(out.byteLength / 1024 / 1024).toFixed(2)} MB) in ${(performance.now() - t0).toFixed(0)} ms`,
     );
     return out;
+  } finally {
+    doc.free();
+  }
+}
+
+/**
+ * Build a fresh blank HWP document.
+ *
+ * **Why not `HwpDocument.createEmpty()`**: that static factory returns a
+ * shell with `sectionCount=0`, which fails on subsequent `insertText` /
+ * `applyCharFormat` ("구역 인덱스 0 범위 초과"). The instance-method
+ * `createBlankDocument()` route — load a seed, then reset its IR — keeps
+ * the section/paragraph structure intact (verified via
+ * scripts/probe-blank3.mjs). We embed a tiny seed (~6KB blank HWPX) as
+ * base64 to avoid shipping an extra resource file.
+ */
+export async function createBlankHwpBytes(): Promise<Uint8Array> {
+  const { HwpDocument } = await loadRhwpCore();
+  const seed = Uint8Array.from(Buffer.from(BLANK_HWPX_BASE64, 'base64'));
+  const doc = new HwpDocument(seed);
+  try {
+    doc.createBlankDocument();
+    return doc.exportHwp();
   } finally {
     doc.free();
   }
