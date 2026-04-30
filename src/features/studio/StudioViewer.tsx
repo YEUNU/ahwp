@@ -8,9 +8,16 @@ import {
   ChevronDown,
   ChevronUp,
   Italic,
+  List,
+  ListOrdered,
   Loader2,
   Maximize2,
+  MoreHorizontal,
+  Pilcrow,
   Redo2,
+  SeparatorHorizontal,
+  Square,
+  Table2,
   Underline,
   Undo2,
   X,
@@ -103,6 +110,74 @@ const PAGE_GAP_PX = 16;
 const PAGE_PADDING_PX = 32;
 
 /** Parse <svg width="X" height="Y"> or fall back to viewBox last two numbers. */
+/**
+ * Mini "rows × cols" picker — 8×8 grid of cells the user can hover over.
+ * Hovering highlights the rectangle from (1,1) up to the hover cell;
+ * clicking commits that size. Used for `Table 삽입`.
+ */
+function TablePicker({
+  onPick,
+  onCancel,
+}: {
+  onPick: (rows: number, cols: number) => void;
+  onCancel: () => void;
+}): React.ReactElement {
+  const MAX = 8;
+  const [hover, setHover] = useState<{ r: number; c: number }>({ r: 0, c: 0 });
+  const cells: React.ReactNode[] = [];
+  for (let r = 1; r <= MAX; r++) {
+    for (let c = 1; c <= MAX; c++) {
+      const on = r <= hover.r && c <= hover.c;
+      cells.push(
+        <button
+          key={`${r}:${c}`}
+          type="button"
+          onMouseEnter={() => setHover({ r, c })}
+          onClick={() => onPick(r, c)}
+          className={
+            'h-4 w-4 rounded-sm border ' +
+            (on
+              ? 'border-ring bg-primary/40'
+              : 'border-border bg-background hover:bg-muted')
+          }
+          aria-label={`${r}행 ${c}열`}
+          data-testid="studio-table-picker-cell"
+          data-rows={r}
+          data-cols={c}
+        />,
+      );
+    }
+  }
+  return (
+    <div onMouseLeave={() => setHover({ r: 0, c: 0 })}>
+      <div
+        className="grid gap-0.5"
+        style={{ gridTemplateColumns: `repeat(${MAX}, minmax(0, 1fr))` }}
+      >
+        {cells}
+      </div>
+      <div
+        className="mt-1 flex items-center justify-between text-xs text-muted-foreground"
+        data-testid="studio-table-picker-label"
+      >
+        <span>
+          {hover.r > 0 && hover.c > 0
+            ? `${hover.r}행 × ${hover.c}열`
+            : '크기 선택'}
+        </span>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded p-0.5 hover:bg-muted"
+          aria-label="닫기"
+        >
+          <X className="size-3" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function parsePageDimensions(svg: string): PageDims | null {
   const parser = new DOMParser();
   const doc = parser.parseFromString(svg, 'image/svg+xml');
@@ -270,6 +345,14 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       >
     >({});
     const findInputRef = useRef<HTMLInputElement>(null);
+    /** Toolbar second-row visibility — collapsed by default. */
+    const [toolbarExpanded, setToolbarExpanded] = useState(false);
+    /** Doc-level view toggles. Mirror what setShow* set. */
+    const [showControlCodes, setShowControlCodesState] = useState(false);
+    const [showTransparentBorders, setShowTransparentBordersState] =
+      useState(false);
+    /** Inline rows × cols input for insert-table — open from toolbar. */
+    const [tablePickerOpen, setTablePickerOpen] = useState(false);
     /**
      * Cached lowercased paragraph text for Find. Built lazily on the
      * first non-empty search; keyed by `${sec}:${para}` so multi-section
@@ -312,18 +395,21 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       const cache = cacheRef.current;
       const pageRefs = pageRefsRef;
 
-      // Reset everything for a fresh path.
+      // Reset everything for a fresh path. Refs reset synchronously
+      // (no React tear-related lint), but the React state setters are
+      // moved into the async IIFE below so we avoid the
+      // react-hooks/set-state-in-effect cascade warning.
       cache.clear();
       pageRefs.current = [];
       dirtyRef.current = false;
-      setDirty(false);
       historyRef.current = { entries: [], index: -1 };
-      setCanUndo(false);
-      setCanRedo(false);
       findTextCacheRef.current = null;
 
       (async () => {
         try {
+          setDirty(false);
+          setCanUndo(false);
+          setCanRedo(false);
           setError(null);
           setPhase('mounting');
           await ensureRhwpCore();
@@ -866,6 +952,17 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         // Mutations change paragraph text → drop the find text cache so
         // subsequent searches re-extract from the doc.
         findTextCacheRef.current = null;
+        // Page count can change (insertPageBreak, table insert spanning
+        // a page, large insertText pushing content to a new page). Only
+        // setState if the value actually changed to avoid extra renders.
+        if (doc) {
+          try {
+            const newCount = doc.pageCount();
+            setPageCount((prev) => (prev !== newCount ? newCount : prev));
+          } catch {
+            /* keep previous */
+          }
+        }
         pageRefsRef.current.forEach((el, idx) => {
           if (el?.firstElementChild?.tagName.toLowerCase() === 'svg') {
             el.innerHTML = '';
@@ -1095,6 +1192,129 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         applyCharProps({ textColor: hex.toLowerCase() });
       },
       [applyCharProps],
+    );
+
+    /**
+     * Toggle a list (numbered / bulleted) on the caret's current paragraph.
+     * Calling toggle on a paragraph that already has the same kind of list
+     * removes it (headType: 'None'). Selection-aware: applies to every
+     * paragraph in the range.
+     */
+    const toggleList = useCallback(
+      (kind: 'number' | 'bullet'): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        try {
+          const numId =
+            kind === 'number'
+              ? doc.ensureDefaultNumbering()
+              : doc.ensureDefaultBullet('•');
+          const targetHead = kind === 'number' ? 'Number' : 'Bullet';
+          const sel = selectionRef.current;
+          // Decide on/off by checking the caret's paragraph current headType.
+          const c = caretRef.current;
+          const cur = JSON.parse(
+            doc.getParaPropertiesAt(c.sectionIndex, c.paragraphIndex),
+          ) as { headType?: string };
+          const turnOn = cur.headType !== targetHead;
+          const propsJson = JSON.stringify(
+            turnOn
+              ? { headType: targetHead, numberingId: numId }
+              : { headType: 'None' },
+          );
+          if (sel) {
+            const r = sortRange(sel.anchor, sel.focus);
+            for (let p = r.startPara; p <= r.endPara; p++) {
+              doc.applyParaFormat(sel.anchor.sectionIndex, p, propsJson);
+            }
+          } else {
+            doc.applyParaFormat(c.sectionIndex, c.paragraphIndex, propsJson);
+          }
+          refreshAfterMutation({ syncCaret: false });
+        } catch (err) {
+          console.warn('[studio] toggleList failed:', err);
+        }
+      },
+      [refreshAfterMutation, sortRange],
+    );
+
+    /**
+     * Insert a hard page break at the caret. Splits the current paragraph
+     * if the caret is mid-text. Subsequent edits land on the new page.
+     */
+    const insertPageBreak = useCallback((): void => {
+      const doc = docRef.current;
+      if (!doc) return;
+      const c = caretRef.current;
+      try {
+        doc.insertPageBreak(c.sectionIndex, c.paragraphIndex, c.charOffset);
+        refreshAfterMutation();
+      } catch (err) {
+        console.warn('[studio] insertPageBreak failed:', err);
+      }
+    }, [refreshAfterMutation]);
+
+    /**
+     * Insert a table (rows × cols) at the caret. The new table is the
+     * first child of a freshly-inserted paragraph. Edits inside cells go
+     * through `*InCell` IPC variants in a future chunk; for now the
+     * inserted table is a static grid.
+     */
+    const insertTable = useCallback(
+      (rows: number, cols: number): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        if (!Number.isInteger(rows) || rows < 1 || rows > 100) return;
+        if (!Number.isInteger(cols) || cols < 1 || cols > 100) return;
+        const c = caretRef.current;
+        try {
+          doc.createTable(
+            c.sectionIndex,
+            c.paragraphIndex,
+            c.charOffset,
+            rows,
+            cols,
+          );
+          refreshAfterMutation();
+        } catch (err) {
+          console.warn('[studio] createTable failed:', err);
+        }
+      },
+      [refreshAfterMutation],
+    );
+
+    /**
+     * View toggles — show control codes (¶ marks etc), transparent
+     * borders. The doc's render output changes accordingly so we re-render.
+     */
+    const setShowControlCodes = useCallback(
+      (on: boolean): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        try {
+          doc.setShowControlCodes(on);
+          setShowControlCodesState(on);
+          refreshAfterMutation({ syncCaret: false });
+        } catch (err) {
+          console.warn('[studio] setShowControlCodes failed:', err);
+        }
+      },
+      [refreshAfterMutation],
+    );
+
+    const setShowTransparentBorders = useCallback(
+      (on: boolean): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        try {
+          doc.setShowTransparentBorders(on);
+          setShowTransparentBordersState(on);
+          refreshAfterMutation({ syncCaret: false });
+        } catch (err) {
+          console.warn('[studio] setShowTransparentBorders failed:', err);
+        }
+      },
+      [refreshAfterMutation],
     );
 
     /**
@@ -2624,6 +2844,16 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             >
               <Maximize2 className="size-4" />
             </Button>
+            <Button
+              size="sm"
+              variant={toolbarExpanded ? 'secondary' : 'ghost'}
+              onClick={() => setToolbarExpanded((v) => !v)}
+              aria-label="더보기"
+              aria-pressed={toolbarExpanded}
+              data-testid="studio-toolbar-more"
+            >
+              <MoreHorizontal className="size-4" />
+            </Button>
             {dirty && (
               <span
                 className="ml-auto mr-2 text-amber-500"
@@ -2643,6 +2873,93 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             >
               {currentPage + 1} / {pageCount}
             </span>
+          </div>
+        )}
+
+        {showToolbar && toolbarExpanded && (
+          <div
+            className="flex h-10 items-center gap-1 border-b border-border bg-card/30 px-3 text-xs"
+            data-testid="studio-toolbar-row2"
+          >
+            {/* List toggles */}
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => toggleList('bullet')}
+              aria-label="글머리 기호"
+              data-testid="studio-toggle-bullet"
+            >
+              <List className="size-4" />
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => toggleList('number')}
+              aria-label="번호 매기기"
+              data-testid="studio-toggle-number"
+            >
+              <ListOrdered className="size-4" />
+            </Button>
+            <span className="mx-2 h-5 w-px bg-border" aria-hidden="true" />
+            {/* Page break + insert table */}
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => insertPageBreak()}
+              aria-label="페이지 나누기"
+              title="페이지 나누기"
+              data-testid="studio-insert-page-break"
+            >
+              <SeparatorHorizontal className="size-4" />
+            </Button>
+            <div className="relative">
+              <Button
+                size="sm"
+                variant={tablePickerOpen ? 'secondary' : 'ghost'}
+                onClick={() => setTablePickerOpen((v) => !v)}
+                aria-label="표 삽입"
+                aria-pressed={tablePickerOpen}
+                data-testid="studio-insert-table"
+              >
+                <Table2 className="size-4" />
+              </Button>
+              {tablePickerOpen && (
+                <div
+                  className="absolute left-0 top-full z-30 mt-1 w-44 rounded-md border border-border bg-popover p-2 text-xs shadow-md"
+                  data-testid="studio-table-picker"
+                >
+                  <TablePicker
+                    onPick={(rows, cols) => {
+                      setTablePickerOpen(false);
+                      insertTable(rows, cols);
+                    }}
+                    onCancel={() => setTablePickerOpen(false)}
+                  />
+                </div>
+              )}
+            </div>
+            <span className="mx-2 h-5 w-px bg-border" aria-hidden="true" />
+            {/* View toggles */}
+            <Button
+              size="sm"
+              variant={showControlCodes ? 'secondary' : 'ghost'}
+              onClick={() => setShowControlCodes(!showControlCodes)}
+              aria-label="조판 부호"
+              aria-pressed={showControlCodes}
+              data-testid="studio-toggle-controls"
+            >
+              <Pilcrow className="size-4" />
+            </Button>
+            <Button
+              size="sm"
+              variant={showTransparentBorders ? 'secondary' : 'ghost'}
+              onClick={() => setShowTransparentBorders(!showTransparentBorders)}
+              aria-label="투명 테두리"
+              aria-pressed={showTransparentBorders}
+              data-testid="studio-toggle-transparent"
+            >
+              <Square className="size-4" />
+            </Button>
           </div>
         )}
 
