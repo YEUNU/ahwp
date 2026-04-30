@@ -1418,6 +1418,72 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     );
 
     /**
+     * Compute word bounds around a char offset within a paragraph. A "word"
+     * here is a contiguous run of non-whitespace, non-punctuation chars.
+     * Works for ASCII and Korean/CJK because we exclude whitespace and
+     * Unicode punctuation rather than relying on \w (ASCII-only).
+     */
+    const findWordBoundsAt = useCallback(
+      (
+        sec: number,
+        para: number,
+        offset: number,
+      ): { startOffset: number; endOffset: number } | null => {
+        const doc = docRef.current;
+        if (!doc) return null;
+        try {
+          const len = doc.getParagraphLength(sec, para);
+          if (len === 0) return { startOffset: 0, endOffset: 0 };
+          const text = doc.getTextRange(sec, para, 0, len);
+          if (!text) return { startOffset: 0, endOffset: 0 };
+          const isSep = (ch: string): boolean => /[\s\p{P}\p{S}]/u.test(ch);
+          const probe = Math.min(Math.max(0, offset), text.length);
+          if (probe < text.length && isSep(text[probe])) {
+            return { startOffset: probe, endOffset: probe };
+          }
+          let s = probe;
+          while (s > 0 && !isSep(text[s - 1])) s--;
+          let e = probe;
+          while (e < text.length && !isSep(text[e])) e++;
+          return { startOffset: s, endOffset: e };
+        } catch {
+          return null;
+        }
+      },
+      [],
+    );
+
+    /**
+     * Step the offset by one word in a direction (-1 = backward, +1 = forward).
+     * Used by Cmd/Ctrl+Shift+Arrow word-wise selection extend.
+     */
+    const stepWordOffset = useCallback(
+      (sec: number, para: number, offset: number, dir: -1 | 1): number => {
+        const doc = docRef.current;
+        if (!doc) return offset;
+        try {
+          const len = doc.getParagraphLength(sec, para);
+          if (len === 0) return offset;
+          const text = doc.getTextRange(sec, para, 0, len);
+          if (!text) return offset;
+          const isSep = (ch: string): boolean => /[\s\p{P}\p{S}]/u.test(ch);
+          let i = Math.min(Math.max(0, offset), text.length);
+          if (dir === 1) {
+            while (i < text.length && isSep(text[i])) i++;
+            while (i < text.length && !isSep(text[i])) i++;
+          } else {
+            while (i > 0 && isSep(text[i - 1])) i--;
+            while (i > 0 && !isSep(text[i - 1])) i--;
+          }
+          return i;
+        } catch {
+          return offset;
+        }
+      },
+      [],
+    );
+
+    /**
      * Keyboard input. ASCII typing routes through here; Korean IME composition
      * routes through `compositionend` (the browser delivers the final composed
      * string in `event.data`). Caret nav (arrow keys / Home) is local to our
@@ -1443,6 +1509,36 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         // see updates from external drivers (e2e debug API) before the
         // next render attaches a fresh handler.
         const sel0 = selectionRef.current;
+        // Word-wise navigation: Cmd/Ctrl + (Shift?) + Arrow Left/Right
+        // moves the caret to the prev/next word boundary. With Shift this
+        // extends the current selection. Without Shift it collapses any
+        // selection to the new position.
+        const isWordKey =
+          (e.metaKey || e.ctrlKey) &&
+          !e.altKey &&
+          (e.key === 'ArrowLeft' || e.key === 'ArrowRight');
+        if (isWordKey) {
+          const dir: -1 | 1 = e.key === 'ArrowLeft' ? -1 : 1;
+          const nextOff = stepWordOffset(
+            c.sectionIndex,
+            c.paragraphIndex,
+            c.charOffset,
+            dir,
+          );
+          const nextCaret = { ...c, charOffset: nextOff };
+          caretRef.current = nextCaret;
+          if (e.shiftKey) {
+            const sel = sel0 ?? { anchor: c, focus: c };
+            const next = { ...sel, focus: nextCaret };
+            setSelection(next);
+            refreshSelectionRects(next);
+          } else if (sel0) {
+            clearSelection();
+          }
+          refreshCursorRect();
+          e.preventDefault();
+          return;
+        }
         if (e.key === 'ArrowLeft') {
           if (c.charOffset > 0) {
             const nextCaret = { ...c, charOffset: c.charOffset - 1 };
@@ -1638,6 +1734,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         cutSelection,
         pasteAtCaret,
         openFind,
+        stepWordOffset,
       ],
     );
 
@@ -1729,18 +1826,65 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
      * mousedown on a page: hitTest → set caret + clear any prior selection
      * + start drag. anchor/focus both initialized to the clicked caret;
      * mousemove updates focus.
+     *
+     * Click-count behavior:
+     *   1 — caret-only (existing)
+     *   2 — select the word at the click position
+     *   3 — select the entire paragraph
      */
     const handlePageMouseDown = useCallback(
       (idx: number, e: ReactMouseEvent<HTMLDivElement>): void => {
         if (e.button !== 0) return; // primary only
         const result = hitTestAt(idx, e.clientX, e.clientY, e.currentTarget);
         if (!result) return;
-        const caret = {
+        const baseCaret = {
           sectionIndex: result.sectionIndex,
           paragraphIndex: result.paragraphIndex,
           charOffset: result.charOffset,
         };
-        caretRef.current = caret;
+        if (e.detail === 3) {
+          // Triple click → entire paragraph.
+          const doc = docRef.current;
+          if (doc) {
+            try {
+              const len = doc.getParagraphLength(
+                baseCaret.sectionIndex,
+                baseCaret.paragraphIndex,
+              );
+              const start = { ...baseCaret, charOffset: 0 };
+              const end = { ...baseCaret, charOffset: len };
+              caretRef.current = end;
+              setSelection({ anchor: start, focus: end });
+              refreshSelectionRects({ anchor: start, focus: end });
+              refreshCursorRect();
+              refreshActiveFormat();
+              draggingRef.current = false;
+              return;
+            } catch {
+              /* fall through to single-click default */
+            }
+          }
+        }
+        if (e.detail === 2) {
+          // Double click → word at offset.
+          const w = findWordBoundsAt(
+            baseCaret.sectionIndex,
+            baseCaret.paragraphIndex,
+            baseCaret.charOffset,
+          );
+          if (w && w.endOffset > w.startOffset) {
+            const start = { ...baseCaret, charOffset: w.startOffset };
+            const end = { ...baseCaret, charOffset: w.endOffset };
+            caretRef.current = end;
+            setSelection({ anchor: start, focus: end });
+            refreshSelectionRects({ anchor: start, focus: end });
+            refreshCursorRect();
+            refreshActiveFormat();
+            draggingRef.current = false;
+            return;
+          }
+        }
+        caretRef.current = baseCaret;
         if (result.cursorRect) {
           setCursorRect(result.cursorRect);
         } else {
@@ -1748,11 +1892,18 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         }
         refreshActiveFormat();
         // Reset selection — anchor at click, drag will extend focus.
-        setSelection({ anchor: caret, focus: caret });
+        setSelection({ anchor: baseCaret, focus: baseCaret });
         setSelectionRectsByPage({});
         draggingRef.current = true;
       },
-      [hitTestAt, refreshCursorRect, refreshActiveFormat, setSelection],
+      [
+        hitTestAt,
+        refreshCursorRect,
+        refreshActiveFormat,
+        setSelection,
+        findWordBoundsAt,
+        refreshSelectionRects,
+      ],
     );
 
     const handlePageMouseMove = useCallback(
@@ -1929,6 +2080,59 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         applyAlignment: (a: ParaAlignment): void => applyAlignment(a),
         applyFontSizePt: (pt: number): void => applyFontSizePt(pt),
         applyTextColor: (hex: string): void => applyTextColor(hex),
+        // Click-count selection synthesis for e2e — Playwright's
+        // mouse.dblclick simulates two mousedowns but the resulting
+        // e.detail isn't always 2 in Electron. These helpers emulate the
+        // viewer's response directly.
+        selectWordAt: (sec: number, para: number, offset: number): void => {
+          const w = findWordBoundsAt(sec, para, offset);
+          if (!w) return;
+          const start = {
+            sectionIndex: sec,
+            paragraphIndex: para,
+            charOffset: w.startOffset,
+          };
+          const end = {
+            sectionIndex: sec,
+            paragraphIndex: para,
+            charOffset: w.endOffset,
+          };
+          caretRef.current = end;
+          setSelection({ anchor: start, focus: end });
+          refreshSelectionRects({ anchor: start, focus: end });
+          refreshCursorRect();
+          refreshActiveFormat();
+        },
+        selectParagraph: (sec: number, para: number): void => {
+          const doc = docRef.current;
+          if (!doc) return;
+          try {
+            const len = doc.getParagraphLength(sec, para);
+            const start = {
+              sectionIndex: sec,
+              paragraphIndex: para,
+              charOffset: 0,
+            };
+            const end = {
+              sectionIndex: sec,
+              paragraphIndex: para,
+              charOffset: len,
+            };
+            caretRef.current = end;
+            setSelection({ anchor: start, focus: end });
+            refreshSelectionRects({ anchor: start, focus: end });
+            refreshCursorRect();
+            refreshActiveFormat();
+          } catch {
+            /* ignore */
+          }
+        },
+        stepWordOffset: (
+          sec: number,
+          para: number,
+          offset: number,
+          dir: -1 | 1,
+        ): number => stepWordOffset(sec, para, offset, dir),
         // Synthetic Korean IME helper for e2e — Playwright's keyboard.type
         // doesn't trigger real IME composition. This bypasses keydown to
         // exercise the same code path compositionend uses.
@@ -2006,6 +2210,8 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       applyAlignment,
       applyFontSizePt,
       applyTextColor,
+      findWordBoundsAt,
+      stepWordOffset,
     ]);
 
     // Effect 2: IntersectionObserver — lazy render visible pages, track current.
