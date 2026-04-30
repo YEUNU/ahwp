@@ -128,6 +128,10 @@ export default function AppShell() {
         void saveCurrent();
       } else if (action === 'file:save-as') {
         void saveAsCurrent();
+      } else if (action === 'edit:undo') {
+        viewerRef.current?.undo();
+      } else if (action === 'edit:redo') {
+        viewerRef.current?.redo();
       } else if (
         action === 'format:bold' ||
         action === 'format:italic' ||

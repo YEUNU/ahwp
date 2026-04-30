@@ -11,9 +11,12 @@ export interface ViewerHandle {
   /** Returns the current document as bytes (HWP/CFB — see converter notes). */
   exportBytes: () => Promise<Uint8Array>;
   /**
-   * Toggle a character format on the caret's current paragraph. Chunk 5 has
-   * no selection model, so the toggle applies to the entire paragraph the
-   * caret sits in. The current state is read via getStyleAt + getStyleDetail.
+   * Toggle a character format. With an active selection, applies to the
+   * selected range; otherwise applies to the caret's whole paragraph.
    */
   toggleCharFormat: (key: CharFormatKey) => void;
+  /** Undo the most recent mutation (snapshot-based — chunk 7). */
+  undo: () => void;
+  /** Redo a previously-undone mutation. No-op if no redo available. */
+  redo: () => void;
 }

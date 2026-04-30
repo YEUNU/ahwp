@@ -4,7 +4,9 @@ import {
   Italic,
   Loader2,
   Maximize2,
+  Redo2,
   Underline,
+  Undo2,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
@@ -183,6 +185,19 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     >({});
     // True while the user is mouse-dragging — mousemove updates focus.
     const draggingRef = useRef(false);
+    // Undo/Redo (chunk 7). The doc IR exposes snapshot save/restore as a
+    // bidirectional stack: each saveSnapshot returns an integer id; we
+    // record IDs in chronological order along with an index pointer to
+    // the "current" entry. New mutations after an undo discard the redo
+    // tail. We cap the stack depth so ancient snapshots can be released.
+    const HISTORY_CAP = 100;
+    const historyRef = useRef<{
+      entries: number[];
+      // index of the current (latest applied) snapshot in `entries`
+      index: number;
+    }>({ entries: [], index: -1 });
+    const [canUndo, setCanUndo] = useState(false);
+    const [canRedo, setCanRedo] = useState(false);
     // Active formatting state on the caret's paragraph — drives toolbar
     // pressed-state. Recomputed after every mutation / caret move.
     const [activeFormat, setActiveFormat] = useState<{
@@ -207,6 +222,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       pageRefs.current = [];
       dirtyRef.current = false;
       setDirty(false);
+      historyRef.current = { entries: [], index: -1 };
+      setCanUndo(false);
+      setCanRedo(false);
 
       (async () => {
         try {
@@ -304,6 +322,18 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           setPageCount(total);
           setPageDims(dims);
           setPhase('ready');
+          // Reset history and push baseline snapshot. Inline rather than
+          // calling pushHistory() because that closure references docRef,
+          // which has just been swapped — the safe ordering is to seed
+          // historyRef directly here.
+          try {
+            const baseId = localDoc.saveSnapshot();
+            historyRef.current = { entries: [baseId], index: 0 };
+            setCanUndo(false);
+            setCanRedo(false);
+          } catch (err) {
+            console.warn('[studio] baseline snapshot failed:', err);
+          }
         } catch (err) {
           if (!cancelled) {
             setError(err instanceof Error ? err.message : String(err));
@@ -578,6 +608,113 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       }
     }, []);
 
+    /**
+     * Push a snapshot of the current doc state onto the undo stack. Called
+     * from the doc-load effect (baseline) and after every mutation. Discards
+     * the redo tail (snapshots after the current index) so a fresh edit
+     * can't be "redone past". Caps stack depth and discards oldest.
+     */
+    const pushHistory = useCallback((): void => {
+      const doc = docRef.current;
+      if (!doc) return;
+      try {
+        const id = doc.saveSnapshot();
+        const h = historyRef.current;
+        // Drop redo tail (snapshots beyond current index) — they are now
+        // obsolete branches.
+        for (let i = h.index + 1; i < h.entries.length; i++) {
+          try {
+            doc.discardSnapshot(h.entries[i]);
+          } catch {
+            /* ignore */
+          }
+        }
+        h.entries.length = h.index + 1;
+        h.entries.push(id);
+        h.index = h.entries.length - 1;
+        // Cap depth — drop oldest entries (and their snapshot IDs).
+        while (h.entries.length > HISTORY_CAP) {
+          const oldId = h.entries.shift()!;
+          try {
+            doc.discardSnapshot(oldId);
+          } catch {
+            /* ignore */
+          }
+          h.index--;
+        }
+        setCanUndo(h.index > 0);
+        setCanRedo(h.index < h.entries.length - 1);
+      } catch (err) {
+        console.warn('[studio] saveSnapshot failed:', err);
+      }
+    }, []);
+
+    /**
+     * Restore to the entry at index `targetIndex` and refresh layout/UI.
+     * Bypasses pushHistory (we don't snapshot the restore itself).
+     */
+    const restoreToIndex = useCallback(
+      (targetIndex: number): void => {
+        const doc = docRef.current;
+        const h = historyRef.current;
+        if (
+          !doc ||
+          targetIndex < 0 ||
+          targetIndex >= h.entries.length ||
+          targetIndex === h.index
+        )
+          return;
+        try {
+          doc.restoreSnapshot(h.entries[targetIndex]);
+          h.index = targetIndex;
+          try {
+            doc.reflowLinesegs();
+          } catch {
+            /* ignore — older lib */
+          }
+          cacheRef.current.clear();
+          pageRefsRef.current.forEach((el, idx) => {
+            if (el?.firstElementChild?.tagName.toLowerCase() === 'svg') {
+              el.innerHTML = '';
+              renderPageInto(idx);
+            }
+          });
+          try {
+            caretRef.current = JSON.parse(
+              doc.getCaretPosition(),
+            ) as typeof caretRef.current;
+          } catch {
+            /* keep previous */
+          }
+          // Selection is renderer-side state (not in the doc IR snapshot).
+          // Drop it — restoring to a different point shouldn't carry over a
+          // possibly-now-invalid range.
+          setSelection(null);
+          setSelectionRectsByPage({});
+          refreshCursorRect();
+          refreshActiveFormat();
+          // Dirty: the *baseline* (index 0) is the loaded-from-disk state,
+          // so being there means clean. Anything else is dirty.
+          const dirty = h.index !== 0;
+          dirtyRef.current = dirty;
+          setDirty(dirty);
+          setCanUndo(h.index > 0);
+          setCanRedo(h.index < h.entries.length - 1);
+        } catch (err) {
+          console.warn('[studio] restoreSnapshot failed:', err);
+        }
+      },
+      [renderPageInto, refreshCursorRect, refreshActiveFormat, setSelection],
+    );
+
+    const undo = useCallback((): void => {
+      restoreToIndex(historyRef.current.index - 1);
+    }, [restoreToIndex]);
+
+    const redo = useCallback((): void => {
+      restoreToIndex(historyRef.current.index + 1);
+    }, [restoreToIndex]);
+
     const refreshAfterMutation = useCallback((): void => {
       const doc = docRef.current;
       if (doc) {
@@ -620,12 +757,14 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       });
       dirtyRef.current = true;
       setDirty(true);
+      pushHistory();
     }, [
       renderPageInto,
       refreshCursorRect,
       refreshActiveFormat,
       refreshSelectionRects,
       setSelection,
+      pushHistory,
     ]);
 
     /**
@@ -726,8 +865,10 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         toggleCharFormat: (key: CharFormatKey) => {
           toggleCharFormat(key);
         },
+        undo: () => undo(),
+        redo: () => redo(),
       }),
-      [toggleCharFormat],
+      [toggleCharFormat, undo, redo],
     );
 
     /**
@@ -804,6 +945,26 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           refreshCursorRect();
           e.preventDefault();
           return;
+        }
+
+        // Undo / Redo: Cmd/Ctrl + Z (undo), Cmd/Ctrl + Shift + Z (redo).
+        // Cmd+Y is a Windows alternative for redo — accept it too.
+        if ((e.metaKey || e.ctrlKey) && !e.altKey) {
+          const k = e.key.toLowerCase();
+          if (k === 'z') {
+            if (e.shiftKey) {
+              redo();
+            } else {
+              undo();
+            }
+            e.preventDefault();
+            return;
+          }
+          if (k === 'y' && !e.shiftKey) {
+            redo();
+            e.preventDefault();
+            return;
+          }
         }
 
         // Format shortcuts: Cmd/Ctrl + B/I/U toggle the current paragraph.
@@ -903,6 +1064,8 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         refreshSelectionRects,
         deleteSelectionIfAny,
         setSelection,
+        undo,
+        redo,
       ],
     );
 
@@ -1158,6 +1321,15 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         clearSelection: (): void => {
           clearSelection();
         },
+        undo: (): void => undo(),
+        redo: (): void => redo(),
+        canUndo: (): boolean => historyRef.current.index > 0,
+        canRedo: (): boolean =>
+          historyRef.current.index < historyRef.current.entries.length - 1,
+        historyDepth: (): { index: number; size: number } => ({
+          index: historyRef.current.index,
+          size: historyRef.current.entries.length,
+        }),
         // Synthetic Korean IME helper for e2e — Playwright's keyboard.type
         // doesn't trigger real IME composition. This bypasses keydown to
         // exercise the same code path compositionend uses.
@@ -1218,6 +1390,8 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       refreshCursorRect,
       clearSelection,
       setSelection,
+      undo,
+      redo,
     ]);
 
     // Effect 2: IntersectionObserver — lazy render visible pages, track current.
@@ -1296,6 +1470,27 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       >
         {showToolbar && (
           <div className="flex h-10 items-center gap-1 border-b border-border px-3 text-xs">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => undo()}
+              disabled={!canUndo}
+              aria-label="실행 취소"
+              data-testid="studio-undo"
+            >
+              <Undo2 className="size-4" />
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => redo()}
+              disabled={!canRedo}
+              aria-label="다시 실행"
+              data-testid="studio-redo"
+            >
+              <Redo2 className="size-4" />
+            </Button>
+            <span className="mx-2 h-5 w-px bg-border" aria-hidden="true" />
             <Button
               size="sm"
               variant="ghost"

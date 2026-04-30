@@ -50,8 +50,16 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
   const editMenu: MenuItemConstructorOptions = {
     label: '편집',
     submenu: [
-      { role: 'undo', label: '실행 취소' },
-      { role: 'redo', label: '다시 실행' },
+      {
+        label: '실행 취소',
+        accelerator: 'CmdOrCtrl+Z',
+        click: () => send(getWindow(), 'edit:undo'),
+      },
+      {
+        label: '다시 실행',
+        accelerator: 'Shift+CmdOrCtrl+Z',
+        click: () => send(getWindow(), 'edit:redo'),
+      },
       { type: 'separator' },
       { role: 'cut', label: '잘라내기' },
       { role: 'copy', label: '복사' },

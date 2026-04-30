@@ -24,6 +24,8 @@ export type MenuAction =
   | 'file:open'
   | 'file:save'
   | 'file:save-as'
+  | 'edit:undo'
+  | 'edit:redo'
   | 'format:bold'
   | 'format:italic'
   | 'format:underline'
