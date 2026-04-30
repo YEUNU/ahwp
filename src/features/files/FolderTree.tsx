@@ -493,6 +493,13 @@ export function FolderTree({
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const expandedRef = useRef<Set<string>>(new Set());
   const selectedPathRef = useRef<string | null>(null);
+  // Renderer-side clipboard for file/folder copy-paste. Holds the source
+  // path + intent. Cleared after a 'cut' paste; sticky on 'copy' so the
+  // user can paste the same source multiple times.
+  const fileClipboardRef = useRef<{
+    path: string;
+    mode: 'copy' | 'cut';
+  } | null>(null);
   useEffect(() => {
     expandedRef.current = expanded;
   }, [expanded]);
@@ -800,14 +807,178 @@ export function FolderTree({
     [rootPath],
   );
 
-  // Tree-level keyboard handler: F2 rename, Delete trash, Enter open/toggle.
+  /**
+   * Walk the tree in display order producing a flat list of every visible
+   * entry. "Visible" = the entry's ancestors are all expanded. Used for
+   * arrow-key navigation between siblings/ancestors/descendants.
+   */
+  const buildVisibleEntries = useCallback((): FolderEntry[] => {
+    const out: FolderEntry[] = [];
+    const walk = (entries: FolderEntry[]): void => {
+      for (const e of entries) {
+        out.push(e);
+        if (e.isDirectory && expanded.has(e.path)) {
+          const kids = childrenByPath.get(e.path);
+          if (kids) walk(kids);
+        }
+      }
+    };
+    walk(rootChildren);
+    return out;
+  }, [rootChildren, childrenByPath, expanded]);
+
+  /** Find the parent of `path` in the loaded tree, or null at root. */
+  const findParentPath = useCallback(
+    (p: string): string | null => {
+      // Brute search across childrenByPath: the entry whose children
+      // include `p` is the parent. rootPath is the parent if `p` is in
+      // rootChildren.
+      if (rootChildren.some((e) => e.path === p)) return rootPath;
+      for (const [parent, kids] of childrenByPath.entries()) {
+        if (kids.some((k) => k.path === p)) return parent;
+      }
+      return null;
+    },
+    [rootChildren, childrenByPath, rootPath],
+  );
+
+  /**
+   * Tree-level keyboard handler — OS file explorer parity:
+   *   F2          rename
+   *   Delete      trash
+   *   Enter       open file / toggle folder
+   *   ↑ / ↓       previous / next visible entry
+   *   ←           collapse (or jump to parent if already collapsed/file)
+   *   →           expand (or jump to first child if already expanded)
+   *   Cmd/Ctrl + N        new file (in selected folder, or selected file's parent)
+   *   Cmd/Ctrl + Shift + N  new folder (same target)
+   */
   const handleKeyDown = useCallback(
     (e: ReactKeyboardEvent<HTMLDivElement>): void => {
+      // Inputs own their own keys.
+      if (renamingPath || pendingNew) return;
+
       const sel = selectedPathRef.current;
-      if (!sel) return;
-      if (renamingPath || pendingNew) return; // input owns these keys
-      const entry = findEntryByPath(sel);
-      if (!entry) return;
+      const entry = sel ? findEntryByPath(sel) : null;
+
+      // Cmd/Ctrl + N → new file under the selected folder (or sibling parent).
+      // Cmd/Ctrl + Shift + N → new folder. Use rootPath if no selection.
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        !e.altKey &&
+        e.key.toLowerCase() === 'n'
+      ) {
+        e.preventDefault();
+        const target = !sel
+          ? rootPath
+          : entry?.isDirectory
+            ? entry.path
+            : (findParentPath(sel) ?? rootPath);
+        startNew(target, e.shiftKey ? 'folder' : 'file');
+        return;
+      }
+
+      // Cmd/Ctrl + C / X / V — file clipboard (copy / cut / paste). The
+      // editor's text-edit shortcuts run only inside the StudioViewer
+      // scroll container, so they don't conflict here.
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
+        const k = e.key.toLowerCase();
+        if (k === 'c' && sel) {
+          e.preventDefault();
+          fileClipboardRef.current = { path: sel, mode: 'copy' };
+          return;
+        }
+        if (k === 'x' && sel) {
+          e.preventDefault();
+          fileClipboardRef.current = { path: sel, mode: 'cut' };
+          return;
+        }
+        if (k === 'v') {
+          const cb = fileClipboardRef.current;
+          if (!cb) return;
+          e.preventDefault();
+          // Paste destination: the selected folder, or the selected
+          // item's parent, or root.
+          const destDir = !sel
+            ? rootPath
+            : entry?.isDirectory
+              ? entry.path
+              : (findParentPath(sel) ?? rootPath);
+          if (!destDir) return;
+          // Disallow pasting a folder into itself / a descendant.
+          const sep = cb.path.includes('\\') ? '\\' : '/';
+          if (destDir === cb.path || destDir.startsWith(cb.path + sep)) {
+            window.alert('대상 폴더가 원본의 하위입니다.');
+            return;
+          }
+          void (async () => {
+            try {
+              if (cb.mode === 'copy') {
+                await window.api.folder.copy(cb.path, destDir);
+              } else {
+                const name = cb.path.split(/[\\/]/).pop() ?? '';
+                if (!name) return;
+                const newPath = joinPath(destDir, name);
+                if (newPath === cb.path) return;
+                await window.api.folder.rename(cb.path, newPath);
+                fileClipboardRef.current = null; // cut consumed
+              }
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              window.alert(`붙여넣기 실패: ${msg}`);
+            }
+          })();
+          return;
+        }
+      }
+
+      // Arrow navigation.
+      const visible = buildVisibleEntries();
+      const curIdx = sel ? visible.findIndex((e2) => e2.path === sel) : -1;
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        const nextIdx =
+          curIdx < 0 ? 0 : Math.min(curIdx + 1, visible.length - 1);
+        const next = visible[nextIdx];
+        if (next) setSelectedPath(next.path);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        const nextIdx =
+          curIdx <= 0 ? Math.max(visible.length - 1, 0) : curIdx - 1;
+        const next = visible[nextIdx];
+        if (next) setSelectedPath(next.path);
+        return;
+      }
+      if (e.key === 'ArrowRight') {
+        if (!entry) return;
+        e.preventDefault();
+        if (entry.isDirectory && !expanded.has(entry.path)) {
+          void handleToggle(entry.path);
+        } else if (entry.isDirectory) {
+          // Already expanded → jump to first child.
+          const kids = childrenByPath.get(entry.path);
+          if (kids && kids[0]) setSelectedPath(kids[0].path);
+        }
+        return;
+      }
+      if (e.key === 'ArrowLeft') {
+        if (!entry) return;
+        e.preventDefault();
+        if (entry.isDirectory && expanded.has(entry.path)) {
+          void handleToggle(entry.path);
+        } else {
+          // Collapsed dir or file → jump to parent (if any).
+          const parent = findParentPath(entry.path);
+          if (parent && parent !== rootPath) setSelectedPath(parent);
+        }
+        return;
+      }
+
+      // Existing actions need a selection.
+      if (!sel || !entry) return;
       if (e.key === 'F2') {
         e.preventDefault();
         startRename(sel);
@@ -828,10 +999,16 @@ export function FolderTree({
       renamingPath,
       pendingNew,
       findEntryByPath,
+      buildVisibleEntries,
+      findParentPath,
+      expanded,
+      childrenByPath,
+      rootPath,
       startRename,
       trashPath,
       handleToggle,
       onOpenPath,
+      startNew,
     ],
   );
 

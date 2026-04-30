@@ -169,6 +169,34 @@ test.describe('studio viewer — chunk 3 (multi-page stress)', () => {
     await expect(last.locator('svg').first()).toBeVisible({ timeout: 15_000 });
   });
 
+  test('page indicator tracks the topmost visible page on scroll', async () => {
+    const { page } = launched;
+    const indicator = page.getByTestId('studio-page-indicator');
+    // Starts at "1 / N".
+    await expect(indicator).toContainText(/^\s*1\s*\//);
+
+    const placeholders = page.getByTestId('studio-viewer-page');
+    const total = await placeholders.count();
+    expect(total).toBeGreaterThan(5);
+
+    // Scroll a middle page into view — indicator should update to that page.
+    const middleIdx = Math.min(10, total - 1);
+    await placeholders.nth(middleIdx).scrollIntoViewIfNeeded();
+    // Allow rAF + a render tick to settle.
+    await page.waitForTimeout(200);
+    await expect
+      .poll(async () => {
+        const txt = (await indicator.textContent()) ?? '';
+        const m = txt.match(/^\s*(\d+)\s*\//);
+        return m ? Number(m[1]) : 0;
+      })
+      .toBeGreaterThan(1);
+    // And the indicator number should be near the scrolled page (within ±2).
+    const nowText = (await indicator.textContent()) ?? '';
+    const now = Number(nowText.match(/^\s*(\d+)\s*\//)?.[1] ?? 0);
+    expect(Math.abs(now - (middleIdx + 1))).toBeLessThanOrEqual(2);
+  });
+
   test('embedded images render — at least one page has visible <image> with data: href', async () => {
     const { page } = launched;
     const placeholders = page.getByTestId('studio-viewer-page');

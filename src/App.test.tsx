@@ -42,6 +42,7 @@ describe('App', () => {
         rename: vi.fn().mockResolvedValue(undefined),
         trash: vi.fn().mockResolvedValue(undefined),
         reveal: vi.fn().mockResolvedValue(undefined),
+        copy: vi.fn().mockResolvedValue(''),
       },
     };
     Object.defineProperty(window, 'api', {

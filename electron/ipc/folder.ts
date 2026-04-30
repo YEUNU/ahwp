@@ -183,6 +183,54 @@ export function registerFolderIpc(): void {
       shell.showItemInFolder(target);
     },
   );
+
+  ipcMain.handle(
+    'folder:copy',
+    async (_event, src: string, destDir: string): Promise<string> => {
+      if (typeof src !== 'string' || !src)
+        throw new Error('copy: src required');
+      if (typeof destDir !== 'string' || !destDir)
+        throw new Error('copy: destDir required');
+      // Disallow copying a folder into itself / a descendant of itself.
+      const srcSep = src.includes('\\') ? '\\' : '/';
+      if (destDir === src || destDir.startsWith(src + srcSep)) {
+        throw new Error('copy: destination is inside source');
+      }
+      const base = path.basename(src);
+      // Disambiguate name if it would collide. " (1)", " (2)", … before the
+      // extension for files; appended at the end for directories.
+      const target = await uniquePath(destDir, base);
+      // fs.cp is recursive when src is a directory; for files it falls
+      // back to a regular copyFile. errorOnExist=false because we already
+      // resolved the unique path above, but we keep `force: false` so a
+      // race that creates the file mid-call still bubbles up.
+      await fs.cp(src, target, { recursive: true, force: false });
+      return target;
+    },
+  );
+}
+
+/** Resolve a non-colliding path under `dir` based on `name`. */
+async function uniquePath(dir: string, name: string): Promise<string> {
+  const target = path.join(dir, name);
+  const dot = name.lastIndexOf('.');
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : '';
+  let attempt = 0;
+  let candidate = target;
+  // We assume access throws ENOENT for "doesn't exist". Other errors
+  // (EACCES) propagate.
+  for (;;) {
+    try {
+      await fs.access(candidate);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return candidate;
+      throw err;
+    }
+    attempt += 1;
+    candidate = path.join(dir, `${stem} (${attempt})${ext}`);
+    if (attempt > 999) throw new Error('uniquePath: too many collisions');
+  }
 }
 
 /**

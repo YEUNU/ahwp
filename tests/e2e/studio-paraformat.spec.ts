@@ -198,19 +198,20 @@ test.describe('studio paraformat — chunk 10', () => {
         ),
       { timeout: 30_000 },
     );
-    // Re-place caret at (5, 0) and read.
-    await page.evaluate(() => {
-      const dbg = (window as Window & { __studioDebug?: StudioDebug })
-        .__studioDebug!;
-      dbg.setSelection(5, 0, 5, 0);
-    });
-    const after = await page.evaluate(() =>
-      (
-        window as Window & { __studioDebug?: StudioDebug }
-      ).__studioDebug!.getActiveFormat(),
-    );
-    expect(after.alignment).toBe('center');
-    expect(after.fontSize).toBe(2000);
-    expect(after.textColor).toBe('#0070c0');
+    // Re-place caret at (5, 0) and read. Poll because the post-reload
+    // doc parse + setSelection round-trip is async vs the React tab
+    // mounting that wires up `__studioDebug` — the very first read can
+    // land before refreshActiveFormat has run.
+    await expect
+      .poll(async () =>
+        page.evaluate(() => {
+          const dbg = (window as Window & { __studioDebug?: StudioDebug })
+            .__studioDebug!;
+          dbg.setSelection(5, 0, 5, 0);
+          const f = dbg.getActiveFormat();
+          return `${f.alignment}|${f.fontSize}|${f.textColor}`;
+        }),
+      )
+      .toBe('center|2000|#0070c0');
   });
 });

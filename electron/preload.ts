@@ -60,6 +60,7 @@ const api: AhwpApi = {
       ipcRenderer.invoke('folder:rename', oldPath, newPath),
     trash: (path) => ipcRenderer.invoke('folder:trash', path),
     reveal: (path) => ipcRenderer.invoke('folder:reveal', path),
+    copy: (src, destDir) => ipcRenderer.invoke('folder:copy', src, destDir),
   },
 };
 

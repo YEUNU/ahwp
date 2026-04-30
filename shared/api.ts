@@ -141,6 +141,13 @@ export interface FolderApi {
   trash: (path: string) => Promise<void>;
   /** Open the OS file manager with `path` selected. */
   reveal: (path: string) => Promise<void>;
+  /**
+   * Recursive copy from `src` into `destDir`. The new path is the dir +
+   * the source's basename. If a file/folder of that name already exists,
+   * the IPC appends " (1)", " (2)", … to disambiguate. Returns the
+   * resulting absolute path.
+   */
+  copy: (src: string, destDir: string) => Promise<string>;
 }
 
 export interface SessionState {

@@ -100,7 +100,7 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDir": true
+      "allowToChangeInstallationDirectory": true
     }
   },
   "dependencies": {

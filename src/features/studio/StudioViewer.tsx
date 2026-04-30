@@ -2340,7 +2340,13 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       stepWordOffset,
     ]);
 
-    // Effect 2: IntersectionObserver — lazy render visible pages, track current.
+    // Effect 2: IntersectionObserver — lazy render visible pages.
+    // Note: the page indicator was previously updated here too, but the
+    // observer's `entries` callback only contains pages whose visibility
+    // *changed*, so picking "most visible" inside the batch could pin
+    // the indicator on a page whose ratio happened to drop while the
+    // truly visible page wasn't in the batch. Indicator now tracks via
+    // an onScroll handler against scrollTop (effect 3 below).
     useEffect(() => {
       if (phase !== 'ready' || !pageDims || pageCount === 0) return;
 
@@ -2348,7 +2354,6 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       const pageRefs = pageRefsRef;
       let observer: IntersectionObserver | null = null;
 
-      // Defer one tick so refs are populated after the placeholder render.
       const raf = requestAnimationFrame(() => {
         observer = new IntersectionObserver(
           (entries) => {
@@ -2361,18 +2366,8 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                 renderPageInto(idx);
               }
             }
-            // Update current page = the most-visible entry.
-            const visible = entries
-              .filter((e) => e.isIntersecting)
-              .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
-            if (visible.length > 0) {
-              const idx = Number(
-                visible[0].target.getAttribute('data-page-idx') ?? '-1',
-              );
-              if (idx >= 0) setCurrentPage(idx);
-            }
           },
-          { root: scrollEl, rootMargin: '400px', threshold: [0, 0.5] },
+          { root: scrollEl, rootMargin: '400px', threshold: [0] },
         );
 
         pageRefs.current.forEach((el) => {
@@ -2388,6 +2383,43 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         observer?.disconnect();
       };
     }, [phase, pageDims, pageCount, renderPageInto]);
+
+    // Effect 3: page indicator — picks the page whose top edge is closest
+    // to the upper third of the visible viewport. rAF-throttled so it
+    // doesn't run on every scroll tick.
+    useEffect(() => {
+      if (phase !== 'ready' || pageCount === 0) return;
+      const scrollEl = scrollRef.current;
+      if (!scrollEl) return;
+
+      let pending = false;
+      const update = (): void => {
+        pending = false;
+        const refs = pageRefsRef.current;
+        const scrollRect = scrollEl.getBoundingClientRect();
+        const probeY = scrollRect.top + scrollEl.clientHeight * 0.33;
+        let best = 0;
+        for (let i = 0; i < refs.length; i++) {
+          const el = refs[i];
+          if (!el) continue;
+          const r = el.getBoundingClientRect();
+          if (r.top > probeY) break; // pages are stacked top-to-bottom
+          best = i;
+        }
+        setCurrentPage(best);
+      };
+      const onScroll = (): void => {
+        if (pending) return;
+        pending = true;
+        requestAnimationFrame(update);
+      };
+      // Initial sync (e.g. after restoring scroll position on tab switch).
+      update();
+      scrollEl.addEventListener('scroll', onScroll, { passive: true });
+      return () => {
+        scrollEl.removeEventListener('scroll', onScroll);
+      };
+    }, [phase, pageCount, pageDims, zoom]);
 
     const setZoomFit = useCallback(() => {
       if (!pageDims || !scrollRef.current) return;
