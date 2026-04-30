@@ -272,3 +272,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local-only example fixtures (large HWP files used by e2e)
+examples/
+
+# Claude Code runtime state
+.claude/
