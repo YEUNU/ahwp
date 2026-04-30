@@ -61,9 +61,21 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
         click: () => send(getWindow(), 'edit:redo'),
       },
       { type: 'separator' },
-      { role: 'cut', label: '잘라내기' },
-      { role: 'copy', label: '복사' },
-      { role: 'paste', label: '붙여넣기' },
+      {
+        label: '잘라내기',
+        accelerator: 'CmdOrCtrl+X',
+        click: () => send(getWindow(), 'edit:cut'),
+      },
+      {
+        label: '복사',
+        accelerator: 'CmdOrCtrl+C',
+        click: () => send(getWindow(), 'edit:copy'),
+      },
+      {
+        label: '붙여넣기',
+        accelerator: 'CmdOrCtrl+V',
+        click: () => send(getWindow(), 'edit:paste'),
+      },
       { role: 'selectAll', label: '전체 선택' },
     ],
   };

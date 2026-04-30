@@ -26,6 +26,9 @@ export type MenuAction =
   | 'file:save-as'
   | 'edit:undo'
   | 'edit:redo'
+  | 'edit:copy'
+  | 'edit:cut'
+  | 'edit:paste'
   | 'format:bold'
   | 'format:italic'
   | 'format:underline'
@@ -76,6 +79,13 @@ export interface FileApi {
   getPathForFile: (file: File) => string;
 }
 
+export interface ClipboardApi {
+  /** Read plain text from the system clipboard. Returns '' when empty. */
+  readText: () => Promise<string>;
+  /** Write plain text to the system clipboard. */
+  writeText: (text: string) => Promise<void>;
+}
+
 export interface SessionState {
   /** Path of the document active when the renderer last persisted state. */
   lastActivePath: string | null;
@@ -91,6 +101,7 @@ export interface AhwpApi {
   onMenuAction: (handler: (action: MenuAction) => void) => () => void;
   file: FileApi;
   session: SessionApi;
+  clipboard: ClipboardApi;
 }
 
 declare global {

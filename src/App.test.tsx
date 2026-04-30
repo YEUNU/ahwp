@@ -27,6 +27,10 @@ describe('App', () => {
         get: vi.fn().mockResolvedValue({ lastActivePath: null }),
         set: vi.fn().mockResolvedValue(undefined),
       },
+      clipboard: {
+        readText: vi.fn().mockResolvedValue(''),
+        writeText: vi.fn().mockResolvedValue(undefined),
+      },
     };
     Object.defineProperty(window, 'api', {
       value: mockApi,

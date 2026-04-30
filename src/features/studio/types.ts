@@ -19,4 +19,10 @@ export interface ViewerHandle {
   undo: () => void;
   /** Redo a previously-undone mutation. No-op if no redo available. */
   redo: () => void;
+  /** Copy current selection to internal + system clipboard. No-op if empty. */
+  copy: () => Promise<boolean>;
+  /** Cut current selection (copy + deleteRange). No-op if empty. */
+  cut: () => Promise<boolean>;
+  /** Paste system clipboard text (or internal clipboard if it matches). */
+  paste: () => Promise<boolean>;
 }

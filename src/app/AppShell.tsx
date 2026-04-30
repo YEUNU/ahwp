@@ -132,6 +132,12 @@ export default function AppShell() {
         viewerRef.current?.undo();
       } else if (action === 'edit:redo') {
         viewerRef.current?.redo();
+      } else if (action === 'edit:copy') {
+        void viewerRef.current?.copy();
+      } else if (action === 'edit:cut') {
+        void viewerRef.current?.cut();
+      } else if (action === 'edit:paste') {
+        void viewerRef.current?.paste();
       } else if (
         action === 'format:bold' ||
         action === 'format:italic' ||

@@ -852,6 +852,108 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       [refreshAfterMutation],
     );
 
+    /**
+     * Copy the current selection (or no-op when empty) to BOTH the
+     * internal clipboard (preserves formatting for round-trip via
+     * pasteInternal) and the system clipboard (plain text — so the user
+     * can paste in another app). Returns true if anything was copied.
+     */
+    const copySelection = useCallback(async (): Promise<boolean> => {
+      const doc = docRef.current;
+      const sel = selectionRef.current;
+      if (!doc || !sel) return false;
+      const r = sortRange(sel.anchor, sel.focus);
+      if (r.empty) return false;
+      try {
+        const result = JSON.parse(
+          doc.copySelection(
+            sel.anchor.sectionIndex,
+            r.startPara,
+            r.startOffset,
+            r.endPara,
+            r.endOffset,
+          ),
+        ) as { ok: boolean; text?: string };
+        if (!result.ok) return false;
+        const text = result.text ?? doc.getClipboardText();
+        await window.api.clipboard.writeText(text);
+        return true;
+      } catch (err) {
+        console.warn('[studio] copySelection failed:', err);
+        return false;
+      }
+    }, [sortRange]);
+
+    /**
+     * Cut = Copy + delete-selection. No-op when no selection.
+     */
+    const cutSelection = useCallback(async (): Promise<boolean> => {
+      const ok = await copySelection();
+      if (!ok) return false;
+      if (deleteSelectionIfAny()) {
+        refreshAfterMutation();
+        return true;
+      }
+      return false;
+    }, [copySelection, deleteSelectionIfAny, refreshAfterMutation]);
+
+    /**
+     * Paste at caret. If a selection is active it's deleted first
+     * (matching standard editor UX). Source priority:
+     *   1. System clipboard text matches internal clipboard text → use
+     *      pasteInternal (preserves formatting for in-app round-trips)
+     *   2. Else system clipboard plain text → insertText (lossy on rich
+     *      sources but reliable cross-app)
+     *   3. Else internal clipboard text only → pasteInternal
+     */
+    const pasteAtCaret = useCallback(async (): Promise<boolean> => {
+      const doc = docRef.current;
+      if (!doc) return false;
+      try {
+        if (deleteSelectionIfAny()) {
+          // After deleteRange caret is at the start of the deleted range.
+          const cc = JSON.parse(
+            doc.getCaretPosition(),
+          ) as typeof caretRef.current;
+          caretRef.current = cc;
+        }
+        const c = caretRef.current;
+        const systemText = await window.api.clipboard.readText();
+        const hasInternal = doc.hasInternalClipboard();
+        const internalText = hasInternal ? doc.getClipboardText() : '';
+        const useInternal = hasInternal && systemText === internalText;
+        if (useInternal) {
+          const result = JSON.parse(
+            doc.pasteInternal(c.sectionIndex, c.paragraphIndex, c.charOffset),
+          ) as { ok: boolean; paraIdx: number; charOffset: number };
+          if (result.ok) {
+            // pasteInternal doesn't auto-advance the IR caret — sync ours.
+            caretRef.current = {
+              sectionIndex: c.sectionIndex,
+              paragraphIndex: result.paraIdx,
+              charOffset: result.charOffset,
+            };
+            refreshAfterMutation();
+            return true;
+          }
+        }
+        if (systemText) {
+          doc.insertText(
+            c.sectionIndex,
+            c.paragraphIndex,
+            c.charOffset,
+            systemText,
+          );
+          refreshAfterMutation();
+          return true;
+        }
+        return false;
+      } catch (err) {
+        console.warn('[studio] paste failed:', err);
+        return false;
+      }
+    }, [deleteSelectionIfAny, refreshAfterMutation]);
+
     useImperativeHandle(
       ref,
       () => ({
@@ -867,8 +969,11 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         },
         undo: () => undo(),
         redo: () => redo(),
+        copy: () => copySelection(),
+        cut: () => cutSelection(),
+        paste: () => pasteAtCaret(),
       }),
-      [toggleCharFormat, undo, redo],
+      [toggleCharFormat, undo, redo, copySelection, cutSelection, pasteAtCaret],
     );
 
     /**
@@ -962,6 +1067,23 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           }
           if (k === 'y' && !e.shiftKey) {
             redo();
+            e.preventDefault();
+            return;
+          }
+          // Clipboard shortcuts. Use void to discard the promise — keydown
+          // returns synchronously; the actual op completes asynchronously.
+          if (!e.shiftKey && k === 'c') {
+            void copySelection();
+            e.preventDefault();
+            return;
+          }
+          if (!e.shiftKey && k === 'x') {
+            void cutSelection();
+            e.preventDefault();
+            return;
+          }
+          if (!e.shiftKey && k === 'v') {
+            void pasteAtCaret();
             e.preventDefault();
             return;
           }
@@ -1066,6 +1188,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         setSelection,
         undo,
         redo,
+        copySelection,
+        cutSelection,
+        pasteAtCaret,
       ],
     );
 
@@ -1330,6 +1455,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           index: historyRef.current.index,
           size: historyRef.current.entries.length,
         }),
+        copy: () => copySelection(),
+        cut: () => cutSelection(),
+        paste: () => pasteAtCaret(),
         // Synthetic Korean IME helper for e2e — Playwright's keyboard.type
         // doesn't trigger real IME composition. This bypasses keydown to
         // exercise the same code path compositionend uses.
@@ -1392,6 +1520,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       setSelection,
       undo,
       redo,
+      copySelection,
+      cutSelection,
+      pasteAtCaret,
     ]);
 
     // Effect 2: IntersectionObserver — lazy render visible pages, track current.

@@ -30,6 +30,10 @@ const api: AhwpApi = {
     get: () => ipcRenderer.invoke('session:get'),
     set: (state) => ipcRenderer.invoke('session:set', state),
   },
+  clipboard: {
+    readText: () => ipcRenderer.invoke('clipboard:read-text'),
+    writeText: (text) => ipcRenderer.invoke('clipboard:write-text', text),
+  },
 };
 
 contextBridge.exposeInMainWorld('api', api);
