@@ -77,6 +77,12 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
         click: () => send(getWindow(), 'edit:paste'),
       },
       { role: 'selectAll', label: '전체 선택' },
+      { type: 'separator' },
+      {
+        label: '찾기…',
+        accelerator: 'CmdOrCtrl+F',
+        click: () => send(getWindow(), 'edit:find'),
+      },
     ],
   };
 

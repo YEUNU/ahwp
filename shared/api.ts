@@ -29,6 +29,7 @@ export type MenuAction =
   | 'edit:copy'
   | 'edit:cut'
   | 'edit:paste'
+  | 'edit:find'
   | 'format:bold'
   | 'format:italic'
   | 'format:underline'

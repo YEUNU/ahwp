@@ -138,6 +138,8 @@ export default function AppShell() {
         void viewerRef.current?.cut();
       } else if (action === 'edit:paste') {
         void viewerRef.current?.paste();
+      } else if (action === 'edit:find') {
+        viewerRef.current?.openFind();
       } else if (
         action === 'format:bold' ||
         action === 'format:italic' ||

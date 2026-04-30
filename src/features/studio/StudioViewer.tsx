@@ -1,12 +1,15 @@
 import {
   AlertTriangle,
   Bold,
+  ChevronDown,
+  ChevronUp,
   Italic,
   Loader2,
   Maximize2,
   Redo2,
   Underline,
   Undo2,
+  X,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
@@ -198,6 +201,34 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     }>({ entries: [], index: -1 });
     const [canUndo, setCanUndo] = useState(false);
     const [canRedo, setCanRedo] = useState(false);
+    // Find (chunk 9). When `findOpen=true` a small search bar overlays
+    // the toolbar. Matches are computed by iterating sections+paragraphs
+    // and indexOf-searching their text. Each match becomes a {s,p,off,len}
+    // tuple; the active one is highlighted distinctly and brought into view.
+    const [findOpen, setFindOpen] = useState(false);
+    const [findQuery, setFindQuery] = useState('');
+    const [findMatches, setFindMatches] = useState<
+      {
+        sectionIndex: number;
+        paragraphIndex: number;
+        offset: number;
+        length: number;
+      }[]
+    >([]);
+    const [findIndex, setFindIndex] = useState(0);
+    const [findHighlightsByPage, setFindHighlightsByPage] = useState<
+      Record<
+        number,
+        {
+          x: number;
+          y: number;
+          width: number;
+          height: number;
+          isActive: boolean;
+        }[]
+      >
+    >({});
+    const findInputRef = useRef<HTMLInputElement>(null);
     // Active formatting state on the caret's paragraph — drives toolbar
     // pressed-state. Recomputed after every mutation / caret move.
     const [activeFormat, setActiveFormat] = useState<{
@@ -898,6 +929,220 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     }, [copySelection, deleteSelectionIfAny, refreshAfterMutation]);
 
     /**
+     * Iterate every paragraph in every section, indexOf-searching each
+     * paragraph's text for the query. Builds a flat list of matches. Big
+     * docs may take a few hundred ms — Phase 1 minimal. Future optimization:
+     * incremental search per typed char, debounce, or maintain a section
+     * text cache.
+     */
+    const runFindSearch = useCallback((query: string): void => {
+      const doc = docRef.current;
+      if (!doc || !query) {
+        setFindMatches([]);
+        setFindIndex(0);
+        setFindHighlightsByPage({});
+        return;
+      }
+      const lc = query.toLowerCase();
+      const matches: {
+        sectionIndex: number;
+        paragraphIndex: number;
+        offset: number;
+        length: number;
+      }[] = [];
+      try {
+        const sectionCount = doc.getSectionCount();
+        for (let s = 0; s < sectionCount; s++) {
+          const paraCount = doc.getParagraphCount(s);
+          for (let p = 0; p < paraCount; p++) {
+            const text = doc.getTextRange(s, p, 0, 1_000_000);
+            if (!text) continue;
+            const haystack = text.toLowerCase();
+            let from = 0;
+            while (from <= haystack.length - lc.length) {
+              const idx = haystack.indexOf(lc, from);
+              if (idx === -1) break;
+              matches.push({
+                sectionIndex: s,
+                paragraphIndex: p,
+                offset: idx,
+                length: query.length,
+              });
+              from = idx + Math.max(1, lc.length);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[studio] find iteration failed:', err);
+      }
+      setFindMatches(matches);
+      setFindIndex(0);
+    }, []);
+
+    /**
+     * Project the matches list to per-page rect overlays. The active match
+     * (findIndex) is flagged so the renderer can color it differently.
+     */
+    const refreshFindHighlights = useCallback(
+      (matches: typeof findMatches, activeIdx: number): void => {
+        const doc = docRef.current;
+        if (!doc || matches.length === 0) {
+          setFindHighlightsByPage({});
+          return;
+        }
+        const grouped: Record<
+          number,
+          {
+            x: number;
+            y: number;
+            width: number;
+            height: number;
+            isActive: boolean;
+          }[]
+        > = {};
+        for (let i = 0; i < matches.length; i++) {
+          const m = matches[i];
+          try {
+            const rects = JSON.parse(
+              doc.getSelectionRects(
+                m.sectionIndex,
+                m.paragraphIndex,
+                m.offset,
+                m.paragraphIndex,
+                m.offset + m.length,
+              ),
+            ) as {
+              pageIndex: number;
+              x: number;
+              y: number;
+              width: number;
+              height: number;
+            }[];
+            for (const r of rects) {
+              (grouped[r.pageIndex] ??= []).push({
+                x: r.x,
+                y: r.y,
+                width: r.width,
+                height: r.height,
+                isActive: i === activeIdx,
+              });
+            }
+          } catch {
+            /* skip a paragraph that fails (no layout) */
+          }
+        }
+        setFindHighlightsByPage(grouped);
+      },
+      [],
+    );
+
+    /**
+     * Scroll the active match's page into view, set caret to the start of
+     * the match. Called after navigation between matches.
+     */
+    const focusFindMatch = useCallback(
+      (matches: typeof findMatches, idx: number): void => {
+        const m = matches[idx];
+        if (!m) return;
+        const doc = docRef.current;
+        if (!doc) return;
+        // Move caret + selection to the match, so subsequent edits target it.
+        caretRef.current = {
+          sectionIndex: m.sectionIndex,
+          paragraphIndex: m.paragraphIndex,
+          charOffset: m.offset,
+        };
+        try {
+          const rect = JSON.parse(
+            doc.getCursorRect(m.sectionIndex, m.paragraphIndex, m.offset),
+          ) as { pageIndex: number; x: number; y: number; height: number };
+          const pageEl = pageRefsRef.current[rect.pageIndex];
+          pageEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          setCursorRect(rect);
+        } catch {
+          /* keep previous */
+        }
+      },
+      [],
+    );
+
+    const findNext = useCallback((): void => {
+      if (findMatches.length === 0) return;
+      const next = (findIndex + 1) % findMatches.length;
+      setFindIndex(next);
+      refreshFindHighlights(findMatches, next);
+      focusFindMatch(findMatches, next);
+    }, [findMatches, findIndex, refreshFindHighlights, focusFindMatch]);
+
+    const findPrev = useCallback((): void => {
+      if (findMatches.length === 0) return;
+      const prev = (findIndex - 1 + findMatches.length) % findMatches.length;
+      setFindIndex(prev);
+      refreshFindHighlights(findMatches, prev);
+      focusFindMatch(findMatches, prev);
+    }, [findMatches, findIndex, refreshFindHighlights, focusFindMatch]);
+
+    const openFind = useCallback((): void => {
+      setFindOpen(true);
+      // Prime with current selection text if any (so users can hit ⌘F to
+      // search the selected word).
+      const sel = selectionRef.current;
+      if (sel) {
+        const r = sortRange(sel.anchor, sel.focus);
+        if (
+          !r.empty &&
+          r.startPara === r.endPara &&
+          r.endOffset - r.startOffset < 200
+        ) {
+          const doc = docRef.current;
+          if (doc) {
+            try {
+              const text = doc.getTextRange(
+                sel.anchor.sectionIndex,
+                r.startPara,
+                r.startOffset,
+                r.endOffset - r.startOffset,
+              );
+              if (text) {
+                setFindQuery(text);
+                runFindSearch(text);
+              }
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+      }
+      // Move focus to the input on next tick so the caret lands inside.
+      setTimeout(() => findInputRef.current?.focus(), 0);
+    }, [sortRange, runFindSearch]);
+
+    const closeFind = useCallback((): void => {
+      setFindOpen(false);
+      setFindMatches([]);
+      setFindIndex(0);
+      setFindHighlightsByPage({});
+      // Return focus to the scroll container so keyboard editing resumes.
+      scrollRef.current?.focus();
+    }, []);
+
+    // Recompute highlight rects whenever matches or active index change.
+    useEffect(() => {
+      if (findOpen) {
+        refreshFindHighlights(findMatches, findIndex);
+      }
+    }, [findOpen, findMatches, findIndex, refreshFindHighlights]);
+
+    // After matches first arrive, jump to the first one.
+    const matchCount = findMatches.length;
+    useEffect(() => {
+      if (findOpen && matchCount > 0) {
+        focusFindMatch(findMatches, 0);
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [matchCount, findOpen]);
+
+    /**
      * Paste at caret. If a selection is active it's deleted first
      * (matching standard editor UX). Source priority:
      *   1. System clipboard text matches internal clipboard text → use
@@ -972,8 +1217,17 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         copy: () => copySelection(),
         cut: () => cutSelection(),
         paste: () => pasteAtCaret(),
+        openFind: () => openFind(),
       }),
-      [toggleCharFormat, undo, redo, copySelection, cutSelection, pasteAtCaret],
+      [
+        toggleCharFormat,
+        undo,
+        redo,
+        copySelection,
+        cutSelection,
+        pasteAtCaret,
+        openFind,
+      ],
     );
 
     /**
@@ -1087,6 +1341,11 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             e.preventDefault();
             return;
           }
+          if (!e.shiftKey && k === 'f') {
+            openFind();
+            e.preventDefault();
+            return;
+          }
         }
 
         // Format shortcuts: Cmd/Ctrl + B/I/U toggle the current paragraph.
@@ -1191,6 +1450,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         copySelection,
         cutSelection,
         pasteAtCaret,
+        openFind,
       ],
     );
 
@@ -1458,6 +1718,27 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         copy: () => copySelection(),
         cut: () => cutSelection(),
         paste: () => pasteAtCaret(),
+        openFind: (initialQuery?: string): void => {
+          openFind();
+          if (typeof initialQuery === 'string' && initialQuery) {
+            setFindQuery(initialQuery);
+            runFindSearch(initialQuery);
+          }
+        },
+        closeFind: (): void => closeFind(),
+        findNext: (): void => findNext(),
+        findPrev: (): void => findPrev(),
+        getFindState: (): {
+          open: boolean;
+          query: string;
+          matchCount: number;
+          activeIndex: number;
+        } => ({
+          open: findOpen,
+          query: findQuery,
+          matchCount: findMatches.length,
+          activeIndex: findIndex,
+        }),
         // Synthetic Korean IME helper for e2e — Playwright's keyboard.type
         // doesn't trigger real IME composition. This bypasses keydown to
         // exercise the same code path compositionend uses.
@@ -1523,6 +1804,15 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       copySelection,
       cutSelection,
       pasteAtCaret,
+      openFind,
+      closeFind,
+      findNext,
+      findPrev,
+      runFindSearch,
+      findOpen,
+      findQuery,
+      findMatches,
+      findIndex,
     ]);
 
     // Effect 2: IntersectionObserver — lazy render visible pages, track current.
@@ -1732,6 +2022,75 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           </div>
         )}
 
+        {findOpen && (
+          <div
+            className="flex items-center gap-2 border-b border-border bg-card px-3 py-2 text-xs"
+            data-testid="studio-find-bar"
+          >
+            <input
+              ref={findInputRef}
+              type="text"
+              className="h-7 w-56 rounded border border-input bg-background px-2"
+              placeholder="검색…"
+              value={findQuery}
+              onChange={(e) => {
+                setFindQuery(e.target.value);
+                runFindSearch(e.target.value);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  closeFind();
+                  e.preventDefault();
+                } else if (e.key === 'Enter') {
+                  if (e.shiftKey) findPrev();
+                  else findNext();
+                  e.preventDefault();
+                }
+              }}
+              data-testid="studio-find-input"
+            />
+            <span
+              className="font-mono tabular-nums text-muted-foreground"
+              data-testid="studio-find-count"
+            >
+              {findMatches.length === 0
+                ? findQuery
+                  ? '0 / 0'
+                  : ''
+                : `${findIndex + 1} / ${findMatches.length}`}
+            </span>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={findPrev}
+              disabled={findMatches.length === 0}
+              aria-label="이전 매치"
+              data-testid="studio-find-prev"
+            >
+              <ChevronUp className="size-4" />
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={findNext}
+              disabled={findMatches.length === 0}
+              aria-label="다음 매치"
+              data-testid="studio-find-next"
+            >
+              <ChevronDown className="size-4" />
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={closeFind}
+              aria-label="닫기"
+              data-testid="studio-find-close"
+            >
+              <X className="size-4" />
+            </Button>
+          </div>
+        )}
+
         <div
           ref={scrollRef}
           className="flex-1 overflow-auto bg-muted/30 outline-none"
@@ -1781,6 +2140,28 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                       key={ri}
                       data-testid="studio-selection-rect"
                       className="pointer-events-none absolute bg-primary/25"
+                      style={{
+                        left: r.x * zoom,
+                        top: r.y * zoom,
+                        width: r.width * zoom,
+                        height: r.height * zoom,
+                      }}
+                    />
+                  ))}
+                  {/* Find match highlights (chunk 9). Active match rendered
+                      with a stronger color so it stands out from the rest. */}
+                  {(findHighlightsByPage[i] ?? []).map((r, ri) => (
+                    <div
+                      key={`fm-${ri}`}
+                      data-testid={
+                        r.isActive
+                          ? 'studio-find-match-active'
+                          : 'studio-find-match'
+                      }
+                      className={
+                        'pointer-events-none absolute ' +
+                        (r.isActive ? 'bg-amber-400/70' : 'bg-amber-300/35')
+                      }
                       style={{
                         left: r.x * zoom,
                         top: r.y * zoom,

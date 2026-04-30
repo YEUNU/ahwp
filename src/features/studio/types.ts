@@ -25,4 +25,6 @@ export interface ViewerHandle {
   cut: () => Promise<boolean>;
   /** Paste system clipboard text (or internal clipboard if it matches). */
   paste: () => Promise<boolean>;
+  /** Open the in-document Find bar and focus its input (chunk 9). */
+  openFind: () => void;
 }
