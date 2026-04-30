@@ -1,5 +1,9 @@
 import {
   AlertTriangle,
+  AlignCenter,
+  AlignJustify,
+  AlignLeft,
+  AlignRight,
   Bold,
   ChevronDown,
   ChevronUp,
@@ -54,9 +58,24 @@ interface CharProps {
   bold?: boolean;
   italic?: boolean;
   underline?: boolean;
+  /** HWPUNIT — 1pt = 100 units. e.g. 1000 = 10pt, 2400 = 24pt. */
   fontSize?: number;
   fontFamily?: string;
+  /** Lowercase hex like "#ff0000". */
+  textColor?: string;
 }
+
+type ParaAlignment = 'left' | 'center' | 'right' | 'justify';
+interface ParaProps {
+  alignment?: ParaAlignment;
+}
+
+const PARA_ALIGNMENTS: ParaAlignment[] = ['left', 'center', 'right', 'justify'];
+
+/** Common font sizes (in pt) shown in the toolbar dropdown. */
+const FONT_SIZE_PRESETS_PT = [
+  8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 72,
+];
 
 /**
  * applyCharFormat requires a [start, end) char range. We have no selection
@@ -170,14 +189,17 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       (
         next: typeof selection | ((prev: typeof selection) => typeof selection),
       ): void => {
-        setSelectionState((prev) => {
-          const resolved =
-            typeof next === 'function'
-              ? (next as (p: typeof selection) => typeof selection)(prev)
-              : next;
-          selectionRef.current = resolved;
-          return resolved;
-        });
+        const resolved =
+          typeof next === 'function'
+            ? (next as (p: typeof selection) => typeof selection)(
+                selectionRef.current,
+              )
+            : next;
+        // Update the ref synchronously so handlers that fire on the same
+        // tick (debug-driven test sequences, keyboard handlers) see the
+        // latest value without waiting for React to re-render.
+        selectionRef.current = resolved;
+        setSelectionState(resolved);
       },
       [],
     );
@@ -236,7 +258,20 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       italic: boolean;
       underline: boolean;
       styleId: number;
-    }>({ bold: false, italic: false, underline: false, styleId: 0 });
+      /** HWPUNIT — fontSize at caret. */
+      fontSize: number;
+      /** Lowercase hex like "#ff0000". */
+      textColor: string;
+      alignment: ParaAlignment;
+    }>({
+      bold: false,
+      italic: false,
+      underline: false,
+      styleId: 0,
+      fontSize: 1000,
+      textColor: '#000000',
+      alignment: 'left',
+    });
 
     // Effect 1: load doc, render page 0 to learn dimensions, prime cache.
     useEffect(() => {
@@ -341,11 +376,26 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             const at = JSON.parse(
               localDoc.getStyleAt(c.sectionIndex, c.paragraphIndex),
             ) as { id: number };
+            let alignment: ParaAlignment = 'left';
+            try {
+              const pp = JSON.parse(
+                localDoc.getParaPropertiesAt(c.sectionIndex, c.paragraphIndex),
+              ) as ParaProps;
+              if (pp.alignment && PARA_ALIGNMENTS.includes(pp.alignment)) {
+                alignment = pp.alignment;
+              }
+            } catch {
+              /* keep default */
+            }
             setActiveFormat({
               bold: !!cp.bold,
               italic: !!cp.italic,
               underline: !!cp.underline,
               styleId: at.id,
+              fontSize: typeof cp.fontSize === 'number' ? cp.fontSize : 1000,
+              textColor:
+                typeof cp.textColor === 'string' ? cp.textColor : '#000000',
+              alignment,
             });
           } catch {
             /* keep defaults */
@@ -628,11 +678,26 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         const at = JSON.parse(
           doc.getStyleAt(c.sectionIndex, c.paragraphIndex),
         ) as { id: number };
+        let alignment: ParaAlignment = 'left';
+        try {
+          const pp = JSON.parse(
+            doc.getParaPropertiesAt(c.sectionIndex, c.paragraphIndex),
+          ) as ParaProps;
+          if (pp.alignment && PARA_ALIGNMENTS.includes(pp.alignment)) {
+            alignment = pp.alignment;
+          }
+        } catch {
+          /* keep default */
+        }
         setActiveFormat({
           bold: !!cp.bold,
           italic: !!cp.italic,
           underline: !!cp.underline,
           styleId: at.id,
+          fontSize: typeof cp.fontSize === 'number' ? cp.fontSize : 1000,
+          textColor:
+            typeof cp.textColor === 'string' ? cp.textColor : '#000000',
+          alignment,
         });
       } catch {
         /* keep previous */
@@ -746,57 +811,66 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       restoreToIndex(historyRef.current.index + 1);
     }, [restoreToIndex]);
 
-    const refreshAfterMutation = useCallback((): void => {
-      const doc = docRef.current;
-      if (doc) {
-        // Force lineseg reflow before re-rendering. The auto-reflow path
-        // covers empty line_segs + empty text, but not empty line_segs +
-        // text-just-inserted (issue #177 in upstream). Without this, an
-        // insertText into a fresh blank.hwpx paragraph mutates the IR but
-        // the SVG output stays empty.
-        try {
-          doc.reflowLinesegs();
-        } catch {
-          /* ignore — unsupported on older library versions */
+    const refreshAfterMutation = useCallback(
+      (opts?: { syncCaret?: boolean }): void => {
+        // Default true for back-compat with text-modifying paths
+        // (insertText / deleteText / deleteRange) where the IR caret moves.
+        // Format-only paths (applyCharFormat / applyParaFormat / applyStyle)
+        // pass `syncCaret: false` because they don't touch the IR caret —
+        // syncing would snap our renderer-side caret back to (0,0,0).
+        const syncCaret = opts?.syncCaret ?? true;
+        const doc = docRef.current;
+        if (doc) {
+          // Force lineseg reflow before re-rendering. The auto-reflow path
+          // covers empty line_segs + empty text, but not empty line_segs +
+          // text-just-inserted (issue #177 in upstream). Without this, an
+          // insertText into a fresh blank.hwpx paragraph mutates the IR but
+          // the SVG output stays empty.
+          try {
+            doc.reflowLinesegs();
+          } catch {
+            /* ignore — unsupported on older library versions */
+          }
         }
-      }
-      cacheRef.current.clear();
-      pageRefsRef.current.forEach((el, idx) => {
-        if (el?.firstElementChild?.tagName.toLowerCase() === 'svg') {
-          el.innerHTML = '';
-          renderPageInto(idx);
+        cacheRef.current.clear();
+        pageRefsRef.current.forEach((el, idx) => {
+          if (el?.firstElementChild?.tagName.toLowerCase() === 'svg') {
+            el.innerHTML = '';
+            renderPageInto(idx);
+          }
+        });
+        if (doc && syncCaret) {
+          try {
+            const parsed = JSON.parse(
+              doc.getCaretPosition(),
+            ) as typeof caretRef.current;
+            caretRef.current = parsed;
+          } catch {
+            /* keep previous caret */
+          }
         }
-      });
-      if (doc) {
-        try {
-          const parsed = JSON.parse(
-            doc.getCaretPosition(),
-          ) as typeof caretRef.current;
-          caretRef.current = parsed;
-        } catch {
-          /* keep previous caret */
-        }
-      }
-      refreshCursorRect();
-      refreshActiveFormat();
-      // Selection survives format-only mutations — recompute rects against
-      // the (possibly reflowed) layout. setSelection in delete paths has
-      // already cleared selection there, so this is a no-op when sel=null.
-      setSelection((prev) => {
-        refreshSelectionRects(prev);
-        return prev;
-      });
-      dirtyRef.current = true;
-      setDirty(true);
-      pushHistory();
-    }, [
-      renderPageInto,
-      refreshCursorRect,
-      refreshActiveFormat,
-      refreshSelectionRects,
-      setSelection,
-      pushHistory,
-    ]);
+        refreshCursorRect();
+        refreshActiveFormat();
+        // Selection survives format-only mutations — recompute rects against
+        // the (possibly reflowed) layout. setSelection in delete paths has
+        // already cleared selection there, so this is a no-op when sel=null.
+        setSelection((prev) => {
+          refreshSelectionRects(prev);
+          return prev;
+        });
+        dirtyRef.current = true;
+        setDirty(true);
+        pushHistory();
+      },
+      [
+        renderPageInto,
+        refreshCursorRect,
+        refreshActiveFormat,
+        refreshSelectionRects,
+        setSelection,
+        pushHistory,
+      ],
+    );
 
     /**
      * Toggle a character format. With an active selection, applies to the
@@ -847,7 +921,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                 }
                 doc.applyCharFormat(sec, r.endPara, 0, r.endOffset, propsJson);
               }
-              refreshAfterMutation();
+              refreshAfterMutation({ syncCaret: false });
               return;
             }
           }
@@ -860,7 +934,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             PARAGRAPH_END_SENTINEL,
             propsJson,
           );
-          refreshAfterMutation();
+          refreshAfterMutation({ syncCaret: false });
         } catch (err) {
           console.warn('[studio] applyCharFormat failed:', err);
         }
@@ -875,12 +949,119 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         const c = caretRef.current;
         try {
           doc.applyStyle(c.sectionIndex, c.paragraphIndex, styleId);
-          refreshAfterMutation();
+          refreshAfterMutation({ syncCaret: false });
         } catch (err) {
           console.warn('[studio] applyStyle failed:', err);
         }
       },
       [refreshAfterMutation],
+    );
+
+    /**
+     * Apply paragraph alignment. Spans the selection's paragraphs when a
+     * selection is active, otherwise just the caret's paragraph.
+     */
+    const applyAlignment = useCallback(
+      (alignment: ParaAlignment): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        const sel = selectionRef.current;
+        const propsJson = JSON.stringify({ alignment } satisfies ParaProps);
+        try {
+          if (sel) {
+            const r = sortRange(sel.anchor, sel.focus);
+            for (let p = r.startPara; p <= r.endPara; p++) {
+              doc.applyParaFormat(sel.anchor.sectionIndex, p, propsJson);
+            }
+          } else {
+            const c = caretRef.current;
+            doc.applyParaFormat(c.sectionIndex, c.paragraphIndex, propsJson);
+          }
+          refreshAfterMutation({ syncCaret: false });
+        } catch (err) {
+          console.warn('[studio] applyParaFormat failed:', err);
+        }
+      },
+      [refreshAfterMutation, sortRange],
+    );
+
+    /**
+     * Apply a character-level prop (fontSize / textColor) on the selection
+     * range or the caret's whole paragraph as fallback. Same multi-paragraph
+     * split as toggleCharFormat — head/middle/tail with sentinel end.
+     */
+    const applyCharProps = useCallback(
+      (props: CharProps): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        const propsJson = JSON.stringify(props);
+        const sel = selectionRef.current;
+        try {
+          if (sel) {
+            const r = sortRange(sel.anchor, sel.focus);
+            if (!r.empty) {
+              const sec = sel.anchor.sectionIndex;
+              if (r.startPara === r.endPara) {
+                doc.applyCharFormat(
+                  sec,
+                  r.startPara,
+                  r.startOffset,
+                  r.endOffset,
+                  propsJson,
+                );
+              } else {
+                doc.applyCharFormat(
+                  sec,
+                  r.startPara,
+                  r.startOffset,
+                  PARAGRAPH_END_SENTINEL,
+                  propsJson,
+                );
+                for (let p = r.startPara + 1; p < r.endPara; p++) {
+                  doc.applyCharFormat(
+                    sec,
+                    p,
+                    0,
+                    PARAGRAPH_END_SENTINEL,
+                    propsJson,
+                  );
+                }
+                doc.applyCharFormat(sec, r.endPara, 0, r.endOffset, propsJson);
+              }
+              refreshAfterMutation({ syncCaret: false });
+              return;
+            }
+          }
+          const c = caretRef.current;
+          doc.applyCharFormat(
+            c.sectionIndex,
+            c.paragraphIndex,
+            0,
+            PARAGRAPH_END_SENTINEL,
+            propsJson,
+          );
+          refreshAfterMutation({ syncCaret: false });
+        } catch (err) {
+          console.warn('[studio] applyCharProps failed:', err);
+        }
+      },
+      [refreshAfterMutation, sortRange],
+    );
+
+    const applyFontSizePt = useCallback(
+      (pt: number): void => {
+        if (!Number.isFinite(pt) || pt <= 0) return;
+        applyCharProps({ fontSize: Math.round(pt * 100) });
+      },
+      [applyCharProps],
+    );
+
+    const applyTextColor = useCallback(
+      (hex: string): void => {
+        if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return;
+        applyCharProps({ textColor: hex.toLowerCase() });
+      },
+      [applyCharProps],
     );
 
     /**
@@ -1218,6 +1399,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         cut: () => cutSelection(),
         paste: () => pasteAtCaret(),
         openFind: () => openFind(),
+        applyAlignment: (a: ParaAlignment) => applyAlignment(a),
+        applyFontSizePt: (pt: number) => applyFontSizePt(pt),
+        applyTextColor: (hex: string) => applyTextColor(hex),
       }),
       [
         toggleCharFormat,
@@ -1227,6 +1411,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         cutSelection,
         pasteAtCaret,
         openFind,
+        applyAlignment,
+        applyFontSizePt,
+        applyTextColor,
       ],
     );
 
@@ -1739,6 +1926,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           matchCount: findMatches.length,
           activeIndex: findIndex,
         }),
+        applyAlignment: (a: ParaAlignment): void => applyAlignment(a),
+        applyFontSizePt: (pt: number): void => applyFontSizePt(pt),
+        applyTextColor: (hex: string): void => applyTextColor(hex),
         // Synthetic Korean IME helper for e2e — Playwright's keyboard.type
         // doesn't trigger real IME composition. This bypasses keydown to
         // exercise the same code path compositionend uses.
@@ -1813,6 +2003,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       findQuery,
       findMatches,
       findIndex,
+      applyAlignment,
+      applyFontSizePt,
+      applyTextColor,
     ]);
 
     // Effect 2: IntersectionObserver — lazy render visible pages, track current.
@@ -1967,6 +2160,63 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             >
               <Underline className="size-4" />
             </Button>
+            <span className="mx-2 h-5 w-px bg-border" aria-hidden="true" />
+            {/* Alignment buttons (chunk 10). applyParaFormat per paragraph. */}
+            {(
+              [
+                ['left', AlignLeft, '왼쪽 정렬'],
+                ['center', AlignCenter, '가운데 정렬'],
+                ['right', AlignRight, '오른쪽 정렬'],
+                ['justify', AlignJustify, '양쪽 정렬'],
+              ] as const
+            ).map(([a, Icon, label]) => (
+              <Button
+                key={a}
+                size="sm"
+                variant={activeFormat.alignment === a ? 'secondary' : 'ghost'}
+                onClick={() => applyAlignment(a)}
+                aria-label={label}
+                aria-pressed={activeFormat.alignment === a}
+                data-testid={`studio-align-${a}`}
+              >
+                <Icon className="size-4" />
+              </Button>
+            ))}
+            <span className="mx-2 h-5 w-px bg-border" aria-hidden="true" />
+            {/* Font size dropdown — value in pt; converts to HWPUNIT on apply.
+                We list common sizes; if the active size isn't in the preset
+                list (custom), it appears as the first option so the select
+                still reflects state. */}
+            <select
+              className="h-7 rounded border border-input bg-background px-2 text-xs"
+              value={Math.round(activeFormat.fontSize / 100)}
+              onChange={(e) => applyFontSizePt(Number(e.target.value))}
+              aria-label="글자 크기"
+              data-testid="studio-font-size"
+            >
+              {(() => {
+                const cur = Math.round(activeFormat.fontSize / 100);
+                const seen = new Set(FONT_SIZE_PRESETS_PT);
+                const list = seen.has(cur)
+                  ? FONT_SIZE_PRESETS_PT
+                  : [cur, ...FONT_SIZE_PRESETS_PT];
+                return list.map((pt) => (
+                  <option key={pt} value={pt}>
+                    {pt}pt
+                  </option>
+                ));
+              })()}
+            </select>
+            {/* Color picker — native <input type="color"> for arbitrary
+                hex, plus 9 swatches for one-click access. */}
+            <input
+              type="color"
+              className="h-7 w-7 cursor-pointer rounded border border-input bg-background p-0"
+              value={activeFormat.textColor}
+              onChange={(e) => applyTextColor(e.target.value)}
+              aria-label="글자 색상"
+              data-testid="studio-text-color"
+            />
             {styleList.length > 0 && (
               <select
                 className="ml-1 h-7 rounded border border-input bg-background px-2 text-xs"
