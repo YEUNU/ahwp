@@ -247,11 +247,26 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     const dirtyRef = useRef(false);
     // Caret state is read from doc.getCaretPosition() after every mutation;
     // we keep the last-known value here so handlers can act without re-fetching.
+    //
+    // When `cell` is non-null the caret is inside a table cell — text edit
+    // ops route through `*InCell` IPC variants. The IR's getCaretPosition
+    // doesn't report cell-level location, so we maintain it ourselves.
+    interface CellLocation {
+      parentParaIndex: number;
+      controlIndex: number;
+      cellIndex: number;
+      cellParaIndex: number;
+    }
     const caretRef = useRef<{
       sectionIndex: number;
       paragraphIndex: number;
       charOffset: number;
-    }>({ sectionIndex: 0, paragraphIndex: 0, charOffset: 0 });
+      cell?: CellLocation;
+    }>({
+      sectionIndex: 0,
+      paragraphIndex: 0,
+      charOffset: 0,
+    });
     // True between compositionstart and compositionend (Korean IME). keydown
     // forwards any composing keystrokes back to the IME by ignoring them —
     // composition* events deliver the final text on completion.
@@ -636,9 +651,17 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       if (!doc) return;
       try {
         const c = caretRef.current;
-        const rect = JSON.parse(
-          doc.getCursorRect(c.sectionIndex, c.paragraphIndex, c.charOffset),
-        ) as {
+        const rectJson = c.cell
+          ? doc.getCursorRectInCell(
+              c.sectionIndex,
+              c.cell.parentParaIndex,
+              c.cell.controlIndex,
+              c.cell.cellIndex,
+              c.cell.cellParaIndex,
+              c.charOffset,
+            )
+          : doc.getCursorRect(c.sectionIndex, c.paragraphIndex, c.charOffset);
+        const rect = JSON.parse(rectJson) as {
           pageIndex: number;
           x: number;
           y: number;
@@ -1071,6 +1094,61 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       },
       [activeFormat, refreshAfterMutation, sortRange],
     );
+
+    /**
+     * Cell-aware text insertion at the renderer-side caret. Falls back
+     * to the outer-paragraph variant when the caret isn't inside a
+     * table cell. The IR's `insertTextInCell` doesn't auto-advance the
+     * IR caret (`getCaretPosition` doesn't track cell location), so we
+     * advance ours by `text.length` here.
+     */
+    const insertAtCaret = useCallback((text: string): void => {
+      const doc = docRef.current;
+      if (!doc) return;
+      const c = caretRef.current;
+      if (c.cell) {
+        doc.insertTextInCell(
+          c.sectionIndex,
+          c.cell.parentParaIndex,
+          c.cell.controlIndex,
+          c.cell.cellIndex,
+          c.cell.cellParaIndex,
+          c.charOffset,
+          text,
+        );
+        caretRef.current = { ...c, charOffset: c.charOffset + text.length };
+      } else {
+        doc.insertText(c.sectionIndex, c.paragraphIndex, c.charOffset, text);
+      }
+    }, []);
+
+    /**
+     * Cell-aware single-char delete. `at` is the start offset of the
+     * range to remove; `count` is the number of chars (typically 1).
+     * For backspace pass `c.charOffset - 1` so our renderer-side caret
+     * follows.
+     */
+    const deleteAtCaret = useCallback((at: number, count: number): void => {
+      const doc = docRef.current;
+      if (!doc) return;
+      const c = caretRef.current;
+      if (c.cell) {
+        doc.deleteTextInCell(
+          c.sectionIndex,
+          c.cell.parentParaIndex,
+          c.cell.controlIndex,
+          c.cell.cellIndex,
+          c.cell.cellParaIndex,
+          at,
+          count,
+        );
+        if (at < c.charOffset) {
+          caretRef.current = { ...c, charOffset: at };
+        }
+      } else {
+        doc.deleteText(c.sectionIndex, c.paragraphIndex, at, count);
+      }
+    }, []);
 
     const applyParagraphStyle = useCallback(
       (styleId: number): void => {
@@ -2013,13 +2091,8 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           if (deleteSelectionIfAny()) {
             refreshAfterMutation();
           } else if (c.charOffset > 0) {
-            doc.deleteText(
-              c.sectionIndex,
-              c.paragraphIndex,
-              c.charOffset - 1,
-              1,
-            );
-            refreshAfterMutation();
+            deleteAtCaret(c.charOffset - 1, 1);
+            refreshAfterMutation({ syncCaret: !c.cell });
           }
           e.preventDefault();
         } else if (e.key === 'Delete') {
@@ -2027,8 +2100,8 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             refreshAfterMutation();
           } else {
             try {
-              doc.deleteText(c.sectionIndex, c.paragraphIndex, c.charOffset, 1);
-              refreshAfterMutation();
+              deleteAtCaret(c.charOffset, 1);
+              refreshAfterMutation({ syncCaret: !c.cell });
             } catch {
               /* ignore — past end */
             }
@@ -2037,6 +2110,8 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         } else if (e.key === 'Enter') {
           if (deleteSelectionIfAny()) {
             // After delete, caret is at the start of the previous selection.
+            // Selection currently can't span into a cell (v1) so we use the
+            // outer insertText here and re-read the IR caret.
             const cc = JSON.parse(
               doc.getCaretPosition(),
             ) as typeof caretRef.current;
@@ -2047,14 +2122,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               '\n',
             );
           } else {
-            doc.insertText(
-              c.sectionIndex,
-              c.paragraphIndex,
-              c.charOffset,
-              '\n',
-            );
+            insertAtCaret('\n');
           }
-          refreshAfterMutation();
+          refreshAfterMutation({ syncCaret: !c.cell });
           e.preventDefault();
         } else if (e.key.length === 1) {
           // Single printable char, no modifier — ASCII fast path. Korean
@@ -2071,14 +2141,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               e.key,
             );
           } else {
-            doc.insertText(
-              c.sectionIndex,
-              c.paragraphIndex,
-              c.charOffset,
-              e.key,
-            );
+            insertAtCaret(e.key);
           }
-          refreshAfterMutation();
+          refreshAfterMutation({ syncCaret: !c.cell });
           e.preventDefault();
         }
       },
@@ -2098,6 +2163,8 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         pasteAtCaret,
         openFind,
         stepWordOffset,
+        insertAtCaret,
+        deleteAtCaret,
       ],
     );
 
@@ -2122,61 +2189,56 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               cc.charOffset,
               text,
             );
+            refreshAfterMutation();
           } else {
-            const c = caretRef.current;
-            doc.insertText(
-              c.sectionIndex,
-              c.paragraphIndex,
-              c.charOffset,
-              text,
-            );
+            const inCell = !!caretRef.current.cell;
+            insertAtCaret(text);
+            refreshAfterMutation({ syncCaret: !inCell });
           }
-          refreshAfterMutation();
         } catch (err) {
           console.warn('[studio] compositionend insertText failed:', err);
         }
       },
-      [refreshAfterMutation, deleteSelectionIfAny],
+      [refreshAfterMutation, deleteSelectionIfAny, insertAtCaret],
     );
 
     /**
      * hitTest the click coords (page-local SVG space, zoom-adjusted) and
      * return the resulting caret. Returns null if the test failed.
+     *
+     * The doc populates `parentParaIndex` / `controlIndex` / `cellIndex` /
+     * `cellParaIndex` when the click lands inside a table cell — those
+     * fields are absent for plain-text clicks.
      */
+    interface HitTestResult {
+      sectionIndex: number;
+      paragraphIndex: number;
+      charOffset: number;
+      parentParaIndex?: number;
+      controlIndex?: number;
+      cellIndex?: number;
+      cellParaIndex?: number;
+      cursorRect?: {
+        pageIndex: number;
+        x: number;
+        y: number;
+        height: number;
+      };
+    }
     const hitTestAt = useCallback(
       (
         idx: number,
         clientX: number,
         clientY: number,
         target: HTMLElement,
-      ): {
-        sectionIndex: number;
-        paragraphIndex: number;
-        charOffset: number;
-        cursorRect?: {
-          pageIndex: number;
-          x: number;
-          y: number;
-          height: number;
-        };
-      } | null => {
+      ): HitTestResult | null => {
         const doc = docRef.current;
         if (!doc) return null;
         const rect = target.getBoundingClientRect();
         const x = (clientX - rect.left) / zoom;
         const y = (clientY - rect.top) / zoom;
         try {
-          return JSON.parse(doc.hitTest(idx, x, y)) as {
-            sectionIndex: number;
-            paragraphIndex: number;
-            charOffset: number;
-            cursorRect?: {
-              pageIndex: number;
-              x: number;
-              y: number;
-              height: number;
-            };
-          };
+          return JSON.parse(doc.hitTest(idx, x, y)) as HitTestResult;
         } catch (err) {
           console.warn('[studio] hitTest failed:', err);
           return null;
@@ -2200,11 +2262,42 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         if (e.button !== 0) return; // primary only
         const result = hitTestAt(idx, e.clientX, e.clientY, e.currentTarget);
         if (!result) return;
+        // Cell info present when the click lands inside a table cell.
+        const cell =
+          result.controlIndex !== undefined &&
+          result.cellIndex !== undefined &&
+          result.cellParaIndex !== undefined &&
+          result.parentParaIndex !== undefined
+            ? {
+                parentParaIndex: result.parentParaIndex,
+                controlIndex: result.controlIndex,
+                cellIndex: result.cellIndex,
+                cellParaIndex: result.cellParaIndex,
+              }
+            : undefined;
         const baseCaret = {
           sectionIndex: result.sectionIndex,
           paragraphIndex: result.paragraphIndex,
           charOffset: result.charOffset,
+          cell,
         };
+        // For now, double/triple-click + drag-select are disabled when
+        // the click lands in a cell — selection model in cells is v2.
+        if (cell) {
+          caretRef.current = baseCaret;
+          if (result.cursorRect) {
+            setCursorRect(result.cursorRect);
+          } else {
+            refreshCursorRect();
+          }
+          // Cell formatting follow-up (v2): for now we just clear the
+          // outer selection so existing format toggles don't accidentally
+          // apply to outer paragraphs while the caret is in a cell.
+          setSelection(null);
+          setSelectionRectsByPage({});
+          draggingRef.current = false;
+          return;
+        }
         if (e.detail === 3) {
           // Triple click → entire paragraph.
           const doc = docRef.current;
@@ -2505,6 +2598,63 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           offset: number,
           dir: -1 | 1,
         ): number => stepWordOffset(sec, para, offset, dir),
+        // Cell editing v1 — drive the caret into a cell directly so e2e
+        // can verify cell-typing without simulating a click that lands
+        // exactly on a cell rect.
+        enterCell: (
+          sec: number,
+          parentParaIndex: number,
+          controlIndex: number,
+          cellIndex: number,
+          cellParaIndex: number,
+          charOffset: number = 0,
+        ): void => {
+          caretRef.current = {
+            sectionIndex: sec,
+            paragraphIndex: 0,
+            charOffset,
+            cell: {
+              parentParaIndex,
+              controlIndex,
+              cellIndex,
+              cellParaIndex,
+            },
+          };
+          setSelection(null);
+          setSelectionRectsByPage({});
+          refreshCursorRect();
+        },
+        exitCell: (): void => {
+          caretRef.current = {
+            ...caretRef.current,
+            cell: undefined,
+          };
+          refreshCursorRect();
+        },
+        getCellText: (
+          sec: number,
+          parentParaIndex: number,
+          controlIndex: number,
+          cellIndex: number,
+          cellParaIndex: number,
+        ): string => {
+          const doc = docRef.current;
+          if (!doc) return '';
+          try {
+            return doc.getTextInCell(
+              sec,
+              parentParaIndex,
+              controlIndex,
+              cellIndex,
+              cellParaIndex,
+              0,
+              1_000_000,
+            );
+          } catch {
+            return '';
+          }
+        },
+        getCaretCell: () => caretRef.current.cell ?? null,
         // Synthetic Korean IME helper for e2e — Playwright's keyboard.type
         // doesn't trigger real IME composition. This bypasses keydown to
         // exercise the same code path compositionend uses.
