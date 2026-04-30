@@ -4,16 +4,17 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 ## 현재 스냅샷
 
-| 항목     | 상태                                                                                                                                                                                                          |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Phase    | **Phase 1 확장 (청크 7~)** — Phase 2 진입 전 일상 편집 기능 보강. 청크 7 (Undo/Redo) 완료. 다음: Copy/Paste, Find                                                                                             |
-| 빌드     | ✅ `npm run dev` · `npx vite build`                                                                                                                                                                           |
-| 타입     | ✅ `npm run typecheck`                                                                                                                                                                                        |
-| 린트     | ✅ `npm run lint` (warning 2건 — shadcn 표준 패턴, react-refresh HMR 안내)                                                                                                                                    |
-| 포맷     | ✅ `npm run format:check`                                                                                                                                                                                     |
-| 테스트   | ✅ 2/2 (`App.test.tsx`)                                                                                                                                                                                       |
-| Electron | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                                   |
-| 의존성   | runtime: `@rhwp/core` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` (chunk 6에서 `@rhwp/editor` 제거) |
+| 항목        | 상태                                                                                                                                                                                                                       |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Phase       | **Phase 1 확장 완료** — 청크 7~12 (Undo/Copy/Find/Format/Selection/PageNav) + 폴더 트리 + 탭 시스템 + 폴더 ops. 다음: Phase 2 (AI 챗봇)                                                                                    |
+| 빌드        | ✅ `npm run dev` · `npx vite build`                                                                                                                                                                                        |
+| 타입        | ✅ `npm run typecheck`                                                                                                                                                                                                     |
+| 린트        | ✅ `npm run lint` (0 warnings, 0 errors)                                                                                                                                                                                   |
+| 포맷        | ✅ `npm run format:check`                                                                                                                                                                                                  |
+| 단위 테스트 | ✅ 3/3 (`App.test.tsx`)                                                                                                                                                                                                    |
+| e2e         | ✅ 106/106 (smoke + 폴더트리/ops + 탭/스크롤 + 스튜디오 청크 1~12)                                                                                                                                                         |
+| Electron    | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                                                |
+| 의존성      | runtime: `@rhwp/core` · `chokidar` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` (chunk 6에서 `@rhwp/editor` 제거) |
 
 ## 일지
 
@@ -1084,16 +1085,152 @@ HOP / rhwp-editor에 비해 명백히 부족한 핵심 일상 편집 기능 (Und
 ✓ npm run format:check
 ```
 
+### 2026-04-30 — Phase 1 확장 청크 8 — Copy / Cut / Paste
+
+**구현**
+
+- `electron/ipc/clipboard.ts` — `clipboard:read-text` / `clipboard:write-text` (Electron `clipboard` 모듈)
+- `shared/api.ts` — `ClipboardApi`, `MenuAction`에 `edit:copy/cut/paste`
+- `electron/menu.ts` — 편집 메뉴의 native `role:cut/copy/paste`를 자체 IPC로 교체
+- `StudioViewer`:
+  - `copySelection` → `doc.copySelection(...) + window.api.clipboard.writeText(text)` (내부 + 시스템 클립보드 동시)
+  - `cutSelection` → copy + `deleteRange`
+  - `pasteAtCaret` → 시스템 클립보드 텍스트 == `getClipboardText()`이면 `pasteInternal` (서식 보존), 아니면 `insertText` (plain). `pasteInternal`이 IR caret을 자동 갱신 안 해서 result `{paraIdx, charOffset}`로 명시 동기화
+  - ⌘C / ⌘X / ⌘V keydown 인터셉트
+- `ViewerHandle.copy/cut/paste` 노출 → `AppShell`이 `edit:*` MenuAction 라우팅
+
+**e2e — `tests/e2e/studio-clipboard.spec.ts`** (7 케이스)
+
+검증: e2e 56/56
+
+### 2026-04-30 — Phase 1 확장 청크 9 — Find (⌘F)
+
+**구현**
+
+- `getSectionCount × getParagraphCount × getTextRange` 순회 + `indexOf` (case-insensitive)
+- 매치 → `getSelectionRects` per page → 옅은 amber 오버레이 (활성 매치는 진한 amber)
+- 검색 바 UI (`studio-find-bar`): input + 매치 카운트 + Prev/Next/Close
+- ⌘F 열기, Enter / Shift+Enter / Esc, 활성 매치로 자동 스크롤 + 캐럿 이동
+- 메뉴 `편집 → 찾기…` 추가, `__studioDebug`에 `openFind/closeFind/findNext/findPrev/getFindState`
+
+**e2e — `tests/e2e/studio-find.spec.ts`** (7 케이스)
+
+검증: e2e 63/63
+
+### 2026-04-30 — Phase 1 확장 청크 10 — 정렬 + 폰트 크기 + 색상
+
+**조사 + 구현**
+
+- 정렬: `applyParaFormat(s, p, JSON({alignment: 'left|center|right|justify'}))`
+- 폰트 크기: `applyCharFormat(... JSON({fontSize: HWPUNIT}))` — HWPUNIT = 1/100pt
+- 색상: `applyCharFormat(... JSON({textColor: '#hex'}))` — lib이 lowercase 정규화
+- 활성 상태: `getCharPropertiesAt`(효과값) + `getParaPropertiesAt`(문단 효과값). `getStyleDetail`은 템플릿이라 override 미반영
+- 툴바: 4종 정렬 토글 + pt 프리셋 dropdown + native `<input type="color">`
+- Selection-aware: range 시 head/middle/tail 분할 호출
+
+**버그 + 수정**
+
+- `applyCharFormat`은 빈 문단(length=0)에서 silently no-op (lib quirk)
+- `refreshAfterMutation` caret sync는 format-only ops에선 disable (`{syncCaret: false}` 추가) — 그렇지 않으면 caret이 IR의 stale (0,0,0)으로 점프
+- `setSelection` ref 갱신은 React state callback 안이 아닌 동기로 (배칭 시 stale read 방지)
+
+**e2e — `tests/e2e/studio-paraformat.spec.ts`** (4 케이스)
+
+검증: e2e 67/67
+
+### 2026-04-30 — Phase 1 확장 청크 11 — 단어/줄 선택 + 144페이지 부하
+
+**구현**
+
+- `findWordBoundsAt` — Unicode `\p{P}\p{S}\s` 경계로 한글/CJK 지원
+- `stepWordOffset` — skip-separators-then-word
+- `mousedown e.detail`: 더블클릭 → 단어, 트리플클릭 → 문단
+- ⌘⇧← / ⌘⇧→ — 단어 단위 선택 확장 (⌘ 단독은 collapse)
+
+**144페이지 부하 측정** (사용자 제공 fixture):
+
+| 항목                      | 값                  |
+| ------------------------- | ------------------- |
+| 파싱 (0.44MB → IR)        | 85ms                |
+| 페이지 1개 렌더           | ~4.5ms              |
+| 마지막 페이지 lazy 렌더   | <15s budget         |
+| 초기 mount 페이지 수      | <20 / 144 (lazy ✓)  |
+| Find 전체 스캔 (938 매치) | Node 11ms / UI 3.5s |
+| exportHwp                 | 9ms                 |
+
+**e2e** — `studio-wordsel.spec.ts` (6) + `studio-bigdoc.spec.ts` (4). 검증: e2e 77/77
+
+### 2026-04-30 — Phase 1 확장 청크 12 — 페이지 네비
+
+**구현**
+
+- PageUp/Down — `scrollBy(±clientHeight, smooth)`
+- ⌘Home / ⌘End — 문서 시작/끝 caret + scroll
+- Shift 조합으로 선택 확장
+- Plain End 추가 (현재 문단 끝). Plain Home은 기존 동작
+
+**버그 수정**
+
+`__studioDebug.getSelection`이 React 상태에서 읽어 동기 호출 시 stale → `selectionRef`로 변경
+
+**e2e — `tests/e2e/studio-pagenav.spec.ts`** (6 케이스). 검증: e2e 83/83
+
+### 2026-04-30 — 폴더 트리 (좌측 패널 재설계)
+
+**의도**
+
+기존 LRU 최근 파일 리스트(20개) → VS Code 스타일 단일 루트 폴더 트리
+
+**구현**
+
+- `electron/ipc/folder.ts`: `folder:pick`(다이얼로그), `folder:list`(즉시 자식 — dotfile 제외, 폴더 우선 한국어 정렬), `folder:watch/unwatch`(chokidar), `folder:changed` 이벤트
+- shutdown 훅(`will-quit`)에서 watcher 해제
+- `SessionState.lastFolderPath` 추가 (lastActivePath와 별개)
+- `src/features/files/FolderTree.tsx` — lazy expand, watcher가 영향 받은 parent dir만 refresh, 모든 파일 표시(필터 X), 비-hwp 파일 클릭은 no-op
+
+**e2e — `tests/e2e/folder-tree.spec.ts`** (5 케이스). 검증: e2e 88/88
+
+### 2026-04-30 — 가운데 패널 탭 시스템
+
+**구현**
+
+- `TabBar` 컴포넌트 — 파일명 + dirty 점 + X + 미들 클릭 닫기
+- `AppShell`이 `tabsState[]` + `activeIndex` 관리. 모든 탭은 `display:none`으로 mount 유지(HwpDocument + undo 히스토리 보존)
+- `ViewerHandle.isDirty` + `StudioViewer.isActive`/`onDirtyChange` props. 활성 탭만 `window.__studioDebug` 점유 (race 방지)
+- `openTab` — 이미 열린 path는 그 탭으로 포커스 (중복 X)
+- `replaceTabPath` — Save/SaveAs 후 path 자동 라우팅 시 in-place 갱신
+- ⌘W / 미들 클릭 닫기 — dirty 시 confirm
+- `SessionState.openTabPaths` 영속, 재시작 시 모든 탭 복원 + lastActivePath 활성화
+
+**e2e — `tests/e2e/tabs.spec.ts`** (7) + 좌/중 패널 스크롤 검증 `scroll.spec.ts` (2). 검증: e2e 97/97
+
+### 2026-04-30 — 폴더 트리 ops (생성/이름변경/삭제/이동)
+
+**IPC 추가**
+
+- `folder:create-file` (`fs.open 'wx'` — 충돌 시 throw)
+- `folder:create-folder` (non-recursive `mkdir`)
+- `folder:rename` — 이동도 처리. macOS/Linux의 silent overwrite 방지로 destination 사전 체크
+- `folder:trash` — `shell.trashItem` (OS 휴지통, 복구 가능)
+- `folder:reveal` — `shell.showItemInFolder`
+- `validateNameOrThrow` — empty/`.`/`..`/path separator 거부
+
+**FolderTree UI**
+
+- `selectedPath` state (activePath와 별개)
+- 컨텍스트 메뉴 (`TreeContextMenu`): 새 파일 / 새 폴더 (폴더만) / 이름 변경 / 휴지통으로 이동 / 파일 관리자에서 보기. 외부 mousedown + Esc로 닫기
+- 인라인 이름 변경 input — F2 또는 메뉴, focus 시 확장자 제외 basename 자동 선택
+- 인라인 새 파일/폴더 input — parent 안에 (또는 빈 영역 우클릭으로 root에)
+- 트리 keydown: F2 rename / Delete trash / Enter open or toggle
+- HTML5 DnD: dataTransfer로 path 전달, drop target에 ring 표시. fs.rename으로 이동. 자기 자신/하위로 드롭 가드. 빈 영역 드롭 시 root로 이동
+
+**버그 발견**
+
+렌더러는 sandbox=true라 `process` 미정의. `process.platform === 'darwin'` 체크가 컨텍스트 메뉴 렌더를 크래시(에러 바운더리에 잡히지 않은 silent fail). 라벨을 generic '파일 관리자에서 보기'로 변경
+
+**e2e — `tests/e2e/folder-ops.spec.ts`** (9 케이스). 검증: e2e 106/106
+
 ## 다음
-
-### Phase 1 확장 진행 중
-
-- 청크 7: ✅ Undo / Redo
-- 청크 8: Copy / Cut / Paste (`copySelection` + `pasteInternal` + Electron clipboard 브릿지)
-- 청크 9: Find (⌘F) — 자체 구현, 매치 하이라이트
-- 청크 10: 문단 정렬 (좌/우/중/양쪽) + 폰트 크기 + 색상
-- 청크 11: 단어/줄 선택 (더블/트리플 클릭, ⌘⇧Arrow)
-- 청크 12: 페이지 네비 (PageUp/Down, ⌘Home/End)
 
 ### Phase 2 — AI 챗봇 Manual 모드 (3주)
 
@@ -1105,9 +1242,9 @@ HOP / rhwp-editor에 비해 명백히 부족한 핵심 일상 편집 기능 (Und
 
 ### Phase 1 follow-up (선택)
 
-- 폰트 크기 / 색상 picker (HWPUNIT → pt 변환)
-- ⌘Z / ⌘Shift+Z (undo/redo)
+- 탭 드래그 재배치 + 우클릭 컨텍스트 메뉴 (다른 탭 모두 닫기 등)
+- 표 / 이미지 삽입 / 머리말·꼬리말·각주 (Tier 3 구조 요소)
 - temp 파일 정리 (앱 종료 시 `userData/temp/new-*.hwp` 청소)
-- 컨텍스트 메뉴 (recent 우클릭 → "최근 항목에서 제거", "Finder/Explorer에서 보기")
+- typing burst grouping (현재는 글자마다 undo entry)
 
 각 단계의 세부 체크리스트는 [ROADMAP.md](ROADMAP.md) 참고.

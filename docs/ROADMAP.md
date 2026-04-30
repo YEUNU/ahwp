@@ -34,7 +34,7 @@
 
 ---
 
-## Phase 1 — 3-Pane 레이아웃 + rhwp 통합 (진행 중)
+## Phase 1 — 3-Pane 레이아웃 + rhwp 통합 ✅ 완료 (2026-04-30)
 
 목표: 사용자가 `.hwp/.hwpx` 파일을 열어 가운데 패널에서 보고 편집할 수 있다.
 
@@ -43,34 +43,46 @@
 - [x] `AppShell.tsx`: 3-Pane (좌·중·우) 리사이저블 (`react-resizable-panels` v2 — v4는 API 개명되어 v2로 핀)
 - [x] shadcn/ui 수동 셋업 (`components.json`, `cn()`, 토큰 확장된 Tailwind, `:root`/`.dark` CSS 변수, Button)
 - [x] 다크/라이트 테마 토글 (Tailwind `dark:` + system 감지, localStorage 영속)
-- [x] 네이티브 메뉴바 (`electron/menu.ts` — File / Edit / View / Window / Help, macOS 별도 앱 메뉴)
+- [x] 네이티브 메뉴바 (`electron/menu.ts` — File / Edit / Format / View / Window / Help, macOS 별도 앱 메뉴)
 
-### 1-B. 파일 리스트 (좌측) ✅ 핵심 완료
+### 1-B. 파일 리스트 (좌측) ✅ 완료 — VS Code 스타일 폴더 트리
 
-- [x] 최근 파일 영속 — **`userData/recent.json`** LRU max 20 (better-sqlite3는 Phase 2와 같이 도입)
-- [x] 드래그 앤 드롭으로 파일 추가 (`webUtils.getPathForFile`)
-- [x] 빈 상태 안내 (⌘O 키캡 + 드롭 안내)
-- [ ] 파일 우클릭: Reveal in Finder/Explorer, Remove from list (낮은 우선순위)
+- [x] 단일 루트 폴더 트리 (`FolderTree.tsx`) — lazy expand, 모든 파일 표시 (필터 X)
+- [x] chokidar watcher — 외부 변경 자동 반영
+- [x] 워크스페이스 영속 — `lastFolderPath` session.json 자동 복원
+- [x] 드래그앤드롭으로 파일/폴더 이동 (`fs.rename` via `folder:rename` IPC)
+- [x] 컨텍스트 메뉴 — 새 파일 / 새 폴더 / 이름 변경 / 휴지통 / 파일 관리자에서 보기
+- [x] 인라인 이름 변경 (F2) + 새 항목 input
+- [x] 단축키: F2 rename, Delete trash, Enter open/toggle
+- [x] 좌/중 패널 모두 스크롤 동작 (regression e2e gate)
 
-### 1-C. 에디터 (중앙) — 진행 중
+### 1-C. 에디터 (중앙) ✅ 완료 — 자체 Studio + 탭
 
-- [x] ~~`@rhwp/editor` 임베드 방식~~ → **자체 Studio viewer로 전환** (chunk 6 — STUDIO_MIGRATION.md). `@rhwp/core` 직접 사용
-- [x] `StudioViewer.tsx` (`src/features/studio/`) — 멀티 페이지 lazy SVG, 키보드/마우스/IME, dirty 추적, 시각 커서. `forwardRef`+`useImperativeHandle`로 `exportBytes` 노출
-- [x] **워크스페이스 복원** — `userData/session.json`에 `lastActivePath`. 앱 재시작 시 자동 재오픈
-- [x] 파일 열기 IPC: `file:open` (다이얼로그) / `file:open-by-path` (DnD/recent) / `file:list-recent` / `file:read`
-- [x] HWP → HWPX 변환기 (`electron/hwp/converter.ts`) — `@rhwp/core` 동적 import + WASM lazy init + `init_panic_hook`/`version()` 로깅
-- [x] Save (Cmd+S) / Save As (Cmd+Shift+S) IPC — `@rhwp/core` 라운드트립 정규화 + 항상 `.hwpx` 자동 라우팅 (확장자 어긋나면 보정)
-- [x] **새 문서 생성** (`file:new`) — base64-임베드 blank seed → 인스턴스 `createBlankDocument` → exportHwp → `userData/temp/new-*.hwp`
-- [x] **시작 화면 (Welcome view)** — "새 문서" / "파일 열기" 버튼 (`activePath=null` 상태)
-- [ ] dirty 상태 추적 + 저장 안 된 채 닫기 시 확인 (라이브러리에 변경 이벤트 미노출 — exportHwp 해시 비교 방식 검토 중)
-- [ ] 여러 문서 동시 열기 (단일 활성 + 좌측 리스트 전환은 동작, 탭은 미정)
-- [ ] studio 자산 로컬 번들링 (Phase 4와 같이)
+- [x] ~~`@rhwp/editor` 임베드 방식~~ → **자체 Studio viewer**. `@rhwp/core` 직접 사용
+- [x] `StudioViewer.tsx` (`src/features/studio/`) — 멀티 페이지 lazy SVG, 키보드/마우스/IME, 시각 커서, dirty 추적
+- [x] 워크스페이스 복원 — `userData/session.json` (`lastFolderPath` + `lastActivePath` + `openTabPaths`)
+- [x] 파일 IPC: `file:new` / `file:open` / `file:open-by-path` / `file:read` / `file:save` / `file:save-as`
+- [x] HWP / HWPX 변환기 (`electron/hwp/converter.ts`) — `@rhwp/core` 동적 import + WASM lazy init
+- [x] Save / Save As — `@rhwp/core` 라운드트립 정규화 + `.hwp` 자동 라우팅 (KNOWN_ISSUES L-001)
+- [x] 새 문서 생성 (`file:new`) — base64 임베드 blank seed + `createBlankDocument` → 임시 파일
+- [x] 시작 화면 — "새 문서" / "파일 열기" 버튼
+- [x] **탭 시스템** — 다중 파일, dirty 점, X 닫기, ⌘W, 미들 클릭, openTabPaths 영속
+- [x] **편집 기능 풀**:
+  - [x] 텍스트 편집 (insert/delete/IME)
+  - [x] 선택 모델 (mouse drag / shift+arrow / 더블·트리플 클릭 / ⌘⇧Arrow)
+  - [x] Bold/Italic/Underline + 문단 스타일 + ⌘B/⌘I/⌘U
+  - [x] 정렬 (좌/우/중/양쪽) + 폰트 크기 + 색상
+  - [x] Undo/Redo (⌘Z/⌘⇧Z, 100 entry cap)
+  - [x] Copy/Cut/Paste (⌘C/⌘X/⌘V) — 내부 + 시스템 클립보드
+  - [x] Find (⌘F) — 매치 하이라이트 + Next/Prev
+  - [x] 페이지 네비 (PageUp/Down, ⌘Home/End)
+- [x] 144페이지 부하 측정 e2e gate
 
 ### 1-D. 우측 패널 자리만 잡기 ✅ 완료
 
 - [x] 빈 챗봇 패널 (탭 컴포넌트는 Phase 2에서 메시지 UI와 같이)
 
-검증: 실제 `.hwp` 파일 열기/편집/저장 라운드트립 + 워크스페이스 복원 — Playwright E2E 7/7 통과 (사용자 예제 2.85MB HWP fixture 활용).
+검증: e2e 106/106 (smoke + 폴더트리/ops + 탭/스크롤 + 스튜디오 청크 1~12 + 144페이지 부하).
 
 ---
 

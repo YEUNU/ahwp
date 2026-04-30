@@ -13,8 +13,8 @@ ahwp는 Electron 표준 2-프로세스 모델을 따릅니다.
 ┌────────────────────────────────────────────────────────────┐
 │                      Renderer (React)                      │
 │  ┌──────────┐ ┌──────────────────┐ ┌─────────────────────┐ │
-│  │ FileList │ │ Studio (rhwp/    │ │  Chat (History/     │ │
-│  │ (left)   │ │ core viewer)     │ │  Chat tabs, right)  │ │
+│  │ Folder   │ │ TabBar + Studio  │ │  Chat (History/     │ │
+│  │ Tree     │ │ (rhwp/core)      │ │  Chat tabs, right)  │ │
 │  └──────────┘ └──────────────────┘ └─────────────────────┘ │
 │         ▲              ▲                       ▲           │
 │         └──────────────┼───────────────────────┘           │
@@ -38,48 +38,68 @@ ahwp는 Electron 표준 2-프로세스 모델을 따릅니다.
 
 ### Main Process
 
-| 모듈                        | 역할                                                       |
-| --------------------------- | ---------------------------------------------------------- |
-| `electron/main.ts`          | `app.whenReady`, `BrowserWindow` 생성, 메뉴, 자동 업데이트 |
-| `electron/preload.ts`       | `contextBridge.exposeInMainWorld('api', {...})`            |
-| `electron/ipc/file.ts`      | 파일 열기/저장 다이얼로그, 최근 파일, HWP→HWPX 변환 트리거 |
-| `electron/ipc/ai.ts`        | 채팅 요청 라우팅, 스트리밍 토큰 전달, tool 실행            |
-| `electron/ipc/settings.ts`  | API 키 set/get, provider 설정                              |
-| `electron/hwp/converter.ts` | `.hwp` → `.hwpx` 일방향 변환 (rhwp core 활용)              |
-| `electron/hwp/document.ts`  | 문서 로드, 변경 적용, 저장                                 |
-| `electron/ai/openai.ts` 등  | provider별 어댑터 (공통 인터페이스 구현)                   |
-| `electron/store/db.ts`      | better-sqlite3, 마이그레이션                               |
-| `electron/store/secrets.ts` | `safeStorage.encryptString` 래퍼                           |
+| 모듈                         | 역할                                                                           |
+| ---------------------------- | ------------------------------------------------------------------------------ |
+| `electron/main.ts`           | `app.whenReady`, `BrowserWindow` 생성, 메뉴, watcher shutdown, 자동 업데이트   |
+| `electron/preload.ts`        | `contextBridge.exposeInMainWorld('api', {...})`                                |
+| `electron/ipc/file.ts`       | 파일 새 문서 / 열기·저장 다이얼로그 / 라운드트립 정규화 / 임시 파일 라우팅     |
+| `electron/ipc/folder.ts`     | 폴더 pick/list/watch (chokidar) / create-file·folder / rename / trash / reveal |
+| `electron/ipc/clipboard.ts`  | `clipboard:read-text` / `write-text` (Electron `clipboard` 모듈)               |
+| `electron/ipc/session.ts`    | `userData/session.json` get/set (lastFolderPath, lastActivePath, openTabPaths) |
+| `electron/ipc/ai.ts`         | 채팅 요청 라우팅, 스트리밍 토큰 전달, tool 실행 (Phase 2)                      |
+| `electron/ipc/settings.ts`   | API 키 set/get, provider 설정 (Phase 2)                                        |
+| `electron/hwp/converter.ts`  | `@rhwp/core` 동적 import + WASM lazy init + 라운드트립 정규화 + 빈 시드        |
+| `electron/hwp/blank-seed.ts` | base64 임베드 blank.hwpx (`file:new`용)                                        |
+| `electron/store/recent.ts`   | `userData/recent.json` LRU max 20 (legacy — UI는 폴더 트리)                    |
+| `electron/store/secrets.ts`  | `safeStorage.encryptString` 래퍼 (Phase 2)                                     |
 
 ### Renderer Process
 
-| 모듈                                   | 역할                                                                             |
-| -------------------------------------- | -------------------------------------------------------------------------------- |
-| `src/app/AppShell.tsx`                 | 3-Pane 레이아웃, 리사이저블                                                      |
-| `src/features/files/`                  | 파일 리스트, 최근 항목, drag-and-drop                                            |
-| `src/features/studio/StudioViewer.tsx` | `@rhwp/core` 직접 마운트, 멀티 페이지 lazy render, 키보드/마우스/IME, dirty 추적 |
-| `src/features/chat/ChatPanel.tsx`      | 탭(History/Chat), 메시지 스트림                                                  |
-| `src/features/chat/Modes.tsx`          | Manual/Agent 토글, diff 뷰어                                                     |
-| `src/lib/ipc.ts`                       | `window.api.*` 타입 안전 래퍼                                                    |
+| 모듈                                   | 역할                                                                                                                 |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `src/app/AppShell.tsx`                 | 3-Pane 레이아웃, 탭 상태(`tabsState`+`activeIndex`), 세션 복원, 메뉴 액션 라우팅                                     |
+| `src/features/files/FolderTree.tsx`    | 폴더 트리(lazy expand, watcher 동기화) + 컨텍스트 메뉴 + 인라인 rename/new + DnD 이동 + F2/Delete                    |
+| `src/features/studio/StudioViewer.tsx` | `@rhwp/core` 직접 마운트. 페이지 SVG, 키보드/마우스/IME, 선택, 서식, Undo/Redo, Find. 활성 탭만 `__studioDebug` 점유 |
+| `src/features/studio/TabBar.tsx`       | 파일별 탭 — dirty 점, X 닫기, 미들 클릭, ⌘W                                                                          |
+| `src/features/chat/ChatPanel.tsx`      | 탭(History/Chat), 메시지 스트림 (Phase 2)                                                                            |
+| `src/features/chat/Modes.tsx`          | Manual/Agent 토글, diff 뷰어 (Phase 2/3)                                                                             |
+| `src/lib/rhwp-core.ts`                 | 렌더러 측 `@rhwp/core` lazy WASM init + `measureTextWidth` 콜백                                                      |
 
 ## IPC 채널 설계
 
 명명 규칙: `domain:action` (kebab-case 안에 콜론 구분)
 
-| Channel                  | 방향        | 페이로드                                         | 응답                                         |
-| ------------------------ | ----------- | ------------------------------------------------ | -------------------------------------------- |
-| `file:new`               | R→M         | `{ template?: 'blank' \| 'report' \| 'letter' }` | `{ docId, hwpxPath }`                        |
-| `file:open`              | R→M         | `void`                                           | `{ path, hwpxPath, content }`                |
-| `file:save`              | R→M         | `{ docId, path? }`                               | `{ path }` (Save As 시 사용자 선택 경로)     |
-| `file:save-as`           | R→M         | `{ docId }`                                      | `{ path }`                                   |
-| `file:list-recent`       | R→M         | `void`                                           | `RecentFile[]`                               |
-| `file:convert-to-hwpx`   | R→M         | `{ srcPath }`                                    | `{ hwpxPath }`                               |
-| `ai:chat-stream`         | R→M (event) | `{ provider, messages, mode }`                   | 스트림 이벤트 (`token`, `tool-call`, `done`) |
-| `ai:apply-diff`          | R→M         | `{ docId, patch }`                               | `{ ok, newRevision }`                        |
-| `settings:set-secret`    | R→M         | `{ provider, key }`                              | `{ ok }`                                     |
-| `settings:get-providers` | R→M         | `void`                                           | `ProviderConfig[]`                           |
-| `history:list`           | R→M         | `{ filePath }`                                   | `Conversation[]`                             |
-| `history:append`         | R→M         | `{ filePath, message }`                          | `{ ok }`                                     |
+| Channel                  | 방향        | 페이로드                                 | 응답                                               |
+| ------------------------ | ----------- | ---------------------------------------- | -------------------------------------------------- |
+| `file:new`               | R→M         | `void`                                   | `{ path }` (임시 blank `.hwp` 파일 경로)           |
+| `file:open`              | R→M         | `void`                                   | `{ path }` 또는 `null`                             |
+| `file:open-by-path`      | R→M         | `{ path }`                               | `{ path }` 또는 `null`                             |
+| `file:read`              | R→M         | `{ path }`                               | `ArrayBuffer`                                      |
+| `file:save`              | R→M         | `{ path, bytes }`                        | `{ path }` (.hwpx → .hwp 자동 라우팅)              |
+| `file:save-as`           | R→M         | `{ bytes, defaultPath? }`                | `{ path }` 또는 `null`                             |
+| `file:list-recent`       | R→M         | `void`                                   | `RecentFile[]` (legacy, 새 UI 미사용)              |
+| `folder:pick`            | R→M         | `void`                                   | `string` 또는 `null`                               |
+| `folder:list`            | R→M         | `path`                                   | `FolderEntry[]` (즉시 자식, 폴더 우선 한국어 정렬) |
+| `folder:watch`           | R→M         | `rootPath`                               | `void` (chokidar watcher 시작)                     |
+| `folder:unwatch`         | R→M         | `void`                                   | `void`                                             |
+| `folder:changed`         | M→R (event) | `{ type, path, parent }`                 | watcher 이벤트                                     |
+| `folder:create-file`     | R→M         | `parentPath, name`                       | `string` (생성된 절대 경로)                        |
+| `folder:create-folder`   | R→M         | `parentPath, name`                       | `string`                                           |
+| `folder:rename`          | R→M         | `oldPath, newPath`                       | `void` (이동에도 사용)                             |
+| `folder:trash`           | R→M         | `path`                                   | `void` (`shell.trashItem`)                         |
+| `folder:reveal`          | R→M         | `path`                                   | `void` (`shell.showItemInFolder`)                  |
+| `clipboard:read-text`    | R→M         | `void`                                   | `string`                                           |
+| `clipboard:write-text`   | R→M         | `text`                                   | `void`                                             |
+| `session:get`            | R→M         | `void`                                   | `SessionState`                                     |
+| `session:set`            | R→M         | `SessionState`                           | `void`                                             |
+| `menu:action`            | M→R (event) | `MenuAction`                             | (`file:new` / `edit:undo` / `format:bold` 등)      |
+| `ipc:ping`               | R→M         | `{ message }`                            | `{ pong, at, platform, electron }` (헬스체크)      |
+| `ai:chat-stream`         | R→M (event) | `{ provider, messages, mode }` (Phase 2) | 스트림 이벤트 (`token`, `tool-call`, `done`)       |
+| `ai:apply-diff`          | R→M         | `{ docId, patch }` (Phase 2)             | `{ ok, newRevision }`                              |
+| `settings:set-secret`    | R→M         | `{ provider, key }` (Phase 2)            | `{ ok }`                                           |
+| `settings:get-providers` | R→M         | `void` (Phase 2)                         | `ProviderConfig[]`                                 |
+| `history:list`           | R→M         | `{ filePath }` (Phase 2)                 | `Conversation[]`                                   |
+| `history:append`         | R→M         | `{ filePath, message }` (Phase 2)        | `{ ok }`                                           |
 
 스트리밍은 `ipcRenderer.on(channel, ...)` 이벤트 + 요청 ID로 구분.
 
