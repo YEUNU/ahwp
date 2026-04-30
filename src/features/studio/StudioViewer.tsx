@@ -179,6 +179,96 @@ function TablePicker({
   );
 }
 
+/**
+ * Right-click context menu for table cells. Same dismiss model as the
+ * folder-tree menu: outside mousedown + Escape close it.
+ */
+function CellContextMenu({
+  state,
+  onClose,
+  onInsertRowAbove,
+  onInsertRowBelow,
+  onInsertColLeft,
+  onInsertColRight,
+  onDeleteRow,
+  onDeleteCol,
+  onDeleteTable,
+}: {
+  state: { x: number; y: number };
+  onClose: () => void;
+  onInsertRowAbove: () => void;
+  onInsertRowBelow: () => void;
+  onInsertColLeft: () => void;
+  onInsertColRight: () => void;
+  onDeleteRow: () => void;
+  onDeleteCol: () => void;
+  onDeleteTable: () => void;
+}): React.ReactElement {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onDown = (e: MouseEvent): void => {
+      if (
+        ref.current &&
+        e.target instanceof Node &&
+        ref.current.contains(e.target)
+      )
+        return;
+      onClose();
+    };
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose();
+    };
+    const t = window.setTimeout(() => {
+      document.addEventListener('mousedown', onDown);
+    }, 0);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      window.clearTimeout(t);
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [onClose]);
+
+  const item = (
+    label: string,
+    onClick: () => void,
+    testid: string,
+  ): React.ReactElement => (
+    <button
+      type="button"
+      onClick={() => {
+        onClick();
+        onClose();
+      }}
+      className="block w-full px-3 py-1.5 text-left text-xs hover:bg-muted"
+      data-testid={testid}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div
+      ref={ref}
+      role="menu"
+      className="fixed z-50 min-w-[10rem] rounded-md border border-border bg-popover py-1 shadow-md"
+      style={{ left: state.x, top: state.y }}
+      data-testid="studio-cell-context-menu"
+    >
+      {item('위에 행 추가', onInsertRowAbove, 'studio-cell-row-above')}
+      {item('아래에 행 추가', onInsertRowBelow, 'studio-cell-row-below')}
+      <hr className="my-1 border-border" />
+      {item('왼쪽에 열 추가', onInsertColLeft, 'studio-cell-col-left')}
+      {item('오른쪽에 열 추가', onInsertColRight, 'studio-cell-col-right')}
+      <hr className="my-1 border-border" />
+      {item('행 삭제', onDeleteRow, 'studio-cell-row-delete')}
+      {item('열 삭제', onDeleteCol, 'studio-cell-col-delete')}
+      <hr className="my-1 border-border" />
+      {item('표 삭제', onDeleteTable, 'studio-cell-table-delete')}
+    </div>
+  );
+}
+
 function parsePageDimensions(svg: string): PageDims | null {
   const parser = new DOMParser();
   const doc = parser.parseFromString(svg, 'image/svg+xml');
@@ -365,6 +455,17 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     const imageInputRef = useRef<HTMLInputElement>(null);
     /** Drop overlay state — true while a file drag is hovering the viewer. */
     const [isImageDropTarget, setIsImageDropTarget] = useState(false);
+    /** Cell context menu (right-click on a table cell). */
+    const [cellMenu, setCellMenu] = useState<{
+      x: number;
+      y: number;
+      sectionIndex: number;
+      parentParaIndex: number;
+      controlIndex: number;
+      cellIndex: number;
+      rowCount: number;
+      colCount: number;
+    } | null>(null);
     /** Toolbar second-row visibility — collapsed by default. */
     const [toolbarExpanded, setToolbarExpanded] = useState(false);
     /** Doc-level view toggles. Mirror what setShow* set. */
@@ -2541,6 +2642,151 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       [hitTestAt, refreshSelectionRects, setSelection],
     );
 
+    /**
+     * Right-click on a page → if it lands inside a table cell, show the
+     * cell context menu. We hit-test the click coords; if cell info is
+     * present we open `cellMenu`. Outside-cell right-clicks fall through
+     * (no native menu).
+     */
+    const handlePageContextMenu = useCallback(
+      (idx: number, e: ReactMouseEvent<HTMLDivElement>): void => {
+        const result = hitTestAt(idx, e.clientX, e.clientY, e.currentTarget);
+        if (!result) return;
+        if (
+          result.controlIndex === undefined ||
+          result.cellIndex === undefined ||
+          result.parentParaIndex === undefined
+        ) {
+          return;
+        }
+        e.preventDefault();
+        const doc = docRef.current;
+        if (!doc) return;
+        try {
+          const dims = JSON.parse(
+            doc.getTableDimensions(
+              result.sectionIndex,
+              result.parentParaIndex,
+              result.controlIndex,
+            ),
+          ) as { rowCount: number; colCount: number; cellCount: number };
+          // Move caret into the right-clicked cell so subsequent ops act
+          // on it. (Matches Word/한컴: right-click selects the cell.)
+          caretRef.current = {
+            sectionIndex: result.sectionIndex,
+            paragraphIndex: 0,
+            charOffset: 0,
+            cell: {
+              parentParaIndex: result.parentParaIndex,
+              controlIndex: result.controlIndex,
+              cellIndex: result.cellIndex,
+              cellParaIndex: result.cellParaIndex ?? 0,
+            },
+          };
+          setSelection(null);
+          setSelectionRectsByPage({});
+          setCellMenu({
+            x: e.clientX,
+            y: e.clientY,
+            sectionIndex: result.sectionIndex,
+            parentParaIndex: result.parentParaIndex,
+            controlIndex: result.controlIndex,
+            cellIndex: result.cellIndex,
+            rowCount: dims.rowCount,
+            colCount: dims.colCount,
+          });
+        } catch {
+          /* not a table cell or dims unavailable */
+        }
+      },
+      [hitTestAt, setSelection],
+    );
+
+    const insertTableRowAt = useCallback(
+      (
+        sec: number,
+        parentPara: number,
+        ctrl: number,
+        rowIdx: number,
+        below: boolean,
+      ): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        try {
+          doc.insertTableRow(sec, parentPara, ctrl, rowIdx, below);
+          refreshAfterMutation();
+        } catch (err) {
+          console.warn('[studio] insertTableRow failed:', err);
+        }
+      },
+      [refreshAfterMutation],
+    );
+
+    const insertTableColumnAt = useCallback(
+      (
+        sec: number,
+        parentPara: number,
+        ctrl: number,
+        colIdx: number,
+        right: boolean,
+      ): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        try {
+          doc.insertTableColumn(sec, parentPara, ctrl, colIdx, right);
+          refreshAfterMutation();
+        } catch (err) {
+          console.warn('[studio] insertTableColumn failed:', err);
+        }
+      },
+      [refreshAfterMutation],
+    );
+
+    const deleteTableRowAt = useCallback(
+      (sec: number, parentPara: number, ctrl: number, rowIdx: number): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        try {
+          doc.deleteTableRow(sec, parentPara, ctrl, rowIdx);
+          refreshAfterMutation();
+        } catch (err) {
+          console.warn('[studio] deleteTableRow failed:', err);
+        }
+      },
+      [refreshAfterMutation],
+    );
+
+    const deleteTableColumnAt = useCallback(
+      (sec: number, parentPara: number, ctrl: number, colIdx: number): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        try {
+          doc.deleteTableColumn(sec, parentPara, ctrl, colIdx);
+          refreshAfterMutation();
+        } catch (err) {
+          console.warn('[studio] deleteTableColumn failed:', err);
+        }
+      },
+      [refreshAfterMutation],
+    );
+
+    const deleteWholeTable = useCallback(
+      (sec: number, parentPara: number, ctrl: number): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        try {
+          doc.deleteTableControl(sec, parentPara, ctrl);
+          // Caret was inside the cell — clear cell info now that the
+          // table's gone.
+          caretRef.current = { ...caretRef.current, cell: undefined };
+          refreshAfterMutation();
+        } catch (err) {
+          console.warn('[studio] deleteTableControl failed:', err);
+        }
+      },
+      [refreshAfterMutation],
+    );
+
     const handlePageMouseUp = useCallback((): void => {
       if (!draggingRef.current) return;
       draggingRef.current = false;
@@ -2810,6 +3056,49 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           }
         },
         getCaretCell: () => caretRef.current.cell ?? null,
+        // Cell row/col ops for e2e (skip the right-click flow and
+        // exercise the IPC + refresh path directly).
+        insertTableRow: (
+          sec: number,
+          parentPara: number,
+          ctrl: number,
+          rowIdx: number,
+          below: boolean,
+        ): void => insertTableRowAt(sec, parentPara, ctrl, rowIdx, below),
+        insertTableColumn: (
+          sec: number,
+          parentPara: number,
+          ctrl: number,
+          colIdx: number,
+          right: boolean,
+        ): void => insertTableColumnAt(sec, parentPara, ctrl, colIdx, right),
+        deleteTableRow: (
+          sec: number,
+          parentPara: number,
+          ctrl: number,
+          rowIdx: number,
+        ): void => deleteTableRowAt(sec, parentPara, ctrl, rowIdx),
+        deleteTableColumn: (
+          sec: number,
+          parentPara: number,
+          ctrl: number,
+          colIdx: number,
+        ): void => deleteTableColumnAt(sec, parentPara, ctrl, colIdx),
+        getTableDimensions: (
+          sec: number,
+          parentPara: number,
+          ctrl: number,
+        ): { rowCount: number; colCount: number; cellCount: number } | null => {
+          const doc = docRef.current;
+          if (!doc) return null;
+          try {
+            return JSON.parse(
+              doc.getTableDimensions(sec, parentPara, ctrl),
+            ) as { rowCount: number; colCount: number; cellCount: number };
+          } catch {
+            return null;
+          }
+        },
         // Image insert hook for e2e — bytes encoded as base64 to keep
         // the test deterministic without needing real image files.
         insertImageBase64: async (
@@ -2903,6 +3192,10 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       findWordBoundsAt,
       stepWordOffset,
       insertImage,
+      insertTableRowAt,
+      insertTableColumnAt,
+      deleteTableRowAt,
+      deleteTableColumnAt,
     ]);
 
     // Effect 2: page indicator + mount window. On every scroll (rAF-
@@ -3441,6 +3734,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                   onMouseMove={(e) => handlePageMouseMove(i, e)}
                   onMouseUp={handlePageMouseUp}
                   onMouseLeave={handlePageMouseUp}
+                  onContextMenu={(e) => handlePageContextMenu(i, e)}
                 >
                   {/* SVG mount target — kept as a separate child so the
                       cursor overlay survives renderPageInto's
@@ -3508,6 +3802,88 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             </div>
           )}
         </div>
+
+        {cellMenu && (
+          <CellContextMenu
+            state={cellMenu}
+            onClose={() => setCellMenu(null)}
+            onInsertRowAbove={() =>
+              insertTableRowAt(
+                cellMenu.sectionIndex,
+                cellMenu.parentParaIndex,
+                cellMenu.controlIndex,
+                Math.floor(cellMenu.cellIndex / cellMenu.colCount),
+                false,
+              )
+            }
+            onInsertRowBelow={() =>
+              insertTableRowAt(
+                cellMenu.sectionIndex,
+                cellMenu.parentParaIndex,
+                cellMenu.controlIndex,
+                Math.floor(cellMenu.cellIndex / cellMenu.colCount),
+                true,
+              )
+            }
+            onInsertColLeft={() =>
+              insertTableColumnAt(
+                cellMenu.sectionIndex,
+                cellMenu.parentParaIndex,
+                cellMenu.controlIndex,
+                cellMenu.cellIndex % cellMenu.colCount,
+                false,
+              )
+            }
+            onInsertColRight={() =>
+              insertTableColumnAt(
+                cellMenu.sectionIndex,
+                cellMenu.parentParaIndex,
+                cellMenu.controlIndex,
+                cellMenu.cellIndex % cellMenu.colCount,
+                true,
+              )
+            }
+            onDeleteRow={() => {
+              if (cellMenu.rowCount <= 1) {
+                deleteWholeTable(
+                  cellMenu.sectionIndex,
+                  cellMenu.parentParaIndex,
+                  cellMenu.controlIndex,
+                );
+              } else {
+                deleteTableRowAt(
+                  cellMenu.sectionIndex,
+                  cellMenu.parentParaIndex,
+                  cellMenu.controlIndex,
+                  Math.floor(cellMenu.cellIndex / cellMenu.colCount),
+                );
+              }
+            }}
+            onDeleteCol={() => {
+              if (cellMenu.colCount <= 1) {
+                deleteWholeTable(
+                  cellMenu.sectionIndex,
+                  cellMenu.parentParaIndex,
+                  cellMenu.controlIndex,
+                );
+              } else {
+                deleteTableColumnAt(
+                  cellMenu.sectionIndex,
+                  cellMenu.parentParaIndex,
+                  cellMenu.controlIndex,
+                  cellMenu.cellIndex % cellMenu.colCount,
+                );
+              }
+            }}
+            onDeleteTable={() =>
+              deleteWholeTable(
+                cellMenu.sectionIndex,
+                cellMenu.parentParaIndex,
+                cellMenu.controlIndex,
+              )
+            }
+          />
+        )}
 
         {phase !== 'ready' && !error && (
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background/60 backdrop-blur-sm">
