@@ -7,6 +7,7 @@ import {
   Bold,
   ChevronDown,
   ChevronUp,
+  Image as ImageIcon,
   Italic,
   List,
   ListOrdered,
@@ -360,6 +361,10 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       >
     >({});
     const findInputRef = useRef<HTMLInputElement>(null);
+    /** Hidden file input for the toolbar's "이미지 삽입" button. */
+    const imageInputRef = useRef<HTMLInputElement>(null);
+    /** Drop overlay state — true while a file drag is hovering the viewer. */
+    const [isImageDropTarget, setIsImageDropTarget] = useState(false);
     /** Toolbar second-row visibility — collapsed by default. */
     const [toolbarExpanded, setToolbarExpanded] = useState(false);
     /** Doc-level view toggles. Mirror what setShow* set. */
@@ -1356,6 +1361,81 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           refreshAfterMutation();
         } catch (err) {
           console.warn('[studio] createTable failed:', err);
+        }
+      },
+      [refreshAfterMutation],
+    );
+
+    /**
+     * Insert an image at the caret. The bytes payload comes either from
+     * the toolbar's hidden `<input type="file">` or from a drag-and-drop
+     * event (`e.dataTransfer.files[0]`). We measure the natural pixel
+     * size via an in-memory `<img>`, convert to HWPUNIT (1 inch = 7200,
+     * so 1 px @ 96 DPI ≈ 75 HWPUNIT), and clamp the display width to
+     * the typical page text-area width (~166 mm ≈ 47k HWPUNIT) so a
+     * full-resolution screenshot doesn't overflow the page.
+     */
+    const insertImage = useCallback(
+      async (
+        bytes: Uint8Array,
+        ext: string,
+        description = '',
+      ): Promise<void> => {
+        const doc = docRef.current;
+        if (!doc) return;
+        const lcExt = ext.toLowerCase().replace(/^\./, '');
+        // Measure natural size via an in-memory Image element. Use a
+        // blob URL so we don't re-encode the bytes.
+        const blob = new Blob([new Uint8Array(bytes)], {
+          type: `image/${lcExt}`,
+        });
+        const url = URL.createObjectURL(blob);
+        let natW = 0;
+        let natH = 0;
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => {
+              natW = img.naturalWidth || 1;
+              natH = img.naturalHeight || 1;
+              resolve();
+            };
+            img.onerror = () => reject(new Error('image decode failed'));
+            img.src = url;
+          });
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+        const HWPUNIT_PER_PX = 75; // 1px @ 96 DPI ≈ 75 HWPUNIT
+        const MAX_W = 47_000; // ~ page text width (HWPUNIT)
+        let displayW = natW * HWPUNIT_PER_PX;
+        let displayH = natH * HWPUNIT_PER_PX;
+        if (displayW > MAX_W) {
+          const scale = MAX_W / displayW;
+          displayW = MAX_W;
+          displayH = displayH * scale;
+        }
+        const c = caretRef.current;
+        try {
+          // insertPicture targets the outer paragraph; cell-internal
+          // image insert is a follow-up (no insertPictureInCell yet).
+          doc.insertPicture(
+            c.sectionIndex,
+            c.paragraphIndex,
+            c.charOffset,
+            new Uint8Array(bytes),
+            Math.round(displayW),
+            Math.round(displayH),
+            natW,
+            natH,
+            lcExt,
+            description,
+          );
+          refreshAfterMutation();
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn('[studio] insertPicture failed:', err);
+          window.alert(`이미지 삽입 실패: ${msg}`);
         }
       },
       [refreshAfterMutation],
@@ -2655,6 +2735,18 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           }
         },
         getCaretCell: () => caretRef.current.cell ?? null,
+        // Image insert hook for e2e — bytes encoded as base64 to keep
+        // the test deterministic without needing real image files.
+        insertImageBase64: async (
+          base64: string,
+          ext: string,
+          description?: string,
+        ): Promise<void> => {
+          const bin = atob(base64);
+          const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          await insertImage(bytes, ext, description ?? '');
+        },
         // Synthetic Korean IME helper for e2e — Playwright's keyboard.type
         // doesn't trigger real IME composition. This bypasses keydown to
         // exercise the same code path compositionend uses.
@@ -2735,6 +2827,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       applyTextColor,
       findWordBoundsAt,
       stepWordOffset,
+      insertImage,
     ]);
 
     // Effect 2: page indicator + mount window. On every scroll (rAF-
@@ -3088,6 +3181,36 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                 </div>
               )}
             </div>
+            {/* Image insert — opens hidden file input. Uses File API
+                directly (no IPC needed) so the same handler works for
+                drag-and-drop drops on the scroll area. */}
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => imageInputRef.current?.click()}
+              aria-label="이미지 삽입"
+              title="이미지 삽입"
+              data-testid="studio-insert-image"
+            >
+              <ImageIcon className="size-4" />
+            </Button>
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/bmp,image/webp"
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.target.value = ''; // allow re-picking the same file
+                if (!f) return;
+                void (async () => {
+                  const buf = await f.arrayBuffer();
+                  const ext = f.name.split('.').pop() ?? 'png';
+                  await insertImage(new Uint8Array(buf), ext, f.name);
+                })();
+              }}
+              data-testid="studio-image-input"
+            />
             <span className="mx-2 h-5 w-px bg-border" aria-hidden="true" />
             {/* View toggles */}
             <Button
@@ -3184,12 +3307,44 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
 
         <div
           ref={scrollRef}
-          className="flex-1 overflow-auto bg-muted/30 outline-none"
+          className={
+            'relative flex-1 overflow-auto bg-muted/30 outline-none ' +
+            (isImageDropTarget ? 'ring-2 ring-inset ring-ring' : '')
+          }
           data-testid="studio-scroll"
           tabIndex={0}
           onKeyDown={handleKeyDown}
           onCompositionStart={handleCompositionStart}
           onCompositionEnd={handleCompositionEnd}
+          onDragOver={(e) => {
+            // Accept only when the drag carries an image file from
+            // outside (Finder / Explorer). Internal folder-tree drags
+            // use 'application/x-ahwp-path' which we ignore here.
+            if (
+              e.dataTransfer.types.includes('Files') &&
+              !e.dataTransfer.types.includes('application/x-ahwp-path')
+            ) {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'copy';
+              setIsImageDropTarget(true);
+            }
+          }}
+          onDragLeave={(e) => {
+            // Only clear when the drag has left the scroll container —
+            // children dispatch dragleave too as the cursor passes.
+            if (e.currentTarget === e.target) setIsImageDropTarget(false);
+          }}
+          onDrop={(e) => {
+            setIsImageDropTarget(false);
+            const file = e.dataTransfer.files?.[0];
+            if (!file || !file.type.startsWith('image/')) return;
+            e.preventDefault();
+            void (async () => {
+              const buf = await file.arrayBuffer();
+              const ext = file.name.split('.').pop() ?? 'png';
+              await insertImage(new Uint8Array(buf), ext, file.name);
+            })();
+          }}
         >
           {pageDims && pageCount > 0 && (
             <div
