@@ -6,13 +6,13 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 | 항목        | 상태                                                                                                                                                                                                                       |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Phase       | **Phase 2 청크 14~17** — 스타일 / 수식 / 표·셀 속성 / 도형 (rhwp-core 활용 시리즈 8~11). 다음: 셀 배경 / 그림 속성 / 클립보드 컨트롤                                                                                       |
+| Phase       | **Phase 2 청크 18** — HTML 내보내기/붙이기 + ChatPanel 문서 컨텍스트 (rhwp-core 시리즈 12번째 + AI 라운드트립). 다음: 셀 배경 / 그림 속성 / 클립보드 컨트롤                                                                |
 | 빌드        | ✅ `npm run dev` · `npx vite build`                                                                                                                                                                                        |
 | 타입        | ✅ `npm run typecheck`                                                                                                                                                                                                     |
 | 린트        | ✅ `npm run lint` (0 warnings, 0 errors)                                                                                                                                                                                   |
 | 포맷        | ✅ `npm run format:check`                                                                                                                                                                                                  |
 | 단위 테스트 | ✅ 3/3 (`App.test.tsx`)                                                                                                                                                                                                    |
-| e2e         | ✅ 221 케이스 / 4 워커 병렬 + retry=1 (~85s) — 208 + 4 equation + 4 table-props + 5 shape (chunk 14·16·17·15). 2 skip = NIM live + cell-menu UI(의도)                                                                      |
+| e2e         | ✅ 232 케이스 / 4 워커 병렬 + retry=1 — 222 + 7 studio-html-paste + 3 chat-html-apply (chunk 18). 229 passed / 3 skipped (NIM smoke + NIM chunk 18 round-trip 키 게이트 + cell-menu UI 의도). live 2/2 통과(키 주입 시)    |
 | Electron    | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                                                |
 | 의존성      | runtime: `@rhwp/core` · `chokidar` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` (chunk 6에서 `@rhwp/editor` 제거) |
 
@@ -2324,6 +2324,68 @@ insertTextInHeaderFooter(..., 0 /* paraIdx */, 0 /* charOffset */, text)
 ✓ 누적 e2e 221 = 208 + 13
 ```
 
+### 2026-05-01 — Phase 2 청크 18 — HTML 내보내기/붙이기 + ChatPanel 문서 컨텍스트 (rhwp-core 시리즈 12번째 + AI 라운드트립)
+
+**rhwp-core API 매핑 (시리즈 12번째)**
+
+- IR: `exportSelectionHtml(s, sp, so, ep, eo)` / `pasteHtml(s, p, charOffset, html)`
+- 프로브 결과: `pasteHtml`은 글자 단위 스타일(bold/italic/underline/color/font-size)은 보존하지만 **문단 단위 스타일은 무시** — `text-align`/`margin-*`/`text-indent`/`line-height`가 있어도 문서 기본값으로 셋팅됨
+- 분해 layer 필요: `pasteHtml`로 글자 스타일을 먼저 적용한 뒤, 입력 HTML을 DOM-walk하여 `<p>/<h*>/<li>` 블록마다 `applyParaFormat`을 다시 호출
+
+**StudioViewer 헬퍼 — `applyHtmlAtCaret`**
+
+- `pasteHtml`을 wrapping. DOM walk로 다음 인라인 스타일을 추출 → ParaProps로 변환 → `applyParaFormat`:
+  - `text-align: left|center|right|justify` → `alignment`
+  - `line-height: <n>` (배수) → `lineSpacing` + `lineSpacingType: 'Percent'` (1.5 → 150)
+  - `margin-left|margin-right` (px/pt) → `marginLeft/marginRight` (1px=75 HWPUNIT, 1pt=100 HWPUNIT)
+  - `text-indent` (px/pt) → `indent`
+  - `margin-top|margin-bottom` → `spacingBefore/spacingAfter`
+- 라이브러리가 readback 시점에 spacing 값을 ~74.6× 압축해서 정확한 round-trip 단언이 어려움. e2e는 "before=0, after>0" 패턴으로 검증
+
+**StudioViewer 헬퍼 — `exportDocumentHtml(maxParagraphs?)`**
+
+- 섹션 0의 첫 N개 문단을 HTML로 내보냄 (기본 50). HWPX(XML)에 비해 ~50배 토큰-효율적이고, AI가 이해하기에 충분한 구조(정렬/문단/표/글자 서식) 보존
+- 머리말/꼬리말/각주 메타는 손실되지만 본문 컨텍스트로 충분
+
+**ChatPanel 통합 — 문서 컨텍스트 첨부 + 적용 버튼**
+
+- `ChatPanelProps` 확장: `getDocHtml?: () => string` / `applyHtml?: (html: string) => void`
+- `📎 현재 문서를 컨텍스트로 첨부` 토글 (input form 상단). 활성 시 system 메시지로 `SYSTEM_PROMPT_DOC_CONTEXT` + `[현재 문서]:\n<html>` 자동 prepend
+- 시스템 프롬프트는 한컴 한글 양식 대응을 명시: 모델이 응답에 `\`\`\`html ... \`\`\`` 단일 블록으로 변경분만 작성하도록 유도. 정렬/줄간격/들여쓰기/문단 간격/글자 서식 전 영역의 인라인 스타일 가이드 포함
+- 어시스턴트 메시지에 `\`\`\`html\`\`\``블록이 감지되고`onApplyHtml`prop이 있으면 메시지 본문 하단에 **"문서에 적용"** 버튼 노출 → 클릭 시`applyHtmlAtCaret(payload)` 호출 후 "✓ 적용됨" 피드백 (2s)
+- `AppShell`은 활성 탭의 `viewerRef`로 두 함수를 wiring (`activeViewerRef()?.exportDocumentHtml() ?? ''` / `applyHtmlAtCaret(html)`). 비활성 탭/문서 미로드 시 빈 문자열·no-op
+
+**ViewerHandle 확장**
+
+- `applyHtmlAtCaret(html)`: AI가 작성한 HTML 적용
+- `exportDocumentHtml(maxParagraphs?)`: 채팅 컨텍스트 첨부용 HTML 추출
+- `__studioDebug`도 `applyHtmlAtCaret` / `pasteHtmlAt` / `exportSelectionHtmlAt` / `getParaProps` 노출
+
+**E2E (10 신규 케이스)**
+
+- `studio-html-paste.spec.ts` (7): `pasteHtml` lossy 검증 / `applyHtmlAtCaret`로 text-align·line-height·margin-left·margin-top/bottom·char-styles·pt-indent 복원
+- `chat-html-apply.spec.ts` (3): attach 토글 노출, html 블록 → 문서에 적용 버튼 → IR 정렬 변경 round-trip, html 블록 없음 → 버튼 미노출
+
+**라이브 검증 — NVIDIA NIM (`meta/llama-3.1-70b-instruct`)**
+
+- `nvidia-live.spec.ts`에 chunk 18 round-trip 케이스 추가
+- 시나리오: blank.hwpx → "Center the first paragraph" 프롬프트 → 모델이 `<p style="text-align:center;">CENTERED</p>` 작성 → 적용 클릭 → `getParaProps(0,0).alignment === 'center'` 검증
+- 결과: **2/2 통과** (smoke 968ms + round-trip 11.6s). `NVAPI_KEY` env 게이트 유지
+
+**버전 규칙 도입**
+
+- `package.json` 0.2.18 — major=정식 릴리스, minor=Phase, patch=청크 번호. 청크 별로 패치 버전을 올림
+
+**검증**
+
+```
+✓ npm run typecheck
+✓ npm run lint              (0 errors, 0 warnings)
+✓ npm test                  (3/3)
+✓ 누적 e2e 231 = 221 + 7 (html-paste) + 3 (chat-html-apply)
+✓ NVIDIA NIM live 2/2 (chunk 18 round-trip 포함)
+```
+
 **다음 청크 — rhwp-core API 추가 활용 (계속)**
 
 `@rhwp/core` 0.7.9는 253개 메서드 노출. 우리가 활용 중인 건 ~30%. 한컴 한글 핵심 누락분을 라이브러리 API로 매핑한 후보 청크 (사용 빈도 + UX 임팩트 순):
@@ -2371,6 +2433,7 @@ insertTextInHeaderFooter(..., 0 /* paraIdx */, 0 /* charOffset */, text)
 - ~~수식 미리보기 (renderEquationPreview)~~ ✅ (청크 16, 2026-05-01)
 - ~~표/셀 속성 (padding/spacing/repeatHeader/verticalAlign)~~ ✅ (청크 17, 2026-05-01)
 - ~~도형 (사각형 MVP)~~ ✅ (청크 15, 2026-05-01)
+- ~~HTML 내보내기/붙이기 + ChatPanel 문서 컨텍스트 (AI 라운드트립 검증)~~ ✅ (청크 18, 2026-05-01)
 
 **진행 가능 (키 의존성 없음)**
 

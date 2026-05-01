@@ -88,10 +88,41 @@ export interface ChatPanelProps {
    * dig through the menu when their key isn't set yet.
    */
   onOpenSettings?: () => void;
+  /**
+   * Active document HTML context — chunk 18. When attached, the
+   * panel includes a system message with the first N paragraphs as
+   * HTML so the AI can understand structure (paragraphs, alignment,
+   * font styles, tables). Returns null when no doc is loaded.
+   */
+  getDocHtml?: () => string;
+  /**
+   * Apply an AI-authored HTML fragment to the active doc — chunk 18.
+   * Wraps StudioViewer's applyHtmlAtCaret. Surfaced as a "문서에 적용"
+   * button on assistant messages that contain ```html``` code blocks.
+   */
+  applyHtml?: (html: string) => void;
 }
+
+const HTML_BLOCK_RE = /```html\n?([\s\S]*?)```/i;
+
+const SYSTEM_PROMPT_DOC_CONTEXT = `너는 한컴 한글 문서 어시스턴트야. 사용자가 문서 변경을 요청하면, 응답 안에 \`\`\`html ... \`\`\` 코드 블록을 만들어 변경분만 그 안에 작성해. 사용자가 그 블록을 한 번의 클릭으로 문서에 적용할 거야.
+
+지원하는 인라인 스타일 (그대로 작성):
+- 단락 정렬: <p style="text-align: left|center|right|justify;">...</p>
+- 줄 간격: <p style="line-height: 1.5;"> (배수, 1.0/1.15/1.5/2.0/3.0)
+- 문단 들여쓰기: <p style="margin-left: 30px;"> (좌측 여백)
+- 첫 줄 들여쓰기: <p style="text-indent: 20pt;">
+- 문단 위/아래 간격: <p style="margin-top: 12px; margin-bottom: 6px;">
+- 글자 서식: <strong>, <em>, <u>, <s>, <span style="color:#ff0000;font-size:14pt;">
+
+표는 <table><tr><td>...</td></tr></table> 형식. 보고서 형식 요청에는 명확한 정렬과 간격을 적극 활용해.
+
+응답엔 코드 블록 외에 짧은 설명이 있어도 좋지만, 코드 블록은 단 하나만 포함해.`;
 
 export function ChatPanel({
   onOpenSettings,
+  getDocHtml,
+  applyHtml,
 }: ChatPanelProps = {}): JSX.Element {
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState('');
@@ -104,6 +135,7 @@ export function ChatPanel({
   const [models, setModels] = useState<Record<ChatProviderId, string>>(() =>
     loadModels(),
   );
+  const [attachDoc, setAttachDoc] = useState(false);
   const handleRef = useRef<AiChatHandle | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const assistantIdRef = useRef<string | null>(null);
@@ -195,14 +227,28 @@ export function ChatPanel({
       setMessages([...history, assistantMsg]);
       setStreaming(true);
 
-      const request: ChatRequest = {
-        provider,
-        model,
-        messages: history.map(({ role, content }) => ({ role, content })),
-      };
+      // Build provider-bound message list. When the user has attach-doc
+      // enabled and a doc is loaded, prepend a system message that
+      // (a) tells the model how to author HTML edits, and (b) embeds
+      // the current document body so it can reference structure.
+      const messages: {
+        role: 'system' | 'user' | 'assistant';
+        content: string;
+      }[] = history.map(({ role, content }) => ({ role, content }));
+      if (attachDoc && getDocHtml) {
+        const docHtml = getDocHtml();
+        if (docHtml.length > 0) {
+          messages.unshift({
+            role: 'system',
+            content: `${SYSTEM_PROMPT_DOC_CONTEXT}\n\n[현재 문서]:\n${docHtml}`,
+          });
+        }
+      }
+
+      const request: ChatRequest = { provider, model, messages };
       handleRef.current = window.api.ai.chat(request, { onEvent });
     },
-    [model, onEvent, provider],
+    [attachDoc, getDocHtml, model, onEvent, provider],
   );
 
   const send = useCallback(() => {
@@ -369,6 +415,7 @@ export function ChatPanel({
               onCopy={copyMessage}
               onRegenerate={regenerate}
               onDelete={deleteMessage}
+              onApplyHtml={applyHtml}
             />
           ))
         )}
@@ -387,6 +434,21 @@ export function ChatPanel({
         className="border-t border-border bg-card p-3"
         data-testid="chat-input-form"
       >
+        {getDocHtml ? (
+          <label
+            className="mb-2 flex cursor-pointer items-center gap-2 text-[10px] text-muted-foreground"
+            data-testid="chat-attach-toggle"
+          >
+            <input
+              type="checkbox"
+              checked={attachDoc}
+              onChange={(e) => setAttachDoc(e.target.checked)}
+              data-testid="chat-attach-checkbox"
+              disabled={streaming}
+            />
+            <span>📎 현재 문서를 컨텍스트로 첨부</span>
+          </label>
+        ) : null}
         <div className="flex items-end gap-2">
           <textarea
             value={input}
@@ -436,6 +498,8 @@ interface MessageProps {
   onCopy: (id: string) => Promise<boolean>;
   onRegenerate: (id: string) => void;
   onDelete: (id: string) => void;
+  /** Apply an HTML fragment to the active document (chunk 18). */
+  onApplyHtml?: (html: string) => void;
 }
 
 function Message({
@@ -444,6 +508,7 @@ function Message({
   onCopy,
   onRegenerate,
   onDelete,
+  onApplyHtml,
 }: MessageProps): JSX.Element {
   const isUser = message.role === 'user';
   const isAssistantStreaming =
@@ -470,6 +535,30 @@ function Message({
   // mid-stream, but for consistency we hide everything during streaming
   // and only show it on the bubble that finished its content.
   const actionsHidden = streaming || isAssistantStreaming;
+
+  // Apply-HTML affordance — only on completed assistant messages that
+  // contain a ```html``` fenced block AND when a viewer handle is
+  // available (onApplyHtml prop). Extract the first block; the
+  // SYSTEM_PROMPT_DOC_CONTEXT instructs the model to emit at most one.
+  const htmlMatch =
+    !isUser && !streaming && onApplyHtml
+      ? HTML_BLOCK_RE.exec(message.content)
+      : null;
+  const htmlPayload = htmlMatch ? htmlMatch[1].trim() : null;
+  const [applied, setApplied] = useState(false);
+  const appliedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (appliedTimerRef.current) clearTimeout(appliedTimerRef.current);
+    };
+  }, []);
+  const handleApply = () => {
+    if (!htmlPayload || !onApplyHtml) return;
+    onApplyHtml(htmlPayload);
+    setApplied(true);
+    if (appliedTimerRef.current) clearTimeout(appliedTimerRef.current);
+    appliedTimerRef.current = setTimeout(() => setApplied(false), 2000);
+  };
 
   return (
     <div
@@ -499,6 +588,20 @@ function Message({
         ) : (
           <MessageContent content={message.content} />
         )}
+        {htmlPayload ? (
+          <div className="mt-2 border-t border-border pt-2">
+            <Button
+              type="button"
+              size="sm"
+              variant={applied ? 'secondary' : 'default'}
+              onClick={handleApply}
+              data-testid="chat-action-apply-html"
+              className="text-xs"
+            >
+              {applied ? '✓ 적용됨' : '문서에 적용'}
+            </Button>
+          </div>
+        ) : null}
       </div>
       {actionsHidden ? null : (
         <div

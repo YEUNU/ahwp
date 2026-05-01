@@ -148,11 +148,10 @@
 
 ### 2-E. Manual 편집 흐름
 
-- [ ] 시스템 프롬프트 작성 (현재 문서 컨텍스트 주입)
-- [ ] AI 응답에서 `<edit>` JSON 블록 파싱
-- [ ] 변경 위치를 에디터에서 하이라이트 + diff 패널 표시
-- [ ] Accept → `ai:apply-diff` IPC → 에디터 갱신
-- [ ] Reject → 변경사항 폐기
+- [x] 시스템 프롬프트 작성 (현재 문서 컨텍스트 주입) — chunk 18: 한컴 한글 양식 가이드 + `[현재 문서]:` HTML 첨부 (`exportDocumentHtml`)
+- [x] AI 응답 파싱 + 적용 — chunk 18: `\`\`\`html\`\`\``블록 자동 감지 → "문서에 적용" 버튼 →`applyHtmlAtCaret`. 정렬·줄간격·들여쓰기·문단간격·글자 서식 round-trip 검증 (`nvidia-live.spec.ts` chunk 18)
+- [ ] 변경 위치를 에디터에서 하이라이트 + diff 패널 표시 (현재는 HTML을 caret 위치에 삽입 — diff 미리보기는 후속)
+- [ ] Reject → 변경사항 폐기 (현재는 Undo로 복구 가능, 전용 Reject UX는 후속)
 
 검증: 실제 문서를 열고 "이 단락 요약해서 다시 써줘" 같은 작업이 정상 동작.
 

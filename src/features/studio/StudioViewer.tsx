@@ -1561,6 +1561,159 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     );
 
     /**
+     * HTML paste with paragraph-shape decomposition — chunk 18.
+     *
+     * `pasteHtml` alone is partially lossy: char-level styles (bold,
+     * italic, underline, color, font-size) round-trip, but paragraph-
+     * level inline styles (`text-align`, `margin-left`, `line-height`,
+     * `text-indent`) are silently dropped to defaults. We verify what
+     * the IR retains via probes; for the rest we walk the source HTML
+     * and apply the missing fields directly with `applyParaFormat`.
+     *
+     * 1px ≈ 75 HWPUNIT (96 DPI: 25.4/96 mm × 283.5 HWPUNIT/mm ≈ 75).
+     * line-height: 1.5 → lineSpacing: 150 (percent of single).
+     */
+    const applyHtmlAtCaret = useCallback(
+      (html: string): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        const c = caretRef.current;
+        try {
+          // 1. Native paste — body text + char-level styles only.
+          doc.pasteHtml(c.sectionIndex, c.paragraphIndex, c.charOffset, html);
+          // 2. DOM-walk for paragraph-level styles `pasteHtml` ignores.
+          //    Each <p>/<h*>/<li> becomes a paragraph in IR order
+          //    starting at the caret's paragraph index.
+          const dom = new DOMParser().parseFromString(html, 'text/html');
+          const blocks = Array.from(
+            dom.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li'),
+          );
+          let paraIdx = c.paragraphIndex;
+          for (const el of blocks) {
+            const props: Record<string, unknown> = {};
+            const style = (el as HTMLElement).style;
+            // Alignment.
+            const align = style.textAlign;
+            if (
+              align === 'left' ||
+              align === 'center' ||
+              align === 'right' ||
+              align === 'justify'
+            ) {
+              props.alignment = align;
+            }
+            // Line height — accept "1.5" / "150%" / "200%".
+            const lh = style.lineHeight;
+            if (lh) {
+              let percent: number | null = null;
+              if (lh.endsWith('%')) percent = parseFloat(lh);
+              else {
+                const ratio = parseFloat(lh);
+                if (Number.isFinite(ratio) && ratio > 0)
+                  percent = Math.round(ratio * 100);
+              }
+              if (percent != null && Number.isFinite(percent)) {
+                props.lineSpacing = percent;
+                props.lineSpacingType = 'Percent';
+              }
+            }
+            // Left/right indent — only handle px / pt for now.
+            const pxToHu = (raw: string): number | null => {
+              const m = raw.match(/^(-?\d+(?:\.\d+)?)(px|pt)?$/);
+              if (!m) return null;
+              const n = parseFloat(m[1]);
+              if (!Number.isFinite(n)) return null;
+              const unit = m[2] || 'px';
+              // 1pt = 1/72 in × 25.4 mm × 283.5 HWPUNIT/mm ≈ 100
+              // 1px = 1/96 in × 25.4 mm × 283.5 HWPUNIT/mm ≈ 75
+              const k = unit === 'pt' ? 100 : 75;
+              return Math.round(n * k);
+            };
+            const ml = pxToHu(style.marginLeft);
+            if (ml != null) props.marginLeft = ml;
+            const mr = pxToHu(style.marginRight);
+            if (mr != null) props.marginRight = mr;
+            const ti = pxToHu(style.textIndent);
+            if (ti != null) props.indent = ti;
+            const mt = pxToHu(style.marginTop);
+            if (mt != null) props.spacingBefore = mt;
+            const mb = pxToHu(style.marginBottom);
+            if (mb != null) props.spacingAfter = mb;
+
+            if (Object.keys(props).length > 0) {
+              try {
+                doc.applyParaFormat(
+                  c.sectionIndex,
+                  paraIdx,
+                  JSON.stringify(props),
+                );
+              } catch (err) {
+                console.warn(
+                  '[studio] applyHtmlAtCaret applyParaFormat failed:',
+                  err,
+                );
+              }
+            }
+            paraIdx += 1;
+          }
+          dirtyRef.current = true;
+          setDirty(true);
+          refreshAfterMutation({ syncCaret: false });
+        } catch (err) {
+          console.warn('[studio] applyHtmlAtCaret failed:', err);
+        }
+      },
+      [refreshAfterMutation],
+    );
+
+    /**
+     * HTML export / paste — chunk 18 (probe). The IR's `pasteHtml` is
+     * lossy — verifying which inline styles round-trip needs raw access
+     * to both ends of the pipe.
+     */
+    const exportSelectionHtmlAt = useCallback(
+      (
+        sec: number,
+        startPara: number,
+        startOff: number,
+        endPara: number,
+        endOff: number,
+      ): string => {
+        const doc = docRef.current;
+        if (!doc) return '';
+        try {
+          return doc.exportSelectionHtml(
+            sec,
+            startPara,
+            startOff,
+            endPara,
+            endOff,
+          );
+        } catch (err) {
+          console.warn('[studio] exportSelectionHtml failed:', err);
+          return '';
+        }
+      },
+      [],
+    );
+
+    const pasteHtmlAt = useCallback(
+      (sec: number, para: number, charOffset: number, html: string): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        try {
+          doc.pasteHtml(sec, para, charOffset, html);
+          dirtyRef.current = true;
+          setDirty(true);
+          refreshAfterMutation({ syncCaret: false });
+        } catch (err) {
+          console.warn('[studio] pasteHtml failed:', err);
+        }
+      },
+      [refreshAfterMutation],
+    );
+
+    /**
      * Shapes — chunk 15. Insert / read / write / delete a rectangle
      * shape control at the current caret. Z-order ops too. The IR's
      * `createShapeControl` JSON shape:
@@ -2719,6 +2872,21 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           renderEquationSvg(script, fontSizeHwpunit, color),
         createRectShapeAtCaret: (widthHwpunit, heightHwpunit, opts) =>
           createRectShapeAtCaret(widthHwpunit, heightHwpunit, opts),
+        applyHtmlAtCaret: (html) => applyHtmlAtCaret(html),
+        exportDocumentHtml: (maxParagraphs = 50) => {
+          const doc = docRef.current;
+          if (!doc) return '';
+          try {
+            const paraCount = doc.getParagraphCount(0);
+            const lastPara = Math.min(paraCount - 1, maxParagraphs - 1);
+            if (lastPara < 0) return '';
+            // End offset: a sentinel large enough to cover any paragraph.
+            return doc.exportSelectionHtml(0, 0, 0, lastPara, 1_000_000);
+          } catch (err) {
+            console.warn('[studio] exportDocumentHtml failed:', err);
+            return '';
+          }
+        },
         isDirty: () => dirtyRef.current,
       }),
       [
@@ -2744,6 +2912,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         deleteStyleById,
         renderEquationSvg,
         createRectShapeAtCaret,
+        applyHtmlAtCaret,
       ],
     );
 
@@ -4088,6 +4257,22 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         },
         applyPageDef: (props: Record<string, unknown>, sectionIdx = 0): void =>
           applyPageDef(props, sectionIdx),
+        // HTML export + paste with paragraph-shape decomposition — chunk 18.
+        applyHtmlAtCaret: (html: string): void => applyHtmlAtCaret(html),
+        exportSelectionHtmlAt: (
+          sec: number,
+          startPara: number,
+          startOff: number,
+          endPara: number,
+          endOff: number,
+        ): string =>
+          exportSelectionHtmlAt(sec, startPara, startOff, endPara, endOff),
+        pasteHtmlAt: (
+          sec: number,
+          para: number,
+          charOffset: number,
+          html: string,
+        ): void => pasteHtmlAt(sec, para, charOffset, html),
         // Shapes — chunk 15.
         createRectShapeAtCaret: (
           widthHwpunit: number,
@@ -4380,6 +4565,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       setShapeProps,
       deleteShape,
       changeShapeZOrderAt,
+      exportSelectionHtmlAt,
+      pasteHtmlAt,
+      applyHtmlAtCaret,
     ]);
 
     // Effect 2: page indicator + mount window. On every scroll (rAF-

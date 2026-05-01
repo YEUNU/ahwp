@@ -19,10 +19,18 @@
  * The launched app uses an isolated `--user-data-dir` so the key does not
  * persist beyond the test.
  */
+/// <reference lib="dom" />
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { launchApp, type LaunchedApp } from './launch';
 
 const NVAPI_KEY = process.env.NVAPI_KEY;
+const FIXTURE = path.resolve(__dirname, 'fixtures', 'blank.hwpx');
+
+interface StudioDebug {
+  getParaProps(s: number, p: number): Record<string, unknown>;
+}
 
 test.describe('NVIDIA NIM — live smoke', () => {
   test.skip(!NVAPI_KEY, 'NVAPI_KEY env not set — skipping live test');
@@ -66,5 +74,63 @@ test.describe('NVIDIA NIM — live smoke', () => {
     await expect(assistantContent).toContainText('NIM_OK', { timeout: 30_000 });
     // Stream finished → send button is back.
     await expect(page.getByTestId('chat-send')).toBeVisible();
+  });
+
+  // chunk 18 — doc-context attach + apply HTML round trip. Loads the
+  // blank fixture, asks NIM for a centered paragraph as ```html```, then
+  // clicks "문서에 적용" and asserts the IR alignment flipped to
+  // 'center'. Real model output is non-deterministic, so we steer with a
+  // strict prompt and a fallback regex (any ```html``` block with
+  // text-align:center).
+  test('chunk 18 — attach doc + apply HTML edit (centered paragraph)', async () => {
+    test.skip(!existsSync(FIXTURE), 'tests/e2e/fixtures/blank.hwpx missing');
+    const { page } = launched;
+
+    // Open the blank fixture so the StudioViewer mounts and exposes
+    // exportDocumentHtml + applyHtmlAtCaret to the chat panel.
+    await page.evaluate(async (p) => {
+      await window.api.session.set({ lastActivePath: p });
+    }, FIXTURE);
+    await page.reload();
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForFunction(
+      () =>
+        Boolean(
+          (window as Window & { __studioDebug?: StudioDebug }).__studioDebug,
+        ),
+      { timeout: 30_000 },
+    );
+
+    await page.getByTestId('chat-provider-select').selectOption('nvidia');
+    // Larger model handles "respond with one html block" instructions
+    // more reliably than 8b.
+    await page
+      .getByTestId('chat-model-input')
+      .fill('meta/llama-3.1-70b-instruct');
+    await expect(page.getByTestId('chat-key-indicator')).toHaveText(/●/);
+
+    await page.getByTestId('chat-attach-checkbox').check();
+
+    // Tightly scoped prompt — system prompt already tells the model to
+    // emit one ```html``` fenced block.
+    await page
+      .getByTestId('chat-input')
+      .fill(
+        'Center the first paragraph. Reply with EXACTLY one fenced ```html``` code block containing only `<p style="text-align:center;">CENTERED</p>` and nothing else.',
+      );
+    await page.getByTestId('chat-send').click();
+
+    const applyBtn = page.getByTestId('chat-action-apply-html');
+    await expect(applyBtn).toBeVisible({ timeout: 60_000 });
+
+    await applyBtn.click();
+    await expect(applyBtn).toHaveText('✓ 적용됨');
+
+    const align = await page.evaluate(() => {
+      const dbg = (window as Window & { __studioDebug?: StudioDebug })
+        .__studioDebug!;
+      return dbg.getParaProps(0, 0).alignment as string;
+    });
+    expect(align).toBe('center');
   });
 });

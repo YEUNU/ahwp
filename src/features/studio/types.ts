@@ -99,6 +99,20 @@ export interface ViewerHandle {
     heightHwpunit: number,
     opts?: { treatAsChar?: boolean },
   ) => { paraIdx: number; controlIdx: number } | null;
+  /**
+   * Apply an HTML fragment at the current caret (chunk 18). Wraps
+   * `pasteHtml` and additionally walks the source HTML to apply
+   * paragraph-level styles (text-align, line-height, margins, indent)
+   * the IR's pasteHtml drops. Use this for AI-authored HTML responses.
+   */
+  applyHtmlAtCaret: (html: string) => void;
+  /**
+   * Export the first N paragraphs of section 0 as HTML (chunk 18).
+   * Used by the chat panel to attach document context to AI requests.
+   * Token-cheap compared to HWPX; lossy on header/footer/footnote
+   * meta but fine for AI comprehension of body content.
+   */
+  exportDocumentHtml: (maxParagraphs?: number) => string;
   /** Set paragraph alignment on selection / current paragraph (chunk 10). */
   applyAlignment: (a: ParagraphAlignment) => void;
   /** Apply font size in points (converted to HWPUNIT internally). */

@@ -589,7 +589,11 @@ export default function AppShell() {
               </h2>
             </div>
             <div className="flex-1 overflow-hidden">
-              <ChatPanel onOpenSettings={() => setSettingsOpen(true)} />
+              <ChatPanel
+                onOpenSettings={() => setSettingsOpen(true)}
+                getDocHtml={() => activeViewerRef()?.exportDocumentHtml() ?? ''}
+                applyHtml={(html) => activeViewerRef()?.applyHtmlAtCaret(html)}
+              />
             </div>
           </aside>
         </Panel>
