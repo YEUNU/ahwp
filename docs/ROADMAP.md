@@ -152,7 +152,7 @@
 - [x] AI 응답 파싱 + 적용 (양식) — chunk 18: ` ```html``` ` 블록 자동 감지 → "문서에 적용" 버튼 → `applyHtmlAtCaret`. 정렬·줄간격·들여쓰기·문단간격·글자 서식 round-trip 검증 (`nvidia-live.spec.ts` chunk 18)
 - [x] AI 응답 파싱 + 적용 (컨트롤) — chunk 19: ` ```ahwp-tools``` ` JSON 블록 자동 감지 → ops 미리보기 + "도구 실행" 버튼 → 화이트리스트 IR 호출. 각주·머리말·책갈피·페이지 설정·스타일·도형 11개 tool 카탈로그. provider tool-use API 바인딩은 Phase 3
 - [x] **발췌 첨부** ✅ chunk 20: `📌 발췌 첨부` 버튼으로 활성 viewer 선택을 칩으로 캡처 → `[발췌]:` 시스템 블록이 통째 첨부를 대체. send 시 anchor stale 검증 + 자동 재바인딩 + missing은 송신 차단. HTML5 drag UX는 SVG selection 침투 회피 위해 chunk 22로 분리
-- [ ] **멀티 문서 컨텍스트 (chunk 21 예정)** — `ChatPanel` 상단 "이 대화에 포함할 문서" 칩으로 target(활성 탭, 자동 잠김) + reference(다른 열린 탭, 사용자 체크) 분리 (`docs/AI_INTEGRATION.md` §멀티 다큐먼트 모델). target에는 본문 HTML, reference에는 outline만 주입(토큰 절약). write tool은 **target에만 dispatch** — `runTools` 라우터가 enforce. reference write 시도는 `write-on-reference` 거절 결과로 사용자에 알림
+- [x] **멀티 문서 컨텍스트** ✅ chunk 21: ChatPanel 상단 멀티 문서 칩 행 — 🎯 target (활성 탭, 잠김) + 📚 reference (다른 탭 체크박스). reference 옵트인 시 `[참조 문서]:` 시스템 블록에 첫 20문단 outline 주입. write tool은 active dispatch로 target 한정 (single-target dispatch 패턴 — docId-aware 라우팅은 Phase 3로). HTML5 drag UX는 chunk 22로 분리
 - [ ] 변경 위치를 에디터에서 하이라이트 + diff 패널 표시 (현재는 caret 위치에 적용 — diff 미리보기는 후속)
 - [ ] Reject → 변경사항 폐기 (현재는 Undo로 복구 가능, 전용 Reject UX는 후속)
 - [ ] op별 한 묶음 Undo grouping (chunk 19는 op마다 독립 snapshot — 사용자가 ⌘Z로 단계적 되돌리기)

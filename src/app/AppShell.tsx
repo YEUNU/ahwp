@@ -606,6 +606,23 @@ export default function AppShell() {
                 verifyExcerpt={(anchor, expected) =>
                   activeViewerRef()?.verifyExcerpt(anchor, expected) ?? null
                 }
+                getOpenDocs={() =>
+                  tabsState.map((tab, idx) => ({
+                    path: tab.path,
+                    label: tab.path.split(/[/\\]/).pop() ?? tab.path,
+                    isActive: idx === activeIndex,
+                  }))
+                }
+                getDocOutline={(path) => {
+                  // Look up the (still-mounted) viewer for this tab and
+                  // pull a short HTML outline. Inactive viewers stay
+                  // mounted (display:none), so reading their IR is just
+                  // a method call. 20 paragraphs trades cost vs context.
+                  const tab = tabsState.find((t) => t.path === path);
+                  if (!tab) return '';
+                  const ref = viewerRefsRef.current.get(tab.key);
+                  return ref?.exportDocumentHtml(20) ?? '';
+                }}
               />
             </div>
           </aside>

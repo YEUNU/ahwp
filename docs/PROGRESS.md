@@ -4,17 +4,17 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 ## 현재 스냅샷
 
-| 항목        | 상태                                                                                                                                                                                                                       |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Phase       | **Phase 2 청크 20** — 발췌 첨부 (`ExcerptAttachment` + 칩 + 시스템 프롬프트 `[발췌]:` 블록). 사용자가 선택한 영역만 컨텍스트로 사용 → 토큰↓·anchor 정확도↑. 다음: 청크 21 멀티 문서 (target/reference)                     |
-| 빌드        | ✅ `npm run dev` · `npx vite build`                                                                                                                                                                                        |
-| 타입        | ✅ `npm run typecheck`                                                                                                                                                                                                     |
-| 린트        | ✅ `npm run lint` (0 warnings, 0 errors)                                                                                                                                                                                   |
-| 포맷        | ✅ `npm run format:check`                                                                                                                                                                                                  |
-| 단위 테스트 | ✅ 3/3 (`App.test.tsx`)                                                                                                                                                                                                    |
-| e2e         | ✅ 249 케이스 / 4 워커 병렬 + retry=1 — 240 + 8 chat-excerpt + 1 NIM chunk 20. 244 passed / 5 skipped (NIM 4개 키 게이트 + cell-menu UI 의도). live NIM 4/4 통과(`qwen/qwen3.5-122b-a10b`)                                 |
-| Electron    | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                                                |
-| 의존성      | runtime: `@rhwp/core` · `chokidar` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` (chunk 6에서 `@rhwp/editor` 제거) |
+| 항목        | 상태                                                                                                                                                                                                                           |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Phase       | **Phase 2 청크 21** — 멀티 문서 컨텍스트 (target/reference 칩 + `[참조 문서]:` 시스템 블록). 활성 탭=잠긴 target, 다른 탭=reference 체크박스. write tool은 active dispatch로 target 한정. 다음: 청크 22 drag UX, 23 multi-para |
+| 빌드        | ✅ `npm run dev` · `npx vite build`                                                                                                                                                                                            |
+| 타입        | ✅ `npm run typecheck`                                                                                                                                                                                                         |
+| 린트        | ✅ `npm run lint` (0 warnings, 0 errors)                                                                                                                                                                                       |
+| 포맷        | ✅ `npm run format:check`                                                                                                                                                                                                      |
+| 단위 테스트 | ✅ 3/3 (`App.test.tsx`)                                                                                                                                                                                                        |
+| e2e         | ✅ 255 케이스 / 4 워커 병렬 + retry=1 — 249 + 5 chat-multidoc + 1 NIM chunk 21. 249 passed / 6 skipped (NIM 5개 키 게이트 + cell-menu UI 의도). live NIM 5/5 통과(`qwen/qwen3.5-122b-a10b`)                                    |
+| Electron    | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                                                    |
+| 의존성      | runtime: `@rhwp/core` · `chokidar` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` (chunk 6에서 `@rhwp/editor` 제거)     |
 
 ## 일지
 
@@ -2533,6 +2533,59 @@ interface ExcerptAttachment {
 ✓ NVIDIA NIM live 4/4 (qwen/qwen3.5-122b-a10b — chunk 18·19·20 round-trip 모두 포함)
 ```
 
+### 2026-05-02 — Phase 2 청크 21 — 멀티 문서 컨텍스트 (target / reference)
+
+**배경**
+
+청크 18~20까지의 채팅 컨텍스트는 활성 탭 한 개만 다뤘음. 그러나 한컴 한글의 흔한 워크플로우는 "B 문서의 뉘앙스로 A 다듬어줘" 같은 cross-document 작업. 활성 탭 = 편집 대상(target), 다른 열린 탭 = 읽기 전용 참조(reference)로 모델에 주입할 수 있어야 함.
+
+**ChatPanel 멀티 문서 칩 행**
+
+- 입력 폼 위 새 행. 활성 탭은 🎯 잠긴 target 칩, 다른 열린 탭은 📚 reference 체크박스로 표시
+- `data-role="target" | "reference" | "unused"` 3-state로 e2e가 검증
+- `referencePaths: string[]` 상태로 사용자 opt-in 추적
+
+**시스템 프롬프트 확장**
+
+- `referencePaths`에 들어있는 각 문서마다 `getDocOutline(path)` 호출 → 첫 20문단 HTML 반환
+- 활성 탭의 target 컨텍스트(발췌 또는 통째 첨부) 뒤에 `[참조 문서]:\n[ref 1] doc="..." (read-only)\n<outline>\n...` 블록 추가
+- 시스템 프롬프트 끝에 read-only 규칙 명시: "변경 적용 (` ```html``` ` / ` ```ahwp-tools``` `) 은 활성 문서(target)에만 한다"
+
+**Tool 권한 분리**
+
+- 청크 19의 `runTools`는 항상 active viewer에 dispatch — 즉 write 항상 target만 영향. 별도 docId 라우팅 없이 single-target dispatch 패턴으로 reference write 자체가 불가능
+- Phase 3 Agent 모드에서 provider tool-use API 도입 시 docId-aware 라우팅으로 확장 (현재는 미구현)
+
+**AppShell wiring**
+
+- `getOpenDocs()` — `tabsState` + `activeIndex`에서 `[{path, label, isActive}]` 합성
+- `getDocOutline(path)` — 비활성 탭의 mounted viewer (display:none)를 그대로 활용 → `viewerRef.exportDocumentHtml(20)`. 추가 마운트 비용 없음
+
+**E2E (chunk 21 신규)**
+
+- `chat-multidoc.spec.ts` (5 케이스): 칩 표시 / 단일 탭 잠금 / 두 탭에서 reference 체크박스 / role 토글 / send 후 chip 상태 유지. 두 탭 만들기 위해 blank.hwpx를 temp dir에 두 이름으로 복사
+- `nvidia-live.spec.ts` chunk 21 round-trip: target/reference 두 탭 → reference에 sentinel 시드 → reference 체크 → "[ref 1]에서 명사 두 개 인용해줘" → `qwen/qwen3.5-122b-a10b`이 sentinel 명사를 응답에 포함시켜 `[참조 문서]` 블록이 프롬프트에 도달함을 증명
+
+**제한 / 후속**
+
+- HTML5 drag-and-drop UX (chunk 22) → SVG selection 모델 리팩터 후 진행
+- multi-paragraph excerpts (chunk 23+) → `getTextRange` 단일 문단 한정 해소 필요
+- inactive-tab에서 발췌 캡처 → 현재는 active tab만. inactive viewer ref도 `captureExcerpt` 노출하면 가능하지만 selection 시각 피드백이 비활성 탭에 없어 UX 문제. drag UX 합류 시 같이 해결
+- provider tool-use API + docId-aware 라우팅 → Phase 3 Agent 모드
+
+**버전 + 검증**
+
+- `package.json` 0.2.21 (Phase 2 청크 21)
+
+```
+✓ npm run typecheck
+✓ npm run lint              (0 errors, 0 warnings)
+✓ npm run format:check
+✓ npm test                  (3/3)
+✓ 누적 e2e 255 = 249 + 5 (chat-multidoc) + 1 (nvidia-live chunk 21). 249 passed / 6 skipped (NIM 5개 키 게이트 + cell-menu 1개 의도)
+✓ NVIDIA NIM live 5/5 (qwen/qwen3.5-122b-a10b — chunk 18·19·20·21 round-trip 모두 포함)
+```
+
 **다음 청크 — rhwp-core API 추가 활용 (계속)**
 
 `@rhwp/core` 0.7.9는 253개 메서드 노출. 우리가 활용 중인 건 ~30%. 한컴 한글 핵심 누락분을 라이브러리 API로 매핑한 후보 청크 (사용 빈도 + UX 임팩트 순):
@@ -2583,6 +2636,7 @@ interface ExcerptAttachment {
 - ~~HTML 내보내기/붙이기 + ChatPanel 문서 컨텍스트 (AI 라운드트립 검증)~~ ✅ (청크 18, 2026-05-01)
 - ~~Manual 모드 도구 디스패치 (`ahwp-tools` JSON 블록 — 각주/머리말/책갈피/페이지/스타일/도형 IR 라우팅)~~ ✅ (청크 19, 2026-05-01)
 - ~~발췌 첨부 (선택 영역만 시스템 프롬프트 `[발췌]:` 블록으로 — 토큰↓·anchor 정확도↑, stale 자동 재바인딩)~~ ✅ (청크 20, 2026-05-02)
+- ~~멀티 문서 컨텍스트 (target/reference 칩 + `[참조 문서]:` 시스템 블록 + write tool target-only)~~ ✅ (청크 21, 2026-05-02)
 
 **진행 가능 (키 의존성 없음)**
 

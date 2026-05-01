@@ -20,7 +20,8 @@
  * persist beyond the test.
  */
 /// <reference lib="dom" />
-import { existsSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { launchApp, type LaunchedApp } from './launch';
@@ -250,5 +251,104 @@ test.describe('NVIDIA NIM — live smoke', () => {
     });
 
     await expect(page.getByTestId('chat-send')).toBeVisible();
+  });
+
+  // chunk 21 — multi-doc reference round trip. Two distinct tabs:
+  // target (active) and reference. Reference is opted in via chip
+  // checkbox; the model is asked to quote the reference's body. A
+  // successful quote proves the [참조 문서] block reached the prompt.
+  test('chunk 21 — reference doc outline landed in system prompt (model quotes it back)', async () => {
+    test.skip(!existsSync(FIXTURE), 'tests/e2e/fixtures/blank.hwpx missing');
+    const { page } = launched;
+
+    // Set up two distinct paths via copying the blank fixture.
+    const dir = mkdtempSync(path.join(tmpdir(), 'ahwp-nim21-'));
+    const docA = path.join(dir, 'target.hwpx');
+    const docB = path.join(dir, 'reference.hwpx');
+    copyFileSync(FIXTURE, docA);
+    copyFileSync(FIXTURE, docB);
+    try {
+      await page.evaluate(
+        async (paths) => {
+          await window.api.session.set({
+            openTabPaths: paths,
+            lastActivePath: paths[0],
+          });
+        },
+        [docA, docB],
+      );
+      await page.reload();
+      await page.waitForLoadState('domcontentloaded');
+      await page.waitForFunction(
+        () =>
+          Boolean(
+            (window as Window & { __studioDebug?: StudioDebug }).__studioDebug,
+          ),
+        { timeout: 30_000 },
+      );
+
+      // Switch to reference tab and seed sentinel.
+      // The activate handler lives on the first <button> inside the
+      // studio-tab wrapper (the close × is the second button). Locator
+      // chain to grab the right one.
+      const tabButtons = page
+        .getByTestId('studio-tab')
+        .locator('button:not([data-testid="studio-tab-close"])');
+      await tabButtons.nth(1).click();
+      await page.waitForFunction(
+        () =>
+          Boolean(
+            (window as Window & { __studioDebug?: StudioDebug }).__studioDebug,
+          ),
+        { timeout: 10_000 },
+      );
+      const REF_SENTINEL = '본 규정은 매 분기 사외이사 회의에서 검토된다';
+      await page.evaluate((text) => {
+        const dbg = (window as Window & { __studioDebug?: StudioDebug })
+          .__studioDebug!;
+        dbg.insertText(0, 0, 0, text);
+      }, REF_SENTINEL);
+
+      // Switch back to target tab.
+      await tabButtons.nth(0).click();
+      await page.waitForFunction(
+        () =>
+          Boolean(
+            (window as Window & { __studioDebug?: StudioDebug }).__studioDebug,
+          ),
+        { timeout: 10_000 },
+      );
+
+      await page.getByTestId('chat-provider-select').selectOption('nvidia');
+      await page.getByTestId('chat-model-input').fill('qwen/qwen3.5-122b-a10b');
+      await expect(page.getByTestId('chat-key-indicator')).toHaveText(/●/);
+
+      // Opt in the reference doc.
+      const chips = page.getByTestId('chat-multidoc-chip');
+      await expect(chips).toHaveCount(2);
+      await chips.nth(1).getByTestId('chat-multidoc-checkbox').check();
+
+      await page
+        .getByTestId('chat-input')
+        .fill(
+          '참조 문서 [ref 1]에서 보이는 한국어 명사 두 개를 따옴표로 인용해서 그대로 응답에 포함시켜줘. 다른 설명은 짧게만.',
+        );
+      await page.getByTestId('chat-send').click();
+
+      const assistantContent = page
+        .locator('[data-testid="chat-message"][data-role="assistant"]')
+        .last()
+        .getByTestId('chat-message-content');
+      // The reference body has '규정 / 분기 / 사외이사 / 회의 / 검토'
+      // — model should quote at least one back.
+      await expect(assistantContent).toContainText(
+        /(규정|분기|사외이사|회의|검토)/,
+        { timeout: 60_000 },
+      );
+
+      await expect(page.getByTestId('chat-send')).toBeVisible();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

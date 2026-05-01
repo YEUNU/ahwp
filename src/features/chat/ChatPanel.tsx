@@ -152,6 +152,26 @@ export interface ChatPanelProps {
     status: ExcerptStatus;
     newAnchor?: TextRange;
   } | null;
+  /**
+   * Currently open document tabs — chunk 21. Used by the multi-doc
+   * chip row to show target (active tab, locked) + reference candidates
+   * (other tabs, user opt-in). Returns an empty array when no tabs are
+   * open.
+   */
+  getOpenDocs?: () => {
+    path: string;
+    label: string;
+    isActive: boolean;
+  }[];
+  /**
+   * Read a non-active document's outline for the system prompt — chunk
+   * 21. Each reference contributes a short outline (the first ~20
+   * paragraphs as HTML by default) so the model can quote / analyze it
+   * without the full body landing in every turn. The IR fetch goes
+   * through the inactive tab's mounted viewer, so this works without
+   * activating that tab.
+   */
+  getDocOutline?: (path: string) => string;
 }
 
 const HTML_BLOCK_RE = /```html\n?([\s\S]*?)```/i;
@@ -187,6 +207,46 @@ const SYSTEM_PROMPT_DOC_CONTEXT = `너는 한컴 한글 문서 어시스턴트�
 
 분리 기준: 양식(정렬/간격/글자 서식/표) = [A] HTML, 컨트롤 객체 = [B] ahwp-tools. 같은 일을 두 갈래로 보내지 마. 각 형식은 응답에 최대 한 블록만 포함해. 코드 블록 외에 짧은 설명을 함께 써도 돼.`;
 
+/** Collect `{ label, outline }` for each reference doc the user has
+ * opted in — chunk 21. Filters out paths that no longer correspond to
+ * an open tab (closed since the user checked it) and active-tab paths
+ * (target is implicit, never a reference). */
+function collectReferenceOutlines(
+  referencePaths: string[],
+  getOpenDocs?: () => { path: string; label: string; isActive: boolean }[],
+  getDocOutline?: (path: string) => string,
+): { label: string; outline: string }[] {
+  if (!getOpenDocs || !getDocOutline || referencePaths.length === 0) return [];
+  const docs = getOpenDocs();
+  const byPath = new Map(docs.map((d) => [d.path, d]));
+  const out: { label: string; outline: string }[] = [];
+  for (const path of referencePaths) {
+    const meta = byPath.get(path);
+    if (!meta || meta.isActive) continue;
+    const outline = getDocOutline(path);
+    if (outline.length === 0) continue;
+    out.push({ label: meta.label, outline });
+  }
+  return out;
+}
+
+/** Serialize references into the system prompt — chunk 21. Read-only
+ * by contract; the system prompt explicitly forbids modification. */
+function buildReferenceSystemBlock(
+  refs: { label: string; outline: string }[],
+): string {
+  const lines: string[] = ['[참조 문서]:'];
+  refs.forEach((r, i) => {
+    lines.push(`[ref ${i + 1}] doc="${r.label}" (read-only)`);
+    lines.push(r.outline);
+    lines.push('');
+  });
+  lines.push(
+    '참조 규칙: [참조 문서]는 읽기·인용·문체 분석만 허용. 절대 수정 대상으로 삼지 마. 변경 적용 (` ```html``` ` / ` ```ahwp-tools``` `) 은 활성 문서(target)에만 한다.',
+  );
+  return lines.join('\n');
+}
+
 /** Serialize chips into the system message for chunk 20. The block
  * mirrors the spec in `docs/AI_INTEGRATION.md` §발췌 드래그 첨부 ›
  * 프롬프트 직렬화: numbered entries with role/doc/anchor metadata so
@@ -214,6 +274,8 @@ export function ChatPanel({
   captureExcerpt,
   activeDocPath,
   verifyExcerpt,
+  getOpenDocs,
+  getDocOutline,
 }: ChatPanelProps = {}): JSX.Element {
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState('');
@@ -233,6 +295,10 @@ export function ChatPanel({
   const [excerpts, setExcerpts] = useState<ExcerptAttachment[]>([]);
   // Toast for send-side blocking events (e.g. all chips went stale).
   const [excerptError, setExcerptError] = useState<string | null>(null);
+  // chunk 21 — paths the user opted in as references. Active tab is
+  // implicit target (always included) and never appears in this set.
+  // Stored as an array (not Set) so React equality is straightforward.
+  const [referencePaths, setReferencePaths] = useState<string[]>([]);
   const handleRef = useRef<AiChatHandle | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const assistantIdRef = useRef<string | null>(null);
@@ -329,16 +395,29 @@ export function ChatPanel({
       setStreaming(true);
 
       // Build provider-bound message list. The system message
-      // composition picks one of three context strategies:
+      // composition picks one of three context strategies for the
+      // *target* doc (the active tab):
       //   (1) excerpts present  → `[발췌]:` block, narrowly anchored
       //   (2) attach toggle on  → `[현재 문서]:` whole-doc HTML
-      //   (3) neither           → no doc context (chat is doc-free)
+      //   (3) neither           → no target body in prompt (just refs)
       // Excerpts win over the toggle when both are set, per
       // memory/project_chat_context_pipeline.md priority rule.
+      //
+      // Reference docs (chunk 21) are appended as an additional
+      // `[참조 문서]:` block when the user has opted any in. They are
+      // read-only — write tools (chunk 19) still target the active doc
+      // by construction since the dispatcher hands them to the active
+      // viewer's IR.
       const messages: {
         role: 'system' | 'user' | 'assistant';
         content: string;
       }[] = history.map(({ role, content }) => ({ role, content }));
+
+      const refOutlines = collectReferenceOutlines(
+        referencePaths,
+        getOpenDocs,
+        getDocOutline,
+      );
 
       let systemContent: string | null = null;
       if (verifiedExcerpts.length > 0) {
@@ -349,6 +428,13 @@ export function ChatPanel({
           systemContent = `${SYSTEM_PROMPT_DOC_CONTEXT}\n\n[현재 문서]:\n${docHtml}`;
         }
       }
+      if (refOutlines.length > 0) {
+        const refBlock = buildReferenceSystemBlock(refOutlines);
+        systemContent =
+          systemContent === null
+            ? `${SYSTEM_PROMPT_DOC_CONTEXT}\n\n${refBlock}`
+            : `${systemContent}\n\n${refBlock}`;
+      }
       if (systemContent !== null) {
         messages.unshift({ role: 'system', content: systemContent });
       }
@@ -356,7 +442,16 @@ export function ChatPanel({
       const request: ChatRequest = { provider, model, messages };
       handleRef.current = window.api.ai.chat(request, { onEvent });
     },
-    [attachDoc, getDocHtml, model, onEvent, provider],
+    [
+      attachDoc,
+      getDocHtml,
+      getDocOutline,
+      getOpenDocs,
+      model,
+      onEvent,
+      provider,
+      referencePaths,
+    ],
   );
 
   // chunk 20 — capture the active viewer selection as a chip. The
@@ -625,6 +720,20 @@ export function ChatPanel({
         className="border-t border-border bg-card p-3"
         data-testid="chat-input-form"
       >
+        {getOpenDocs ? (
+          <MultiDocChips
+            getOpenDocs={getOpenDocs}
+            referencePaths={referencePaths}
+            onToggleReference={(path) =>
+              setReferencePaths((prev) =>
+                prev.includes(path)
+                  ? prev.filter((p) => p !== path)
+                  : [...prev, path],
+              )
+            }
+            disabled={streaming}
+          />
+        ) : null}
         {getDocHtml ? (
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
             <label
@@ -776,6 +885,77 @@ interface MessageProps {
   onApplyHtml?: (html: string) => void;
   /** Run an `ahwp-tools` op list against the active document (chunk 19). */
   onRunTools?: (items: AhwpPreflightItem[]) => AhwpToolResult[];
+}
+
+/** Multi-doc chip strip — chunk 21. Reads `getOpenDocs` each render so
+ * we always reflect the latest tab list (close/open events mutate the
+ * source of truth in AppShell, not here). The active tab is shown as
+ * a locked target chip; everything else is a reference checkbox. */
+function MultiDocChips({
+  getOpenDocs,
+  referencePaths,
+  onToggleReference,
+  disabled,
+}: {
+  getOpenDocs: () => { path: string; label: string; isActive: boolean }[];
+  referencePaths: string[];
+  onToggleReference: (path: string) => void;
+  disabled: boolean;
+}): JSX.Element | null {
+  const docs = getOpenDocs();
+  if (docs.length === 0) return null;
+  return (
+    <div
+      className="mb-2 flex flex-wrap items-center gap-1.5 text-[10px]"
+      data-testid="chat-multidoc-chips"
+    >
+      <span className="text-muted-foreground">컨텍스트:</span>
+      {docs.map((d) => {
+        const isReference = referencePaths.includes(d.path);
+        return (
+          <span
+            key={d.path}
+            data-testid="chat-multidoc-chip"
+            data-role={
+              d.isActive ? 'target' : isReference ? 'reference' : 'unused'
+            }
+            className={cn(
+              'flex items-center gap-1 rounded-full border px-2 py-0.5',
+              d.isActive && 'border-primary/40 bg-primary/10 text-foreground',
+              !d.isActive &&
+                isReference &&
+                'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400',
+              !d.isActive &&
+                !isReference &&
+                'border-input bg-background text-muted-foreground',
+            )}
+            title={d.path}
+          >
+            {d.isActive ? (
+              <span className="font-medium">🎯 {d.label}</span>
+            ) : (
+              <label
+                className={cn(
+                  'flex cursor-pointer items-center gap-1',
+                  disabled && 'cursor-not-allowed opacity-50',
+                )}
+                data-testid="chat-multidoc-toggle"
+              >
+                <input
+                  type="checkbox"
+                  checked={isReference}
+                  onChange={() => onToggleReference(d.path)}
+                  disabled={disabled}
+                  data-testid="chat-multidoc-checkbox"
+                />
+                <span>📚 {d.label}</span>
+              </label>
+            )}
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 
 function Message({
