@@ -13,6 +13,7 @@ import { correctExtension } from '@shared/format';
 import { ChatPanel } from '@/features/chat/ChatPanel';
 import { FolderTree } from '@/features/files/FolderTree';
 import { SettingsDialog } from '@/features/settings/SettingsDialog';
+import { BookmarkDialog } from '@/features/studio/BookmarkDialog';
 import { HeaderFooterDialog } from '@/features/studio/HeaderFooterDialog';
 import { PageSetupDialog } from '@/features/studio/PageSetupDialog';
 import { StudioViewer } from '@/features/studio/StudioViewer';
@@ -56,6 +57,7 @@ export default function AppShell() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [pageSetupOpen, setPageSetupOpen] = useState(false);
   const [hfOpen, setHfOpen] = useState(false);
+  const [bookmarkOpen, setBookmarkOpen] = useState(false);
   // viewerRef per tab (by key). The active tab's viewer is what menu /
   // shortcut actions target.
   const viewerRefsRef = useRef<Map<string, ViewerHandle | null>>(new Map());
@@ -339,6 +341,8 @@ export default function AppShell() {
         setPageSetupOpen(true);
       } else if (action === 'insert:header-footer') {
         setHfOpen(true);
+      } else if (action === 'insert:bookmark') {
+        setBookmarkOpen(true);
       }
     });
   }, [
@@ -366,6 +370,15 @@ export default function AppShell() {
         }
         onApply={(sec, isHeader, applyTo, text) =>
           activeViewerRef()?.setHeaderFooterText(sec, isHeader, applyTo, text)
+        }
+      />
+      <BookmarkDialog
+        open={bookmarkOpen}
+        onOpenChange={setBookmarkOpen}
+        getBookmarks={() => activeViewerRef()?.getBookmarks() ?? null}
+        onAdd={(name) => activeViewerRef()?.addBookmarkAtCaret(name)}
+        onDelete={(sec, para, ctrlIdx) =>
+          activeViewerRef()?.deleteBookmarkAt(sec, para, ctrlIdx)
         }
       />
       <PanelGroup

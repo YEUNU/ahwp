@@ -1561,6 +1561,56 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     );
 
     /**
+     * Bookmarks — chunk 12. Targets a specific (sec, para, charOffset)
+     * with a user-supplied name. The IR returns `{ok, ctrlIdx, ...}`;
+     * `ctrlIdx` is what subsequent rename/delete calls need.
+     */
+    const addBookmarkAtCaret = useCallback((name: string): void => {
+      const doc = docRef.current;
+      if (!doc) return;
+      const c = caretRef.current;
+      try {
+        doc.addBookmark(c.sectionIndex, c.paragraphIndex, c.charOffset, name);
+        // Bookmarks don't change visible content, but they do mutate the IR
+        // — so save state must reflect them. We don't re-paginate.
+        dirtyRef.current = true;
+        setDirty(true);
+      } catch (err) {
+        console.warn('[studio] addBookmark failed:', err);
+      }
+    }, []);
+
+    const deleteBookmarkAt = useCallback(
+      (sec: number, para: number, ctrlIdx: number): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        try {
+          doc.deleteBookmark(sec, para, ctrlIdx);
+          dirtyRef.current = true;
+          setDirty(true);
+        } catch (err) {
+          console.warn('[studio] deleteBookmark failed:', err);
+        }
+      },
+      [],
+    );
+
+    const renameBookmarkAt = useCallback(
+      (sec: number, para: number, ctrlIdx: number, newName: string): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        try {
+          doc.renameBookmark(sec, para, ctrlIdx, newName);
+          dirtyRef.current = true;
+          setDirty(true);
+        } catch (err) {
+          console.warn('[studio] renameBookmark failed:', err);
+        }
+      },
+      [],
+    );
+
+    /**
      * Header / footer wrappers — chunk 11. HF edits live outside the body
      * caret stream, so we pass `syncCaret: false`. The IR returns
      * `{ok, exists, kind, applyTo, ...}` JSON; UI-facing helpers parse
@@ -2264,6 +2314,25 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         },
         setHeaderFooterText: (sectionIdx, isHeader, applyTo, text) =>
           setHeaderFooterText(sectionIdx, isHeader, applyTo, text),
+        addBookmarkAtCaret: (name) => addBookmarkAtCaret(name),
+        getBookmarks: () => {
+          const doc = docRef.current;
+          if (!doc) return null;
+          try {
+            const raw = JSON.parse(doc.getBookmarks()) as
+              | Record<string, unknown>[]
+              | { bookmarks?: Record<string, unknown>[] };
+            if (Array.isArray(raw)) return raw;
+            if (Array.isArray(raw?.bookmarks)) return raw.bookmarks;
+            return null;
+          } catch {
+            return null;
+          }
+        },
+        deleteBookmarkAt: (sec, para, ctrlIdx) =>
+          deleteBookmarkAt(sec, para, ctrlIdx),
+        renameBookmarkAt: (sec, para, ctrlIdx, newName) =>
+          renameBookmarkAt(sec, para, ctrlIdx, newName),
         isDirty: () => dirtyRef.current,
       }),
       [
@@ -2280,6 +2349,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         applyTextColor,
         applyPageDef,
         setHeaderFooterText,
+        addBookmarkAtCaret,
+        deleteBookmarkAt,
+        renameBookmarkAt,
       ],
     );
 
@@ -3624,6 +3696,30 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         },
         applyPageDef: (props: Record<string, unknown>, sectionIdx = 0): void =>
           applyPageDef(props, sectionIdx),
+        // Bookmarks — chunk 12.
+        addBookmarkAtCaret: (name: string): void => addBookmarkAtCaret(name),
+        getBookmarks: (): Record<string, unknown>[] | null => {
+          const doc = docRef.current;
+          if (!doc) return null;
+          try {
+            const raw = JSON.parse(doc.getBookmarks()) as
+              | Record<string, unknown>[]
+              | { bookmarks?: Record<string, unknown>[] };
+            if (Array.isArray(raw)) return raw;
+            if (Array.isArray(raw?.bookmarks)) return raw.bookmarks;
+            return null;
+          } catch {
+            return null;
+          }
+        },
+        deleteBookmarkAt: (sec: number, para: number, ctrlIdx: number): void =>
+          deleteBookmarkAt(sec, para, ctrlIdx),
+        renameBookmarkAt: (
+          sec: number,
+          para: number,
+          ctrlIdx: number,
+          newName: string,
+        ): void => renameBookmarkAt(sec, para, ctrlIdx, newName),
         // Header / footer — chunk 11.
         setHeaderFooterText: (
           sectionIdx: number,
@@ -3756,6 +3852,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       unmergeCell,
       applyPageDef,
       setHeaderFooterText,
+      addBookmarkAtCaret,
+      deleteBookmarkAt,
+      renameBookmarkAt,
     ]);
 
     // Effect 2: page indicator + mount window. On every scroll (rAF-

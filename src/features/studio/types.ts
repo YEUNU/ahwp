@@ -51,6 +51,23 @@ export interface ViewerHandle {
     applyTo: number,
     text: string,
   ) => void;
+  /** Add a bookmark at the current caret position (chunk 12). */
+  addBookmarkAtCaret: (name: string) => void;
+  /** All bookmarks in the document. Each entry has `{name, sectionIndex, paragraphIndex, controlIndex, ...}` (shape varies by lib version). */
+  getBookmarks: () => Record<string, unknown>[] | null;
+  /** Delete a bookmark by its IR coordinates. */
+  deleteBookmarkAt: (
+    sectionIdx: number,
+    paraIdx: number,
+    ctrlIdx: number,
+  ) => void;
+  /** Rename a bookmark in place. */
+  renameBookmarkAt: (
+    sectionIdx: number,
+    paraIdx: number,
+    ctrlIdx: number,
+    newName: string,
+  ) => void;
   /** Set paragraph alignment on selection / current paragraph (chunk 10). */
   applyAlignment: (a: ParagraphAlignment) => void;
   /** Apply font size in points (converted to HWPUNIT internally). */

@@ -6,13 +6,13 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 | 항목        | 상태                                                                                                                                                                                                                       |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Phase       | **Phase 2 청크 11** — 머리말/꼬리말 (rhwp-core 활용 시리즈 5번째). 다음: 각주 → 책갈피 → 도형                                                                                                                              |
+| Phase       | **Phase 2 청크 12** — 책갈피 (rhwp-core 활용 시리즈 6번째). 다음: 각주 → 스타일 관리 → 도형                                                                                                                                |
 | 빌드        | ✅ `npm run dev` · `npx vite build`                                                                                                                                                                                        |
 | 타입        | ✅ `npm run typecheck`                                                                                                                                                                                                     |
 | 린트        | ✅ `npm run lint` (0 warnings, 0 errors)                                                                                                                                                                                   |
 | 포맷        | ✅ `npm run format:check`                                                                                                                                                                                                  |
 | 단위 테스트 | ✅ 3/3 (`App.test.tsx`)                                                                                                                                                                                                    |
-| e2e         | ✅ 192 케이스 / 4 워커 병렬 + retry=1 (~76s) — 186 prior + 6 header/footer. 2 skip = NIM live + cell-menu UI(의도)                                                                                                         |
+| e2e         | ✅ 197 케이스 / 4 워커 병렬 + retry=1 (~77s) — 192 prior + 5 bookmark. 2 skip = NIM live + cell-menu UI(의도)                                                                                                              |
 | Electron    | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                                                |
 | 의존성      | runtime: `@rhwp/core` · `chokidar` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` (chunk 6에서 `@rhwp/editor` 제거) |
 
@@ -2086,6 +2086,68 @@ insertTextInHeaderFooter(..., 0 /* paraIdx */, 0 /* charOffset */, text)
 ✓ npm run e2e               (190/192, 2 skip = NIM live + cell-menu UI 의도, 회귀 0)
 ```
 
+### 2026-05-01 — Phase 2 청크 12 — 책갈피 (rhwp-core 활용 시리즈 6번째)
+
+가장 가벼운 청크 — IR API 4개. Settings/Page/HF dialog 패턴 그대로 재사용.
+
+**IR API**
+
+| 메서드                                        | 역할                 |
+| --------------------------------------------- | -------------------- |
+| `addBookmark(sec, para, charOffset, name)`    | 새 책갈피 추가       |
+| `getBookmarks()`                              | 전체 책갈피 목록     |
+| `renameBookmark(sec, para, ctrlIdx, newName)` | 이름 변경 (in-place) |
+| `deleteBookmark(sec, para, ctrlIdx)`          | 삭제                 |
+
+**probe 응답**
+
+```json
+[{ "name": "bm-1", "sec": 0, "para": 0, "ctrlIdx": 1, "charPos": 11 }]
+```
+
+5필드 평면 구조. ctrlIdx는 IR이 1부터 할당.
+
+**구현 — 헬퍼**
+
+- `addBookmarkAtCaret(name)`: 현재 caret(`caretRef.current`)에 IR call. 시각 콘텐츠 변경 X → re-paginate 안 함, dirty만 표시
+- `deleteBookmarkAt(sec, para, ctrlIdx)` / `renameBookmarkAt(...)` 동일
+- `getBookmarks` debug 헬퍼는 응답이 배열이거나 `{bookmarks: [...]}` 양쪽 처리 (라이브러리 future-proof)
+
+**ViewerHandle / \_\_studioDebug**
+
+- `ViewerHandle.{addBookmarkAtCaret, getBookmarks, deleteBookmarkAt, renameBookmarkAt}` 노출
+- `__studioDebug` 동일 — e2e 라운드트립용
+
+**구현 — `BookmarkDialog`**
+
+- shadcn `Dialog` 재사용
+- 추가 폼 (이름 input + "추가" 버튼) — 빈 이름 disabled
+- 책갈피 목록 — 각 행에 이름 + `§{sec} · ¶{para} · @{charPos}` 위치 정보 + 삭제 휴지통 버튼
+- 빈 상태 안내
+- 진입점: `insert:bookmark` MenuAction → 메뉴 "보기 → 책갈피…"
+
+**점프 기능 보류**
+
+책갈피 클릭 시 caret 이동 + scroll은 후속 청크. caret/scroll 메커니즘은 viewer 내부에 깊게 묶여 있어 다이얼로그 → viewer 통신 surface 추가가 필요. 현재 MVP는 추가 / 목록 / 삭제 / 이름변경.
+
+**e2e — `tests/e2e/studio-bookmark.spec.ts`** (5 케이스)
+
+1. blank doc — 빈 배열
+2. addBookmarkAtCaret → getBookmarks 라운드트립 (name/sec/para/ctrlIdx≥1)
+3. 두 책갈피 추가 → 첫 번째만 deleteBookmarkAt → 두 번째 남음
+4. renameBookmarkAt 후 readback name 변경
+5. UI: `insert:bookmark` IPC → 다이얼로그 → 추가 → row 표시 → 삭제 → 빈 상태
+
+**검증 결과**
+
+```
+✓ npm run typecheck
+✓ npm run lint              (0 errors, 0 warnings)
+✓ npm run format:check
+✓ npm test                  (3/3)
+✓ npm run e2e               (195/197, 2 skip = NIM live + cell-menu UI 의도, 회귀 0)
+```
+
 **다음 청크 — rhwp-core API 추가 활용 (계속)**
 
 `@rhwp/core` 0.7.9는 253개 메서드 노출. 우리가 활용 중인 건 ~30%. 한컴 한글 핵심 누락분을 라이브러리 API로 매핑한 후보 청크 (사용 빈도 + UX 임팩트 순):
@@ -2127,10 +2189,11 @@ insertTextInHeaderFooter(..., 0 /* paraIdx */, 0 /* charOffset */, text)
 - ~~셀 합치기 / 나누기 / 병합 해제~~ ✅ (청크 9, 2026-05-01)
 - ~~페이지 설정 (용지/방향/여백)~~ ✅ (청크 10, 2026-05-01)
 - ~~머리말 / 꼬리말 (단일 라인 MVP)~~ ✅ (청크 11, 2026-05-01)
+- ~~책갈피 (add/list/delete/rename)~~ ✅ (청크 12, 2026-05-01)
 
 **진행 가능 (키 의존성 없음)**
 
-- rhwp-core API 추가 활용 시리즈 (각주 → 책갈피 → 도형 → 수식 등 — 위 일지의 "다음 청크" 표 참조)
+- rhwp-core API 추가 활용 시리즈 (각주 → 스타일 관리 → 도형 → 수식 등 — 위 일지의 "다음 청크" 표 참조)
 - 파일별 채팅 히스토리 (better-sqlite3 도입 — schema/migration 정리)
 - Manual 모드: AI 변경사항을 diff로 제안 → Accept/Reject (2-E, 현재 OpenAI/NVIDIA만으로도 검증 가능)
 

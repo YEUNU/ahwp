@@ -35,6 +35,7 @@ export type MenuAction =
   | 'edit:replace'
   | 'view:page-setup'
   | 'insert:header-footer'
+  | 'insert:bookmark'
   | 'format:bold'
   | 'format:italic'
   | 'format:underline'

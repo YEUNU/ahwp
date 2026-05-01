@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+### Added — Phase 2 청크 12: 책갈피 (add / list / rename / delete)
+
+- 메뉴 "보기 → 책갈피…" 또는 `insert:bookmark` IPC로 다이얼로그 진입
+- 현재 커서 위치에 이름 붙여 책갈피로 저장 (이름 input + "추가" 버튼)
+- 저장된 책갈피 목록 — 각 행에 `§{sec} · ¶{para} · @{charPos}` 위치 + 삭제 휴지통
+- `addBookmark` / `getBookmarks` / `renameBookmark` / `deleteBookmark` IR API 직접 위임
+- **점프 기능(책갈피 클릭 → caret + scroll)은 후속 청크로 보류**
+
 ### Added — Phase 2 청크 11: 머리말 / 꼬리말 (MVP)
 
 - 메뉴 "보기 → 머리말 / 꼬리말…" 또는 `insert:header-footer` IPC로 다이얼로그 진입

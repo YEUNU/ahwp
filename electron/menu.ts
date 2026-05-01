@@ -134,6 +134,10 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
         click: () => send(getWindow(), 'insert:header-footer'),
       },
       {
+        label: '책갈피…',
+        click: () => send(getWindow(), 'insert:bookmark'),
+      },
+      {
         label: '설정…',
         accelerator: 'CmdOrCtrl+,',
         click: () => send(getWindow(), 'view:settings'),
