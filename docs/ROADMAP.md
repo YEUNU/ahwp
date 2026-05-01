@@ -76,6 +76,8 @@
   - [x] Copy/Cut/Paste (⌘C/⌘X/⌘V) — 내부 + 시스템 클립보드
   - [x] Find (⌘F) — 매치 하이라이트 + Next/Prev
   - [x] 찾아 바꾸기 (⌘H) — `replaceOne` / `replaceAll` IR API 위임. 단일/모두 바꾸기, 빈 값=삭제, case-insensitive, 매치 없을 때 버튼 비활성
+  - [x] 줄 간격 / 들여쓰기 / 문단 간격 (`applyParaFormat` props 확장 — `lineSpacing`, `marginLeft`, `spacingBefore`/`spacingAfter`). 확장 툴바에 선택 셀렉터 + 들여쓰기/내어쓰기 버튼
+  - [x] **하단 status bar** — undo/redo/zoom (out/level/in/100%/fit) + dirty + 페이지 인디케이터를 상단에서 분리. 한컴 한글 status bar 패턴
   - [x] 페이지 네비 (PageUp/Down, ⌘Home/End)
   - [x] 리스트 (글머리 / 번호) + 페이지 나누기
   - [x] 표 삽입 (TablePicker 8×8) + 셀 편집 (클릭→타이핑, Tab 네비, 인-셀 서식, 우클릭 행/열 추가·삭제)

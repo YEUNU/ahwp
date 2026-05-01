@@ -8,6 +8,8 @@ import {
   ChevronDown,
   ChevronUp,
   Image as ImageIcon,
+  IndentDecrease,
+  IndentIncrease,
   Italic,
   List,
   ListOrdered,
@@ -84,9 +86,39 @@ interface CharProps {
 }
 
 type ParaAlignment = 'left' | 'center' | 'right' | 'justify';
+/**
+ * Subset of @rhwp/core's ParaShape props_json schema we expose to the
+ * toolbar. Key names mirror the library's IR exactly (verified by reading
+ * `getParaPropertiesAt` output) — calling them anything else makes the IR
+ * silently ignore the value.
+ */
 interface ParaProps {
   alignment?: ParaAlignment;
+  /** Percent of single line height (100 = 1.0, 200 = 2.0). */
+  lineSpacing?: number;
+  /** "Percent" | "Fixed" | "AtLeast" — defaults to "Percent" when omitted. */
+  lineSpacingType?: 'Percent' | 'Fixed' | 'AtLeast';
+  /** Space before / after the paragraph in HWPUNIT (1mm ≈ 567 HWPUNIT). */
+  spacingBefore?: number;
+  spacingAfter?: number;
+  /** Left / right margins in HWPUNIT. Positive = inset from page margin. */
+  marginLeft?: number;
+  marginRight?: number;
+  /** First-line offset in HWPUNIT. Positive = indent, negative = hanging. */
+  indent?: number;
 }
+
+/** Line spacing presets shown in the toolbar (percent of single). */
+const LINE_SPACING_PRESETS: { label: string; value: number }[] = [
+  { label: '1.0', value: 100 },
+  { label: '1.15', value: 115 },
+  { label: '1.5', value: 150 },
+  { label: '2.0', value: 200 },
+  { label: '3.0', value: 300 },
+];
+
+/** One indent step ≈ 1cm = 5670 HWPUNIT. Matches what 한컴 한글 toolbar increments. */
+const INDENT_STEP_HWPUNIT = 5670;
 
 const PARA_ALIGNMENTS: ParaAlignment[] = ['left', 'center', 'right', 'justify'];
 
@@ -1294,15 +1326,18 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     );
 
     /**
-     * Apply paragraph alignment. Spans the selection's paragraphs when a
-     * selection is active, otherwise just the caret's paragraph.
+     * Generic paragraph-format applier. Spans the selection's paragraphs when
+     * one is active, otherwise just the caret's paragraph (or its enclosing
+     * cell if the caret sits inside a table). Used by alignment, line
+     * spacing, indent, and paragraph spacing — they all funnel through here
+     * so the selection / cell routing logic stays in one place.
      */
-    const applyAlignment = useCallback(
-      (alignment: ParaAlignment): void => {
+    const applyParaProps = useCallback(
+      (props: ParaProps): void => {
         const doc = docRef.current;
         if (!doc) return;
         const sel = selectionRef.current;
-        const propsJson = JSON.stringify({ alignment } satisfies ParaProps);
+        const propsJson = JSON.stringify(props);
         try {
           if (sel) {
             const r = sortRange(sel.anchor, sel.focus);
@@ -1330,6 +1365,56 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         }
       },
       [refreshAfterMutation, sortRange],
+    );
+
+    /**
+     * Apply paragraph alignment. Spans the selection's paragraphs when a
+     * selection is active, otherwise just the caret's paragraph.
+     */
+    const applyAlignment = useCallback(
+      (alignment: ParaAlignment): void => applyParaProps({ alignment }),
+      [applyParaProps],
+    );
+
+    /** Set line spacing as a percent of single line height (100 = 1.0). */
+    const applyLineSpacing = useCallback(
+      (percent: number): void => applyParaProps({ lineSpacing: percent }),
+      [applyParaProps],
+    );
+
+    /**
+     * Step the left margin by ±1cm (matches 한컴 한글's toolbar buttons).
+     * Reads the current value via getParaPropertiesAt so successive clicks
+     * stack correctly; floors at 0.
+     */
+    const stepIndent = useCallback(
+      (direction: 'increase' | 'decrease'): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        const c = caretRef.current;
+        let current = 0;
+        try {
+          const raw = doc.getParaPropertiesAt(c.sectionIndex, c.paragraphIndex);
+          const parsed = JSON.parse(raw) as { marginLeft?: number };
+          if (typeof parsed.marginLeft === 'number')
+            current = parsed.marginLeft;
+        } catch {
+          /* fall back to 0 — IR will accept fresh value either way */
+        }
+        const next =
+          direction === 'increase'
+            ? current + INDENT_STEP_HWPUNIT
+            : Math.max(0, current - INDENT_STEP_HWPUNIT);
+        applyParaProps({ marginLeft: next });
+      },
+      [applyParaProps],
+    );
+
+    /** Set paragraph spacing (before / after) in HWPUNIT. */
+    const applyParaSpacing = useCallback(
+      (spacingBefore: number, spacingAfter: number): void =>
+        applyParaProps({ spacingBefore, spacingAfter }),
+      [applyParaProps],
     );
 
     /**
@@ -3089,6 +3174,29 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         applyAlignment: (a: ParaAlignment): void => applyAlignment(a),
         applyFontSizePt: (pt: number): void => applyFontSizePt(pt),
         applyTextColor: (hex: string): void => applyTextColor(hex),
+        // Paragraph-shape ops — chunk 8 (line spacing / indent / spacing).
+        applyLineSpacing: (percent: number): void => applyLineSpacing(percent),
+        stepIndent: (dir: 'increase' | 'decrease'): void => stepIndent(dir),
+        applyParaSpacing: (before: number, after: number): void =>
+          applyParaSpacing(before, after),
+        getParaProps: (sectionIdx: number, paraIdx: number): unknown => {
+          const doc = docRef.current;
+          if (!doc) throw new Error('Document not loaded');
+          return JSON.parse(doc.getParaPropertiesAt(sectionIdx, paraIdx));
+        },
+        // Raw escape hatch — lets e2e probes try alternate prop key names
+        // when the lib's input schema diverges from its output schema.
+        applyParaPropsRaw: (
+          sectionIdx: number,
+          paraIdx: number,
+          propsJson: string,
+        ): string => {
+          const doc = docRef.current;
+          if (!doc) throw new Error('Document not loaded');
+          const result = doc.applyParaFormat(sectionIdx, paraIdx, propsJson);
+          refreshAfterMutation({ syncCaret: false });
+          return result;
+        },
         // Click-count selection synthesis for e2e — Playwright's
         // mouse.dblclick simulates two mousedowns but the resulting
         // e.detail isn't always 2 in Electron. These helpers emulate the
@@ -3337,6 +3445,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       applyAlignment,
       applyFontSizePt,
       applyTextColor,
+      applyLineSpacing,
+      stepIndent,
+      applyParaSpacing,
       findWordBoundsAt,
       stepWordOffset,
       insertImage,
@@ -3437,52 +3548,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       >
         {showToolbar && (
           <div className="flex h-10 items-center gap-1 border-b border-border px-3 text-xs">
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => undo()}
-              disabled={!canUndo}
-              aria-label="실행 취소"
-              data-testid="studio-undo"
-            >
-              <Undo2 className="size-4" />
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => redo()}
-              disabled={!canRedo}
-              aria-label="다시 실행"
-              data-testid="studio-redo"
-            >
-              <Redo2 className="size-4" />
-            </Button>
-            <span className="mx-2 h-5 w-px bg-border" aria-hidden="true" />
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => stepZoom('out')}
-              aria-label="축소"
-              data-testid="studio-zoom-out"
-            >
-              <ZoomOut className="size-4" />
-            </Button>
-            <span
-              className="min-w-[3.5rem] text-center font-mono text-muted-foreground"
-              data-testid="studio-zoom-level"
-            >
-              {Math.round(zoom * 100)}%
-            </span>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => stepZoom('in')}
-              aria-label="확대"
-              data-testid="studio-zoom-in"
-            >
-              <ZoomIn className="size-4" />
-            </Button>
-            <span className="mx-2 h-5 w-px bg-border" aria-hidden="true" />
+            {/* History + zoom + page indicator moved to the bottom status bar
+             *  (chunk 8). The top row is now editing-format only: B/I/U, align,
+             *  font size/color, paragraph style, and the "더보기" toggle. */}
             <Button
               size="sm"
               variant={activeFormat.bold ? 'secondary' : 'ghost'}
@@ -3585,24 +3653,6 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                 ))}
               </select>
             )}
-            <span className="mx-2 h-5 w-px bg-border" aria-hidden="true" />
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => setZoom(1)}
-              data-testid="studio-zoom-reset"
-            >
-              100%
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={setZoomFit}
-              aria-label="너비 맞춤"
-              data-testid="studio-zoom-fit"
-            >
-              <Maximize2 className="size-4" />
-            </Button>
             <Button
               size="sm"
               variant={toolbarExpanded ? 'secondary' : 'ghost'}
@@ -3613,25 +3663,6 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             >
               <MoreHorizontal className="size-4" />
             </Button>
-            {dirty && (
-              <span
-                className="ml-auto mr-2 text-amber-500"
-                data-testid="studio-dirty-indicator"
-                title="저장되지 않은 변경사항"
-              >
-                ●
-              </span>
-            )}
-            <span
-              className={
-                dirty
-                  ? 'text-muted-foreground'
-                  : 'ml-auto text-muted-foreground'
-              }
-              data-testid="studio-page-indicator"
-            >
-              {currentPage + 1} / {pageCount}
-            </span>
           </div>
         )}
 
@@ -3749,6 +3780,68 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             >
               <Square className="size-4" />
             </Button>
+            <span className="mx-2 h-5 w-px bg-border" aria-hidden="true" />
+            {/* Paragraph spacing controls — chunk 8. */}
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => stepIndent('decrease')}
+              aria-label="내어쓰기"
+              data-testid="studio-indent-decrease"
+            >
+              <IndentDecrease className="size-4" />
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => stepIndent('increase')}
+              aria-label="들여쓰기"
+              data-testid="studio-indent-increase"
+            >
+              <IndentIncrease className="size-4" />
+            </Button>
+            <select
+              className="h-7 rounded border border-input bg-background px-2 text-xs"
+              aria-label="줄 간격"
+              data-testid="studio-line-spacing"
+              defaultValue=""
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                if (Number.isFinite(v) && v > 0) applyLineSpacing(v);
+                e.currentTarget.value = ''; // reset so the same option re-fires
+              }}
+            >
+              <option value="" disabled>
+                줄 간격
+              </option>
+              {LINE_SPACING_PRESETS.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+            <select
+              className="h-7 rounded border border-input bg-background px-2 text-xs"
+              aria-label="문단 간격"
+              data-testid="studio-para-spacing"
+              defaultValue=""
+              onChange={(e) => {
+                // Stored as before|after pairs, both in HWPUNIT (≈ 567/mm).
+                // Presets: 0/0, 280/0 (≈0.5 line), 567/0 (≈1 line),
+                // 567/567 (1 line both).
+                const [before, after] = e.target.value.split(',').map(Number);
+                applyParaSpacing(before, after);
+                e.currentTarget.value = '';
+              }}
+            >
+              <option value="" disabled>
+                문단 간격
+              </option>
+              <option value="0,0">없음</option>
+              <option value="280,0">위 0.5</option>
+              <option value="567,0">위 1.0</option>
+              <option value="567,567">위·아래 1.0</option>
+            </select>
           </div>
         )}
 
@@ -4102,6 +4195,95 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             <pre className="max-w-md whitespace-pre-wrap text-xs text-muted-foreground">
               {error}
             </pre>
+          </div>
+        )}
+
+        {showToolbar && (
+          <div
+            className="flex h-9 items-center gap-1 border-t border-border bg-card px-3 text-xs"
+            data-testid="studio-statusbar"
+          >
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => undo()}
+              disabled={!canUndo}
+              aria-label="실행 취소"
+              data-testid="studio-undo"
+            >
+              <Undo2 className="size-4" />
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => redo()}
+              disabled={!canRedo}
+              aria-label="다시 실행"
+              data-testid="studio-redo"
+            >
+              <Redo2 className="size-4" />
+            </Button>
+            <span className="mx-2 h-5 w-px bg-border" aria-hidden="true" />
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => stepZoom('out')}
+              aria-label="축소"
+              data-testid="studio-zoom-out"
+            >
+              <ZoomOut className="size-4" />
+            </Button>
+            <span
+              className="min-w-[3.5rem] text-center font-mono text-muted-foreground"
+              data-testid="studio-zoom-level"
+            >
+              {Math.round(zoom * 100)}%
+            </span>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => stepZoom('in')}
+              aria-label="확대"
+              data-testid="studio-zoom-in"
+            >
+              <ZoomIn className="size-4" />
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setZoom(1)}
+              data-testid="studio-zoom-reset"
+            >
+              100%
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={setZoomFit}
+              aria-label="너비 맞춤"
+              data-testid="studio-zoom-fit"
+            >
+              <Maximize2 className="size-4" />
+            </Button>
+            {dirty && (
+              <span
+                className="ml-auto mr-2 text-amber-500"
+                data-testid="studio-dirty-indicator"
+                title="저장되지 않은 변경사항"
+              >
+                ●
+              </span>
+            )}
+            <span
+              className={
+                dirty
+                  ? 'text-muted-foreground'
+                  : 'ml-auto text-muted-foreground'
+              }
+              data-testid="studio-page-indicator"
+            >
+              {currentPage + 1} / {pageCount}
+            </span>
           </div>
         )}
       </div>
