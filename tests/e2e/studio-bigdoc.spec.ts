@@ -5,7 +5,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { launchApp, type LaunchedApp } from './launch';
 
 /**
- * Big-document load profile — 144-page HWPX.
+ * Big-document load profile — multi-page HWP/HWPX fixture.
  *
  * Goals:
  *   1. Doc parses + first page renders within a budget
@@ -13,9 +13,10 @@ import { launchApp, type LaunchedApp } from './launch';
  *   3. Scroll into view triggers render for distant pages
  *   4. Find across all paragraphs returns reasonably fast for many matches
  *
- * Numbers here are upper bounds on dev hardware — looser than the
- * Node-side probe (scripts/probe-bigdoc.mjs) because Playwright + Electron
- * adds startup + build overhead.
+ * The exact page count depends on the fixture in `examples/`; assertions are
+ * fixture-agnostic where possible (lower bounds rather than exact counts).
+ * Numbers are upper bounds on dev hardware — looser than the Node-side probe
+ * because Playwright + Electron adds startup + build overhead.
  */
 
 const BIG_FIXTURE = path.resolve(
@@ -23,7 +24,7 @@ const BIG_FIXTURE = path.resolve(
   '..',
   '..',
   'examples',
-  '★2026년 스마트공장 보급확산사업 세부관리기준 개정(전문)_260327.hwpx',
+  "(참고)(양식) ★'25년 제조AI특화 중간보고서, 완료보고서 서식자료_260127_01.hwp",
 );
 
 interface StudioDebug {
@@ -52,10 +53,10 @@ async function activateStudio(page: Page, fixture: string): Promise<void> {
   );
 }
 
-test.describe('studio big doc — 144-page load profile', () => {
+test.describe('studio big doc — multi-page load profile', () => {
   test.skip(
     !existsSync(BIG_FIXTURE),
-    'examples/★2026년 ... .hwpx fixture missing (gitignored)',
+    "examples/(참고)(양식) ★'25년 ... .hwp fixture missing (gitignored)",
   );
 
   let launched: LaunchedApp;
@@ -69,7 +70,7 @@ test.describe('studio big doc — 144-page load profile', () => {
     await launched.close();
   });
 
-  test('opens with ~144 pages and indicator reads "1 / 144"', async () => {
+  test('opens with multiple pages; indicator reads "1 / N"', async () => {
     const { page } = launched;
     const indicator = page.getByTestId('studio-page-indicator');
     await expect(indicator).toBeVisible({ timeout: 30_000 });
@@ -77,10 +78,10 @@ test.describe('studio big doc — 144-page load profile', () => {
     const m = text.match(/^\s*1\s*\/\s*(\d+)/);
     expect(m).not.toBeNull();
     const total = Number(m![1]);
-    // We expect 144 but the renderer's text reflow can shift by a small
-    // amount (KNOWN_ISSUES L-004); allow ±10.
-    expect(total).toBeGreaterThanOrEqual(134);
-    expect(total).toBeLessThanOrEqual(154);
+    // Lower bound only — the rest of this suite needs enough pages to make
+    // mount-window and scroll-unmount assertions meaningful (≥ ~20). The
+    // current fixture renders 57 pages.
+    expect(total).toBeGreaterThanOrEqual(20);
   });
 
   test('mount window — only ±5 pages from the active page have SVG mounted', async () => {
@@ -89,7 +90,7 @@ test.describe('studio big doc — 144-page load profile', () => {
       page.getByTestId('studio-viewer-page').first().locator('svg').first(),
     ).toBeVisible({ timeout: 30_000 });
     const total = await page.getByTestId('studio-viewer-page').count();
-    expect(total).toBeGreaterThan(100);
+    expect(total).toBeGreaterThan(20);
     const mounted = await page
       .getByTestId('studio-viewer-page')
       .locator('svg')
@@ -109,7 +110,7 @@ test.describe('studio big doc — 144-page load profile', () => {
     // Wait for the rAF-throttled scroll handler to settle.
     await page.waitForTimeout(200);
     // Page 0 should now be UNMOUNTED (out of the ±5 window from the
-    // bottom of a 144-page doc).
+    // bottom of a multi-page doc).
     await expect
       .poll(async () => placeholders.first().locator('svg').count())
       .toBe(0);
@@ -127,13 +128,15 @@ test.describe('studio big doc — 144-page load profile', () => {
     await expect(last.locator('svg').first()).toBeVisible({ timeout: 15_000 });
   });
 
-  test('Find across the whole doc returns many matches in under 5s', async () => {
+  test('Find across the whole doc returns matches in under 5s', async () => {
     const { page } = launched;
     const t0 = Date.now();
+    // "보고서" is common in Korean reports; if the fixture lacks it we'd
+    // need to swap. Lower bound only — exact count varies by fixture.
     await page.evaluate(() => {
       (
         window as Window & { __studioDebug?: StudioDebug }
-      ).__studioDebug!.openFind('사업');
+      ).__studioDebug!.openFind('보고서');
     });
     await expect
       .poll(
@@ -146,8 +149,10 @@ test.describe('studio big doc — 144-page load profile', () => {
           ),
         { timeout: 5_000 },
       )
-      .toBeGreaterThan(50);
+      .toBeGreaterThan(0);
     const elapsed = Date.now() - t0;
-    console.log(`[e2e] find scan over 144-page doc completed in ${elapsed} ms`);
+    console.log(
+      `[e2e] find scan over multi-page doc completed in ${elapsed} ms`,
+    );
   });
 });

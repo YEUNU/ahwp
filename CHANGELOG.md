@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+### Added — Phase 2 청크 6: 메시지 액션 (2-C 완료)
+
+- assistant bubble hover 시 액션 툴바 노출 — **복사 / 재생성 / 삭제**. user bubble은 **복사**만
+- 복사 직후 1.5초간 ✓ 아이콘으로 시각 피드백
+- 재생성 = 같은 user 메시지에 대한 새 응답으로 assistant bubble 갈아치움 (history 보존)
+- 삭제 = 단일 메시지만 제거 (preceding user 보존)
+- 스트리밍 중엔 모든 액션 툴바 숨김 (race 방지)
+
+### Changed — E2E BIG_FIXTURE 교체
+
+- `studio-bigdoc.spec.ts` / `studio-pagenav.spec.ts`의 fixture를 `(참고)(양식) ★'25년 ... 보고서 서식자료_260127_01.hwp` (57페이지)로 변경. 기존 ~144페이지 `.hwpx`에 의존하던 11 케이스 skip 모두 활성화. 어설션을 fixture-agnostic 하한으로 일반화 (page≥20, find match≥1)
+- e2e 결과: 12 skip → **1 skip** (남은 1개는 `nvidia-live` env 게이트)
+
 ### Added — Phase 2 청크 5: 채팅 마크다운 + 코드 syntax highlight
 
 - **assistant 메시지 마크다운 렌더링** — `react-markdown` + `remark-gfm` (테이블, 취소선, 작업 리스트, 자동 링크). user 메시지는 plain text 유지(입력 그대로 표시 — 마크다운 깜짝 변환 X)

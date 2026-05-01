@@ -20,7 +20,7 @@ const BIG_FIXTURE = path.resolve(
   '..',
   '..',
   'examples',
-  '★2026년 스마트공장 보급확산사업 세부관리기준 개정(전문)_260327.hwpx',
+  "(참고)(양식) ★'25년 제조AI특화 중간보고서, 완료보고서 서식자료_260127_01.hwp",
 );
 
 interface Caret {
@@ -75,7 +75,7 @@ async function getScrollTop(page: Page): Promise<number> {
 test.describe('studio page nav — chunk 12', () => {
   test.skip(
     !existsSync(BIG_FIXTURE),
-    'examples/★2026년 ... .hwpx fixture missing (gitignored)',
+    "examples/(참고)(양식) ★'25년 ... .hwp fixture missing (gitignored)",
   );
 
   let launched: LaunchedApp;

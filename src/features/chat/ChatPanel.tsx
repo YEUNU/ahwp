@@ -1,4 +1,12 @@
-import { Loader2, Send, Square } from 'lucide-react';
+import {
+  Check,
+  Copy,
+  Loader2,
+  RotateCcw,
+  Send,
+  Square,
+  Trash2,
+} from 'lucide-react';
 import {
   useCallback,
   useEffect,
@@ -170,31 +178,76 @@ export function ChatPanel({
     assistantIdRef.current = null;
   }, []);
 
+  /**
+   * Append a fresh assistant bubble to `history` and start streaming the
+   * provider's response into it. `history` should already end in the user
+   * message that the assistant is replying to.
+   */
+  const fireChat = useCallback(
+    (history: UiMessage[]) => {
+      setError(null);
+      const assistantMsg: UiMessage = {
+        id: newId(),
+        role: 'assistant',
+        content: '',
+      };
+      assistantIdRef.current = assistantMsg.id;
+      setMessages([...history, assistantMsg]);
+      setStreaming(true);
+
+      const request: ChatRequest = {
+        provider,
+        model,
+        messages: history.map(({ role, content }) => ({ role, content })),
+      };
+      handleRef.current = window.api.ai.chat(request, { onEvent });
+    },
+    [model, onEvent, provider],
+  );
+
   const send = useCallback(() => {
     const text = input.trim();
     if (text.length === 0 || streaming) return;
-    setError(null);
-
     const userMsg: UiMessage = { id: newId(), role: 'user', content: text };
-    const assistantMsg: UiMessage = {
-      id: newId(),
-      role: 'assistant',
-      content: '',
-    };
-    assistantIdRef.current = assistantMsg.id;
-
-    const history = [...messages, userMsg];
-    setMessages([...history, assistantMsg]);
     setInput('');
-    setStreaming(true);
+    fireChat([...messages, userMsg]);
+  }, [fireChat, input, messages, streaming]);
 
-    const request: ChatRequest = {
-      provider,
-      model,
-      messages: history.map(({ role, content }) => ({ role, content })),
-    };
-    handleRef.current = window.api.ai.chat(request, { onEvent });
-  }, [input, messages, model, onEvent, provider, streaming]);
+  const regenerate = useCallback(
+    (assistantId: string) => {
+      if (streaming) return;
+      const idx = messages.findIndex((m) => m.id === assistantId);
+      if (idx === -1) return;
+      const history = messages.slice(0, idx);
+      // Need a preceding user turn to regenerate from.
+      if (history.length === 0 || history[history.length - 1].role !== 'user')
+        return;
+      fireChat(history);
+    },
+    [fireChat, messages, streaming],
+  );
+
+  const deleteMessage = useCallback(
+    (id: string) => {
+      if (streaming) return;
+      setMessages((prev) => prev.filter((m) => m.id !== id));
+    },
+    [streaming],
+  );
+
+  const copyMessage = useCallback(
+    async (id: string): Promise<boolean> => {
+      const m = messages.find((x) => x.id === id);
+      if (!m) return false;
+      try {
+        await window.api.clipboard.writeText(m.content);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [messages],
+  );
 
   const onSubmit = useCallback(
     (e: FormEvent<HTMLFormElement>) => {
@@ -309,7 +362,14 @@ export function ChatPanel({
           </div>
         ) : (
           messages.map((m) => (
-            <Message key={m.id} message={m} streaming={streaming} />
+            <Message
+              key={m.id}
+              message={m}
+              streaming={streaming}
+              onCopy={copyMessage}
+              onRegenerate={regenerate}
+              onDelete={deleteMessage}
+            />
           ))
         )}
         {error ? (
@@ -370,20 +430,51 @@ export function ChatPanel({
   );
 }
 
+interface MessageProps {
+  message: UiMessage;
+  streaming: boolean;
+  onCopy: (id: string) => Promise<boolean>;
+  onRegenerate: (id: string) => void;
+  onDelete: (id: string) => void;
+}
+
 function Message({
   message,
   streaming,
-}: {
-  message: UiMessage;
-  streaming: boolean;
-}): JSX.Element {
+  onCopy,
+  onRegenerate,
+  onDelete,
+}: MessageProps): JSX.Element {
   const isUser = message.role === 'user';
   const isAssistantStreaming =
     !isUser && streaming && message.content.length === 0;
+  const [copied, setCopied] = useState(false);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
+  }, []);
+
+  const handleCopy = async () => {
+    const ok = await onCopy(message.id);
+    if (!ok) return;
+    setCopied(true);
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = setTimeout(() => setCopied(false), 1500);
+  };
+
+  // Action visibility: hide all actions while a stream is running anywhere
+  // (regenerate/delete would corrupt streaming state). Copy is fine even
+  // mid-stream, but for consistency we hide everything during streaming
+  // and only show it on the bubble that finished its content.
+  const actionsHidden = streaming || isAssistantStreaming;
+
   return (
     <div
       className={cn(
-        'flex flex-col gap-1',
+        'group flex flex-col gap-1',
         isUser ? 'items-end' : 'items-start',
       )}
       data-testid="chat-message"
@@ -409,6 +500,70 @@ function Message({
           <MessageContent content={message.content} />
         )}
       </div>
+      {actionsHidden ? null : (
+        <div
+          className={cn(
+            'flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100',
+            isUser ? 'self-end' : 'self-start',
+          )}
+          data-testid="chat-message-actions"
+        >
+          <ActionButton
+            label={copied ? '복사됨' : '복사'}
+            testid={`chat-action-copy-${message.role}`}
+            onClick={() => void handleCopy()}
+          >
+            {copied ? (
+              <Check className="h-3 w-3" />
+            ) : (
+              <Copy className="h-3 w-3" />
+            )}
+          </ActionButton>
+          {!isUser ? (
+            <>
+              <ActionButton
+                label="재생성"
+                testid="chat-action-regenerate"
+                onClick={() => onRegenerate(message.id)}
+              >
+                <RotateCcw className="h-3 w-3" />
+              </ActionButton>
+              <ActionButton
+                label="삭제"
+                testid="chat-action-delete"
+                onClick={() => onDelete(message.id)}
+              >
+                <Trash2 className="h-3 w-3" />
+              </ActionButton>
+            </>
+          ) : null}
+        </div>
+      )}
     </div>
+  );
+}
+
+function ActionButton({
+  label,
+  testid,
+  onClick,
+  children,
+}: {
+  label: string;
+  testid: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      data-testid={testid}
+      className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+    >
+      {children}
+    </button>
   );
 }
