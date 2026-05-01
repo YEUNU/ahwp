@@ -6,6 +6,15 @@
 
 ## [Unreleased]
 
+### Added — Phase 2 청크 13: 각주 삽입 (MVP)
+
+- 메뉴 "보기 → 각주…" 또는 `insert:footnote` IPC로 다이얼로그 진입
+- 현재 커서 위치에 각주 삽입 + 본문 텍스트 한 번에 (단일 라인 MVP)
+- `insertFootnote` / `insertTextInFootnote` / `getFootnoteInfo` IR API 직접 위임
+- IR 실패(라이브러리 panic 등) 시 다이얼로그 내부 banner로 surface — 닫으면 자동 클리어
+- **알려진 한계** — `createBlankDocument` 기반 빈 문서엔 footnote 영역이 정의 안 되어 라이브러리가 panic. 실제 .hwp/.hwpx 파일은 정상 작동
+- **각주 안 caret 편집 모델 + 다중 라인 본문은 후속 청크로 보류**
+
 ### Added — Phase 2 청크 12: 책갈피 (add / list / rename / delete)
 
 - 메뉴 "보기 → 책갈피…" 또는 `insert:bookmark` IPC로 다이얼로그 진입

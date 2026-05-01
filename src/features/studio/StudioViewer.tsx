@@ -1561,6 +1561,55 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     );
 
     /**
+     * Footnotes — chunk 13. Insert a footnote at the current caret and
+     * (optionally) populate its body in one shot. The IR's `insertFootnote`
+     * returns `{ok, ctrlIdx, ...}`; we read ctrlIdx so the body insertion
+     * can target the new footnote without a separate getFootnoteInfo round-
+     * trip.
+     */
+    const insertFootnoteAtCaret = useCallback(
+      (text: string): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        const c = caretRef.current;
+        try {
+          const raw = doc.insertFootnote(
+            c.sectionIndex,
+            c.paragraphIndex,
+            c.charOffset,
+          );
+          // IR response shape: { ok, paraIdx, controlIdx, footnoteNumber }.
+          // We need controlIdx for the body insertion.
+          const result = JSON.parse(raw) as {
+            controlIdx?: number;
+            paraIdx?: number;
+          };
+          const targetPara = result.paraIdx ?? c.paragraphIndex;
+          if (text.length > 0 && typeof result.controlIdx === 'number') {
+            doc.insertTextInFootnote(
+              c.sectionIndex,
+              targetPara,
+              result.controlIdx,
+              0 /* first paragraph in the footnote */,
+              0 /* offset 0 */,
+              text,
+            );
+          }
+          // Footnote body lives off-page; spilling content can re-paginate
+          // so we still call the full refresh.
+          refreshAfterMutation({ syncCaret: false });
+        } catch (err) {
+          // The IR panics on docs with no footnote area defined (e.g. the
+          // blank seed). Surface as a soft failure so the UI can show an
+          // error toast — caller catches via the dialog flow.
+          console.warn('[studio] insertFootnote failed:', err);
+          throw err;
+        }
+      },
+      [refreshAfterMutation],
+    );
+
+    /**
      * Bookmarks — chunk 12. Targets a specific (sec, para, charOffset)
      * with a user-supplied name. The IR returns `{ok, ctrlIdx, ...}`;
      * `ctrlIdx` is what subsequent rename/delete calls need.
@@ -2333,6 +2382,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           deleteBookmarkAt(sec, para, ctrlIdx),
         renameBookmarkAt: (sec, para, ctrlIdx, newName) =>
           renameBookmarkAt(sec, para, ctrlIdx, newName),
+        insertFootnoteAtCaret: (text) => insertFootnoteAtCaret(text),
         isDirty: () => dirtyRef.current,
       }),
       [
@@ -2352,6 +2402,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         addBookmarkAtCaret,
         deleteBookmarkAt,
         renameBookmarkAt,
+        insertFootnoteAtCaret,
       ],
     );
 
@@ -3696,6 +3747,47 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         },
         applyPageDef: (props: Record<string, unknown>, sectionIdx = 0): void =>
           applyPageDef(props, sectionIdx),
+        // Footnotes — chunk 13.
+        insertFootnoteAtCaret: (text: string): void =>
+          insertFootnoteAtCaret(text),
+        // Raw probe surface — debug only, returns the IR's JSON string.
+        insertFootnoteRaw: (
+          sec: number,
+          para: number,
+          charOffset: number,
+        ): string => {
+          const doc = docRef.current;
+          if (!doc) return '';
+          return doc.insertFootnote(sec, para, charOffset);
+        },
+        getFootnoteInfoRaw: (
+          sec: number,
+          para: number,
+          ctrlIdx: number,
+        ): string => {
+          const doc = docRef.current;
+          if (!doc) return '';
+          try {
+            return doc.getFootnoteInfo(sec, para, ctrlIdx);
+          } catch (err) {
+            return `ERROR: ${err instanceof Error ? err.message : String(err)}`;
+          }
+        },
+        getFootnoteInfo: (
+          sec: number,
+          para: number,
+          ctrlIdx: number,
+        ): Record<string, unknown> | null => {
+          const doc = docRef.current;
+          if (!doc) return null;
+          try {
+            return JSON.parse(
+              doc.getFootnoteInfo(sec, para, ctrlIdx),
+            ) as Record<string, unknown>;
+          } catch {
+            return null;
+          }
+        },
         // Bookmarks — chunk 12.
         addBookmarkAtCaret: (name: string): void => addBookmarkAtCaret(name),
         getBookmarks: (): Record<string, unknown>[] | null => {
@@ -3855,6 +3947,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       addBookmarkAtCaret,
       deleteBookmarkAt,
       renameBookmarkAt,
+      insertFootnoteAtCaret,
     ]);
 
     // Effect 2: page indicator + mount window. On every scroll (rAF-

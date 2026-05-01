@@ -138,6 +138,10 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
         click: () => send(getWindow(), 'insert:bookmark'),
       },
       {
+        label: '각주…',
+        click: () => send(getWindow(), 'insert:footnote'),
+      },
+      {
         label: '설정…',
         accelerator: 'CmdOrCtrl+,',
         click: () => send(getWindow(), 'view:settings'),

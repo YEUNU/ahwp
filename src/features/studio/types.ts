@@ -68,6 +68,11 @@ export interface ViewerHandle {
     ctrlIdx: number,
     newName: string,
   ) => void;
+  /**
+   * Insert a footnote at the current caret with optional body text
+   * (chunk 13). Empty text creates an empty footnote shell.
+   */
+  insertFootnoteAtCaret: (text: string) => void;
   /** Set paragraph alignment on selection / current paragraph (chunk 10). */
   applyAlignment: (a: ParagraphAlignment) => void;
   /** Apply font size in points (converted to HWPUNIT internally). */

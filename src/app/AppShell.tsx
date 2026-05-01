@@ -14,6 +14,7 @@ import { ChatPanel } from '@/features/chat/ChatPanel';
 import { FolderTree } from '@/features/files/FolderTree';
 import { SettingsDialog } from '@/features/settings/SettingsDialog';
 import { BookmarkDialog } from '@/features/studio/BookmarkDialog';
+import { FootnoteDialog } from '@/features/studio/FootnoteDialog';
 import { HeaderFooterDialog } from '@/features/studio/HeaderFooterDialog';
 import { PageSetupDialog } from '@/features/studio/PageSetupDialog';
 import { StudioViewer } from '@/features/studio/StudioViewer';
@@ -58,6 +59,7 @@ export default function AppShell() {
   const [pageSetupOpen, setPageSetupOpen] = useState(false);
   const [hfOpen, setHfOpen] = useState(false);
   const [bookmarkOpen, setBookmarkOpen] = useState(false);
+  const [footnoteOpen, setFootnoteOpen] = useState(false);
   // viewerRef per tab (by key). The active tab's viewer is what menu /
   // shortcut actions target.
   const viewerRefsRef = useRef<Map<string, ViewerHandle | null>>(new Map());
@@ -343,6 +345,8 @@ export default function AppShell() {
         setHfOpen(true);
       } else if (action === 'insert:bookmark') {
         setBookmarkOpen(true);
+      } else if (action === 'insert:footnote') {
+        setFootnoteOpen(true);
       }
     });
   }, [
@@ -380,6 +384,11 @@ export default function AppShell() {
         onDelete={(sec, para, ctrlIdx) =>
           activeViewerRef()?.deleteBookmarkAt(sec, para, ctrlIdx)
         }
+      />
+      <FootnoteDialog
+        open={footnoteOpen}
+        onOpenChange={setFootnoteOpen}
+        onInsert={(text) => activeViewerRef()?.insertFootnoteAtCaret(text)}
       />
       <PanelGroup
         direction="horizontal"

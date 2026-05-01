@@ -6,13 +6,13 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 | 항목        | 상태                                                                                                                                                                                                                       |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Phase       | **Phase 2 청크 12** — 책갈피 (rhwp-core 활용 시리즈 6번째). 다음: 각주 → 스타일 관리 → 도형                                                                                                                                |
+| Phase       | **Phase 2 청크 13** — 각주 (rhwp-core 활용 시리즈 7번째). 다음: 스타일 관리 → 도형 → 수식                                                                                                                                  |
 | 빌드        | ✅ `npm run dev` · `npx vite build`                                                                                                                                                                                        |
 | 타입        | ✅ `npm run typecheck`                                                                                                                                                                                                     |
 | 린트        | ✅ `npm run lint` (0 warnings, 0 errors)                                                                                                                                                                                   |
 | 포맷        | ✅ `npm run format:check`                                                                                                                                                                                                  |
 | 단위 테스트 | ✅ 3/3 (`App.test.tsx`)                                                                                                                                                                                                    |
-| e2e         | ✅ 197 케이스 / 4 워커 병렬 + retry=1 (~77s) — 192 prior + 5 bookmark. 2 skip = NIM live + cell-menu UI(의도)                                                                                                              |
+| e2e         | ✅ 202 케이스 / 4 워커 병렬 + retry=1 (~81s) — 197 prior + 5 footnote. 2 skip = NIM live + cell-menu UI(의도)                                                                                                              |
 | Electron    | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                                                |
 | 의존성      | runtime: `@rhwp/core` · `chokidar` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` (chunk 6에서 `@rhwp/editor` 제거) |
 
@@ -2148,6 +2148,69 @@ insertTextInHeaderFooter(..., 0 /* paraIdx */, 0 /* charOffset */, text)
 ✓ npm run e2e               (195/197, 2 skip = NIM live + cell-menu UI 의도, 회귀 0)
 ```
 
+### 2026-05-01 — Phase 2 청크 13 — 각주 (rhwp-core 활용 시리즈 7번째)
+
+한컴 한글 "삽입 → 각주" MVP. caret 위치에 각주 생성 + 본문 텍스트 한 번에. 각주 안에서 직접 caret 편집(insertTextInFootnote 후속 호출 등)은 후속 청크.
+
+**IR API**
+
+| 메서드                                                                  | 역할                                                         |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `insertFootnote(sec, para, charOffset)`                                 | 각주 삽입 — `{ok, paraIdx, controlIdx, footnoteNumber}` 반환 |
+| `getFootnoteInfo(sec, para, ctrlIdx)`                                   | 각주 조회 — `{ok, paraCount, totalTextLen, number, texts}`   |
+| `insertTextInFootnote(sec, para, ctrlIdx, fnParaIdx, charOffset, text)` | 각주 안 텍스트 삽입                                          |
+| `deleteTextInFootnote(...)`                                             | 각주 안 텍스트 삭제                                          |
+| `mergeParagraphInFootnote` / `splitParagraphInFootnote`                 | 각주 안 문단 분할/병합                                       |
+| `hitTestFootnote` / `hitTestInFootnote` / `getCursorRectInFootnote`     | 각주 영역 인터랙션용                                         |
+
+**probe 발견**
+
+- 응답 키는 `controlIdx` (bookmark는 `ctrlIdx` — 일관성 차이)
+- `paraIdx`는 caret이 들어간 본문 문단 인덱스 echo
+- `footnoteNumber`는 1부터 시작하는 각주 번호 (자동 할당)
+- **blank.hwpx에선 라이브러리 panic** ("unreachable" / "recursive use of an object") — `createBlankDocument`가 footnote 영역(SectionDef의 `footnotePeriod`/`footnoteNumberType`)을 정의 안 한 미완성 section을 만듦. 한 번 panic하면 라이브러리 전체가 unrecoverable
+- 실제 .hwp/.hwpx 문서(STRESS_FIXTURE)에선 문제없이 작동
+
+**구현 — 헬퍼**
+
+- `insertFootnoteAtCaret(text)`: caretRef 기반 IR call
+  1. `doc.insertFootnote(sec, para, charOffset)` → response에서 `controlIdx`/`paraIdx` 추출
+  2. text가 있으면 `doc.insertTextInFootnote(...)` 호출 — fnParaIdx=0, charOffset=0
+  3. `refreshAfterMutation({ syncCaret: false })` (각주 본문은 off-page)
+  4. 라이브러리 panic은 caller에 throw (UI banner로 surface)
+
+**ViewerHandle / \_\_studioDebug**
+
+- `ViewerHandle.insertFootnoteAtCaret(text)` 노출
+- `__studioDebug.{insertFootnoteAtCaret, insertFootnoteRaw, getFootnoteInfo, getFootnoteInfoRaw}` — raw probe surface (라이브러리 input schema 변동 시 즉시 검증)
+
+**구현 — `FootnoteDialog`**
+
+- shadcn `Dialog` 재사용 (5번째 다이얼로그 — Settings/Page/HF/Bookmark/Footnote)
+- 단일 라인 text input + 삽입/취소 버튼
+- IR throw 시 다이얼로그 내부 banner로 메시지 표시 (e.g. blank doc panic) — 닫으면 자동 클리어
+- 진입점: `insert:footnote` MenuAction → 메뉴 "보기 → 각주…"
+
+**e2e — `tests/e2e/studio-footnote.spec.ts`** (5 케이스)
+
+`STRESS_FIXTURE` 사용 (blank.hwpx panic 회피)
+
+1. `insertFootnoteRaw(0, 5, 1)` 응답 = `{ok, paraIdx, controlIdx, footnoteNumber}` 키 검증
+2. 삽입 후 `getFootnoteInfo` round-trip — 빈 본문 (`paraCount:1, totalTextLen:0, texts:[""]`)
+3. raw insert 후 `getFootnoteInfo`로 number/ok 회수
+4. UI: `insert:footnote` IPC → 다이얼로그 + input + insert 버튼 노출
+5. UI: 취소 버튼으로 다이얼로그 close
+
+**검증 결과**
+
+```
+✓ npm run typecheck
+✓ npm run lint              (0 errors, 0 warnings)
+✓ npm run format:check
+✓ npm test                  (3/3)
+✓ npm run e2e               (199/202, 1 flaky→retry pass, 2 skip = NIM live + cell-menu UI 의도, 회귀 0)
+```
+
 **다음 청크 — rhwp-core API 추가 활용 (계속)**
 
 `@rhwp/core` 0.7.9는 253개 메서드 노출. 우리가 활용 중인 건 ~30%. 한컴 한글 핵심 누락분을 라이브러리 API로 매핑한 후보 청크 (사용 빈도 + UX 임팩트 순):
@@ -2190,10 +2253,11 @@ insertTextInHeaderFooter(..., 0 /* paraIdx */, 0 /* charOffset */, text)
 - ~~페이지 설정 (용지/방향/여백)~~ ✅ (청크 10, 2026-05-01)
 - ~~머리말 / 꼬리말 (단일 라인 MVP)~~ ✅ (청크 11, 2026-05-01)
 - ~~책갈피 (add/list/delete/rename)~~ ✅ (청크 12, 2026-05-01)
+- ~~각주 (insert + body text)~~ ✅ (청크 13, 2026-05-01)
 
 **진행 가능 (키 의존성 없음)**
 
-- rhwp-core API 추가 활용 시리즈 (각주 → 스타일 관리 → 도형 → 수식 등 — 위 일지의 "다음 청크" 표 참조)
+- rhwp-core API 추가 활용 시리즈 (스타일 관리 → 도형 → 수식 등 — 위 일지의 "다음 청크" 표 참조)
 - 파일별 채팅 히스토리 (better-sqlite3 도입 — schema/migration 정리)
 - Manual 모드: AI 변경사항을 diff로 제안 → Accept/Reject (2-E, 현재 OpenAI/NVIDIA만으로도 검증 가능)
 
