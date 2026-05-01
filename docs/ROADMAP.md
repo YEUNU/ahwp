@@ -110,7 +110,8 @@
 ### 2-B. Provider 어댑터
 
 - [x] `Provider` 인터페이스 정의 (`shared/ai.ts`) — `ProviderId` / `PROVIDERS` 메타 / `ChatRequest` / `ChatStreamEvent` / `ProviderRuntimeOptions`
-- [ ] OpenAI 어댑터 (스트리밍)
+- [x] OpenAI 어댑터 (스트리밍 SSE 파싱 + ping) — `electron/ai/providers/openai.ts`. 기본 base URL `api.openai.com/v1`, 사용자 base URL override 지원
+- [x] `ai:chat` 스트리밍 IPC — id 기반 채널, 인플라이트 abort 지원 (`electron/ipc/ai.ts`)
 - [ ] Anthropic 어댑터
 - [ ] Google 어댑터
 - [ ] NVIDIA NIM 어댑터 (OpenAI 호환 경로)
@@ -118,10 +119,11 @@
 
 ### 2-C. 채팅 UI
 
-- [ ] 채팅 탭: 메시지 리스트 + 입력 박스 + 스트리밍 토큰 표시
+- [x] 채팅 패널 골격 — 메시지 리스트 + textarea + 스트리밍 토큰 표시 + abort 버튼 (`src/features/chat/ChatPanel.tsx`). Enter 전송, Shift+Enter 줄바꿈, IME composition 가드
 - [ ] 메시지 마크다운 렌더링 (`react-markdown` + `remark-gfm`)
 - [ ] 코드 블록 syntax highlight (`shiki` 또는 `react-syntax-highlighter`)
 - [ ] 메시지 복사·재생성·삭제
+- [ ] Provider/Model 선택 드롭다운 (현재는 `gpt-4o-mini` 하드코드)
 
 ### 2-D. 히스토리
 

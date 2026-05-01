@@ -10,6 +10,7 @@ import {
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import type { MenuAction, PingResponse } from '@shared/api';
 import { correctExtension } from '@shared/format';
+import { ChatPanel } from '@/features/chat/ChatPanel';
 import { FolderTree } from '@/features/files/FolderTree';
 import { StudioViewer } from '@/features/studio/StudioViewer';
 import { TabBar, type TabDescriptor } from '@/features/studio/TabBar';
@@ -495,10 +496,8 @@ export default function AppShell() {
               챗봇
             </h2>
           </div>
-          <div className="flex-1 overflow-auto p-4">
-            <p className="text-xs text-muted-foreground">
-              Phase 2에서 활성화됩니다.
-            </p>
+          <div className="flex-1 overflow-hidden">
+            <ChatPanel />
           </div>
         </aside>
       </Panel>

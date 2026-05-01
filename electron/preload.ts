@@ -4,6 +4,7 @@ import {
   webUtils,
   type IpcRendererEvent,
 } from 'electron';
+import type { ChatStreamEvent } from '../shared/ai';
 import type {
   AhwpApi,
   FolderChangeEvent,
@@ -68,6 +69,41 @@ const api: AhwpApi = {
     delete: (providerId) => ipcRenderer.invoke('secrets:delete', providerId),
     has: (providerId) => ipcRenderer.invoke('secrets:has', providerId),
     list: () => ipcRenderer.invoke('secrets:list'),
+  },
+  ai: {
+    chat: (request, callbacks) => {
+      const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      const channel = `ai:chat-event:${id}`;
+      let settled = false;
+      const listener = (_event: IpcRendererEvent, evt: ChatStreamEvent) => {
+        if (settled) return;
+        callbacks.onEvent(evt);
+        if (evt.type === 'done' || evt.type === 'error') {
+          settled = true;
+          ipcRenderer.off(channel, listener);
+        }
+      };
+      ipcRenderer.on(channel, listener);
+      void ipcRenderer
+        .invoke('ai:chat-start', { id, request })
+        .catch((err: unknown) => {
+          if (settled) return;
+          settled = true;
+          ipcRenderer.off(channel, listener);
+          callbacks.onEvent({
+            type: 'error',
+            message: err instanceof Error ? err.message : String(err),
+          });
+        });
+      return {
+        abort: () => {
+          if (settled) return;
+          settled = true;
+          ipcRenderer.off(channel, listener);
+          void ipcRenderer.invoke('ai:chat-abort', id);
+        },
+      };
+    },
   },
 };
 

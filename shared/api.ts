@@ -3,7 +3,7 @@
  * Renderer accesses these as window.api.*
  */
 
-import type { ProviderId } from './ai';
+import type { ChatRequest, ChatStreamEvent, ProviderId } from './ai';
 
 export interface PingRequest {
   message: string;
@@ -186,6 +186,32 @@ export interface SecretsApi {
   list: () => Promise<ProviderId[]>;
 }
 
+export interface AiChatHandle {
+  /**
+   * Cancel the in-flight stream. Safe to call after the stream has already
+   * completed; subsequent events for this id are ignored.
+   */
+  abort: () => void;
+}
+
+export interface AiChatCallbacks {
+  /**
+   * Invoked for every event emitted by the provider. The stream always ends
+   * with exactly one `done` or `error` event; once one of those is delivered
+   * no further events arrive for this handle.
+   */
+  onEvent: (event: ChatStreamEvent) => void;
+}
+
+/**
+ * AI chat over IPC. The renderer never sees the API key — main loads it from
+ * encrypted storage and runs the adapter. Returns synchronously with a handle
+ * for cancellation; events arrive asynchronously via `callbacks.onEvent`.
+ */
+export interface AiApi {
+  chat: (req: ChatRequest, callbacks: AiChatCallbacks) => AiChatHandle;
+}
+
 export interface AhwpApi {
   ping: (req: PingRequest) => Promise<PingResponse>;
   onMenuAction: (handler: (action: MenuAction) => void) => () => void;
@@ -194,6 +220,7 @@ export interface AhwpApi {
   clipboard: ClipboardApi;
   folder: FolderApi;
   secrets: SecretsApi;
+  ai: AiApi;
 }
 
 declare global {

@@ -50,6 +50,9 @@ describe('App', () => {
         has: vi.fn().mockResolvedValue(false),
         list: vi.fn().mockResolvedValue([]),
       },
+      ai: {
+        chat: vi.fn().mockReturnValue({ abort: vi.fn() }),
+      },
     };
     Object.defineProperty(window, 'api', {
       value: mockApi,
