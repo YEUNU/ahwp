@@ -1561,6 +1561,99 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     );
 
     /**
+     * Table / cell properties — chunk 17. Read-modify-write helpers
+     * for the IR's `{set,get}{Table,Cell}Properties`. Both setters
+     * accept a JSON props bag mirroring the getter's shape:
+     *   table: { cellSpacing, paddingLeft/Right/Top/Bottom, pageBreak,
+     *            repeatHeader }
+     *   cell:  { width, height, paddingLeft/Right/Top/Bottom,
+     *            verticalAlign, textDirection, isHeader }
+     */
+    const getTableProps = useCallback(
+      (
+        sec: number,
+        parentPara: number,
+        ctrl: number,
+      ): Record<string, unknown> | null => {
+        const doc = docRef.current;
+        if (!doc) return null;
+        try {
+          return JSON.parse(
+            doc.getTableProperties(sec, parentPara, ctrl),
+          ) as Record<string, unknown>;
+        } catch {
+          return null;
+        }
+      },
+      [],
+    );
+
+    const setTableProps = useCallback(
+      (
+        sec: number,
+        parentPara: number,
+        ctrl: number,
+        props: Record<string, unknown>,
+      ): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        try {
+          doc.setTableProperties(sec, parentPara, ctrl, JSON.stringify(props));
+          refreshAfterMutation({ syncCaret: false });
+        } catch (err) {
+          console.warn('[studio] setTableProperties failed:', err);
+        }
+      },
+      [refreshAfterMutation],
+    );
+
+    const getCellProps = useCallback(
+      (
+        sec: number,
+        parentPara: number,
+        ctrl: number,
+        cellIdx: number,
+      ): Record<string, unknown> | null => {
+        const doc = docRef.current;
+        if (!doc) return null;
+        try {
+          return JSON.parse(
+            doc.getCellProperties(sec, parentPara, ctrl, cellIdx),
+          ) as Record<string, unknown>;
+        } catch {
+          return null;
+        }
+      },
+      [],
+    );
+
+    const setCellProps = useCallback(
+      (
+        sec: number,
+        parentPara: number,
+        ctrl: number,
+        cellIdx: number,
+        props: Record<string, unknown>,
+      ): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        try {
+          doc.setCellProperties(
+            sec,
+            parentPara,
+            ctrl,
+            cellIdx,
+            JSON.stringify(props),
+          );
+          refreshAfterMutation({ syncCaret: false });
+        } catch (err) {
+          console.warn('[studio] setCellProperties failed:', err);
+        }
+      },
+      [refreshAfterMutation],
+    );
+
+    /**
      * Equation preview — chunk 16. The IR's `renderEquationPreview`
      * takes a script string (한컴 수식 syntax — e.g. `x^2 + y^2 = z^2`),
      * a font size in HWPUNIT, and a color int (0xRRGGBB), and returns a
@@ -3868,6 +3961,33 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         },
         applyPageDef: (props: Record<string, unknown>, sectionIdx = 0): void =>
           applyPageDef(props, sectionIdx),
+        // Table / cell properties — chunk 17.
+        getTableProps: (
+          sec: number,
+          parentPara: number,
+          ctrl: number,
+        ): Record<string, unknown> | null =>
+          getTableProps(sec, parentPara, ctrl),
+        setTableProps: (
+          sec: number,
+          parentPara: number,
+          ctrl: number,
+          props: Record<string, unknown>,
+        ): void => setTableProps(sec, parentPara, ctrl, props),
+        getCellProps: (
+          sec: number,
+          parentPara: number,
+          ctrl: number,
+          cellIdx: number,
+        ): Record<string, unknown> | null =>
+          getCellProps(sec, parentPara, ctrl, cellIdx),
+        setCellProps: (
+          sec: number,
+          parentPara: number,
+          ctrl: number,
+          cellIdx: number,
+          props: Record<string, unknown>,
+        ): void => setCellProps(sec, parentPara, ctrl, cellIdx, props),
         // Equation preview — chunk 16.
         renderEquationSvg: (
           script: string,
@@ -4097,6 +4217,10 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       renameStyle,
       deleteStyleById,
       renderEquationSvg,
+      getTableProps,
+      setTableProps,
+      getCellProps,
+      setCellProps,
     ]);
 
     // Effect 2: page indicator + mount window. On every scroll (rAF-

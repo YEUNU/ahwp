@@ -87,6 +87,7 @@
   - [x] 각주 — `insertFootnote` / `insertTextInFootnote` / `getFootnoteInfo` IR 위임. FootnoteDialog (각주 본문 텍스트 input + caret에 삽입). 각주 안 caret 편집 모델은 후속. blank.hwpx에선 라이브러리 panic (footnote 영역 미정의 — 실제 .hwp 문서에선 정상 작동)
   - [x] 스타일 관리 — `createStyle` / `updateStyle` / `deleteStyle` / `getStyleList` IR 위임. StyleManagerDialog (목록 + 추가 + 인라인 이름 변경 + 삭제). char/para shape 모드는 후속 (현재는 이름만 받는 빈 셸 생성)
   - [x] 수식 미리보기 — `renderEquationPreview` IR. EquationDialog (한컴 수식 script input + 라이브 SVG 미리보기). 본문에 수식 컨트롤 *삽입*은 후속 (라이브러리에 명시적 createEquation 메서드 없음)
+  - [x] 표 / 셀 속성 (padding/spacing/repeatHeader/verticalAlign/isHeader) — `getTableProperties` / `setTableProperties` / `getCellProperties` / `setCellProperties` IR 위임. UI 다이얼로그는 후속 (현재는 `__studioDebug` + ViewerHandle 통한 IR 노출만 — e2e가 round-trip 검증). 셀 배경색은 별도 `applyCellStyle` 메커니즘으로 후속
   - [x] 이미지 삽입 (툴바 + OS 드래그)
   - [x] 확장형 툴바 (더보기 행) + 보기 토글 (제어문자 / 투명 테두리)
 - [x] 144페이지 부하 측정 e2e gate
