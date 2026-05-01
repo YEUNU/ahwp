@@ -142,6 +142,10 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
         click: () => send(getWindow(), 'insert:footnote'),
       },
       {
+        label: '스타일 관리…',
+        click: () => send(getWindow(), 'view:style-manager'),
+      },
+      {
         label: '설정…',
         accelerator: 'CmdOrCtrl+,',
         click: () => send(getWindow(), 'view:settings'),

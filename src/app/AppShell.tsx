@@ -18,6 +18,7 @@ import { FootnoteDialog } from '@/features/studio/FootnoteDialog';
 import { HeaderFooterDialog } from '@/features/studio/HeaderFooterDialog';
 import { PageSetupDialog } from '@/features/studio/PageSetupDialog';
 import { StudioViewer } from '@/features/studio/StudioViewer';
+import { StyleManagerDialog } from '@/features/studio/StyleManagerDialog';
 import { TabBar, type TabDescriptor } from '@/features/studio/TabBar';
 import type { ViewerHandle } from '@/features/studio/types';
 import { ThemeToggle } from './theme-toggle';
@@ -60,6 +61,7 @@ export default function AppShell() {
   const [hfOpen, setHfOpen] = useState(false);
   const [bookmarkOpen, setBookmarkOpen] = useState(false);
   const [footnoteOpen, setFootnoteOpen] = useState(false);
+  const [styleManagerOpen, setStyleManagerOpen] = useState(false);
   // viewerRef per tab (by key). The active tab's viewer is what menu /
   // shortcut actions target.
   const viewerRefsRef = useRef<Map<string, ViewerHandle | null>>(new Map());
@@ -347,6 +349,8 @@ export default function AppShell() {
         setBookmarkOpen(true);
       } else if (action === 'insert:footnote') {
         setFootnoteOpen(true);
+      } else if (action === 'view:style-manager') {
+        setStyleManagerOpen(true);
       }
     });
   }, [
@@ -389,6 +393,18 @@ export default function AppShell() {
         open={footnoteOpen}
         onOpenChange={setFootnoteOpen}
         onInsert={(text) => activeViewerRef()?.insertFootnoteAtCaret(text)}
+      />
+      <StyleManagerDialog
+        open={styleManagerOpen}
+        onOpenChange={setStyleManagerOpen}
+        getStyleList={() => activeViewerRef()?.getStyleListJson() ?? null}
+        onCreate={(name, englishName) =>
+          activeViewerRef()?.createNamedStyle(name, englishName) ?? null
+        }
+        onRename={(id, name, englishName) =>
+          activeViewerRef()?.renameStyle(id, name, englishName) ?? false
+        }
+        onDelete={(id) => activeViewerRef()?.deleteStyleById(id) ?? false}
       />
       <PanelGroup
         direction="horizontal"

@@ -6,13 +6,13 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 | 항목        | 상태                                                                                                                                                                                                                       |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Phase       | **Phase 2 청크 13** — 각주 (rhwp-core 활용 시리즈 7번째). 다음: 스타일 관리 → 도형 → 수식                                                                                                                                  |
+| Phase       | **Phase 2 청크 14** — 스타일 관리 (rhwp-core 활용 시리즈 8번째). 다음: 수식 → 표 속성 → 도형                                                                                                                               |
 | 빌드        | ✅ `npm run dev` · `npx vite build`                                                                                                                                                                                        |
 | 타입        | ✅ `npm run typecheck`                                                                                                                                                                                                     |
 | 린트        | ✅ `npm run lint` (0 warnings, 0 errors)                                                                                                                                                                                   |
 | 포맷        | ✅ `npm run format:check`                                                                                                                                                                                                  |
 | 단위 테스트 | ✅ 3/3 (`App.test.tsx`)                                                                                                                                                                                                    |
-| e2e         | ✅ 202 케이스 / 4 워커 병렬 + retry=1 (~81s) — 197 prior + 5 footnote. 2 skip = NIM live + cell-menu UI(의도)                                                                                                              |
+| e2e         | ✅ 208 케이스 / 4 워커 병렬 + retry=1 (~84s) — 202 prior + 6 style-manager. 2 skip = NIM live + cell-menu UI(의도)                                                                                                         |
 | Electron    | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                                                |
 | 의존성      | runtime: `@rhwp/core` · `chokidar` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` (chunk 6에서 `@rhwp/editor` 제거) |
 
@@ -2211,6 +2211,66 @@ insertTextInHeaderFooter(..., 0 /* paraIdx */, 0 /* charOffset */, text)
 ✓ npm run e2e               (199/202, 1 flaky→retry pass, 2 skip = NIM live + cell-menu UI 의도, 회귀 0)
 ```
 
+### 2026-05-01 — Phase 2 청크 14 — 스타일 관리 (rhwp-core 활용 시리즈 8번째)
+
+기존 `applyStyle`(chunk 5 툴바)에 더해 사용자 정의 스타일의 add/rename/delete 카탈로그 편집을 다이얼로그로 노출.
+
+**IR API**
+
+| 메서드                                                | 역할                                                        |
+| ----------------------------------------------------- | ----------------------------------------------------------- |
+| `createStyle({name, englishName, type, nextStyleId})` | 빈 스타일 생성 → id 반환                                    |
+| `updateStyle(id, {name, englishName, nextStyleId})`   | 이름/영문명/다음 스타일 변경                                |
+| `deleteStyle(id)`                                     | 삭제. 사용 중인 문단은 id 0 (바탕글)로 fallback             |
+| `getStyleList()`                                      | `[{id, name, englishName, type, paraShapeId, charShapeId}]` |
+
+`applyStyle`(이미 사용 중) → 문단에 적용.
+
+**구현 — 헬퍼**
+
+- `createNamedStyle(name, englishName?)` → id (englishName 없으면 name 그대로)
+- `renameStyle(id, name, englishName?)` → bool
+- `deleteStyleById(id)` → bool
+
+모두 dirty 플래그 + `refreshAfterMutation({ syncCaret: false })` (스타일 목록 변경은 caret 영향 없음).
+
+**StyleManagerDialog**
+
+- shadcn `Dialog` (6번째 다이얼로그)
+- 추가 폼 (이름 input + "추가") — 빈 이름 disabled
+- 목록: 각 행에 이름 + id (영문명 다르면 표기) + 이름 변경 / 삭제 버튼
+  - 이름 변경: 인라인 input (Enter 적용 / Esc 취소 / blur 적용)
+  - 삭제: id 0 (바탕글)은 disabled — 모든 문단의 fallback 타깃이라 dangle 위험
+- 진입점: `view:style-manager` MenuAction → 메뉴 "보기 → 스타일 관리…"
+
+**ViewerHandle / \_\_studioDebug**
+
+- `ViewerHandle.{createNamedStyle, renameStyle, deleteStyleById, getStyleListJson}` 노출
+- 동일 4개 `__studioDebug`에도 — e2e 라운드트립
+
+**스타일에 char/para shape 저장 보류**
+
+`createStyle`은 빈 셸만 만든다. 현재 caret의 char/para shape를 스타일로 캡처하는 흐름(예: "현재 서식으로 저장")은 라이브러리의 별도 메서드(`updateStyleShapes`)와 char/para mods 직렬화 layer가 필요 — 후속 청크.
+
+**e2e — `tests/e2e/studio-style-manager.spec.ts`** (6 케이스)
+
+1. 기본 문서가 비어있지 않은 스타일 목록 + id 0 포함
+2. createNamedStyle → 새 id 반환 + 목록에 등장
+3. renameStyle → name readback 변경
+4. deleteStyleById → 목록에서 제거
+5. UI: `view:style-manager` IPC → 다이얼로그 + id 0 행 disabled 삭제
+6. UI: 폼으로 추가 → 행 등장 → 삭제 버튼으로 제거
+
+**검증 결과**
+
+```
+✓ npm run typecheck
+✓ npm run lint              (0 errors, 0 warnings)
+✓ npm run format:check
+✓ npm test                  (3/3)
+✓ npm run e2e               (예상 200+/208, 회귀 0)
+```
+
 **다음 청크 — rhwp-core API 추가 활용 (계속)**
 
 `@rhwp/core` 0.7.9는 253개 메서드 노출. 우리가 활용 중인 건 ~30%. 한컴 한글 핵심 누락분을 라이브러리 API로 매핑한 후보 청크 (사용 빈도 + UX 임팩트 순):
@@ -2254,10 +2314,11 @@ insertTextInHeaderFooter(..., 0 /* paraIdx */, 0 /* charOffset */, text)
 - ~~머리말 / 꼬리말 (단일 라인 MVP)~~ ✅ (청크 11, 2026-05-01)
 - ~~책갈피 (add/list/delete/rename)~~ ✅ (청크 12, 2026-05-01)
 - ~~각주 (insert + body text)~~ ✅ (청크 13, 2026-05-01)
+- ~~스타일 관리 (add/rename/delete)~~ ✅ (청크 14, 2026-05-01)
 
 **진행 가능 (키 의존성 없음)**
 
-- rhwp-core API 추가 활용 시리즈 (스타일 관리 → 도형 → 수식 등 — 위 일지의 "다음 청크" 표 참조)
+- rhwp-core API 추가 활용 시리즈 (수식 → 표 속성 → 도형 등 — 위 일지의 "다음 청크" 표 참조)
 - 파일별 채팅 히스토리 (better-sqlite3 도입 — schema/migration 정리)
 - Manual 모드: AI 변경사항을 diff로 제안 → Accept/Reject (2-E, 현재 OpenAI/NVIDIA만으로도 검증 가능)
 

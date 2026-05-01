@@ -1561,6 +1561,83 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     );
 
     /**
+     * Styles — chunk 14. Add / rename / delete user styles. New style
+     * is a "shell" with just a name; char/para shape mods are a
+     * follow-up. `applyStyle` (chunk 5) already wires the toolbar.
+     */
+    const createNamedStyle = useCallback(
+      (name: string, englishName?: string): number | null => {
+        const doc = docRef.current;
+        if (!doc) return null;
+        try {
+          const id = doc.createStyle(
+            JSON.stringify({
+              name,
+              englishName: englishName ?? name,
+              type: 0,
+              nextStyleId: 0,
+            }),
+          );
+          dirtyRef.current = true;
+          setDirty(true);
+          refreshAfterMutation({ syncCaret: false });
+          return id;
+        } catch (err) {
+          console.warn('[studio] createStyle failed:', err);
+          return null;
+        }
+      },
+      [refreshAfterMutation],
+    );
+
+    const renameStyle = useCallback(
+      (id: number, name: string, englishName?: string): boolean => {
+        const doc = docRef.current;
+        if (!doc) return false;
+        try {
+          const ok = doc.updateStyle(
+            id,
+            JSON.stringify({
+              name,
+              englishName: englishName ?? name,
+              nextStyleId: 0,
+            }),
+          );
+          if (ok) {
+            dirtyRef.current = true;
+            setDirty(true);
+            refreshAfterMutation({ syncCaret: false });
+          }
+          return ok;
+        } catch (err) {
+          console.warn('[studio] updateStyle failed:', err);
+          return false;
+        }
+      },
+      [refreshAfterMutation],
+    );
+
+    const deleteStyleById = useCallback(
+      (id: number): boolean => {
+        const doc = docRef.current;
+        if (!doc) return false;
+        try {
+          const ok = doc.deleteStyle(id);
+          if (ok) {
+            dirtyRef.current = true;
+            setDirty(true);
+            refreshAfterMutation({ syncCaret: false });
+          }
+          return ok;
+        } catch (err) {
+          console.warn('[studio] deleteStyle failed:', err);
+          return false;
+        }
+      },
+      [refreshAfterMutation],
+    );
+
+    /**
      * Footnotes — chunk 13. Insert a footnote at the current caret and
      * (optionally) populate its body in one shot. The IR's `insertFootnote`
      * returns `{ok, ctrlIdx, ...}`; we read ctrlIdx so the body insertion
@@ -2383,6 +2460,20 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         renameBookmarkAt: (sec, para, ctrlIdx, newName) =>
           renameBookmarkAt(sec, para, ctrlIdx, newName),
         insertFootnoteAtCaret: (text) => insertFootnoteAtCaret(text),
+        createNamedStyle: (name, englishName) =>
+          createNamedStyle(name, englishName),
+        renameStyle: (id, name, englishName) =>
+          renameStyle(id, name, englishName),
+        deleteStyleById: (id) => deleteStyleById(id),
+        getStyleListJson: () => {
+          const doc = docRef.current;
+          if (!doc) return null;
+          try {
+            return JSON.parse(doc.getStyleList()) as Record<string, unknown>[];
+          } catch {
+            return null;
+          }
+        },
         isDirty: () => dirtyRef.current,
       }),
       [
@@ -2403,6 +2494,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         deleteBookmarkAt,
         renameBookmarkAt,
         insertFootnoteAtCaret,
+        createNamedStyle,
+        renameStyle,
+        deleteStyleById,
       ],
     );
 
@@ -3747,6 +3841,24 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         },
         applyPageDef: (props: Record<string, unknown>, sectionIdx = 0): void =>
           applyPageDef(props, sectionIdx),
+        // Styles — chunk 14.
+        createNamedStyle: (name: string, englishName?: string): number | null =>
+          createNamedStyle(name, englishName),
+        renameStyle: (
+          id: number,
+          name: string,
+          englishName?: string,
+        ): boolean => renameStyle(id, name, englishName),
+        deleteStyleById: (id: number): boolean => deleteStyleById(id),
+        getStyleListJson: (): Record<string, unknown>[] | null => {
+          const doc = docRef.current;
+          if (!doc) return null;
+          try {
+            return JSON.parse(doc.getStyleList()) as Record<string, unknown>[];
+          } catch {
+            return null;
+          }
+        },
         // Footnotes — chunk 13.
         insertFootnoteAtCaret: (text: string): void =>
           insertFootnoteAtCaret(text),
@@ -3948,6 +4060,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       deleteBookmarkAt,
       renameBookmarkAt,
       insertFootnoteAtCaret,
+      createNamedStyle,
+      renameStyle,
+      deleteStyleById,
     ]);
 
     // Effect 2: page indicator + mount window. On every scroll (rAF-

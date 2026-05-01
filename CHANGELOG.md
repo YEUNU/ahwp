@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+### Added — Phase 2 청크 14: 스타일 관리 (add / rename / delete)
+
+- 메뉴 "보기 → 스타일 관리…" 또는 `view:style-manager` IPC로 다이얼로그 진입
+- 스타일 목록 (id, 이름, 영문명) + 새 스타일 추가 폼 + 인라인 이름 변경 (Enter/Esc/blur) + 삭제 버튼
+- id 0 (바탕글) 삭제는 비활성 — 모든 문단의 fallback 타깃이라 dangle 위험
+- `createStyle` / `updateStyle` / `deleteStyle` / `getStyleList` IR API 직접 위임
+- **스타일에 char/para shape 캡처는 후속 청크로 보류** — 현재는 빈 셸만 생성
+
 ### Added — Phase 2 청크 13: 각주 삽입 (MVP)
 
 - 메뉴 "보기 → 각주…" 또는 `insert:footnote` IPC로 다이얼로그 진입

@@ -37,6 +37,7 @@ export type MenuAction =
   | 'insert:header-footer'
   | 'insert:bookmark'
   | 'insert:footnote'
+  | 'view:style-manager'
   | 'format:bold'
   | 'format:italic'
   | 'format:underline'

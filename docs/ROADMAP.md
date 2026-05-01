@@ -85,6 +85,7 @@
   - [x] 머리말 / 꼬리말 (단일 라인 MVP) — `createHeaderFooter` / `getHeaderFooter` / `insertTextInHeaderFooter` / `deleteHeaderFooter` IR 위임. HeaderFooterDialog (header/footer 토글 + 단일 라인 + applyTo=0 양쪽). 다중 라인 / 페이지 템플릿(홀수/짝수)은 후속
   - [x] 책갈피 — `addBookmark` / `getBookmarks` / `renameBookmark` / `deleteBookmark` IR 위임. BookmarkDialog (caret에 추가 + 목록 + 삭제). 책갈피로 점프(caret + scroll)는 후속
   - [x] 각주 — `insertFootnote` / `insertTextInFootnote` / `getFootnoteInfo` IR 위임. FootnoteDialog (각주 본문 텍스트 input + caret에 삽입). 각주 안 caret 편집 모델은 후속. blank.hwpx에선 라이브러리 panic (footnote 영역 미정의 — 실제 .hwp 문서에선 정상 작동)
+  - [x] 스타일 관리 — `createStyle` / `updateStyle` / `deleteStyle` / `getStyleList` IR 위임. StyleManagerDialog (목록 + 추가 + 인라인 이름 변경 + 삭제). char/para shape 모드는 후속 (현재는 이름만 받는 빈 셸 생성)
   - [x] 이미지 삽입 (툴바 + OS 드래그)
   - [x] 확장형 툴바 (더보기 행) + 보기 토글 (제어문자 / 투명 테두리)
 - [x] 144페이지 부하 측정 e2e gate

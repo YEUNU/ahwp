@@ -73,6 +73,14 @@ export interface ViewerHandle {
    * (chunk 13). Empty text creates an empty footnote shell.
    */
   insertFootnoteAtCaret: (text: string) => void;
+  /** Create a new named style (chunk 14). Returns the new id, or null on failure. */
+  createNamedStyle: (name: string, englishName?: string) => number | null;
+  /** Rename an existing style. */
+  renameStyle: (id: number, name: string, englishName?: string) => boolean;
+  /** Delete a style. Paragraphs using it fall back to id 0 (바탕글). */
+  deleteStyleById: (id: number) => boolean;
+  /** Read the style list as parsed JSON. */
+  getStyleListJson: () => Record<string, unknown>[] | null;
   /** Set paragraph alignment on selection / current paragraph (chunk 10). */
   applyAlignment: (a: ParagraphAlignment) => void;
   /** Apply font size in points (converted to HWPUNIT internally). */
