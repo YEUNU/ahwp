@@ -113,9 +113,12 @@
 - [x] OpenAI 어댑터 (스트리밍 SSE 파싱 + ping) — `electron/ai/providers/openai.ts`. 기본 base URL `api.openai.com/v1`, 사용자 base URL override 지원
 - [x] `ai:chat` 스트리밍 IPC — id 기반 채널, 인플라이트 abort 지원 (`electron/ipc/ai.ts`)
 - [x] NVIDIA NIM 어댑터 (`electron/ai/providers/nvidia.ts`) — OpenAI 어댑터에 `https://integrate.api.nvidia.com/v1` baseUrl 위임. SSE 100% 호환 라이브 검증 통과 (1.5s 응답)
-- [ ] Anthropic 어댑터
-- [ ] Google 어댑터
-- [ ] Ollama / 커스텀 어댑터 (base URL 입력)
+
+> **블록됨** — 아래 어댑터들은 메인테이너의 API 키/계정 준비를 기다리는 중. 코드 자체는 OpenAI/NVIDIA 패턴을 이미 확립해두었으므로 키만 확보되면 빠르게 진행 가능. 그 전까지는 `SHOWN_IDS`(SettingsDialog)에서 숨김 + `getProvider`에서 null 반환 유지.
+
+- [ ] Anthropic 어댑터 — 키 준비 대기 (`messages` API, `event:` line-prefixed SSE, Phase 3 `tool_use` 대비)
+- [ ] Google (Gemini) 어댑터 — 키 준비 대기
+- [ ] Ollama / 커스텀 어댑터 — 키 준비 대기 (자체 호스팅 base URL 입력)
 
 ### 2-C. 채팅 UI
 
