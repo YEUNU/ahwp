@@ -44,6 +44,12 @@ describe('App', () => {
         reveal: vi.fn().mockResolvedValue(undefined),
         copy: vi.fn().mockResolvedValue(''),
       },
+      secrets: {
+        set: vi.fn().mockResolvedValue(undefined),
+        delete: vi.fn().mockResolvedValue(undefined),
+        has: vi.fn().mockResolvedValue(false),
+        list: vi.fn().mockResolvedValue([]),
+      },
     };
     Object.defineProperty(window, 'api', {
       value: mockApi,

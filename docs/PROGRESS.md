@@ -6,7 +6,7 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 | 항목        | 상태                                                                                                                                                                                                                       |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Phase       | **Phase 1 확장 완료** — 청크 7~12 + 폴더 트리/ops/단축키 + 탭 시스템 + 표/이미지/리스트/페이지 나누기 + 확장 툴바 + perf 최적화. 다음: Phase 2 (AI 챗봇)                                                                   |
+| Phase       | **Phase 2 진입** — 청크 1 토대 (BYOK secrets + Provider 타입). 다음: Settings 모달 → 어댑터                                                                                                                                |
 | 빌드        | ✅ `npm run dev` · `npx vite build`                                                                                                                                                                                        |
 | 타입        | ✅ `npm run typecheck`                                                                                                                                                                                                     |
 | 린트        | ✅ `npm run lint` (0 warnings, 0 errors)                                                                                                                                                                                   |
@@ -1398,12 +1398,55 @@ HOP / rhwp-editor에 비해 명백히 부족한 핵심 일상 편집 기능 (Und
 - 셀 merge / split (`mergeTableCells` API 존재; 셀 selection 필요)
 - 셀 레벨 paste (`pasteHtmlInCell`)
 
+### 2026-05-01 — Phase 2 청크 1 — BYOK secrets 토대 + Provider 타입
+
+**범위**
+
+UI 없이 토대만. Settings 모달과 첫 어댑터(OpenAI 스트리밍)는 다음 청크.
+
+**구현 — `shared/ai.ts`**
+
+- `ProviderId = 'openai' | 'anthropic' | 'google' | 'nvidia' | 'ollama' | 'custom'`
+- `PROVIDERS` 메타 배열 — 각 provider의 `requiresApiKey` / `requiresBaseUrl` 명시. ollama만 `requiresApiKey: false`. `isProviderId()` 가드로 IPC 입력 검증
+- 채팅 모델: `ChatMessage` (role/content), `ChatRequest` (provider/model/messages/temperature?), `ChatStreamEvent` (`text-delta` / `done` / `error` 종료성 보장 — Phase 3에서 tool-call 추가 예정), `ChatUsage`
+- `Provider` 인터페이스 — `chat(req, opts): AsyncIterable<ChatStreamEvent>` + `ping(opts): Promise<void>`. `ProviderRuntimeOptions` (apiKey, baseUrl, signal)는 main에서만 주입
+
+**구현 — secrets 영속**
+
+- `electron/store/secrets.ts` — `safeStorage.encryptString` 기반 BYOK 영속. `userData/secrets.json` (mode 0o600 + atomic tmp+rename + writeChain 직렬화). 캐시는 `Map<ProviderId, string>` (base64 ciphertext)
+- 보안 결정: **평문 키는 main 프로세스에만 존재**. renderer에는 `has` / `list`만 노출하고 `get`은 IPC에 출항 없음. AI 요청은 Phase 2-B의 `ai:chat` IPC가 main에서 secret을 합쳐 어댑터에 전달
+- 시스템 키링 미가용 시(`safeStorage.isEncryptionAvailable() === false`) `setSecret`/`getSecret`이 명시 에러 throw — Linux의 libsecret 미설치 케이스. macOS Keychain / Windows DPAPI는 OS에서 항상 사용 가능
+
+**구현 — IPC**
+
+- `electron/ipc/secrets.ts` — `secrets:set` (provider id 검증 + key trim/non-empty 검증) / `secrets:delete` / `secrets:has` / `secrets:list`
+- `shared/api.ts` — `SecretsApi` 추가 + `AhwpApi.secrets`. `preload.ts`에 4개 메서드 노출. `main.ts`에 `registerSecretsIpc()` 등록
+- `App.test.tsx` mockApi에 `secrets` 추가 (typecheck 통과용 noop mock)
+
+**검증 결과**
+
+```
+✓ npm run typecheck
+✓ npm run lint
+✓ npm test             (3/3 — App.test.tsx)
+✓ npm run format:check
+✓ npx vite build       (main.js 47.80 kB)
+```
+
+**다음 청크 후보**
+
+- Settings 모달 (shadcn dialog) — provider 토글 + 키 입력 폼 (renderer에서는 input → `secrets:set`만, 평문 키 메모리 보유 시간 짧게)
+- OpenAI 어댑터 + `ai:chat` 스트리밍 IPC + 채팅 UI 골격
+
 ## 다음
 
 ### Phase 2 — AI 챗봇 Manual 모드 (3주)
 
-- BYOK 설정 UI (`safeStorage` 통합)
+- ~~BYOK secrets 영속 토대~~ ✅ (2026-05-01 청크 1)
+- ~~Provider / Chat 타입 정의~~ ✅ (2026-05-01 청크 1)
+- BYOK Settings 모달 UI (provider 토글 + 키 폼 + 연결 테스트)
 - Provider 어댑터 — OpenAI / Anthropic / Google / NVIDIA NIM / Ollama / 커스텀
+- `ai:chat` 스트리밍 IPC (renderer ↔ main 토큰 전달)
 - `ChatPanel` UI — 탭(History/Chat), 메시지 리스트, 입력창, 스트리밍 토큰 렌더
 - Manual 모드: AI 변경사항을 diff로 제안 → Accept/Reject
 - 파일별 채팅 히스토리 (better-sqlite3 도입 — schema/migration 정리)

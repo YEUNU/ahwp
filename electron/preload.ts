@@ -62,6 +62,13 @@ const api: AhwpApi = {
     reveal: (path) => ipcRenderer.invoke('folder:reveal', path),
     copy: (src, destDir) => ipcRenderer.invoke('folder:copy', src, destDir),
   },
+  secrets: {
+    set: (providerId, key) =>
+      ipcRenderer.invoke('secrets:set', providerId, key),
+    delete: (providerId) => ipcRenderer.invoke('secrets:delete', providerId),
+    has: (providerId) => ipcRenderer.invoke('secrets:has', providerId),
+    list: () => ipcRenderer.invoke('secrets:list'),
+  },
 };
 
 contextBridge.exposeInMainWorld('api', api);

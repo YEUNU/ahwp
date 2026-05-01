@@ -3,6 +3,8 @@
  * Renderer accesses these as window.api.*
  */
 
+import type { ProviderId } from './ai';
+
 export interface PingRequest {
   message: string;
 }
@@ -167,6 +169,23 @@ export interface SessionApi {
   set: (state: SessionState) => Promise<void>;
 }
 
+/**
+ * BYOK secret storage. Plaintext keys never leave the main process —
+ * the renderer can write a key, ask whether one exists, list providers,
+ * and delete, but cannot read. AI requests go through a separate IPC
+ * (Phase 2-B) that injects the secret in main.
+ */
+export interface SecretsApi {
+  /** Persist an API key for a provider (encrypted via Electron safeStorage). */
+  set: (providerId: ProviderId, key: string) => Promise<void>;
+  /** Remove a stored key. No-op if not set. */
+  delete: (providerId: ProviderId) => Promise<void>;
+  /** Whether a key is currently stored for the provider. */
+  has: (providerId: ProviderId) => Promise<boolean>;
+  /** Providers with stored keys, in insertion order. */
+  list: () => Promise<ProviderId[]>;
+}
+
 export interface AhwpApi {
   ping: (req: PingRequest) => Promise<PingResponse>;
   onMenuAction: (handler: (action: MenuAction) => void) => () => void;
@@ -174,6 +193,7 @@ export interface AhwpApi {
   session: SessionApi;
   clipboard: ClipboardApi;
   folder: FolderApi;
+  secrets: SecretsApi;
 }
 
 declare global {

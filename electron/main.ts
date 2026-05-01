@@ -4,6 +4,7 @@ import type { PingRequest, PingResponse } from '../shared/api';
 import { registerClipboardIpc } from './ipc/clipboard';
 import { registerFileIpc } from './ipc/file';
 import { registerFolderIpc, shutdownFolderIpc } from './ipc/folder';
+import { registerSecretsIpc } from './ipc/secrets';
 import { registerSessionIpc } from './ipc/session';
 import { buildAppMenu } from './menu';
 
@@ -51,6 +52,7 @@ function registerIpcHandlers(): void {
   registerSessionIpc();
   registerClipboardIpc();
   registerFolderIpc();
+  registerSecretsIpc();
 }
 
 void app.whenReady().then(() => {
