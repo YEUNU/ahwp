@@ -18,8 +18,20 @@ import type { AiChatHandle } from '@shared/api';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
-const DEFAULT_PROVIDER: ProviderId = 'openai';
-const DEFAULT_MODEL = 'gpt-4o-mini';
+type ChatProviderId = Extract<ProviderId, 'openai' | 'nvidia'>;
+
+const PROVIDER_OPTIONS: { id: ChatProviderId; label: string }[] = [
+  { id: 'openai', label: 'OpenAI' },
+  { id: 'nvidia', label: 'NVIDIA NIM' },
+];
+
+const DEFAULT_MODELS: Record<ChatProviderId, string> = {
+  openai: 'gpt-4o-mini',
+  nvidia: 'meta/llama-3.1-70b-instruct',
+};
+
+const STORAGE_PROVIDER = 'ahwp:chat:provider';
+const STORAGE_MODELS = 'ahwp:chat:models';
 
 interface UiMessage extends ChatMessage {
   id: string;
@@ -29,24 +41,88 @@ function newId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function loadProvider(): ChatProviderId {
+  try {
+    const raw = localStorage.getItem(STORAGE_PROVIDER);
+    if (raw === 'openai' || raw === 'nvidia') return raw;
+  } catch {
+    /* no-op */
+  }
+  return 'openai';
+}
+
+function loadModels(): Record<ChatProviderId, string> {
+  try {
+    const raw = localStorage.getItem(STORAGE_MODELS);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<Record<ChatProviderId, string>>;
+      return {
+        openai:
+          typeof parsed.openai === 'string' && parsed.openai.length > 0
+            ? parsed.openai
+            : DEFAULT_MODELS.openai,
+        nvidia:
+          typeof parsed.nvidia === 'string' && parsed.nvidia.length > 0
+            ? parsed.nvidia
+            : DEFAULT_MODELS.nvidia,
+      };
+    }
+  } catch {
+    /* no-op */
+  }
+  return { ...DEFAULT_MODELS };
+}
+
 export function ChatPanel(): JSX.Element {
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasKey, setHasKey] = useState<boolean | null>(null);
+  const [provider, setProvider] = useState<ChatProviderId>(() =>
+    loadProvider(),
+  );
+  const [models, setModels] = useState<Record<ChatProviderId, string>>(() =>
+    loadModels(),
+  );
   const handleRef = useRef<AiChatHandle | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const assistantIdRef = useRef<string | null>(null);
 
+  const model = models[provider];
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_PROVIDER, provider);
+    } catch {
+      /* no-op */
+    }
+  }, [provider]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_MODELS, JSON.stringify(models));
+    } catch {
+      /* no-op */
+    }
+  }, [models]);
+
   useEffect(() => {
     let cancelled = false;
-    void window.api.secrets.has(DEFAULT_PROVIDER).then((v) => {
+    void window.api.secrets.has(provider).then((v) => {
       if (!cancelled) setHasKey(v);
     });
     return () => {
       cancelled = true;
     };
+  }, [provider]);
+
+  const onProviderChange = useCallback((next: ChatProviderId) => {
+    // Reset the indicator to the loading state immediately so the user sees
+    // feedback while the new has() call is in flight. Doing this in the
+    // change handler (not an effect) avoids react-hooks/set-state-in-effect.
+    setHasKey(null);
+    setProvider(next);
   }, []);
 
   useEffect(() => {
@@ -63,13 +139,16 @@ export function ChatPanel(): JSX.Element {
 
   const onEvent = useCallback((evt: ChatStreamEvent) => {
     if (evt.type === 'text-delta') {
-      setMessages((prev) => {
-        const id = assistantIdRef.current;
-        if (!id) return prev;
-        return prev.map((m) =>
+      // Capture the id eagerly: the setMessages updater may run later in a
+      // React batch, by which point a terminal event might have cleared
+      // assistantIdRef. Reading it inside the updater drops late deltas.
+      const id = assistantIdRef.current;
+      if (!id) return;
+      setMessages((prev) =>
+        prev.map((m) =>
           m.id === id ? { ...m, content: m.content + evt.text } : m,
-        );
-      });
+        ),
+      );
       return;
     }
     if (evt.type === 'error') {
@@ -99,12 +178,12 @@ export function ChatPanel(): JSX.Element {
     setStreaming(true);
 
     const request: ChatRequest = {
-      provider: DEFAULT_PROVIDER,
-      model: DEFAULT_MODEL,
+      provider,
+      model,
       messages: history.map(({ role, content }) => ({ role, content })),
     };
     handleRef.current = window.api.ai.chat(request, { onEvent });
-  }, [input, messages, onEvent, streaming]);
+  }, [input, messages, model, onEvent, provider, streaming]);
 
   const onSubmit = useCallback(
     (e: FormEvent<HTMLFormElement>) => {
@@ -131,14 +210,68 @@ export function ChatPanel(): JSX.Element {
     assistantIdRef.current = null;
   }, []);
 
+  const providerLabel = useMemo(
+    () => PROVIDER_OPTIONS.find((p) => p.id === provider)?.label ?? provider,
+    [provider],
+  );
+
   const placeholder = useMemo(() => {
     if (hasKey === false)
-      return 'OpenAI API 키가 설정되지 않았습니다. 설정에서 추가하세요.';
-    return 'Cmd/Ctrl+Enter는 줄바꿈, Enter는 전송';
-  }, [hasKey]);
+      return `${providerLabel} API 키가 설정되지 않았습니다. DevTools에서 secrets.set('${provider}', '...')`;
+    return 'Enter 전송 / Shift+Enter 줄바꿈';
+  }, [hasKey, provider, providerLabel]);
+
+  const onModelChange = useCallback(
+    (next: string) => {
+      setModels((prev) => ({ ...prev, [provider]: next }));
+    },
+    [provider],
+  );
 
   return (
     <div className="flex h-full flex-col">
+      <div
+        className="flex items-center gap-2 border-b border-border bg-card px-3 py-2"
+        data-testid="chat-provider-bar"
+      >
+        <select
+          value={provider}
+          onChange={(e) => onProviderChange(e.target.value as ChatProviderId)}
+          className="rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+          data-testid="chat-provider-select"
+          aria-label="Provider"
+          disabled={streaming}
+        >
+          {PROVIDER_OPTIONS.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.label}
+            </option>
+          ))}
+        </select>
+        <input
+          value={model}
+          onChange={(e) => onModelChange(e.target.value)}
+          className="flex-1 rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+          data-testid="chat-model-input"
+          aria-label="Model"
+          disabled={streaming}
+          spellCheck={false}
+        />
+        <span
+          className={cn(
+            'text-[10px]',
+            hasKey === true
+              ? 'text-emerald-600 dark:text-emerald-400'
+              : hasKey === false
+                ? 'text-muted-foreground'
+                : 'text-muted-foreground/60',
+          )}
+          data-testid="chat-key-indicator"
+          aria-label={hasKey ? 'API 키 있음' : 'API 키 없음'}
+        >
+          {hasKey === true ? '키 ●' : hasKey === false ? '키 ○' : '…'}
+        </span>
+      </div>
       <div
         ref={scrollerRef}
         className="flex-1 space-y-4 overflow-auto px-4 py-4"
@@ -147,9 +280,6 @@ export function ChatPanel(): JSX.Element {
         {messages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-xs text-muted-foreground">
             <p>현재 문서에 대해 질문하거나 도움을 요청하세요.</p>
-            <p className="text-[10px] text-muted-foreground/60">
-              모델: {DEFAULT_MODEL}
-            </p>
           </div>
         ) : (
           messages.map((m) => (
@@ -230,6 +360,8 @@ function Message({
         'flex flex-col gap-1',
         isUser ? 'items-end' : 'items-start',
       )}
+      data-testid="chat-message"
+      data-role={message.role}
     >
       <span className="text-[10px] uppercase tracking-wide text-muted-foreground/70">
         {isUser ? 'You' : 'Assistant'}
@@ -241,6 +373,7 @@ function Message({
             ? 'bg-primary text-primary-foreground'
             : 'bg-muted text-foreground',
         )}
+        data-testid="chat-message-content"
       >
         {isAssistantStreaming ? (
           <Loader2 className="h-3 w-3 animate-spin" />

@@ -24,7 +24,14 @@ export interface LaunchedApp {
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const MAIN_ENTRY = path.join(REPO_ROOT, 'dist-electron', 'main.js');
 
-export async function launchApp(): Promise<LaunchedApp> {
+export interface LaunchOptions {
+  /** Extra environment variables passed to the Electron main process. */
+  env?: Record<string, string>;
+}
+
+export async function launchApp(
+  opts: LaunchOptions = {},
+): Promise<LaunchedApp> {
   const userDataDir = await mkdtemp(path.join(tmpdir(), 'ahwp-e2e-'));
   const app = await electron.launch({
     args: [MAIN_ENTRY, `--user-data-dir=${userDataDir}`],
@@ -32,6 +39,7 @@ export async function launchApp(): Promise<LaunchedApp> {
     env: {
       ...process.env,
       NODE_ENV: 'test',
+      ...opts.env,
     },
   });
   const page = await app.firstWindow();

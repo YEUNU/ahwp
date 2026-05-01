@@ -104,7 +104,7 @@
 - [ ] Settings 모달 (shadcn dialog)
 - [ ] Provider 활성화 토글 + 키 입력 폼
 - [x] `safeStorage`로 키 암호화 저장 (`electron/store/secrets.ts` + `secrets:set/delete/has/list` IPC). 평문 키는 main에 머무름 — renderer는 `has`/`list`만 노출
-- [ ] Active provider / model 선택 드롭다운
+- [x] Active provider / model 선택 드롭다운 (ChatPanel 상단 — provider `<select>` + model `<input>`, localStorage 영속)
 - [ ] 연결 테스트 버튼 (provider별 ping)
 
 ### 2-B. Provider 어댑터
@@ -112,9 +112,9 @@
 - [x] `Provider` 인터페이스 정의 (`shared/ai.ts`) — `ProviderId` / `PROVIDERS` 메타 / `ChatRequest` / `ChatStreamEvent` / `ProviderRuntimeOptions`
 - [x] OpenAI 어댑터 (스트리밍 SSE 파싱 + ping) — `electron/ai/providers/openai.ts`. 기본 base URL `api.openai.com/v1`, 사용자 base URL override 지원
 - [x] `ai:chat` 스트리밍 IPC — id 기반 채널, 인플라이트 abort 지원 (`electron/ipc/ai.ts`)
+- [x] NVIDIA NIM 어댑터 (`electron/ai/providers/nvidia.ts`) — OpenAI 어댑터에 `https://integrate.api.nvidia.com/v1` baseUrl 위임. SSE 100% 호환 라이브 검증 통과 (1.5s 응답)
 - [ ] Anthropic 어댑터
 - [ ] Google 어댑터
-- [ ] NVIDIA NIM 어댑터 (OpenAI 호환 경로)
 - [ ] Ollama / 커스텀 어댑터 (base URL 입력)
 
 ### 2-C. 채팅 UI
