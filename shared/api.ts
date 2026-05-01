@@ -203,6 +203,17 @@ export interface AiChatCallbacks {
   onEvent: (event: ChatStreamEvent) => void;
 }
 
+export interface AiPingOptions {
+  /**
+   * Transient API key supplied by a Settings form *before* the user has saved.
+   * If omitted, the main process falls back to the stored secret for this
+   * provider. The transient key is never persisted.
+   */
+  apiKey?: string;
+  /** Override the provider's default base URL (e.g. self-hosted Ollama / NIM). */
+  baseUrl?: string;
+}
+
 /**
  * AI chat over IPC. The renderer never sees the API key — main loads it from
  * encrypted storage and runs the adapter. Returns synchronously with a handle
@@ -210,6 +221,8 @@ export interface AiChatCallbacks {
  */
 export interface AiApi {
   chat: (req: ChatRequest, callbacks: AiChatCallbacks) => AiChatHandle;
+  /** Reachability check. Resolves on success, rejects with the error message. */
+  ping: (providerId: ProviderId, opts?: AiPingOptions) => Promise<void>;
 }
 
 export interface AhwpApi {

@@ -52,6 +52,7 @@ describe('App', () => {
       },
       ai: {
         chat: vi.fn().mockReturnValue({ abort: vi.fn() }),
+        ping: vi.fn().mockResolvedValue(undefined),
       },
     };
     Object.defineProperty(window, 'api', {

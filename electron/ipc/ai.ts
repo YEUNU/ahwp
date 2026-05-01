@@ -111,4 +111,45 @@ export function registerAiIpc(): void {
       inflight.delete(id);
     }
   });
+
+  ipcMain.handle('ai:ping', async (_event, raw: unknown): Promise<void> => {
+    const params = (raw ?? {}) as {
+      providerId?: unknown;
+      apiKey?: unknown;
+      baseUrl?: unknown;
+    };
+    if (!isProviderId(params.providerId)) {
+      throw new Error(`Invalid provider id: ${String(params.providerId)}`);
+    }
+    const provider = getProvider(params.providerId);
+    if (!provider) {
+      throw new Error(`Provider '${params.providerId}' is not implemented yet`);
+    }
+    // Transient (typed-but-not-saved) key wins. Fall back to stored secret.
+    const transient =
+      typeof params.apiKey === 'string' && params.apiKey.length > 0
+        ? params.apiKey
+        : null;
+    const apiKey = transient ?? (await getSecret(params.providerId));
+    if (provider.meta.requiresApiKey && !apiKey) {
+      throw new Error(
+        `${provider.meta.label}: 키가 없습니다. 입력 후 테스트하거나 먼저 저장하세요.`,
+      );
+    }
+    const baseUrl =
+      typeof params.baseUrl === 'string' && params.baseUrl.length > 0
+        ? params.baseUrl
+        : undefined;
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 15_000);
+    try {
+      await provider.ping({
+        apiKey: apiKey ?? undefined,
+        baseUrl,
+        signal: ctrl.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+  });
 }

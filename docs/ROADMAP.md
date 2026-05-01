@@ -99,13 +99,13 @@
 
 목표: 사용자가 채팅창에서 AI에게 질문하고, AI는 변경사항을 diff로 제안하며, Accept/Reject가 가능하다. **파일 자동 수정은 안 됨**.
 
-### 2-A. 설정 UI
+### 2-A. 설정 UI ✅ 완료
 
-- [ ] Settings 모달 (shadcn dialog)
-- [ ] Provider 활성화 토글 + 키 입력 폼
+- [x] Settings 모달 (shadcn dialog) — `view:settings` MenuAction (`Cmd/Ctrl+,`) + ChatPanel 빈 키 안내의 "설정 열기" 버튼으로 진입
+- [x] Provider 활성화 토글 + 키 입력 폼 (provider별 row: 라벨 + password input + 저장/테스트/삭제)
 - [x] `safeStorage`로 키 암호화 저장 (`electron/store/secrets.ts` + `secrets:set/delete/has/list` IPC). 평문 키는 main에 머무름 — renderer는 `has`/`list`만 노출
 - [x] Active provider / model 선택 드롭다운 (ChatPanel 상단 — provider `<select>` + model `<input>`, localStorage 영속)
-- [ ] 연결 테스트 버튼 (provider별 ping)
+- [x] 연결 테스트 버튼 (provider별 ping) — `ai:ping` IPC. transient 키(저장 전 입력값) 또는 stored 키 모두 지원, 15s 타임아웃
 
 ### 2-B. Provider 어댑터
 

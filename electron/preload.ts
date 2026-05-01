@@ -104,6 +104,8 @@ const api: AhwpApi = {
         },
       };
     },
+    ping: (providerId, opts) =>
+      ipcRenderer.invoke('ai:ping', { providerId, ...opts }),
   },
 };
 

@@ -73,7 +73,17 @@ function loadModels(): Record<ChatProviderId, string> {
   return { ...DEFAULT_MODELS };
 }
 
-export function ChatPanel(): JSX.Element {
+export interface ChatPanelProps {
+  /**
+   * Open the Settings modal — used by the empty-key CTA so users don't have to
+   * dig through the menu when their key isn't set yet.
+   */
+  onOpenSettings?: () => void;
+}
+
+export function ChatPanel({
+  onOpenSettings,
+}: ChatPanelProps = {}): JSX.Element {
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
@@ -216,10 +226,9 @@ export function ChatPanel(): JSX.Element {
   );
 
   const placeholder = useMemo(() => {
-    if (hasKey === false)
-      return `${providerLabel} API 키가 설정되지 않았습니다. DevTools에서 secrets.set('${provider}', '...')`;
+    if (hasKey === false) return `${providerLabel} API 키가 필요합니다`;
     return 'Enter 전송 / Shift+Enter 줄바꿈';
-  }, [hasKey, provider, providerLabel]);
+  }, [hasKey, providerLabel]);
 
   const onModelChange = useCallback(
     (next: string) => {
@@ -278,8 +287,24 @@ export function ChatPanel(): JSX.Element {
         data-testid="chat-scroller"
       >
         {messages.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-xs text-muted-foreground">
-            <p>현재 문서에 대해 질문하거나 도움을 요청하세요.</p>
+          <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-xs text-muted-foreground">
+            {hasKey === false ? (
+              <>
+                <p>{providerLabel} API 키를 먼저 설정하세요.</p>
+                {onOpenSettings ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={onOpenSettings}
+                    data-testid="chat-open-settings"
+                  >
+                    설정 열기
+                  </Button>
+                ) : null}
+              </>
+            ) : (
+              <p>현재 문서에 대해 질문하거나 도움을 요청하세요.</p>
+            )}
           </div>
         ) : (
           messages.map((m) => (

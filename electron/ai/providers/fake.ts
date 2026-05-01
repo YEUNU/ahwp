@@ -80,7 +80,11 @@ export const fakeProvider: Provider = {
     };
   },
 
-  async ping(): Promise<void> {
-    // Always reachable — tests don't exercise the failure path here.
+  async ping(opts: ProviderRuntimeOptions): Promise<void> {
+    // Allow e2e to drive the error path: a key starting with 'BAD' (e.g.
+    // a transient input typed by the user in Settings) makes ping reject.
+    if (opts.apiKey && opts.apiKey.startsWith('BAD')) {
+      throw new Error('fake: invalid key');
+    }
   },
 };
