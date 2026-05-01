@@ -30,6 +30,10 @@ export interface ViewerHandle {
   openFind: () => void;
   /** Open the Find bar with replace input focused (chunk 7 — Phase 2). */
   openReplace: () => void;
+  /** Read the current section's PageDef (for Page Setup dialog seed values). */
+  getPageDef: (sectionIdx?: number) => Record<string, unknown> | null;
+  /** Apply a PageDef props bag (paper size / margins / orientation). */
+  applyPageDef: (props: Record<string, unknown>, sectionIdx?: number) => void;
   /** Set paragraph alignment on selection / current paragraph (chunk 10). */
   applyAlignment: (a: ParagraphAlignment) => void;
   /** Apply font size in points (converted to HWPUNIT internally). */

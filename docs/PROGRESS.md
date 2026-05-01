@@ -6,13 +6,13 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 | 항목        | 상태                                                                                                                                                                                                                       |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Phase       | **Phase 2 청크 9** — 셀 합치기/나누기 (rhwp-core 활용 시리즈 3번째). 다음: 머리말/꼬리말 → 각주 → 페이지 설정                                                                                                              |
+| Phase       | **Phase 2 청크 10** — 페이지 설정 (rhwp-core 활용 시리즈 4번째). 다음: 머리말/꼬리말 → 각주 → 책갈피                                                                                                                       |
 | 빌드        | ✅ `npm run dev` · `npx vite build`                                                                                                                                                                                        |
 | 타입        | ✅ `npm run typecheck`                                                                                                                                                                                                     |
 | 린트        | ✅ `npm run lint` (0 warnings, 0 errors)                                                                                                                                                                                   |
 | 포맷        | ✅ `npm run format:check`                                                                                                                                                                                                  |
 | 단위 테스트 | ✅ 3/3 (`App.test.tsx`)                                                                                                                                                                                                    |
-| e2e         | ✅ 181 케이스 / 4 워커 병렬 + retry=1 (~77s) — 177 prior + 4 cells-merge. 2 skip = NIM live + cell-menu UI(의도)                                                                                                           |
+| e2e         | ✅ 186 케이스 / 4 워커 병렬 + retry=1 (~99s) — 181 prior + 5 pagesetup. 2 skip = NIM live + cell-menu UI(의도)                                                                                                             |
 | Electron    | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                                                |
 | 의존성      | runtime: `@rhwp/core` · `chokidar` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` (chunk 6에서 `@rhwp/editor` 제거) |
 
@@ -1962,6 +1962,69 @@ STRESS_FIXTURE para 5에 3×3 표 plant (v3 패턴 재사용).
 ✓ npm run e2e               (178/181, 1 flaky→retry pass, 2 skip = NIM live + cell-menu UI 의도, 회귀 0)
 ```
 
+### 2026-05-01 — Phase 2 청크 10 — 페이지 설정 (rhwp-core 활용 시리즈 4번째)
+
+용지 크기·방향·여백 조절. `setPageDef` / `getPageDef` IR API 위임 + Settings 패턴의 shadcn Dialog 재사용.
+
+**IR 응답 형식 발견** (`getPageDef(0)` probe)
+
+```json
+{
+  "width": 59528,
+  "height": 84186,
+  "marginLeft": 8504,
+  "marginRight": 8504,
+  "marginTop": 5668,
+  "marginBottom": 4252,
+  "marginHeader": 4252,
+  "marginFooter": 4252,
+  "marginGutter": 0,
+  "landscape": false,
+  "binding": 0
+}
+```
+
+A4 = 59528 × 84186 HWPUNIT (210 × 297 mm). 1 mm = 567/2 = 283.5 HWPUNIT (A4 width 210 × 283.5 = 59535에 근접 — 라이브러리는 정확히 59528, ±0.01% 라운딩).
+
+**구현 — IR 핸들러**
+
+- `applyPageDef(props, sectionIdx=0)` — `doc.setPageDef(idx, JSON.stringify(props))` + `refreshAfterMutation`. paper-size 변경 시 IR이 자동 re-paginate
+- `__studioDebug.{getPageDef, applyPageDef}` 노출
+- `ViewerHandle.{getPageDef, applyPageDef}` 노출 — AppShell이 활성 viewer 호출
+
+**구현 — `PageSetupDialog`**
+
+- `src/features/studio/PageSetupDialog.tsx` — shadcn `Dialog` 재사용
+- 5 paper presets (A4 / A5 / B5 / Letter / Legal) + "사용자 정의"
+- Form fields: 너비·높이 (mm), 가로 방향 토글, 여백 4개 (위·아래·좌·우)
+- HWPUNIT ↔ mm 변환 (`HWPUNIT_PER_MM = 283.5`). preset 자동 감지 (`detectPreset` — 어느 방향이든 매칭)
+- `useEffect`로 dialog open 시 PageDef seed (lint rule는 disable로 명시 — discrete event-based seed는 정당한 케이스)
+- 적용 시 mm → HWPUNIT 변환 후 `onApply`. dialog 닫음
+
+**진입점**
+
+- `view:page-setup` MenuAction (메뉴 "보기 → 페이지 설정…")
+- AppShell이 라우팅 → `setPageSetupOpen(true)`
+- `getCurrentPageDef`/`onApply`는 `activeViewerRef()`로 현재 활성 탭의 viewer 호출
+
+**e2e — `tests/e2e/studio-pagesetup.spec.ts`** (5 케이스)
+
+1. 기본 A4 portrait — width=59528, height=84186, landscape=false
+2. `applyPageDef`로 모든 마진 8505 HWPUNIT(=30mm) 변경 → readback 동일
+3. landscape 토글 → readback `landscape: true`
+4. UI: `view:page-setup` IPC → 다이얼로그 노출 + preset selector "A4" 시드
+5. UI: 위 여백 50mm 입력 → 적용 → `getPageDef.marginTop` ≈ 14175 (50 × 283.5, ±1 HWPUNIT)
+
+**검증 결과**
+
+```
+✓ npm run typecheck
+✓ npm run lint              (0 errors, 0 warnings)
+✓ npm run format:check
+✓ npm test                  (3/3)
+✓ npm run e2e               (182/186, 2 flaky→retry pass, 2 skip = NIM live + cell-menu UI 의도, 회귀 0)
+```
+
 **다음 청크 — rhwp-core API 추가 활용 (계속)**
 
 `@rhwp/core` 0.7.9는 253개 메서드 노출. 우리가 활용 중인 건 ~30%. 한컴 한글 핵심 누락분을 라이브러리 API로 매핑한 후보 청크 (사용 빈도 + UX 임팩트 순):
@@ -2001,10 +2064,11 @@ STRESS_FIXTURE para 5에 3×3 표 plant (v3 패턴 재사용).
 - ~~찾아 바꾸기 (⌘H, replaceOne/replaceAll IR) + examples/ git 추적 + e2e retry~~ ✅ (청크 7, 2026-05-01)
 - ~~줄 간격 / 들여쓰기 / 문단 간격 + 하단 status bar (undo/redo/zoom 분리)~~ ✅ (청크 8, 2026-05-01)
 - ~~셀 합치기 / 나누기 / 병합 해제~~ ✅ (청크 9, 2026-05-01)
+- ~~페이지 설정 (용지/방향/여백)~~ ✅ (청크 10, 2026-05-01)
 
 **진행 가능 (키 의존성 없음)**
 
-- rhwp-core API 추가 활용 시리즈 (머리말/꼬리말 → 각주 → 페이지 설정 등 — 위 일지의 "다음 청크" 표 참조)
+- rhwp-core API 추가 활용 시리즈 (머리말/꼬리말 → 각주 → 책갈피 → 도형 등 — 위 일지의 "다음 청크" 표 참조)
 - 파일별 채팅 히스토리 (better-sqlite3 도입 — schema/migration 정리)
 - Manual 모드: AI 변경사항을 diff로 제안 → Accept/Reject (2-E, 현재 OpenAI/NVIDIA만으로도 검증 가능)
 

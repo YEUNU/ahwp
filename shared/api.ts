@@ -33,6 +33,7 @@ export type MenuAction =
   | 'edit:paste'
   | 'edit:find'
   | 'edit:replace'
+  | 'view:page-setup'
   | 'format:bold'
   | 'format:italic'
   | 'format:underline'

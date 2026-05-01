@@ -13,6 +13,7 @@ import { correctExtension } from '@shared/format';
 import { ChatPanel } from '@/features/chat/ChatPanel';
 import { FolderTree } from '@/features/files/FolderTree';
 import { SettingsDialog } from '@/features/settings/SettingsDialog';
+import { PageSetupDialog } from '@/features/studio/PageSetupDialog';
 import { StudioViewer } from '@/features/studio/StudioViewer';
 import { TabBar, type TabDescriptor } from '@/features/studio/TabBar';
 import type { ViewerHandle } from '@/features/studio/types';
@@ -52,6 +53,7 @@ export default function AppShell() {
   const [activeIndex, setActiveIndex] = useState(-1);
   const [folderRoot, setFolderRoot] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [pageSetupOpen, setPageSetupOpen] = useState(false);
   // viewerRef per tab (by key). The active tab's viewer is what menu /
   // shortcut actions target.
   const viewerRefsRef = useRef<Map<string, ViewerHandle | null>>(new Map());
@@ -331,6 +333,8 @@ export default function AppShell() {
         handle?.toggleCharFormat(key);
       } else if (action === 'view:settings') {
         setSettingsOpen(true);
+      } else if (action === 'view:page-setup') {
+        setPageSetupOpen(true);
       }
     });
   }, [
@@ -344,6 +348,12 @@ export default function AppShell() {
   return (
     <>
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <PageSetupDialog
+        open={pageSetupOpen}
+        onOpenChange={setPageSetupOpen}
+        getCurrentPageDef={() => activeViewerRef()?.getPageDef() ?? null}
+        onApply={(props) => activeViewerRef()?.applyPageDef(props)}
+      />
       <PanelGroup
         direction="horizontal"
         autoSaveId="ahwp:shell"

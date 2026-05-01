@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+### Added — Phase 2 청크 10: 페이지 설정 (용지 / 방향 / 여백)
+
+- 메뉴 "보기 → 페이지 설정…" 또는 `view:page-setup` IPC로 다이얼로그 진입
+- 용지 5종 preset: A4 / A5 / B5 / Letter / Legal + 사용자 정의 (mm 단위 직접 입력)
+- 가로 방향 토글, 4 여백 (위·아래·좌·우, mm 단위)
+- `setPageDef` / `getPageDef` IR API 직접 위임. mm ↔ HWPUNIT 변환 (1mm = 283.5)
+- 적용 시 IR 자동 re-paginate
+
 ### Added — Phase 2 청크 9: 셀 합치기 / 나누기 / 병합 해제
 
 - 표 셀 우클릭 메뉴에 4개 신규 항목: **오른쪽 셀과 병합 / 아래 셀과 병합 / 셀 나누기 (2×2) / 병합 해제**. 마지막 행/열에서는 해당 병합 항목 자동 비활성화

@@ -1540,6 +1540,27 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     );
 
     /**
+     * Page setup — chunk 10. `applyPageDef` updates a section's PageDef
+     * (paper size, margins, orientation) and triggers IR re-pagination.
+     * The shape of `props` mirrors what `getPageDef` returns (HWPUNIT-
+     * based: width/height, marginLeft/Right/Top/Bottom/Header/Footer/
+     * Gutter, landscape, binding).
+     */
+    const applyPageDef = useCallback(
+      (props: Record<string, unknown>, sectionIdx = 0): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        try {
+          doc.setPageDef(sectionIdx, JSON.stringify(props));
+          refreshAfterMutation({ syncCaret: false });
+        } catch (err) {
+          console.warn('[studio] setPageDef failed:', err);
+        }
+      },
+      [refreshAfterMutation],
+    );
+
+    /**
      * Toggle a list (numbered / bulleted) on the caret's current paragraph.
      * Calling toggle on a paragraph that already has the same kind of list
      * removes it (headType: 'None'). Selection-aware: applies to every
@@ -2171,6 +2192,20 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         applyAlignment: (a: ParaAlignment) => applyAlignment(a),
         applyFontSizePt: (pt: number) => applyFontSizePt(pt),
         applyTextColor: (hex: string) => applyTextColor(hex),
+        getPageDef: (sectionIdx = 0) => {
+          const doc = docRef.current;
+          if (!doc) return null;
+          try {
+            return JSON.parse(doc.getPageDef(sectionIdx)) as Record<
+              string,
+              unknown
+            >;
+          } catch {
+            return null;
+          }
+        },
+        applyPageDef: (props, sectionIdx = 0) =>
+          applyPageDef(props, sectionIdx),
         isDirty: () => dirtyRef.current,
       }),
       [
@@ -2185,6 +2220,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         applyAlignment,
         applyFontSizePt,
         applyTextColor,
+        applyPageDef,
       ],
     );
 
@@ -3514,6 +3550,21 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           row: number,
           col: number,
         ): void => unmergeCell(sec, parentPara, ctrl, row, col),
+        // Page setup — chunk 10.
+        getPageDef: (sectionIdx = 0): Record<string, unknown> | null => {
+          const doc = docRef.current;
+          if (!doc) return null;
+          try {
+            return JSON.parse(doc.getPageDef(sectionIdx)) as Record<
+              string,
+              unknown
+            >;
+          } catch {
+            return null;
+          }
+        },
+        applyPageDef: (props: Record<string, unknown>, sectionIdx = 0): void =>
+          applyPageDef(props, sectionIdx),
         // Image insert hook for e2e — bytes encoded as base64 to keep
         // the test deterministic without needing real image files.
         insertImageBase64: async (
@@ -3622,6 +3673,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       mergeCells,
       splitCellInto,
       unmergeCell,
+      applyPageDef,
     ]);
 
     // Effect 2: page indicator + mount window. On every scroll (rAF-

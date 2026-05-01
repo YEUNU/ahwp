@@ -126,6 +126,10 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
       { role: 'togglefullscreen', label: '전체 화면' },
       { type: 'separator' },
       {
+        label: '페이지 설정…',
+        click: () => send(getWindow(), 'view:page-setup'),
+      },
+      {
         label: '설정…',
         accelerator: 'CmdOrCtrl+,',
         click: () => send(getWindow(), 'view:settings'),
