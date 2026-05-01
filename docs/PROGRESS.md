@@ -6,13 +6,13 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 | 항목        | 상태                                                                                                                                                                                                                       |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Phase       | **Phase 2 청크 19** — Manual 모드 도구 디스패치 (`ahwp-tools` JSON 블록). HTML로 표현 못 하는 컨트롤(각주/머리말/책갈피/페이지/스타일/도형)을 화이트리스트 IR 호출로 라우팅. 다음: 셀 배경 / 그림 속성 / 클립보드 컨트롤   |
+| Phase       | **Phase 2 청크 20** — 발췌 첨부 (`ExcerptAttachment` + 칩 + 시스템 프롬프트 `[발췌]:` 블록). 사용자가 선택한 영역만 컨텍스트로 사용 → 토큰↓·anchor 정확도↑. 다음: 청크 21 멀티 문서 (target/reference)                     |
 | 빌드        | ✅ `npm run dev` · `npx vite build`                                                                                                                                                                                        |
 | 타입        | ✅ `npm run typecheck`                                                                                                                                                                                                     |
 | 린트        | ✅ `npm run lint` (0 warnings, 0 errors)                                                                                                                                                                                   |
 | 포맷        | ✅ `npm run format:check`                                                                                                                                                                                                  |
 | 단위 테스트 | ✅ 3/3 (`App.test.tsx`)                                                                                                                                                                                                    |
-| e2e         | ✅ 240 케이스 / 4 워커 병렬 + retry=1 — 232 + 7 chat-tools + 1 NIM chunk 19 (chunk 19). 235 passed / 4 skipped (NIM 3개 키 게이트 + cell-menu UI 의도). live NIM 3/3 통과(`qwen/qwen3.5-122b-a10b`)                        |
+| e2e         | ✅ 249 케이스 / 4 워커 병렬 + retry=1 — 240 + 8 chat-excerpt + 1 NIM chunk 20. 244 passed / 5 skipped (NIM 4개 키 게이트 + cell-menu UI 의도). live NIM 4/4 통과(`qwen/qwen3.5-122b-a10b`)                                 |
 | Electron    | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                                                |
 | 의존성      | runtime: `@rhwp/core` · `chokidar` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` (chunk 6에서 `@rhwp/editor` 제거) |
 
@@ -2467,6 +2467,72 @@ insertTextInHeaderFooter(..., 0 /* paraIdx */, 0 /* charOffset */, text)
 ✓ NVIDIA NIM live 3/3 (qwen/qwen3.5-122b-a10b — chunk 18 + chunk 19 round-trip 포함)
 ```
 
+### 2026-05-02 — Phase 2 청크 20 — 발췌 첨부 (`ExcerptAttachment` + 칩 + `[발췌]:` 시스템 블록)
+
+**배경**
+
+청크 18의 `[현재 문서]:` 통째 첨부는 (a) 토큰을 50문단까지 무차별 사용 (b) anchor 정확도 낮음 — 사용자가 "이 단락"을 가리켰는데 시스템은 50개를 보내 모델이 다른 곳을 고침. 사용자가 명시적으로 선택한 텍스트만 좁게 첨부하면 두 문제 동시에 해결.
+
+**데이터 모델 (`shared/ai-excerpt.ts`)**
+
+```ts
+interface ExcerptAttachment {
+  id: string;
+  docPath: string | null;
+  docLabel: string; // basename
+  role: 'target' | 'reference'; // 청크 20은 target만
+  anchor: { sectionIndex; paragraphIndex; startOffset; endOffset };
+  text: string; // 캡처 시점에 박제
+  hash: string; // djb2 deterministic checksum
+  status: 'fresh' | 'stale-relocated' | 'stale-missing';
+}
+```
+
+**ViewerHandle 확장**
+
+- `captureExcerpt()` — `selectionRef` + `getTextRange`로 현재 선택을 portable 구조로 반환. 단일 문단 한정 (multi-paragraph excerpts는 청크 23+ 후속)
+- `verifyExcerpt(anchor, expected)` — 보낸 시점 stale 검증. anchor에서 다시 읽어 비교 → fresh / 일치 안 하면 IR 전체 1회 스캔(1000문단 상한)으로 relocate / 못 찾으면 stale-missing
+
+**ChatPanel 통합**
+
+- 입력 폼 위에 `📌 발췌 첨부` 버튼 + 칩 리스트 (basename:¶para + 텍스트 미리보기 + ⚠️ 토큰 경고 + ×). 칩 status는 색으로 구분 — fresh(회색) / stale-relocated(앰버) / stale-missing(빨강)
+- **우선순위**: 칩이 하나라도 있으면 통째 첨부 토글 disabled + `[현재 문서]:` 시스템 메시지 대체 → `[발췌]:` 블록만 주입
+- 시스템 프롬프트 직렬화 (`docs/AI_INTEGRATION.md` §발췌 드래그 첨부 › 프롬프트 직렬화 그대로):
+  ```
+  [발췌]:
+  [1] role=target  doc="제안서.hwp"  anchor={para:4, [12,58]}
+      "현행 문안을 다음과 같이 변경합니다."
+  ```
+- send 직전 칩별 verify 호출 → status 갱신. stale-missing이 하나라도 있으면 send 차단 + 토스트
+
+**드래그 UX는 폴리시 후속**
+
+청크 20 deliverable은 데이터 모델 + 칩 UI + send-time stale check. StudioViewer의 SVG selection은 `pointer-events-none`으로 렌더되어 HTML5 drag 진입점이 없음. 진짜 drag-and-drop은 selection 모델에 침투적 변경이 필요해 별도 청크로 분리. 버튼 클릭으로도 같은 데이터 흐름이 동작하므로 우선 데이터 파이프라인부터 박제.
+
+**E2E (chunk 20 신규)**
+
+- `chat-excerpt.spec.ts` (8 케이스): 캡처 / 빈 선택 에러 / 토글 disable / 칩 제거 / stale-relocated 자동 재바인딩 / stale-missing 차단 / 긴 발췌 ⚠️
+- `nvidia-live.spec.ts` chunk 20 round-trip: blank.hwpx에 sentinel 텍스트 삽입 + 선택 → 캡처 → "이 발췌의 명사를 인용해줘" 프롬프트 → NIM(`qwen/qwen3.5-122b-a10b`)이 sentinel의 단어를 응답에 포함시켜 [발췌] 블록이 프롬프트에 도달했음을 증명
+
+**제한 / 후속**
+
+- multi-paragraph excerpts → 청크 23+ (`getTextRange`가 단일 문단 한정)
+- 진짜 HTML5 drag → 청크 22 (selection 모델 리팩터)
+- 멀티 문서 (target + reference 칩) → 청크 21
+
+**버전 + 검증**
+
+- `package.json` 0.2.20 (Phase 2 청크 20)
+
+```
+✓ npm run typecheck
+✓ npm run lint              (0 errors, 0 warnings)
+✓ npm run format:check
+✓ npm test                  (3/3)
+✓ 누적 e2e 249 = 240 + 8 (chat-excerpt) + 1 (nvidia-live chunk 20). 244 passed / 5 skipped (NIM 4개 키 게이트 + cell-menu 1개 의도)
+✓ NVIDIA NIM live 4/4 (qwen/qwen3.5-122b-a10b — chunk 18·19·20 round-trip 모두 포함)
+```
+
 **다음 청크 — rhwp-core API 추가 활용 (계속)**
 
 `@rhwp/core` 0.7.9는 253개 메서드 노출. 우리가 활용 중인 건 ~30%. 한컴 한글 핵심 누락분을 라이브러리 API로 매핑한 후보 청크 (사용 빈도 + UX 임팩트 순):
@@ -2516,6 +2582,7 @@ insertTextInHeaderFooter(..., 0 /* paraIdx */, 0 /* charOffset */, text)
 - ~~도형 (사각형 MVP)~~ ✅ (청크 15, 2026-05-01)
 - ~~HTML 내보내기/붙이기 + ChatPanel 문서 컨텍스트 (AI 라운드트립 검증)~~ ✅ (청크 18, 2026-05-01)
 - ~~Manual 모드 도구 디스패치 (`ahwp-tools` JSON 블록 — 각주/머리말/책갈피/페이지/스타일/도형 IR 라우팅)~~ ✅ (청크 19, 2026-05-01)
+- ~~발췌 첨부 (선택 영역만 시스템 프롬프트 `[발췌]:` 블록으로 — 토큰↓·anchor 정확도↑, stale 자동 재바인딩)~~ ✅ (청크 20, 2026-05-02)
 
 **진행 가능 (키 의존성 없음)**
 

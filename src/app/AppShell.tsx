@@ -599,6 +599,13 @@ export default function AppShell() {
                   if (!v) return [];
                   return runTools(v, items);
                 }}
+                captureExcerpt={() =>
+                  activeViewerRef()?.captureExcerpt() ?? null
+                }
+                activeDocPath={() => activeTab?.path ?? null}
+                verifyExcerpt={(anchor, expected) =>
+                  activeViewerRef()?.verifyExcerpt(anchor, expected) ?? null
+                }
               />
             </div>
           </aside>

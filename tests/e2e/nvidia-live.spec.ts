@@ -31,6 +31,13 @@ const FIXTURE = path.resolve(__dirname, 'fixtures', 'blank.hwpx');
 interface StudioDebug {
   getParaProps(s: number, p: number): Record<string, unknown>;
   getBookmarks(): Record<string, unknown>[] | null;
+  insertText(s: number, p: number, c: number, text: string): string;
+  setSelection(
+    anchorPara: number,
+    anchorOff: number,
+    focusPara: number,
+    focusOff: number,
+  ): void;
 }
 
 test.describe('NVIDIA NIM — live smoke', () => {
@@ -176,5 +183,72 @@ test.describe('NVIDIA NIM — live smoke', () => {
       return dbg.getBookmarks();
     });
     expect(bookmarks?.some((b) => b.name === 'intro')).toBe(true);
+  });
+
+  // chunk 20 — excerpt attachment round trip. Captures a viewer
+  // selection as a chip and verifies that:
+  //  1. The chip survives the send-time stale check
+  //  2. The model responds with `[1]` style references (proving the
+  //     `[발췌]:` block in the system prompt reached it)
+  //  3. attachDoc toggle is suppressed (excerpts win over whole-doc)
+  test('chunk 20 — excerpt chip drives system context (whole-doc HTML suppressed)', async () => {
+    test.skip(!existsSync(FIXTURE), 'tests/e2e/fixtures/blank.hwpx missing');
+    const { page } = launched;
+
+    await page.evaluate(async (p) => {
+      await window.api.session.set({ lastActivePath: p });
+    }, FIXTURE);
+    await page.reload();
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForFunction(
+      () =>
+        Boolean(
+          (window as Window & { __studioDebug?: StudioDebug }).__studioDebug,
+        ),
+      { timeout: 30_000 },
+    );
+
+    // Seed paragraph 0 with a sentinel and select it. The model can
+    // reference the sentinel back in its reply, proving the excerpt
+    // block landed in the prompt.
+    const SENTINEL = '거버넌스 위원회는 분기마다 회의록을 공개한다';
+    await page.evaluate((text) => {
+      const dbg = (window as Window & { __studioDebug?: StudioDebug })
+        .__studioDebug!;
+      dbg.insertText(0, 0, 0, text);
+      dbg.setSelection(0, 0, 0, text.length);
+    }, SENTINEL);
+
+    await page.getByTestId('chat-provider-select').selectOption('nvidia');
+    await page.getByTestId('chat-model-input').fill('qwen/qwen3.5-122b-a10b');
+    await expect(page.getByTestId('chat-key-indicator')).toHaveText(/●/);
+
+    // Toggle stays available but goes disabled once a chip is captured.
+    await page.getByTestId('chat-attach-checkbox').check();
+    await page.getByTestId('chat-capture-excerpt').click();
+    await expect(page.getByTestId('chat-excerpt-chip')).toHaveAttribute(
+      'data-status',
+      'fresh',
+    );
+    await expect(page.getByTestId('chat-attach-checkbox')).toBeDisabled();
+
+    await page
+      .getByTestId('chat-input')
+      .fill(
+        '발췌 [1]에 등장한 한국어 명사 하나를 정확히 따옴표로 인용해서 그대로 응답에 포함시켜줘. 다른 설명은 짧게만.',
+      );
+    await page.getByTestId('chat-send').click();
+
+    const assistantContent = page
+      .locator('[data-testid="chat-message"][data-role="assistant"]')
+      .last()
+      .getByTestId('chat-message-content');
+    // Model should quote at least one noun from the excerpt back at us
+    // — '거버넌스' / '위원회' / '회의록' all appear in the sentinel.
+    await expect(assistantContent).toContainText(/(거버넌스|위원회|회의록)/, {
+      timeout: 60_000,
+    });
+
+    await expect(page.getByTestId('chat-send')).toBeVisible();
   });
 });

@@ -142,6 +142,65 @@ const ZOOM_MAX = 3;
 const PAGE_GAP_PX = 16;
 const PAGE_PADDING_PX = 32;
 
+/** Excerpt rebind scan — chunk 20. Walks the IR text top-to-bottom
+ * looking for `expected` and returns the first hit's anchor. Capped
+ * to keep send-time verification cheap; long docs simply lose their
+ * relocation guarantee past the cap and the chip falls to
+ * `stale-missing`. The IR's getTextRange / getParagraphCount /
+ * getParagraphLength are hot paths so this is a thin wrapper. */
+const RELOCATE_PARA_SCAN_LIMIT = 1000;
+interface DocReadOnly {
+  getParagraphCount: (sectionIdx: number) => number;
+  getParagraphLength: (sectionIdx: number, paraIdx: number) => number;
+  getTextRange: (
+    sectionIdx: number,
+    paraIdx: number,
+    startOffset: number,
+    length: number,
+  ) => string;
+}
+function relocateExcerpt(
+  doc: DocReadOnly,
+  expected: string,
+): {
+  sectionIndex: number;
+  paragraphIndex: number;
+  startOffset: number;
+  endOffset: number;
+} | null {
+  if (expected.length === 0) return null;
+  // Single-section docs only (matches captureExcerpt). When we move to
+  // multi-section, walk every section the same way.
+  const SECTION_INDEX = 0;
+  let paraCount: number;
+  try {
+    paraCount = doc.getParagraphCount(SECTION_INDEX);
+  } catch {
+    return null;
+  }
+  const limit = Math.min(paraCount, RELOCATE_PARA_SCAN_LIMIT);
+  for (let p = 0; p < limit; p++) {
+    let paraText: string;
+    try {
+      const len = doc.getParagraphLength(SECTION_INDEX, p);
+      if (len < expected.length) continue;
+      paraText = doc.getTextRange(SECTION_INDEX, p, 0, len);
+    } catch {
+      continue;
+    }
+    const idx = paraText.indexOf(expected);
+    if (idx >= 0) {
+      return {
+        sectionIndex: SECTION_INDEX,
+        paragraphIndex: p,
+        startOffset: idx,
+        endOffset: idx + expected.length,
+      };
+    }
+  }
+  return null;
+}
+
 /** Parse <svg width="X" height="Y"> or fall back to viewBox last two numbers. */
 /**
  * Mini "rows × cols" picker — 8×8 grid of cells the user can hover over.
@@ -2888,8 +2947,84 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           }
         },
         isDirty: () => dirtyRef.current,
+        // chunk 20 — excerpt capture + stale verification. Selection
+        // must be non-empty AND single-paragraph; multi-paragraph
+        // excerpts need a span anchor model that the IR's
+        // getTextRange (single-para) doesn't support yet.
+        captureExcerpt: () => {
+          const doc = docRef.current;
+          if (!doc) return null;
+          const sel = selectionRef.current;
+          if (!sel) return null;
+          if (sel.anchor.sectionIndex !== sel.focus.sectionIndex) return null;
+          const range = sortRange(sel.anchor, sel.focus);
+          if (range.empty) return null;
+          // Single-paragraph constraint — multi-paragraph excerpts need
+          // a span anchor model and getTextRange's single-para output.
+          if (range.startPara !== range.endPara) return null;
+          try {
+            const text = doc.getTextRange(
+              sel.anchor.sectionIndex,
+              range.startPara,
+              range.startOffset,
+              range.endOffset - range.startOffset,
+            );
+            if (typeof text !== 'string' || text.length === 0) return null;
+            return {
+              sectionIndex: sel.anchor.sectionIndex,
+              paragraphIndex: range.startPara,
+              startOffset: range.startOffset,
+              endOffset: range.endOffset,
+              text,
+            };
+          } catch (err) {
+            console.warn('[studio] captureExcerpt failed:', err);
+            return null;
+          }
+        },
+        verifyExcerpt: (anchor, expected) => {
+          const doc = docRef.current;
+          if (!doc) return null;
+          try {
+            // Bounds check first — paragraph may have been deleted entirely.
+            const paraCount = doc.getParagraphCount(anchor.sectionIndex);
+            if (anchor.paragraphIndex >= paraCount) {
+              const relocated = relocateExcerpt(doc, expected);
+              return relocated
+                ? { status: 'stale-relocated', newAnchor: relocated }
+                : { status: 'stale-missing' };
+            }
+            const paraLen = doc.getParagraphLength(
+              anchor.sectionIndex,
+              anchor.paragraphIndex,
+            );
+            const len = anchor.endOffset - anchor.startOffset;
+            if (anchor.endOffset > paraLen) {
+              // Paragraph shrank past the anchor end — anchor is stale.
+              const relocated = relocateExcerpt(doc, expected);
+              return relocated
+                ? { status: 'stale-relocated', newAnchor: relocated }
+                : { status: 'stale-missing' };
+            }
+            const current = doc.getTextRange(
+              anchor.sectionIndex,
+              anchor.paragraphIndex,
+              anchor.startOffset,
+              len,
+            );
+            if (current === expected) return { status: 'fresh' };
+            const relocated = relocateExcerpt(doc, expected);
+            return relocated
+              ? { status: 'stale-relocated', newAnchor: relocated }
+              : { status: 'stale-missing' };
+          } catch (err) {
+            console.warn('[studio] verifyExcerpt failed:', err);
+            return null;
+          }
+        },
       }),
       [
+        sortRange,
         toggleCharFormat,
         undo,
         redo,
@@ -4259,6 +4394,85 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           applyPageDef(props, sectionIdx),
         // HTML export + paste with paragraph-shape decomposition — chunk 18.
         applyHtmlAtCaret: (html: string): void => applyHtmlAtCaret(html),
+        // chunk 20 — excerpt capture + stale verify mirror the
+        // ViewerHandle entries so e2e specs can drive the chip flow
+        // without needing to script real selection drags.
+        captureExcerpt: () => {
+          const doc = docRef.current;
+          if (!doc) return null;
+          const sel = selectionRef.current;
+          if (!sel) return null;
+          if (sel.anchor.sectionIndex !== sel.focus.sectionIndex) return null;
+          const range = sortRange(sel.anchor, sel.focus);
+          if (range.empty) return null;
+          if (range.startPara !== range.endPara) return null;
+          try {
+            const text = doc.getTextRange(
+              sel.anchor.sectionIndex,
+              range.startPara,
+              range.startOffset,
+              range.endOffset - range.startOffset,
+            );
+            if (typeof text !== 'string' || text.length === 0) return null;
+            return {
+              sectionIndex: sel.anchor.sectionIndex,
+              paragraphIndex: range.startPara,
+              startOffset: range.startOffset,
+              endOffset: range.endOffset,
+              text,
+            };
+          } catch {
+            return null;
+          }
+        },
+        verifyExcerpt: (
+          anchor: {
+            sectionIndex: number;
+            paragraphIndex: number;
+            startOffset: number;
+            endOffset: number;
+          },
+          expected: string,
+        ): {
+          status: 'fresh' | 'stale-relocated' | 'stale-missing';
+          newAnchor?: typeof anchor;
+        } | null => {
+          const doc = docRef.current;
+          if (!doc) return null;
+          try {
+            const paraCount = doc.getParagraphCount(anchor.sectionIndex);
+            if (anchor.paragraphIndex >= paraCount) {
+              const r = relocateExcerpt(doc, expected);
+              return r
+                ? { status: 'stale-relocated', newAnchor: r }
+                : { status: 'stale-missing' };
+            }
+            const paraLen = doc.getParagraphLength(
+              anchor.sectionIndex,
+              anchor.paragraphIndex,
+            );
+            const len = anchor.endOffset - anchor.startOffset;
+            if (anchor.endOffset > paraLen) {
+              const r = relocateExcerpt(doc, expected);
+              return r
+                ? { status: 'stale-relocated', newAnchor: r }
+                : { status: 'stale-missing' };
+            }
+            const cur = doc.getTextRange(
+              anchor.sectionIndex,
+              anchor.paragraphIndex,
+              anchor.startOffset,
+              len,
+            );
+            if (cur === expected) return { status: 'fresh' };
+            const r = relocateExcerpt(doc, expected);
+            return r
+              ? { status: 'stale-relocated', newAnchor: r }
+              : { status: 'stale-missing' };
+          } catch {
+            return null;
+          }
+        },
         exportSelectionHtmlAt: (
           sec: number,
           startPara: number,

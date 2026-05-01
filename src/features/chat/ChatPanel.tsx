@@ -27,6 +27,14 @@ import {
   type AhwpPreflightItem,
   type AhwpToolResult,
 } from '@shared/ai-tools';
+import {
+  EXCERPT_HARD_CHAR_LIMIT,
+  EXCERPT_SOFT_CHAR_LIMIT,
+  hashText,
+  type ExcerptAttachment,
+  type ExcerptStatus,
+  type TextRange,
+} from '@shared/ai-excerpt';
 import type { AiChatHandle } from '@shared/api';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -114,6 +122,36 @@ export interface ChatPanelProps {
    * ```ahwp-tools``` JSON blocks.
    */
   runTools?: (items: AhwpPreflightItem[]) => AhwpToolResult[];
+  /**
+   * Capture the active StudioViewer selection as a portable excerpt — chunk 20.
+   * `null` when no selection is active or the selection spans paragraphs.
+   * The chip lives in chat state until the user removes it or sends.
+   */
+  captureExcerpt?: () => {
+    sectionIndex: number;
+    paragraphIndex: number;
+    startOffset: number;
+    endOffset: number;
+    text: string;
+  } | null;
+  /**
+   * Active document path — chunk 20. Used to label excerpt chips with
+   * the source filename and to differentiate chips by origin doc.
+   */
+  activeDocPath?: () => string | null;
+  /**
+   * Re-read the IR at a stored anchor — chunk 20. Returns whether the
+   * captured text is still where we left it, and a relocated anchor
+   * when the IR moved it. Called per-chip right before `fireChat` so
+   * we don't send stale anchors.
+   */
+  verifyExcerpt?: (
+    anchor: TextRange,
+    expected: string,
+  ) => {
+    status: ExcerptStatus;
+    newAnchor?: TextRange;
+  } | null;
 }
 
 const HTML_BLOCK_RE = /```html\n?([\s\S]*?)```/i;
@@ -149,11 +187,33 @@ const SYSTEM_PROMPT_DOC_CONTEXT = `너는 한컴 한글 문서 어시스턴트�
 
 분리 기준: 양식(정렬/간격/글자 서식/표) = [A] HTML, 컨트롤 객체 = [B] ahwp-tools. 같은 일을 두 갈래로 보내지 마. 각 형식은 응답에 최대 한 블록만 포함해. 코드 블록 외에 짧은 설명을 함께 써도 돼.`;
 
+/** Serialize chips into the system message for chunk 20. The block
+ * mirrors the spec in `docs/AI_INTEGRATION.md` §발췌 드래그 첨부 ›
+ * 프롬프트 직렬화: numbered entries with role/doc/anchor metadata so
+ * the model can refer to "[1]" without ambiguity. */
+function buildExcerptSystemPrompt(excerpts: ExcerptAttachment[]): string {
+  const lines: string[] = [SYSTEM_PROMPT_DOC_CONTEXT, '', '[발췌]:'];
+  excerpts.forEach((ex, i) => {
+    lines.push(
+      `[${i + 1}] role=${ex.role}  doc="${ex.docLabel}"  anchor={para:${ex.anchor.paragraphIndex}, [${ex.anchor.startOffset},${ex.anchor.endOffset}]}`,
+    );
+    lines.push(`    "${ex.text.replace(/\s+/g, ' ').trim()}"`);
+  });
+  lines.push('');
+  lines.push(
+    '발췌 규칙: 사용자가 "이 단락"이라고 하면 [발췌]의 첫 항목을 가리킴. 변경 대상은 role=target 발췌만. role=reference는 인용·문체 참고용으로만 읽고 절대 수정 대상으로 삼지 마.',
+  );
+  return lines.join('\n');
+}
+
 export function ChatPanel({
   onOpenSettings,
   getDocHtml,
   applyHtml,
   runTools,
+  captureExcerpt,
+  activeDocPath,
+  verifyExcerpt,
 }: ChatPanelProps = {}): JSX.Element {
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState('');
@@ -167,6 +227,12 @@ export function ChatPanel({
     loadModels(),
   );
   const [attachDoc, setAttachDoc] = useState(false);
+  // chunk 20 — excerpt chips. When non-empty, the system message
+  // injects a structured `[발췌]:` block instead of the whole-doc
+  // HTML (the toggle still appears but the docHtml path is suppressed).
+  const [excerpts, setExcerpts] = useState<ExcerptAttachment[]>([]);
+  // Toast for send-side blocking events (e.g. all chips went stale).
+  const [excerptError, setExcerptError] = useState<string | null>(null);
   const handleRef = useRef<AiChatHandle | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const assistantIdRef = useRef<string | null>(null);
@@ -244,10 +310,14 @@ export function ChatPanel({
   /**
    * Append a fresh assistant bubble to `history` and start streaming the
    * provider's response into it. `history` should already end in the user
-   * message that the assistant is replying to.
+   * message that the assistant is replying to. The optional
+   * `verifiedExcerpts` arg is the chip list after `send`'s stale check;
+   * passed in so we serialize exactly what the user is committing to,
+   * not whatever excerpts state happens to be by the time React has
+   * batched updates through.
    */
   const fireChat = useCallback(
-    (history: UiMessage[]) => {
+    (history: UiMessage[], verifiedExcerpts: ExcerptAttachment[] = []) => {
       setError(null);
       const assistantMsg: UiMessage = {
         id: newId(),
@@ -258,22 +328,29 @@ export function ChatPanel({
       setMessages([...history, assistantMsg]);
       setStreaming(true);
 
-      // Build provider-bound message list. When the user has attach-doc
-      // enabled and a doc is loaded, prepend a system message that
-      // (a) tells the model how to author HTML edits, and (b) embeds
-      // the current document body so it can reference structure.
+      // Build provider-bound message list. The system message
+      // composition picks one of three context strategies:
+      //   (1) excerpts present  → `[발췌]:` block, narrowly anchored
+      //   (2) attach toggle on  → `[현재 문서]:` whole-doc HTML
+      //   (3) neither           → no doc context (chat is doc-free)
+      // Excerpts win over the toggle when both are set, per
+      // memory/project_chat_context_pipeline.md priority rule.
       const messages: {
         role: 'system' | 'user' | 'assistant';
         content: string;
       }[] = history.map(({ role, content }) => ({ role, content }));
-      if (attachDoc && getDocHtml) {
+
+      let systemContent: string | null = null;
+      if (verifiedExcerpts.length > 0) {
+        systemContent = buildExcerptSystemPrompt(verifiedExcerpts);
+      } else if (attachDoc && getDocHtml) {
         const docHtml = getDocHtml();
         if (docHtml.length > 0) {
-          messages.unshift({
-            role: 'system',
-            content: `${SYSTEM_PROMPT_DOC_CONTEXT}\n\n[현재 문서]:\n${docHtml}`,
-          });
+          systemContent = `${SYSTEM_PROMPT_DOC_CONTEXT}\n\n[현재 문서]:\n${docHtml}`;
         }
+      }
+      if (systemContent !== null) {
+        messages.unshift({ role: 'system', content: systemContent });
       }
 
       const request: ChatRequest = { provider, model, messages };
@@ -282,13 +359,95 @@ export function ChatPanel({
     [attachDoc, getDocHtml, model, onEvent, provider],
   );
 
+  // chunk 20 — capture the active viewer selection as a chip. The
+  // button is disabled when nothing's selectable, so the null-return
+  // path is only hit during a race (selection cleared between hover
+  // and click). Drag-and-drop wiring is a follow-up; this gives us
+  // the data model NOW.
+  const onCaptureExcerpt = useCallback(() => {
+    if (!captureExcerpt) return;
+    const cap = captureExcerpt();
+    if (!cap) {
+      setExcerptError(
+        '선택된 텍스트가 없거나 두 문단에 걸쳐 있어 첨부할 수 없습니다.',
+      );
+      return;
+    }
+    if (cap.text.length > EXCERPT_HARD_CHAR_LIMIT) {
+      setExcerptError(
+        `발췌가 너무 깁니다 (${cap.text.length} / ${EXCERPT_HARD_CHAR_LIMIT}자 상한).`,
+      );
+      return;
+    }
+    setExcerptError(null);
+    const path = activeDocPath?.() ?? null;
+    const label = path ? (path.split(/[/\\]/).pop() ?? path) : '(이름 없음)';
+    const chip: ExcerptAttachment = {
+      id: newId(),
+      docPath: path,
+      docLabel: label,
+      role: 'target',
+      anchor: {
+        sectionIndex: cap.sectionIndex,
+        paragraphIndex: cap.paragraphIndex,
+        startOffset: cap.startOffset,
+        endOffset: cap.endOffset,
+      },
+      text: cap.text,
+      hash: hashText(cap.text),
+      status: 'fresh',
+    };
+    setExcerpts((prev) => [...prev, chip]);
+  }, [activeDocPath, captureExcerpt]);
+
+  const removeExcerpt = useCallback((id: string) => {
+    setExcerpts((prev) => prev.filter((e) => e.id !== id));
+  }, []);
+
   const send = useCallback(() => {
     const text = input.trim();
     if (text.length === 0 || streaming) return;
+
+    // Per-chip stale verification — chunk 20. Each chip's anchor is
+    // re-read from the IR. Fresh = pass through. Relocated = update
+    // anchor in place (silent). Missing = block send and surface a
+    // toast so the user can re-select. We reset to fresh chips so
+    // subsequent turns don't keep re-checking the same anchors.
+    const verified: ExcerptAttachment[] = [];
+    const stillMissing: string[] = [];
+    if (excerpts.length > 0 && verifyExcerpt) {
+      for (const ex of excerpts) {
+        const r = verifyExcerpt(ex.anchor, ex.text);
+        if (!r) {
+          stillMissing.push(ex.docLabel);
+          continue;
+        }
+        if (r.status === 'fresh') {
+          verified.push({ ...ex, status: 'fresh' });
+        } else if (r.status === 'stale-relocated' && r.newAnchor) {
+          verified.push({
+            ...ex,
+            anchor: r.newAnchor,
+            status: 'stale-relocated',
+          });
+        } else {
+          stillMissing.push(ex.docLabel);
+        }
+      }
+      if (stillMissing.length > 0) {
+        setExcerptError(
+          `발췌 위치를 찾을 수 없습니다 (${stillMissing.join(', ')}). 다시 선택해 주세요.`,
+        );
+        return;
+      }
+      setExcerpts(verified);
+      setExcerptError(null);
+    }
+
     const userMsg: UiMessage = { id: newId(), role: 'user', content: text };
     setInput('');
-    fireChat([...messages, userMsg]);
-  }, [fireChat, input, messages, streaming]);
+    fireChat([...messages, userMsg], verified);
+  }, [excerpts, fireChat, input, messages, streaming, verifyExcerpt]);
 
   const regenerate = useCallback(
     (assistantId: string) => {
@@ -467,19 +626,102 @@ export function ChatPanel({
         data-testid="chat-input-form"
       >
         {getDocHtml ? (
-          <label
-            className="mb-2 flex cursor-pointer items-center gap-2 text-[10px] text-muted-foreground"
-            data-testid="chat-attach-toggle"
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+            <label
+              className={cn(
+                'flex cursor-pointer items-center gap-2',
+                excerpts.length > 0 && 'opacity-50',
+              )}
+              data-testid="chat-attach-toggle"
+              title={
+                excerpts.length > 0
+                  ? '발췌 첨부가 있을 때는 통째 첨부 대신 발췌가 사용됩니다.'
+                  : undefined
+              }
+            >
+              <input
+                type="checkbox"
+                checked={attachDoc}
+                onChange={(e) => setAttachDoc(e.target.checked)}
+                data-testid="chat-attach-checkbox"
+                disabled={streaming || excerpts.length > 0}
+              />
+              <span>📎 현재 문서를 컨텍스트로 첨부</span>
+            </label>
+            {captureExcerpt ? (
+              <button
+                type="button"
+                onClick={onCaptureExcerpt}
+                disabled={streaming}
+                data-testid="chat-capture-excerpt"
+                className="rounded-md border border-input px-2 py-0.5 hover:bg-muted disabled:opacity-50"
+              >
+                📌 발췌 첨부
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        {excerpts.length > 0 ? (
+          <ul
+            className="mb-2 flex flex-wrap gap-1.5"
+            data-testid="chat-excerpt-list"
           >
-            <input
-              type="checkbox"
-              checked={attachDoc}
-              onChange={(e) => setAttachDoc(e.target.checked)}
-              data-testid="chat-attach-checkbox"
-              disabled={streaming}
-            />
-            <span>📎 현재 문서를 컨텍스트로 첨부</span>
-          </label>
+            {excerpts.map((ex) => {
+              const tooLong = ex.text.length > EXCERPT_SOFT_CHAR_LIMIT;
+              return (
+                <li
+                  key={ex.id}
+                  data-testid="chat-excerpt-chip"
+                  data-status={ex.status}
+                  data-role={ex.role}
+                  className={cn(
+                    'flex max-w-full items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px]',
+                    ex.status === 'fresh' &&
+                      'border-input bg-muted text-foreground',
+                    ex.status === 'stale-relocated' &&
+                      'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400',
+                    ex.status === 'stale-missing' &&
+                      'border-destructive/40 bg-destructive/10 text-destructive',
+                  )}
+                  title={ex.text}
+                >
+                  <span className="text-muted-foreground">
+                    {ex.docLabel}:¶{ex.anchor.paragraphIndex}
+                  </span>
+                  <span className="max-w-[14rem] truncate">
+                    {ex.text.replace(/\s+/g, ' ').trim()}
+                  </span>
+                  {tooLong ? (
+                    <span
+                      className="text-amber-600"
+                      title={`긴 발췌 (${ex.text.length}자) — 토큰 사용량 주의`}
+                    >
+                      ⚠️
+                    </span>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => removeExcerpt(ex.id)}
+                    disabled={streaming}
+                    aria-label="발췌 제거"
+                    data-testid="chat-excerpt-remove"
+                    className="rounded-full px-1 text-muted-foreground hover:bg-foreground/10 hover:text-foreground disabled:opacity-50"
+                  >
+                    ×
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
+        {excerptError ? (
+          <div
+            role="alert"
+            data-testid="chat-excerpt-error"
+            className="mb-2 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-[11px] text-destructive"
+          >
+            {excerptError}
+          </div>
         ) : null}
         <div className="flex items-end gap-2">
           <textarea

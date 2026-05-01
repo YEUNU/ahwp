@@ -121,4 +121,43 @@ export interface ViewerHandle {
   applyTextColor: (hex: string) => void;
   /** Whether the doc has unsaved changes (mirrors internal dirtyRef). */
   isDirty: () => boolean;
+  /**
+   * Capture the current viewer selection as a portable excerpt — chunk
+   * 20. Returns null when no selection is active or the selection
+   * spans multiple paragraphs (multi-paragraph excerpts are deferred:
+   * the IR's `getTextRange` is single-paragraph). Returned `text` is
+   * frozen at call time; the caller stores it alongside an anchor for
+   * later stale verification.
+   */
+  captureExcerpt: () => {
+    sectionIndex: number;
+    paragraphIndex: number;
+    startOffset: number;
+    endOffset: number;
+    text: string;
+  } | null;
+  /**
+   * Re-read the IR at a stored anchor and compare to the captured
+   * text — chunk 20. Used right before send so we know whether the
+   * user has since edited the source paragraph. On mismatch, scans
+   * the doc once for `expected` and returns a relocated anchor when
+   * found. `null` return = section/paragraph index out of bounds.
+   */
+  verifyExcerpt: (
+    anchor: {
+      sectionIndex: number;
+      paragraphIndex: number;
+      startOffset: number;
+      endOffset: number;
+    },
+    expected: string,
+  ) => {
+    status: 'fresh' | 'stale-relocated' | 'stale-missing';
+    newAnchor?: {
+      sectionIndex: number;
+      paragraphIndex: number;
+      startOffset: number;
+      endOffset: number;
+    };
+  } | null;
 }
