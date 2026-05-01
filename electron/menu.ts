@@ -83,6 +83,11 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
         accelerator: 'CmdOrCtrl+F',
         click: () => send(getWindow(), 'edit:find'),
       },
+      {
+        label: '바꾸기…',
+        accelerator: 'CmdOrCtrl+H',
+        click: () => send(getWindow(), 'edit:replace'),
+      },
     ],
   };
 

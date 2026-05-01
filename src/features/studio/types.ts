@@ -28,6 +28,8 @@ export interface ViewerHandle {
   paste: () => Promise<boolean>;
   /** Open the in-document Find bar and focus its input (chunk 9). */
   openFind: () => void;
+  /** Open the Find bar with replace input focused (chunk 7 — Phase 2). */
+  openReplace: () => void;
   /** Set paragraph alignment on selection / current paragraph (chunk 10). */
   applyAlignment: (a: ParagraphAlignment) => void;
   /** Apply font size in points (converted to HWPUNIT internally). */

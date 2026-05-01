@@ -320,6 +320,8 @@ export default function AppShell() {
         void handle?.paste();
       } else if (action === 'edit:find') {
         handle?.openFind();
+      } else if (action === 'edit:replace') {
+        handle?.openReplace();
       } else if (
         action === 'format:bold' ||
         action === 'format:italic' ||

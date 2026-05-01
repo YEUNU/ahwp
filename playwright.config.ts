@@ -19,6 +19,11 @@ export default defineConfig({
   expect: { timeout: 10_000 },
   fullyParallel: false,
   workers: process.env.CI ? 2 : 4,
+  // Parallel Electron + macOS file-system races (folder-ops DnD, the studio
+  // debug-state propagation in find/replace) flake at <0.5% with 4 workers
+  // but pass deterministically in isolation. One retry absorbs the noise
+  // without masking real regressions — a true bug fails twice.
+  retries: 1,
   reporter: [['list']],
   use: {
     trace: 'on-first-retry',

@@ -451,6 +451,12 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       >
     >({});
     const findInputRef = useRef<HTMLInputElement>(null);
+    /** Replace UI state — chunk 7. ⌘H opens the bar with replace focused;
+     *  ⌘F keeps the search-only entry point. The replace string can be empty
+     *  (= delete matches), so we don't gate the buttons on emptiness. */
+    const [replaceQuery, setReplaceQuery] = useState('');
+    const [replaceFeedback, setReplaceFeedback] = useState<string | null>(null);
+    const replaceInputRef = useRef<HTMLInputElement>(null);
     /** Hidden file input for the toolbar's "이미지 삽입" button. */
     const imageInputRef = useRef<HTMLInputElement>(null);
     /** Drop overlay state — true while a file drag is hovering the viewer. */
@@ -1868,9 +1874,91 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       setFindMatches([]);
       setFindIndex(0);
       setFindHighlightsByPage({});
+      setReplaceFeedback(null);
       // Return focus to the scroll container so keyboard editing resumes.
       scrollRef.current?.focus();
     }, []);
+
+    /**
+     * Open the find bar with replace focused — chunk 7. Same surface as
+     * `openFind` but shifts focus to the replace input. Triggered by
+     * ⌘H / Ctrl+H or the Edit menu's "바꾸기…" entry.
+     */
+    const openReplace = useCallback((): void => {
+      setFindOpen(true);
+      setReplaceFeedback(null);
+      setTimeout(() => replaceInputRef.current?.focus(), 0);
+    }, []);
+
+    /**
+     * Run a single replace (replaceOne) or replace-all (replaceAll) on the
+     * IR via @rhwp/core. We delegate to the library rather than splicing
+     * matches ourselves so case-handling, multi-paragraph spans, and any
+     * future regex/whole-word options stay consistent with what the lib
+     * does internally.
+     *
+     * `replacementOverride` lets callers (e2e debug surface) inject a value
+     * without first round-tripping through React state — same UI buttons
+     * use the state-driven path with `undefined`.
+     *
+     * After the mutation:
+     *   - Find paragraph cache is invalidated (text changed)
+     *   - refreshAfterMutation re-reads page count + marks dirty
+     *   - runFindSearch(query) re-fires to populate updated match list
+     */
+    const applyReplace = useCallback(
+      (all: boolean, replacementOverride?: string): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        const query = findQuery;
+        if (query.length === 0) return;
+        const replacement =
+          replacementOverride !== undefined
+            ? replacementOverride
+            : replaceQuery;
+        try {
+          // Library is case-insensitive when the third arg is false — matches
+          // our own find cache behavior (we lowercase both sides).
+          const raw = all
+            ? doc.replaceAll(query, replacement, false)
+            : doc.replaceOne(query, replacement, false);
+          // The IR returns a JSON status string; we parse defensively because
+          // the lib doesn't expose a typed schema for this. The {count}
+          // shape is what 0.7.9 returns; falling back to "1 match replaced"
+          // for replaceOne keeps the UI honest if shape changes.
+          let count = all ? null : 1;
+          try {
+            const parsed = JSON.parse(raw) as { count?: number };
+            if (typeof parsed.count === 'number') count = parsed.count;
+          } catch {
+            /* ignore — feedback text falls back to a generic message */
+          }
+          // Invalidate the find text cache before re-running the search
+          // — the cached lowercase strings still hold the old matches.
+          findTextCacheRef.current = null;
+          refreshAfterMutation();
+          runFindSearch(query);
+          setReplaceFeedback(
+            count == null ? (all ? '모두 바꿈' : '바꿈') : `${count}건 바꿈`,
+          );
+        } catch (err) {
+          console.warn('[studio] replace failed:', err);
+          setReplaceFeedback(
+            err instanceof Error ? `에러: ${err.message}` : '에러',
+          );
+        }
+      },
+      [findQuery, replaceQuery, refreshAfterMutation, runFindSearch],
+    );
+
+    const replaceCurrent = useCallback(
+      (override?: string): void => applyReplace(false, override),
+      [applyReplace],
+    );
+    const replaceAllMatches = useCallback(
+      (override?: string): void => applyReplace(true, override),
+      [applyReplace],
+    );
 
     // Recompute highlight rects whenever matches or active index change.
     useEffect(() => {
@@ -1964,6 +2052,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         cut: () => cutSelection(),
         paste: () => pasteAtCaret(),
         openFind: () => openFind(),
+        openReplace: () => openReplace(),
         applyAlignment: (a: ParaAlignment) => applyAlignment(a),
         applyFontSizePt: (pt: number) => applyFontSizePt(pt),
         applyTextColor: (hex: string) => applyTextColor(hex),
@@ -1977,6 +2066,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         cutSelection,
         pasteAtCaret,
         openFind,
+        openReplace,
         applyAlignment,
         applyFontSizePt,
         applyTextColor,
@@ -2290,6 +2380,11 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             e.preventDefault();
             return;
           }
+          if (!e.shiftKey && k === 'h') {
+            openReplace();
+            e.preventDefault();
+            return;
+          }
         }
 
         // Format shortcuts: Cmd/Ctrl + B/I/U toggle the current paragraph.
@@ -2418,6 +2513,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         cutSelection,
         pasteAtCaret,
         openFind,
+        openReplace,
         stepWordOffset,
         insertAtCaret,
         deleteAtCaret,
@@ -2971,12 +3067,25 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           query: string;
           matchCount: number;
           activeIndex: number;
+          replaceQuery: string;
+          replaceFeedback: string | null;
         } => ({
           open: findOpen,
           query: findQuery,
           matchCount: findMatches.length,
           activeIndex: findIndex,
+          replaceQuery,
+          replaceFeedback,
         }),
+        // Replace surface — chunk 7. e2e drives these via __studioDebug
+        // (Playwright clicks too, but the direct hooks make assertions
+        // simpler when verifying IR-side outcomes). Optional override arg
+        // bypasses React state so tests don't have to wait for a state
+        // round-trip after `setReplaceQuery`.
+        openReplace: (): void => openReplace(),
+        setReplaceQuery: (text: string): void => setReplaceQuery(text),
+        replaceCurrent: (override?: string): void => replaceCurrent(override),
+        replaceAll: (override?: string): void => replaceAllMatches(override),
         applyAlignment: (a: ParaAlignment): void => applyAlignment(a),
         applyFontSizePt: (pt: number): void => applyFontSizePt(pt),
         applyTextColor: (hex: string): void => applyTextColor(hex),
@@ -3220,6 +3329,11 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       findQuery,
       findMatches,
       findIndex,
+      openReplace,
+      replaceCurrent,
+      replaceAllMatches,
+      replaceQuery,
+      replaceFeedback,
       applyAlignment,
       applyFontSizePt,
       applyTextColor,
@@ -3640,70 +3754,122 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
 
         {findOpen && (
           <div
-            className="flex items-center gap-2 border-b border-border bg-card px-3 py-2 text-xs"
+            className="flex flex-col gap-1 border-b border-border bg-card px-3 py-2 text-xs"
             data-testid="studio-find-bar"
           >
-            <input
-              ref={findInputRef}
-              type="text"
-              className="h-7 w-56 rounded border border-input bg-background px-2"
-              placeholder="검색…"
-              value={findQuery}
-              onChange={(e) => {
-                setFindQuery(e.target.value);
-                runFindSearch(e.target.value);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') {
-                  closeFind();
-                  e.preventDefault();
-                } else if (e.key === 'Enter') {
-                  if (e.shiftKey) findPrev();
-                  else findNext();
-                  e.preventDefault();
-                }
-              }}
-              data-testid="studio-find-input"
-            />
-            <span
-              className="font-mono tabular-nums text-muted-foreground"
-              data-testid="studio-find-count"
+            <div className="flex items-center gap-2">
+              <input
+                ref={findInputRef}
+                type="text"
+                className="h-7 w-56 rounded border border-input bg-background px-2"
+                placeholder="검색…"
+                value={findQuery}
+                onChange={(e) => {
+                  setFindQuery(e.target.value);
+                  runFindSearch(e.target.value);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    closeFind();
+                    e.preventDefault();
+                  } else if (e.key === 'Enter') {
+                    if (e.shiftKey) findPrev();
+                    else findNext();
+                    e.preventDefault();
+                  }
+                }}
+                data-testid="studio-find-input"
+              />
+              <span
+                className="font-mono tabular-nums text-muted-foreground"
+                data-testid="studio-find-count"
+              >
+                {findMatches.length === 0
+                  ? findQuery
+                    ? '0 / 0'
+                    : ''
+                  : `${findIndex + 1} / ${findMatches.length}`}
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={findPrev}
+                disabled={findMatches.length === 0}
+                aria-label="이전 매치"
+                data-testid="studio-find-prev"
+              >
+                <ChevronUp className="size-4" />
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={findNext}
+                disabled={findMatches.length === 0}
+                aria-label="다음 매치"
+                data-testid="studio-find-next"
+              >
+                <ChevronDown className="size-4" />
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={closeFind}
+                aria-label="닫기"
+                data-testid="studio-find-close"
+              >
+                <X className="size-4" />
+              </Button>
+            </div>
+            <div
+              className="flex items-center gap-2"
+              data-testid="studio-replace-row"
             >
-              {findMatches.length === 0
-                ? findQuery
-                  ? '0 / 0'
-                  : ''
-                : `${findIndex + 1} / ${findMatches.length}`}
-            </span>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={findPrev}
-              disabled={findMatches.length === 0}
-              aria-label="이전 매치"
-              data-testid="studio-find-prev"
-            >
-              <ChevronUp className="size-4" />
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={findNext}
-              disabled={findMatches.length === 0}
-              aria-label="다음 매치"
-              data-testid="studio-find-next"
-            >
-              <ChevronDown className="size-4" />
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={closeFind}
-              aria-label="닫기"
-              data-testid="studio-find-close"
-            >
-              <X className="size-4" />
-            </Button>
+              <input
+                ref={replaceInputRef}
+                type="text"
+                className="h-7 w-56 rounded border border-input bg-background px-2"
+                placeholder="바꿀 내용 (빈 값 = 삭제)"
+                value={replaceQuery}
+                onChange={(e) => setReplaceQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    closeFind();
+                    e.preventDefault();
+                  } else if (e.key === 'Enter') {
+                    if (e.shiftKey) replaceAllMatches();
+                    else replaceCurrent();
+                    e.preventDefault();
+                  }
+                }}
+                data-testid="studio-replace-input"
+              />
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => replaceCurrent()}
+                disabled={findQuery.length === 0 || findMatches.length === 0}
+                data-testid="studio-replace-one"
+              >
+                바꾸기
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => replaceAllMatches()}
+                disabled={findQuery.length === 0 || findMatches.length === 0}
+                data-testid="studio-replace-all"
+              >
+                모두 바꾸기
+              </Button>
+              {replaceFeedback ? (
+                <span
+                  className="text-muted-foreground"
+                  data-testid="studio-replace-feedback"
+                >
+                  {replaceFeedback}
+                </span>
+              ) : null}
+            </div>
           </div>
         )}
 
