@@ -273,8 +273,9 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Local-only example fixtures (large HWP files used by e2e)
-examples/
+# Example fixtures used by e2e — committed for CI / contributor parity.
+# (.DS_Store and other macOS junk filtered out separately.)
+examples/.DS_Store
 
 # Claude Code runtime state
 .claude/
