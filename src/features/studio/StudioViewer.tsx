@@ -1561,6 +1561,51 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     );
 
     /**
+     * Header / footer wrappers — chunk 11. HF edits live outside the body
+     * caret stream, so we pass `syncCaret: false`. The IR returns
+     * `{ok, exists, kind, applyTo, ...}` JSON; UI-facing helpers parse
+     * what they need and discard the rest.
+     */
+    const setHeaderFooterText = useCallback(
+      (
+        sectionIdx: number,
+        isHeader: boolean,
+        applyTo: number,
+        text: string,
+      ): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        try {
+          // Drop any previous slot first so we don't append to old content.
+          const existing = JSON.parse(
+            doc.getHeaderFooter(sectionIdx, isHeader, applyTo),
+          ) as { exists?: boolean };
+          if (existing.exists) {
+            doc.deleteHeaderFooter(sectionIdx, isHeader, applyTo);
+          }
+          if (text.length === 0) {
+            // Empty input ⇒ leave the slot deleted.
+            refreshAfterMutation({ syncCaret: false });
+            return;
+          }
+          doc.createHeaderFooter(sectionIdx, isHeader, applyTo);
+          doc.insertTextInHeaderFooter(
+            sectionIdx,
+            isHeader,
+            applyTo,
+            0 /* first paragraph */,
+            0 /* offset 0 */,
+            text,
+          );
+          refreshAfterMutation({ syncCaret: false });
+        } catch (err) {
+          console.warn('[studio] setHeaderFooterText failed:', err);
+        }
+      },
+      [refreshAfterMutation],
+    );
+
+    /**
      * Toggle a list (numbered / bulleted) on the caret's current paragraph.
      * Calling toggle on a paragraph that already has the same kind of list
      * removes it (headType: 'None'). Selection-aware: applies to every
@@ -2206,6 +2251,19 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         },
         applyPageDef: (props, sectionIdx = 0) =>
           applyPageDef(props, sectionIdx),
+        getHeaderFooter: (sectionIdx, isHeader, applyTo) => {
+          const doc = docRef.current;
+          if (!doc) return null;
+          try {
+            return JSON.parse(
+              doc.getHeaderFooter(sectionIdx, isHeader, applyTo),
+            ) as Record<string, unknown>;
+          } catch {
+            return null;
+          }
+        },
+        setHeaderFooterText: (sectionIdx, isHeader, applyTo, text) =>
+          setHeaderFooterText(sectionIdx, isHeader, applyTo, text),
         isDirty: () => dirtyRef.current,
       }),
       [
@@ -2221,6 +2279,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         applyFontSizePt,
         applyTextColor,
         applyPageDef,
+        setHeaderFooterText,
       ],
     );
 
@@ -3565,6 +3624,28 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         },
         applyPageDef: (props: Record<string, unknown>, sectionIdx = 0): void =>
           applyPageDef(props, sectionIdx),
+        // Header / footer — chunk 11.
+        setHeaderFooterText: (
+          sectionIdx: number,
+          isHeader: boolean,
+          applyTo: number,
+          text: string,
+        ): void => setHeaderFooterText(sectionIdx, isHeader, applyTo, text),
+        getHeaderFooter: (
+          sectionIdx: number,
+          isHeader: boolean,
+          applyTo: number,
+        ): Record<string, unknown> | null => {
+          const doc = docRef.current;
+          if (!doc) return null;
+          try {
+            return JSON.parse(
+              doc.getHeaderFooter(sectionIdx, isHeader, applyTo),
+            ) as Record<string, unknown>;
+          } catch {
+            return null;
+          }
+        },
         // Image insert hook for e2e — bytes encoded as base64 to keep
         // the test deterministic without needing real image files.
         insertImageBase64: async (
@@ -3674,6 +3755,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       splitCellInto,
       unmergeCell,
       applyPageDef,
+      setHeaderFooterText,
     ]);
 
     // Effect 2: page indicator + mount window. On every scroll (rAF-

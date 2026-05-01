@@ -82,6 +82,7 @@
   - [x] 리스트 (글머리 / 번호) + 페이지 나누기
   - [x] 표 삽입 (TablePicker 8×8) + 셀 편집 (클릭→타이핑, Tab 네비, 인-셀 서식, 우클릭 행/열 추가·삭제, 셀 합치기·나누기·병합 해제)
   - [x] 페이지 설정 (용지 크기 / 방향 / 여백) — `setPageDef` IR 위임. PageSetupDialog (A4/A5/B5/Letter/Legal preset + 사용자 정의 mm)
+  - [x] 머리말 / 꼬리말 (단일 라인 MVP) — `createHeaderFooter` / `getHeaderFooter` / `insertTextInHeaderFooter` / `deleteHeaderFooter` IR 위임. HeaderFooterDialog (header/footer 토글 + 단일 라인 + applyTo=0 양쪽). 다중 라인 / 페이지 템플릿(홀수/짝수)은 후속
   - [x] 이미지 삽입 (툴바 + OS 드래그)
   - [x] 확장형 툴바 (더보기 행) + 보기 토글 (제어문자 / 투명 테두리)
 - [x] 144페이지 부하 측정 e2e gate

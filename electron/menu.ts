@@ -130,6 +130,10 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
         click: () => send(getWindow(), 'view:page-setup'),
       },
       {
+        label: '머리말 / 꼬리말…',
+        click: () => send(getWindow(), 'insert:header-footer'),
+      },
+      {
         label: '설정…',
         accelerator: 'CmdOrCtrl+,',
         click: () => send(getWindow(), 'view:settings'),

@@ -13,6 +13,7 @@ import { correctExtension } from '@shared/format';
 import { ChatPanel } from '@/features/chat/ChatPanel';
 import { FolderTree } from '@/features/files/FolderTree';
 import { SettingsDialog } from '@/features/settings/SettingsDialog';
+import { HeaderFooterDialog } from '@/features/studio/HeaderFooterDialog';
 import { PageSetupDialog } from '@/features/studio/PageSetupDialog';
 import { StudioViewer } from '@/features/studio/StudioViewer';
 import { TabBar, type TabDescriptor } from '@/features/studio/TabBar';
@@ -54,6 +55,7 @@ export default function AppShell() {
   const [folderRoot, setFolderRoot] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [pageSetupOpen, setPageSetupOpen] = useState(false);
+  const [hfOpen, setHfOpen] = useState(false);
   // viewerRef per tab (by key). The active tab's viewer is what menu /
   // shortcut actions target.
   const viewerRefsRef = useRef<Map<string, ViewerHandle | null>>(new Map());
@@ -335,6 +337,8 @@ export default function AppShell() {
         setSettingsOpen(true);
       } else if (action === 'view:page-setup') {
         setPageSetupOpen(true);
+      } else if (action === 'insert:header-footer') {
+        setHfOpen(true);
       }
     });
   }, [
@@ -353,6 +357,16 @@ export default function AppShell() {
         onOpenChange={setPageSetupOpen}
         getCurrentPageDef={() => activeViewerRef()?.getPageDef() ?? null}
         onApply={(props) => activeViewerRef()?.applyPageDef(props)}
+      />
+      <HeaderFooterDialog
+        open={hfOpen}
+        onOpenChange={setHfOpen}
+        getCurrent={(sec, isHeader, applyTo) =>
+          activeViewerRef()?.getHeaderFooter(sec, isHeader, applyTo) ?? null
+        }
+        onApply={(sec, isHeader, applyTo, text) =>
+          activeViewerRef()?.setHeaderFooterText(sec, isHeader, applyTo, text)
+        }
       />
       <PanelGroup
         direction="horizontal"

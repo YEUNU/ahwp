@@ -34,6 +34,23 @@ export interface ViewerHandle {
   getPageDef: (sectionIdx?: number) => Record<string, unknown> | null;
   /** Apply a PageDef props bag (paper size / margins / orientation). */
   applyPageDef: (props: Record<string, unknown>, sectionIdx?: number) => void;
+  /**
+   * Read a header / footer slot. Shape:
+   * `{ exists, kind, applyTo, paraCount, text, ... }`. applyTo=0 covers
+   * all pages ("양 쪽").
+   */
+  getHeaderFooter: (
+    sectionIdx: number,
+    isHeader: boolean,
+    applyTo: number,
+  ) => Record<string, unknown> | null;
+  /** Replace a header/footer's text in one shot (empty string = remove). */
+  setHeaderFooterText: (
+    sectionIdx: number,
+    isHeader: boolean,
+    applyTo: number,
+    text: string,
+  ) => void;
   /** Set paragraph alignment on selection / current paragraph (chunk 10). */
   applyAlignment: (a: ParagraphAlignment) => void;
   /** Apply font size in points (converted to HWPUNIT internally). */

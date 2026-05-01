@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+### Added — Phase 2 청크 11: 머리말 / 꼬리말 (MVP)
+
+- 메뉴 "보기 → 머리말 / 꼬리말…" 또는 `insert:header-footer` IPC로 다이얼로그 진입
+- 머리말 / 꼬리말 라디오 토글, 단일 라인 텍스트 입력, 모든 페이지에 적용 (applyTo=0)
+- 적용 / 제거 / 취소 버튼. 빈 값 적용 = 슬롯 제거
+- `createHeaderFooter` / `insertTextInHeaderFooter` / `getHeaderFooter` / `deleteHeaderFooter` IR API 직접 위임. 덮어쓰기 시 drop & recreate으로 append 방지
+- **다중 라인 / 페이지 템플릿(홀수만/짝수만/첫 페이지)은 후속 청크로 보류**
+
 ### Added — Phase 2 청크 10: 페이지 설정 (용지 / 방향 / 여백)
 
 - 메뉴 "보기 → 페이지 설정…" 또는 `view:page-setup` IPC로 다이얼로그 진입

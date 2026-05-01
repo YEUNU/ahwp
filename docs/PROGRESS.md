@@ -6,13 +6,13 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 | 항목        | 상태                                                                                                                                                                                                                       |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Phase       | **Phase 2 청크 10** — 페이지 설정 (rhwp-core 활용 시리즈 4번째). 다음: 머리말/꼬리말 → 각주 → 책갈피                                                                                                                       |
+| Phase       | **Phase 2 청크 11** — 머리말/꼬리말 (rhwp-core 활용 시리즈 5번째). 다음: 각주 → 책갈피 → 도형                                                                                                                              |
 | 빌드        | ✅ `npm run dev` · `npx vite build`                                                                                                                                                                                        |
 | 타입        | ✅ `npm run typecheck`                                                                                                                                                                                                     |
 | 린트        | ✅ `npm run lint` (0 warnings, 0 errors)                                                                                                                                                                                   |
 | 포맷        | ✅ `npm run format:check`                                                                                                                                                                                                  |
 | 단위 테스트 | ✅ 3/3 (`App.test.tsx`)                                                                                                                                                                                                    |
-| e2e         | ✅ 186 케이스 / 4 워커 병렬 + retry=1 (~99s) — 181 prior + 5 pagesetup. 2 skip = NIM live + cell-menu UI(의도)                                                                                                             |
+| e2e         | ✅ 192 케이스 / 4 워커 병렬 + retry=1 (~76s) — 186 prior + 6 header/footer. 2 skip = NIM live + cell-menu UI(의도)                                                                                                         |
 | Electron    | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                                                |
 | 의존성      | runtime: `@rhwp/core` · `chokidar` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` (chunk 6에서 `@rhwp/editor` 제거) |
 
@@ -2025,6 +2025,67 @@ A4 = 59528 × 84186 HWPUNIT (210 × 297 mm). 1 mm = 567/2 = 283.5 HWPUNIT (A4 wi
 ✓ npm run e2e               (182/186, 2 flaky→retry pass, 2 skip = NIM live + cell-menu UI 의도, 회귀 0)
 ```
 
+### 2026-05-01 — Phase 2 청크 11 — 머리말 / 꼬리말 (rhwp-core 활용 시리즈 5번째)
+
+한컴 한글 "쪽 → 머리말/꼬리말" 단일-라인 MVP. 다중 라인 / 페이지 템플릿(홀수/짝수)은 후속.
+
+**IR API**
+
+| 메서드                                                                          | 역할                                                                                   |
+| ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `createHeaderFooter(sec, isHeader, applyTo)`                                    | 슬롯 생성                                                                              |
+| `getHeaderFooter(sec, isHeader, applyTo)`                                       | 슬롯 조회 — `{exists, kind, applyTo, paraCount, text, ...}` 반환 (text 필드 직접 포함) |
+| `insertTextInHeaderFooter(sec, isHeader, applyTo, hfParaIdx, charOffset, text)` | 텍스트 삽입                                                                            |
+| `deleteHeaderFooter(sec, isHeader, applyTo)`                                    | 슬롯 제거                                                                              |
+
+**applyTo probe**
+
+`applyTo=0`이 "양 쪽" (label 필드로 확인). 1/2 등 다른 값은 페이지 템플릿(홀수만/짝수만/첫 페이지) — 본 청크에선 0만 노출.
+
+**구현 — `setHeaderFooterText` 헬퍼**
+
+```
+existing = getHeaderFooter(...)
+if existing.exists: deleteHeaderFooter(...)
+if text.length === 0: return  // 빈 입력 = 슬롯 제거
+createHeaderFooter(...)
+insertTextInHeaderFooter(..., 0 /* paraIdx */, 0 /* charOffset */, text)
+```
+
+덮어쓰기 시 append 방지 위해 항상 drop & recreate. `refreshAfterMutation({ syncCaret: false })` (HF 편집은 본문 caret 스트림 외부).
+
+**구현 — `HeaderFooterDialog`**
+
+- shadcn `Dialog` 재사용 (Page setup 패턴)
+- 머리말 / 꼬리말 라디오 토글 (kind state). 토글마다 해당 슬롯 text 자동 시드
+- text input (단일 라인). 빈 값 = 제거
+- 적용 / 제거 / 취소 버튼
+- 진입점: `insert:header-footer` MenuAction → 메뉴 "보기 → 머리말 / 꼬리말…"
+
+**ViewerHandle / \_\_studioDebug**
+
+- `ViewerHandle.{getHeaderFooter, setHeaderFooterText}` 노출 → `AppShell` Dialog가 활성 viewer로 위임
+- `__studioDebug.{setHeaderFooterText, getHeaderFooter}` — e2e 라운드트립용
+
+**e2e — `tests/e2e/studio-headerfooter.spec.ts`** (6 케이스)
+
+1. blank doc — header/footer 모두 `exists:false`
+2. `setHeaderFooterText` → header 생성 + text round-trip + kind/applyTo 검증
+3. header / footer 독립 (서로 영향 X)
+4. 두 번 set하면 덮어쓰기 (append 아님)
+5. 빈 text → 슬롯 제거 (`exists:false`)
+6. UI: `insert:header-footer` IPC → 다이얼로그 → text 입력 → 적용 → IR readback
+
+**검증 결과**
+
+```
+✓ npm run typecheck
+✓ npm run lint              (0 errors, 0 warnings)
+✓ npm run format:check
+✓ npm test                  (3/3)
+✓ npm run e2e               (190/192, 2 skip = NIM live + cell-menu UI 의도, 회귀 0)
+```
+
 **다음 청크 — rhwp-core API 추가 활용 (계속)**
 
 `@rhwp/core` 0.7.9는 253개 메서드 노출. 우리가 활용 중인 건 ~30%. 한컴 한글 핵심 누락분을 라이브러리 API로 매핑한 후보 청크 (사용 빈도 + UX 임팩트 순):
@@ -2065,10 +2126,11 @@ A4 = 59528 × 84186 HWPUNIT (210 × 297 mm). 1 mm = 567/2 = 283.5 HWPUNIT (A4 wi
 - ~~줄 간격 / 들여쓰기 / 문단 간격 + 하단 status bar (undo/redo/zoom 분리)~~ ✅ (청크 8, 2026-05-01)
 - ~~셀 합치기 / 나누기 / 병합 해제~~ ✅ (청크 9, 2026-05-01)
 - ~~페이지 설정 (용지/방향/여백)~~ ✅ (청크 10, 2026-05-01)
+- ~~머리말 / 꼬리말 (단일 라인 MVP)~~ ✅ (청크 11, 2026-05-01)
 
 **진행 가능 (키 의존성 없음)**
 
-- rhwp-core API 추가 활용 시리즈 (머리말/꼬리말 → 각주 → 책갈피 → 도형 등 — 위 일지의 "다음 청크" 표 참조)
+- rhwp-core API 추가 활용 시리즈 (각주 → 책갈피 → 도형 → 수식 등 — 위 일지의 "다음 청크" 표 참조)
 - 파일별 채팅 히스토리 (better-sqlite3 도입 — schema/migration 정리)
 - Manual 모드: AI 변경사항을 diff로 제안 → Accept/Reject (2-E, 현재 OpenAI/NVIDIA만으로도 검증 가능)
 
