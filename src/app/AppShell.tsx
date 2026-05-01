@@ -11,6 +11,7 @@ import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import type { MenuAction, PingResponse } from '@shared/api';
 import { correctExtension } from '@shared/format';
 import { ChatPanel } from '@/features/chat/ChatPanel';
+import { runTools } from '@/features/chat/tools';
 import { FolderTree } from '@/features/files/FolderTree';
 import { SettingsDialog } from '@/features/settings/SettingsDialog';
 import { BookmarkDialog } from '@/features/studio/BookmarkDialog';
@@ -593,6 +594,11 @@ export default function AppShell() {
                 onOpenSettings={() => setSettingsOpen(true)}
                 getDocHtml={() => activeViewerRef()?.exportDocumentHtml() ?? ''}
                 applyHtml={(html) => activeViewerRef()?.applyHtmlAtCaret(html)}
+                runTools={(items) => {
+                  const v = activeViewerRef();
+                  if (!v) return [];
+                  return runTools(v, items);
+                }}
               />
             </div>
           </aside>

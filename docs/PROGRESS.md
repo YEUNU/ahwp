@@ -6,13 +6,13 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 | 항목        | 상태                                                                                                                                                                                                                       |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Phase       | **Phase 2 청크 18** — HTML 내보내기/붙이기 + ChatPanel 문서 컨텍스트 (rhwp-core 시리즈 12번째 + AI 라운드트립). 다음: 셀 배경 / 그림 속성 / 클립보드 컨트롤                                                                |
+| Phase       | **Phase 2 청크 19** — Manual 모드 도구 디스패치 (`ahwp-tools` JSON 블록). HTML로 표현 못 하는 컨트롤(각주/머리말/책갈피/페이지/스타일/도형)을 화이트리스트 IR 호출로 라우팅. 다음: 셀 배경 / 그림 속성 / 클립보드 컨트롤   |
 | 빌드        | ✅ `npm run dev` · `npx vite build`                                                                                                                                                                                        |
 | 타입        | ✅ `npm run typecheck`                                                                                                                                                                                                     |
 | 린트        | ✅ `npm run lint` (0 warnings, 0 errors)                                                                                                                                                                                   |
 | 포맷        | ✅ `npm run format:check`                                                                                                                                                                                                  |
 | 단위 테스트 | ✅ 3/3 (`App.test.tsx`)                                                                                                                                                                                                    |
-| e2e         | ✅ 232 케이스 / 4 워커 병렬 + retry=1 — 222 + 7 studio-html-paste + 3 chat-html-apply (chunk 18). 229 passed / 3 skipped (NIM smoke + NIM chunk 18 round-trip 키 게이트 + cell-menu UI 의도). live 2/2 통과(키 주입 시)    |
+| e2e         | ✅ 240 케이스 / 4 워커 병렬 + retry=1 — 232 + 7 chat-tools + 1 NIM chunk 19 (chunk 19). 235 passed / 4 skipped (NIM 3개 키 게이트 + cell-menu UI 의도). live NIM 3/3 통과(`qwen/qwen3.5-122b-a10b`)                        |
 | Electron    | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                                                |
 | 의존성      | runtime: `@rhwp/core` · `chokidar` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` (chunk 6에서 `@rhwp/editor` 제거) |
 
@@ -2386,6 +2386,87 @@ insertTextInHeaderFooter(..., 0 /* paraIdx */, 0 /* charOffset */, text)
 ✓ NVIDIA NIM live 2/2 (chunk 18 round-trip 포함)
 ```
 
+### 2026-05-01 — Phase 2 청크 19 — Manual 모드 도구 디스패치 (`ahwp-tools` JSON 블록)
+
+**배경**
+
+청크 18의 ` ```html``` ` 라운드트립은 흐르는 글자/문단 양식만 커버. 한컴 한글의 분리된 컨트롤(각주·머리말·책갈피·페이지 설정·스타일·도형)은 HTML 어휘로 표현 불가. AI가 평문 응답에 단일 JSON 블록을 작성하면 렌더러가 화이트리스트 핸들러로 라우팅하는 패턴 도입. provider tool-use API(Anthropic/OpenAI function calling) 바인딩은 Phase 3 Agent 모드로 미룸.
+
+**JSON 블록 형식**
+
+````
+```ahwp-tools
+{
+  "ops": [
+    { "tool": "applyHtml",      "args": { "html": "<p style='text-align:center;'>제목</p>" } },
+    { "tool": "insertFootnote", "args": { "text": "참고 문헌 1" } },
+    { "tool": "addBookmark",    "args": { "name": "section1" } },
+    { "tool": "applyPageDef",   "args": { "props": { "landscape": true } } }
+  ]
+}
+```
+````
+
+- 응답에 블록 하나 (시스템 프롬프트로 강제)
+- ops는 IR 호출 순서대로 실행. 부분 실패 시 이전 op 보존(롤백 없음, Undo로 일괄 되돌리기는 후속)
+
+**도구 카탈로그 (청크 19)**
+
+| `tool`                | 위임                          |
+| --------------------- | ----------------------------- |
+| `applyHtml`           | `applyHtmlAtCaret` (chunk 18) |
+| `applyAlignment`      | `applyAlignment`              |
+| `applyFontSize`       | `applyFontSizePt`             |
+| `applyTextColor`      | `applyTextColor`              |
+| `toggleCharFormat`    | `toggleCharFormat`            |
+| `insertFootnote`      | `insertFootnoteAtCaret`       |
+| `addBookmark`         | `addBookmarkAtCaret`          |
+| `setHeaderFooterText` | `setHeaderFooterText`         |
+| `applyPageDef`        | `applyPageDef`                |
+| `createNamedStyle`    | `createNamedStyle`            |
+| `createRectShape`     | `createRectShapeAtCaret`      |
+
+**검증 (`shared/ai-tools.ts`)**
+
+- 필수 키 / 타입 매칭 / enum 화이트리스트 / 숫자 범위 / 색상 정규식 / 문자열 길이 상한
+- 검증 실패는 결과 배열에 `{ ok: false, reason }`로 기록. 후속 op는 계속 실행 (부분 성공 모델)
+
+**디스패처 (`src/features/chat/tools.ts`)**
+
+- `runTools(ViewerHandle, ops): ToolResult[]` 명시적 switch 분기. `eval` 일체 사용 안 함
+- 등록되지 않은 tool은 `unknown_tool`로 거절. 검증 실패는 `invalid_args`
+- 각 op는 IR snapshot을 남기는 기존 mutation을 그대로 호출 — Undo 호환 (op별 단계적 되돌리기 가능)
+
+**ChatPanel 통합**
+
+- 어시스턴트 메시지에 `\`\`\`ahwp-tools\`\`\`` 블록 감지 → JSON 파싱 + 1차 검증
+- 메시지 본문 하단에 ops 미리보기 리스트 (tool 이름 + 핵심 args 요약, 검증 실패 op는 빨간색)
+- "도구 실행" 버튼 → `runTools` 순차 호출 → 결과 토스트 (`✓ 적용됨 (5/6)`)
+- 청크 18의 ` ```html``` ` 적용 버튼과는 **별도 버튼**으로 표시 (한 메시지에 둘 다 와도 OK)
+
+**시스템 프롬프트 확장**
+
+- 청크 18 SYSTEM_PROMPT에 tool 카탈로그 + JSON schema + 사용 가이드 추가
+- HTML과 tool 분리 기준 명시: "흐르는 글자·문단 양식 = `applyHtml`, 컨트롤 객체(각주·머리말·책갈피 등) = 별도 tool"
+
+**E2E (chunk 19 신규 케이스)**
+
+- `chat-tools.spec.ts` (fake provider): 각 tool 라우팅, 검증 실패 거절, 부분 성공
+- `nvidia-live.spec.ts` chunk 19 case: NIM에 "addBookmark" tool block 요청 → 적용 → IR `getBookmarks()`에 'intro' 확인. 모델 `qwen/qwen3.5-122b-a10b`(NIM)에서 일관되게 통과
+
+**버전 + 검증**
+
+- `package.json` 0.2.19 (Phase 2 청크 19)
+
+```
+✓ npm run typecheck
+✓ npm run lint              (0 errors, 0 warnings)
+✓ npm run format:check
+✓ npm test                  (3/3)
+✓ 누적 e2e 240 = 232 + 7 (chat-tools) + 1 (nvidia-live chunk 19). 235 passed / 4 skipped (NIM 3개 키 게이트 + cell-menu 1개 의도)
+✓ NVIDIA NIM live 3/3 (qwen/qwen3.5-122b-a10b — chunk 18 + chunk 19 round-trip 포함)
+```
+
 **다음 청크 — rhwp-core API 추가 활용 (계속)**
 
 `@rhwp/core` 0.7.9는 253개 메서드 노출. 우리가 활용 중인 건 ~30%. 한컴 한글 핵심 누락분을 라이브러리 API로 매핑한 후보 청크 (사용 빈도 + UX 임팩트 순):
@@ -2434,6 +2515,7 @@ insertTextInHeaderFooter(..., 0 /* paraIdx */, 0 /* charOffset */, text)
 - ~~표/셀 속성 (padding/spacing/repeatHeader/verticalAlign)~~ ✅ (청크 17, 2026-05-01)
 - ~~도형 (사각형 MVP)~~ ✅ (청크 15, 2026-05-01)
 - ~~HTML 내보내기/붙이기 + ChatPanel 문서 컨텍스트 (AI 라운드트립 검증)~~ ✅ (청크 18, 2026-05-01)
+- ~~Manual 모드 도구 디스패치 (`ahwp-tools` JSON 블록 — 각주/머리말/책갈피/페이지/스타일/도형 IR 라우팅)~~ ✅ (청크 19, 2026-05-01)
 
 **진행 가능 (키 의존성 없음)**
 

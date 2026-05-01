@@ -148,10 +148,12 @@
 
 ### 2-E. Manual 편집 흐름
 
-- [x] 시스템 프롬프트 작성 (현재 문서 컨텍스트 주입) — chunk 18: 한컴 한글 양식 가이드 + `[현재 문서]:` HTML 첨부 (`exportDocumentHtml`)
-- [x] AI 응답 파싱 + 적용 — chunk 18: `\`\`\`html\`\`\``블록 자동 감지 → "문서에 적용" 버튼 →`applyHtmlAtCaret`. 정렬·줄간격·들여쓰기·문단간격·글자 서식 round-trip 검증 (`nvidia-live.spec.ts` chunk 18)
-- [ ] 변경 위치를 에디터에서 하이라이트 + diff 패널 표시 (현재는 HTML을 caret 위치에 삽입 — diff 미리보기는 후속)
+- [x] 시스템 프롬프트 작성 (현재 문서 컨텍스트 주입) — chunk 18: 한컴 한글 양식 가이드 + `[현재 문서]:` HTML 첨부 (`exportDocumentHtml`). chunk 19에 tool 카탈로그 + JSON schema 추가
+- [x] AI 응답 파싱 + 적용 (양식) — chunk 18: ` ```html``` ` 블록 자동 감지 → "문서에 적용" 버튼 → `applyHtmlAtCaret`. 정렬·줄간격·들여쓰기·문단간격·글자 서식 round-trip 검증 (`nvidia-live.spec.ts` chunk 18)
+- [x] AI 응답 파싱 + 적용 (컨트롤) — chunk 19: ` ```ahwp-tools``` ` JSON 블록 자동 감지 → ops 미리보기 + "도구 실행" 버튼 → 화이트리스트 IR 호출. 각주·머리말·책갈피·페이지 설정·스타일·도형 11개 tool 카탈로그. provider tool-use API 바인딩은 Phase 3
+- [ ] 변경 위치를 에디터에서 하이라이트 + diff 패널 표시 (현재는 caret 위치에 적용 — diff 미리보기는 후속)
 - [ ] Reject → 변경사항 폐기 (현재는 Undo로 복구 가능, 전용 Reject UX는 후속)
+- [ ] op별 한 묶음 Undo grouping (chunk 19는 op마다 독립 snapshot — 사용자가 ⌘Z로 단계적 되돌리기)
 
 검증: 실제 문서를 열고 "이 단락 요약해서 다시 써줘" 같은 작업이 정상 동작.
 

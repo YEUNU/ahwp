@@ -30,6 +30,7 @@ const FIXTURE = path.resolve(__dirname, 'fixtures', 'blank.hwpx');
 
 interface StudioDebug {
   getParaProps(s: number, p: number): Record<string, unknown>;
+  getBookmarks(): Record<string, unknown>[] | null;
 }
 
 test.describe('NVIDIA NIM — live smoke', () => {
@@ -54,10 +55,7 @@ test.describe('NVIDIA NIM — live smoke', () => {
   test('NVIDIA provider streams a real reply containing the sentinel', async () => {
     const { page } = launched;
     await page.getByTestId('chat-provider-select').selectOption('nvidia');
-    // Pick a smaller, fast model so the test runs in a few seconds.
-    await page
-      .getByTestId('chat-model-input')
-      .fill('meta/llama-3.1-8b-instruct');
+    await page.getByTestId('chat-model-input').fill('qwen/qwen3.5-122b-a10b');
     await expect(page.getByTestId('chat-key-indicator')).toHaveText(/●/);
 
     await page
@@ -102,11 +100,7 @@ test.describe('NVIDIA NIM — live smoke', () => {
     );
 
     await page.getByTestId('chat-provider-select').selectOption('nvidia');
-    // Larger model handles "respond with one html block" instructions
-    // more reliably than 8b.
-    await page
-      .getByTestId('chat-model-input')
-      .fill('meta/llama-3.1-70b-instruct');
+    await page.getByTestId('chat-model-input').fill('qwen/qwen3.5-122b-a10b');
     await expect(page.getByTestId('chat-key-indicator')).toHaveText(/●/);
 
     await page.getByTestId('chat-attach-checkbox').check();
@@ -132,5 +126,55 @@ test.describe('NVIDIA NIM — live smoke', () => {
       return dbg.getParaProps(0, 0).alignment as string;
     });
     expect(align).toBe('center');
+  });
+
+  // chunk 19 — ahwp-tools dispatch round trip. Asks NIM for a tool
+  // block that adds a bookmark, then verifies the IR sees it post-click.
+  test('chunk 19 — ahwp-tools dispatch (addBookmark) round trip', async () => {
+    test.skip(!existsSync(FIXTURE), 'tests/e2e/fixtures/blank.hwpx missing');
+    const { page } = launched;
+
+    await page.evaluate(async (p) => {
+      await window.api.session.set({ lastActivePath: p });
+    }, FIXTURE);
+    await page.reload();
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForFunction(
+      () =>
+        Boolean(
+          (window as Window & { __studioDebug?: StudioDebug }).__studioDebug,
+        ),
+      { timeout: 30_000 },
+    );
+
+    await page.getByTestId('chat-provider-select').selectOption('nvidia');
+    await page.getByTestId('chat-model-input').fill('qwen/qwen3.5-122b-a10b');
+    await expect(page.getByTestId('chat-key-indicator')).toHaveText(/●/);
+
+    await page.getByTestId('chat-attach-checkbox').check();
+
+    await page
+      .getByTestId('chat-input')
+      .fill(
+        [
+          'Add a bookmark named "intro" at the cursor.',
+          'Reply with EXACTLY one fenced ```ahwp-tools``` code block of valid JSON like:',
+          '{"ops":[{"tool":"addBookmark","args":{"name":"intro"}}]}',
+          'No other code blocks. No prose outside.',
+        ].join('\n'),
+      );
+    await page.getByTestId('chat-send').click();
+
+    const runBtn = page.getByTestId('chat-action-run-tools');
+    await expect(runBtn).toBeVisible({ timeout: 60_000 });
+    await runBtn.click();
+    await expect(runBtn).toHaveText(/✓ 적용됨/, { timeout: 10_000 });
+
+    const bookmarks = await page.evaluate(() => {
+      const dbg = (window as Window & { __studioDebug?: StudioDebug })
+        .__studioDebug!;
+      return dbg.getBookmarks();
+    });
+    expect(bookmarks?.some((b) => b.name === 'intro')).toBe(true);
   });
 });

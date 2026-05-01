@@ -22,10 +22,16 @@ import type {
   ChatStreamEvent,
   ProviderId,
 } from '@shared/ai';
+import {
+  parseToolBlock,
+  type AhwpPreflightItem,
+  type AhwpToolResult,
+} from '@shared/ai-tools';
 import type { AiChatHandle } from '@shared/api';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { MessageContent } from './MessageContent';
+import { previewArgs } from './tools';
 
 type ChatProviderId = Extract<ProviderId, 'openai' | 'nvidia'>;
 
@@ -101,28 +107,53 @@ export interface ChatPanelProps {
    * button on assistant messages that contain ```html``` code blocks.
    */
   applyHtml?: (html: string) => void;
+  /**
+   * Run a pre-flighted ahwp-tools op list against the active doc — chunk 19.
+   * Wraps `runTools` from src/features/chat/tools.ts. Surfaced as a
+   * "도구 실행" button on assistant messages that contain
+   * ```ahwp-tools``` JSON blocks.
+   */
+  runTools?: (items: AhwpPreflightItem[]) => AhwpToolResult[];
 }
 
 const HTML_BLOCK_RE = /```html\n?([\s\S]*?)```/i;
+const TOOLS_BLOCK_RE = /```ahwp-tools\n?([\s\S]*?)```/i;
 
-const SYSTEM_PROMPT_DOC_CONTEXT = `너는 한컴 한글 문서 어시스턴트야. 사용자가 문서 변경을 요청하면, 응답 안에 \`\`\`html ... \`\`\` 코드 블록을 만들어 변경분만 그 안에 작성해. 사용자가 그 블록을 한 번의 클릭으로 문서에 적용할 거야.
+const SYSTEM_PROMPT_DOC_CONTEXT = `너는 한컴 한글 문서 어시스턴트야. 사용자의 요청을 두 가지 코드 블록 중 하나(또는 둘 다)로 표현해서 응답해. 사용자가 코드 블록을 한 번의 클릭으로 문서에 적용해.
 
-지원하는 인라인 스타일 (그대로 작성):
+[A] 흐르는 글자/문단 양식 → \`\`\`html ... \`\`\` 한 블록만:
 - 단락 정렬: <p style="text-align: left|center|right|justify;">...</p>
 - 줄 간격: <p style="line-height: 1.5;"> (배수, 1.0/1.15/1.5/2.0/3.0)
-- 문단 들여쓰기: <p style="margin-left: 30px;"> (좌측 여백)
+- 문단 들여쓰기: <p style="margin-left: 30px;">
 - 첫 줄 들여쓰기: <p style="text-indent: 20pt;">
 - 문단 위/아래 간격: <p style="margin-top: 12px; margin-bottom: 6px;">
 - 글자 서식: <strong>, <em>, <u>, <s>, <span style="color:#ff0000;font-size:14pt;">
+- 표: <table><tr><td>...</td></tr></table>
 
-표는 <table><tr><td>...</td></tr></table> 형식. 보고서 형식 요청에는 명확한 정렬과 간격을 적극 활용해.
+[B] 한컴 컨트롤 객체(각주·머리말·책갈피·페이지 설정·스타일·도형) → \`\`\`ahwp-tools ... \`\`\` 한 블록 (JSON):
+{
+  "ops": [
+    { "tool": "applyHtml",          "args": { "html": "<p style='text-align:center;'>제목</p>" } },
+    { "tool": "applyAlignment",     "args": { "align": "left|center|right|justify" } },
+    { "tool": "applyFontSize",      "args": { "pt": 12 } },
+    { "tool": "applyTextColor",     "args": { "hex": "#RRGGBB" } },
+    { "tool": "toggleCharFormat",   "args": { "key": "bold|italic|underline" } },
+    { "tool": "insertFootnote",     "args": { "text": "각주 본문" } },
+    { "tool": "addBookmark",        "args": { "name": "section1" } },
+    { "tool": "setHeaderFooterText","args": { "sectionIdx": 0, "isHeader": true, "applyTo": 0, "text": "머리말 텍스트" } },
+    { "tool": "applyPageDef",       "args": { "props": { "landscape": true } } },
+    { "tool": "createNamedStyle",   "args": { "name": "본문2", "englishName": "Body2" } },
+    { "tool": "createRectShape",    "args": { "widthHwpunit": 5670, "heightHwpunit": 2835 } }
+  ]
+}
 
-응답엔 코드 블록 외에 짧은 설명이 있어도 좋지만, 코드 블록은 단 하나만 포함해.`;
+분리 기준: 양식(정렬/간격/글자 서식/표) = [A] HTML, 컨트롤 객체 = [B] ahwp-tools. 같은 일을 두 갈래로 보내지 마. 각 형식은 응답에 최대 한 블록만 포함해. 코드 블록 외에 짧은 설명을 함께 써도 돼.`;
 
 export function ChatPanel({
   onOpenSettings,
   getDocHtml,
   applyHtml,
+  runTools,
 }: ChatPanelProps = {}): JSX.Element {
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState('');
@@ -416,6 +447,7 @@ export function ChatPanel({
               onRegenerate={regenerate}
               onDelete={deleteMessage}
               onApplyHtml={applyHtml}
+              onRunTools={runTools}
             />
           ))
         )}
@@ -500,6 +532,8 @@ interface MessageProps {
   onDelete: (id: string) => void;
   /** Apply an HTML fragment to the active document (chunk 18). */
   onApplyHtml?: (html: string) => void;
+  /** Run an `ahwp-tools` op list against the active document (chunk 19). */
+  onRunTools?: (items: AhwpPreflightItem[]) => AhwpToolResult[];
 }
 
 function Message({
@@ -509,6 +543,7 @@ function Message({
   onRegenerate,
   onDelete,
   onApplyHtml,
+  onRunTools,
 }: MessageProps): JSX.Element {
   const isUser = message.role === 'user';
   const isAssistantStreaming =
@@ -560,6 +595,31 @@ function Message({
     appliedTimerRef.current = setTimeout(() => setApplied(false), 2000);
   };
 
+  // Tool-call dispatcher affordance — chunk 19. The model emits a
+  // ```ahwp-tools``` JSON block when it needs to mutate controls (footnote,
+  // header/footer, bookmark, page def, style, shape) that the HTML path
+  // can't express. We pre-flight here so the preview can show invalid ops
+  // in red even before the user clicks.
+  const toolsMatch =
+    !isUser && !streaming && onRunTools
+      ? TOOLS_BLOCK_RE.exec(message.content)
+      : null;
+  const toolsParsed = useMemo(() => {
+    if (!toolsMatch) return null;
+    return parseToolBlock(toolsMatch[1].trim());
+  }, [toolsMatch]);
+  const [toolsRun, setToolsRun] = useState<{
+    ok: number;
+    total: number;
+  } | null>(null);
+  const handleRunTools = () => {
+    if (!toolsParsed || !toolsParsed.ok || !onRunTools) return;
+    const results = onRunTools(toolsParsed.items);
+    let ok = 0;
+    for (const r of results) if (r.ok) ok += 1;
+    setToolsRun({ ok, total: results.length });
+  };
+
   return (
     <div
       className={cn(
@@ -600,6 +660,62 @@ function Message({
             >
               {applied ? '✓ 적용됨' : '문서에 적용'}
             </Button>
+          </div>
+        ) : null}
+        {toolsParsed ? (
+          <div
+            className="mt-2 border-t border-border pt-2"
+            data-testid="chat-tools-block"
+          >
+            {toolsParsed.ok ? (
+              <>
+                <ul
+                  className="mb-2 space-y-0.5 text-[11px]"
+                  data-testid="chat-tools-preview"
+                >
+                  {toolsParsed.items.map((item, idx) => (
+                    <li
+                      key={idx}
+                      className={cn(
+                        'flex gap-2',
+                        item.ok ? 'text-muted-foreground' : 'text-destructive',
+                      )}
+                      data-testid="chat-tools-op"
+                      data-op-ok={item.ok ? 'true' : 'false'}
+                    >
+                      <span className="font-mono">
+                        {item.ok ? item.call.tool : item.tool}
+                      </span>
+                      <span className="truncate">
+                        {item.ok ? previewArgs(item.call) : `✗ ${item.reason}`}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={toolsRun ? 'secondary' : 'default'}
+                  onClick={handleRunTools}
+                  disabled={
+                    toolsParsed.items.every((it) => !it.ok) // all-failed: nothing to dispatch
+                  }
+                  data-testid="chat-action-run-tools"
+                  className="text-xs"
+                >
+                  {toolsRun
+                    ? `✓ 적용됨 (${toolsRun.ok}/${toolsRun.total})`
+                    : '도구 실행'}
+                </Button>
+              </>
+            ) : (
+              <div
+                className="text-[11px] text-destructive"
+                data-testid="chat-tools-error"
+              >
+                도구 블록 파싱 실패: {toolsParsed.reason}
+              </div>
+            )}
           </div>
         ) : null}
       </div>

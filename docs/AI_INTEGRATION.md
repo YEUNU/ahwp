@@ -314,6 +314,99 @@ AI가 일반 텍스트 응답 안에 변경 제안을 JSON 블록으로 반환:
 
 target 발췌가 첨부된 경우 모델은 발췌의 `anchor`를 그대로 패치 anchor로 사용해야 함 (시스템 프롬프트에 명시). 따라서 렌더러는 fuzzy 매칭 없이 즉시 적용 가능.
 
+## Manual 모드 — 도구 디스패치 (`ahwp-tools`, 청크 19)
+
+청크 18의 ` ```html``` ` 라운드트립은 흐르는 글자/문단 양식(정렬·줄간격·들여쓰기·문단간격·글자 서식)을 커버합니다. 그러나 한컴 한글의 **분리된 컨트롤** — 각주 / 머리말 / 책갈피 / 페이지 설정 / 스타일 / 도형 — 은 HTML 어휘로 표현하기 어렵습니다. 이를 메우는 것이 청크 19의 **`ahwp-tools` JSON 블록** 입니다.
+
+> 이 절은 **Manual 모드 안의 결정론적 도구 호출**을 정의합니다. provider 측 tool-use API(Anthropic/OpenAI function calling)는 사용하지 않으며, AI가 평문 응답에 단일 JSON 블록을 작성하면 렌더러가 화이트리스트 핸들러로 라우팅합니다. provider tool-use API와 다중 턴 자동 실행은 이후 §Agent 모드의 별도 절로 다룹니다.
+
+### 응답 형식
+
+AI는 변경 의도를 다음 한 블록 안에 직렬화:
+
+````
+변경 사항을 적용합니다.
+
+```ahwp-tools
+{
+  "ops": [
+    { "tool": "applyHtml",       "args": { "html": "<p style='text-align:center;'>제목</p>" } },
+    { "tool": "applyAlignment",  "args": { "align": "center" } },
+    { "tool": "insertFootnote",  "args": { "text": "참고 문헌 1" } },
+    { "tool": "addBookmark",     "args": { "name": "section1" } },
+    { "tool": "applyPageDef",    "args": { "props": { "landscape": true } } },
+    { "tool": "setHeaderFooterText",
+      "args": { "sectionIdx": 0, "isHeader": true, "applyTo": 0, "text": "기밀 - 2026" } }
+  ]
+}
+```
+
+각주를 추가하고 가운데 정렬했습니다.
+````
+
+- 응답 어디에 위치해도 됩니다. 마크다운 fence(` ```ahwp-tools `)로 감지
+- 한 응답에 **블록 하나**. 시스템 프롬프트에 명시
+- `ops`는 IR 호출 순서대로 실행. 각 op는 독립 IR 호출 — 부분 실패 시 이전 op까지의 변경은 보존(롤백 없음, Undo로 일괄 되돌리기는 후속)
+
+### 도구 카탈로그 (청크 19)
+
+`shared/ai-tools.ts`의 `AhwpToolName` 합집합으로 **화이트리스트 enforcement**. 등록되지 않은 tool은 즉시 `unknown_tool` 에러로 거절.
+
+| `tool`                | `args`                                                              | 위임 IR / `ViewerHandle`      |
+| --------------------- | ------------------------------------------------------------------- | ----------------------------- |
+| `applyHtml`           | `{ html: string }`                                                  | `applyHtmlAtCaret` (chunk 18) |
+| `applyAlignment`      | `{ align: 'left'\|'center'\|'right'\|'justify' }`                   | `applyAlignment`              |
+| `applyFontSize`       | `{ pt: number }` (1~999)                                            | `applyFontSizePt`             |
+| `applyTextColor`      | `{ hex: string }` (`#RRGGBB`)                                       | `applyTextColor`              |
+| `toggleCharFormat`    | `{ key: 'bold'\|'italic'\|'underline' }`                            | `toggleCharFormat`            |
+| `insertFootnote`      | `{ text: string }`                                                  | `insertFootnoteAtCaret`       |
+| `addBookmark`         | `{ name: string }`                                                  | `addBookmarkAtCaret`          |
+| `setHeaderFooterText` | `{ sectionIdx, isHeader, applyTo, text }`                           | `setHeaderFooterText`         |
+| `applyPageDef`        | `{ props: Record<string, unknown>, sectionIdx?: number }`           | `applyPageDef`                |
+| `createNamedStyle`    | `{ name: string, englishName?: string }`                            | `createNamedStyle`            |
+| `createRectShape`     | `{ widthHwpunit, heightHwpunit, opts?: { treatAsChar?: boolean } }` | `createRectShapeAtCaret`      |
+
+> **HTML과 tool의 분리 기준** — 흐르는 글자·문단의 양식은 `applyHtml`(혹은 `applyAlignment`/`applyFontSize` 등 단일 명령) 한 가지로 충분. 각주·머리말·책갈피·페이지 설정·스타일·도형 같은 **컨트롤 객체**는 별도 tool. 시스템 프롬프트에 이 분리 기준을 명시해 모델이 같은 일을 두 갈래로 보내지 않도록 유도.
+
+### 검증
+
+각 tool은 `validateArgs(toolName, args): { ok: true; value } | { ok: false; reason }`를 통과해야 디스패처가 실행. 검증 항목:
+
+- 필수 키 존재 / 타입 매칭
+- enum 값 화이트리스트 (`align` 4개, `key` 3개)
+- 숫자 범위 (`pt` 1~999, `widthHwpunit`/`heightHwpunit` 1~283500 — A1 한 변)
+- 색상 정규식 (`/^#[0-9a-fA-F]{6}$/`)
+- 문자열 길이 상한 (`html` 64KB, `text` 4KB, `name` 256B)
+
+검증 실패는 결과 배열에 `{ ok: false, reason }`로 기록되고 사용자에게 토스트로 표시. 후속 op는 **계속 실행** (부분 성공 모델) — 모델은 실패 결과를 다음 턴에서 보고 수정 가능.
+
+### UX — 미리보기와 적용
+
+`ChatPanel`은 어시스턴트 응답에 `ahwp-tools` 블록이 감지되면:
+
+1. JSON 파싱 + 각 op `validateArgs` 1차 검사
+2. 메시지 본문 하단에 **ops 미리보기 리스트** 렌더 (tool 이름 + 핵심 args 요약, 잘못된 op는 빨간색)
+3. **"도구 실행"** 버튼 — 클릭 시 `runTools(ViewerHandle, ops)` 순차 호출
+4. 실행 결과: 성공/실패 카운트 토스트 (`✓ 적용됨 (5/6)`)
+
+`html` 적용 버튼과는 **별도 버튼**으로 표시 (한 메시지에 두 형식이 함께 와도 가능). 모델이 둘 다 보내면 사용자가 원하는 쪽만 선택 적용.
+
+### 안전 장치
+
+- **화이트리스트만 실행** — `AhwpToolName` 합집합 외의 문자열은 dispatch 거절
+- **`eval` 절대 금지** — 핸들러는 명시적 switch 분기로 등록. 동적 메서드 dispatch 안 함
+- **사용자 명시 액션** — AI는 JSON만 생성. 실제 mutation은 사용자가 버튼을 클릭한 직후에만 실행
+- **ops 상한** — 한 블록 50개. 초과 시 전체 거절 (검증 단계)
+- **Undo 호환** — 각 tool은 IR snapshot을 남기는 기존 mutation을 그대로 사용. 사용자는 `⌘Z`로 op별 단계적 되돌리기 가능. 한 묶음 undo grouping은 후속 (chunk 20+)
+- **시크릿 / 파일 시스템 / 셸 접근 없음** — 모든 tool은 활성 문서의 IR mutation으로 한정. 저장(`file:save`)·키 관리(`secrets:*`)·임의 IPC 호출은 카탈로그에서 제외
+
+### 의도적 제외 (후속 청크)
+
+- ~~**provider tool-use API 바인딩**~~ — Phase 3 Agent 모드 (§Agent 모드 — Tool Use에서 다룸). chunk 19는 응답-텍스트-기반 디스패처
+- ~~**다중 턴 자동 실행 / tool-result 응답**~~ — Phase 3
+- **표 셀 병합 / 셀 배경 / 그림 삽입** — Phase 2 시리즈 13~ 별도 청크
+- **각 op 별 진단 위치 (anchor)** — 현재는 caret 기반. paragraph anchor는 chunk 20+ Edit Proposal 합쳐서
+
 ## Agent 모드 — Tool Use
 
 각 provider의 tool 정의로 hwpctl 호환 함수를 노출. 화이트리스트 정의는 §멀티 다큐먼트 모델의 표 참고. 예시 schema:
