@@ -17,6 +17,7 @@ import type {
 import type { AiChatHandle } from '@shared/api';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { MessageContent } from './MessageContent';
 
 type ChatProviderId = Extract<ProviderId, 'openai' | 'nvidia'>;
 
@@ -393,17 +394,19 @@ function Message({
       </span>
       <div
         className={cn(
-          'max-w-[90%] whitespace-pre-wrap rounded-md px-3 py-2 text-sm',
+          'max-w-[90%] rounded-md px-3 py-2',
           isUser
-            ? 'bg-primary text-primary-foreground'
+            ? 'whitespace-pre-wrap bg-primary text-sm text-primary-foreground'
             : 'bg-muted text-foreground',
         )}
         data-testid="chat-message-content"
       >
         {isAssistantStreaming ? (
           <Loader2 className="h-3 w-3 animate-spin" />
-        ) : (
+        ) : isUser ? (
           message.content
+        ) : (
+          <MessageContent content={message.content} />
         )}
       </div>
     </div>

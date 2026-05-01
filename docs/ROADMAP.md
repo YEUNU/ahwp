@@ -123,10 +123,10 @@
 ### 2-C. 채팅 UI
 
 - [x] 채팅 패널 골격 — 메시지 리스트 + textarea + 스트리밍 토큰 표시 + abort 버튼 (`src/features/chat/ChatPanel.tsx`). Enter 전송, Shift+Enter 줄바꿈, IME composition 가드
-- [ ] 메시지 마크다운 렌더링 (`react-markdown` + `remark-gfm`)
-- [ ] 코드 블록 syntax highlight (`shiki` 또는 `react-syntax-highlighter`)
+- [x] 메시지 마크다운 렌더링 (`react-markdown` + `remark-gfm`) — assistant 메시지만, user는 plain text 유지
+- [x] 코드 블록 syntax highlight (`react-syntax-highlighter` PrismLight + 14 언어 — ts/tsx/js/jsx/py/rust/sql/json/bash/yaml/css/markdown). 다크/라이트 테마 자동 매칭
 - [ ] 메시지 복사·재생성·삭제
-- [ ] Provider/Model 선택 드롭다운 (현재는 `gpt-4o-mini` 하드코드)
+- [x] Provider/Model 선택 드롭다운 (ChatPanel 상단 — provider `<select>` + model `<input>`)
 
 ### 2-D. 히스토리
 
