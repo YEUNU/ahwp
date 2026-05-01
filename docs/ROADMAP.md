@@ -53,7 +53,7 @@
 - [x] 드래그앤드롭으로 파일/폴더 이동 (`fs.rename` via `folder:rename` IPC)
 - [x] 컨텍스트 메뉴 — 새 파일 / 새 폴더 / 이름 변경 / 휴지통 / 파일 관리자에서 보기
 - [x] 인라인 이름 변경 (F2) + 새 항목 input
-- [x] 단축키: F2 rename, Delete trash, Enter open/toggle
+- [x] 단축키 (OS 탐색기 패리티): ↑↓ 탐색, ←→ 접기·펼치기·부모/첫자식 점프, F2 rename, Delete trash, Enter open/toggle, ⌘N/⌘⇧N 새 파일·폴더, ⌘C·⌘X·⌘V 파일 복사·이동 (`folder:copy` IPC)
 - [x] 좌/중 패널 모두 스크롤 동작 (regression e2e gate)
 
 ### 1-C. 에디터 (중앙) ✅ 완료 — 자체 Studio + 탭
@@ -76,13 +76,22 @@
   - [x] Copy/Cut/Paste (⌘C/⌘X/⌘V) — 내부 + 시스템 클립보드
   - [x] Find (⌘F) — 매치 하이라이트 + Next/Prev
   - [x] 페이지 네비 (PageUp/Down, ⌘Home/End)
+  - [x] 리스트 (글머리 / 번호) + 페이지 나누기
+  - [x] 표 삽입 (TablePicker 8×8) + 셀 편집 (클릭→타이핑, Tab 네비, 인-셀 서식, 우클릭 행/열 추가·삭제)
+  - [x] 이미지 삽입 (툴바 + OS 드래그)
+  - [x] 확장형 툴바 (더보기 행) + 보기 토글 (제어문자 / 투명 테두리)
 - [x] 144페이지 부하 측정 e2e gate
+- [x] **성능 최적화**:
+  - [x] `@rhwp/core` WASM 앱 부팅 시 pre-init (첫 파일 열기 stall 제거)
+  - [x] Off-viewport 페이지 unmount + lazy-render 통합 (메모리 ~30MB → ~2MB)
+  - [x] Find paragraph 텍스트 캐시 (incremental 키 입력 10× 가속)
+  - [x] Inactive-tab guard (탭 스팸 시 N×6 페이지 렌더 회피)
 
 ### 1-D. 우측 패널 자리만 잡기 ✅ 완료
 
 - [x] 빈 챗봇 패널 (탭 컴포넌트는 Phase 2에서 메시지 UI와 같이)
 
-검증: e2e 106/106 (smoke + 폴더트리/ops + 탭/스크롤 + 스튜디오 청크 1~12 + 144페이지 부하).
+검증: e2e 134/134 (smoke + 폴더트리/ops + 폴더 키보드 단축키 + 탭/스크롤 + 스튜디오 청크 1~12 + 표 셀 v1~v3 + 이미지 삽입 + 확장 툴바 + 144페이지 부하).
 
 ---
 
@@ -172,7 +181,8 @@
 
 - [ ] Crash reporter (Sentry 또는 자체)
 - [x] E2E 인프라 (Playwright Electron, Phase 1-C에 앞당겨 도입) — 7개 케이스 통과
-- [ ] E2E 확장 — file:open dialog 모킹, save-as, studio 렌더링 (자산 로컬 번들링 후), 다국어 입력 등
+- [x] E2E 확장 — studio 청크 1~12 + 표/이미지/폴더 ops/탭 (134/134 케이스)
+- [ ] E2E 추가 — file:open dialog 모킹, save-as 다이얼로그, 다국어 입력, 표 셀 selection v4
 - [ ] 접근성 점검 (radix 기본 + 키보드 탐색)
 - [ ] 사용자 가이드 문서 (`docs/USER_GUIDE.md`)
 - [ ] 베타 사용자 피드백 채널 (GitHub Discussions)

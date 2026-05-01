@@ -6,13 +6,13 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 | 항목        | 상태                                                                                                                                                                                                                       |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Phase       | **Phase 1 확장 완료** — 청크 7~12 (Undo/Copy/Find/Format/Selection/PageNav) + 폴더 트리 + 탭 시스템 + 폴더 ops. 다음: Phase 2 (AI 챗봇)                                                                                    |
+| Phase       | **Phase 1 확장 완료** — 청크 7~12 + 폴더 트리/ops/단축키 + 탭 시스템 + 표/이미지/리스트/페이지 나누기 + 확장 툴바 + perf 최적화. 다음: Phase 2 (AI 챗봇)                                                                   |
 | 빌드        | ✅ `npm run dev` · `npx vite build`                                                                                                                                                                                        |
 | 타입        | ✅ `npm run typecheck`                                                                                                                                                                                                     |
 | 린트        | ✅ `npm run lint` (0 warnings, 0 errors)                                                                                                                                                                                   |
 | 포맷        | ✅ `npm run format:check`                                                                                                                                                                                                  |
 | 단위 테스트 | ✅ 3/3 (`App.test.tsx`)                                                                                                                                                                                                    |
-| e2e         | ✅ 106/106 (smoke + 폴더트리/ops + 탭/스크롤 + 스튜디오 청크 1~12)                                                                                                                                                         |
+| e2e         | ✅ 134/134 (smoke + 폴더트리/ops/단축키 + 탭/스크롤 + 스튜디오 청크 1~12 + 표 셀 v1~v3 + 이미지 + 확장 툴바 + 144페이지 부하)                                                                                              |
 | Electron    | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                                                |
 | 의존성      | runtime: `@rhwp/core` · `chokidar` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` (chunk 6에서 `@rhwp/editor` 제거) |
 
@@ -1230,6 +1230,174 @@ HOP / rhwp-editor에 비해 명백히 부족한 핵심 일상 편집 기능 (Und
 
 **e2e — `tests/e2e/folder-ops.spec.ts`** (9 케이스). 검증: e2e 106/106
 
+### 2026-04-30 — 페이지 인디케이터 fix + 폴더 트리 OS 패리티 단축키
+
+**버그 수정 — 페이지 인디케이터**
+
+- 가운데 페이지 인디케이터가 스크롤 시 잘못된 페이지에 멈추는 문제. `IntersectionObserver`의 `entries` 콜백은 가시성이 _변경된_ 페이지만 담아서, 그 배치 안에서 "가장 잘 보이는" 페이지를 고르면 이미 중앙에서 멀어진 페이지가 남을 수 있음
+- 분리: `IntersectionObserver`는 lazy-render 전용으로 유지. 인디케이터는 새 `onScroll` 핸들러(rAF-throttled)가 viewport 상단 1/3을 가장 먼저 통과한 페이지를 선택. `studio-viewer.spec.ts`에 회귀 게이트 추가
+
+**폴더 트리 단축키 (Finder / Explorer / VS Code 패리티)**
+
+- Tier 1: ↑↓ 가시 항목 탐색 (접힌 dir 무시 flat traversal). ←→ 접기·펼치기 또는 부모/첫 자식 점프. ⌘N 새 파일 (선택 위치 기준), ⌘⇧N 새 폴더. 이름변경 input·새 항목 input은 키 소유 시 우회
+- Tier 2: 파일 ⌘C / ⌘X / ⌘V. 렌더러 측 클립보드 ref (`{path, mode: 'copy'|'cut'}`). 붙여넣기:
+  - copy → `folder:copy` IPC (`fs.cp` recursive, 충돌 시 `" (1)"` 디스앰비귀에이션)
+  - cut → `folder:rename`, 클립보드 클리어
+  - 폴더를 자기 자신/하위로 붙여넣으면 alert reject
+
+**테스트 안정성**
+
+- `studio-paraformat.spec.ts` "정렬 + fontSize + 색상 save→reopen 보존" 케이스가 풀 스위트에서 간헐 실패(단독 실행은 통과). 리로드 후 refresh가 비동기인데 단발 read가 `refreshActiveFormat` 이전에 land하던 문제. `expect.poll`로 변경, 2회 풀런 안정성 확인
+
+**e2e** — `folder-keys.spec.ts` 7 케이스, `studio-viewer.spec.ts` +1. 검증: e2e 114/114
+
+### 2026-04-30 — perf 트리오: WASM pre-init + off-viewport unmount + Find 캐시
+
+**WASM pre-init**
+
+- 첫 파일 열기 시의 "@rhwp/core 초기화 중…" stall은 일회성 lazy compile (~100~200ms). 원인: `ensureRhwpCore()`를 `StudioViewer` mount effect에서 처음 호출 → WASM compile이 사용자의 첫 파일 열기와 겹침
+- `main.tsx`에서 React mount와 병렬로 pre-init 시작. viewer mount 시점엔 캐시된 promise가 이미 resolve되어 mount가 블로킹되지 않음
+
+**Off-viewport 페이지 unmount + lazy-render 통합**
+
+- 기존: `IntersectionObserver`(mount 결정) + 별개 `onScroll`(인디케이터). 두 부기로 항상 lag/drift
+- 통합: 단일 rAF-throttled 핸들러가
+  1. 상단 가시 페이지를 인디케이터로 선택
+  2. 그 페이지 ±5 페이지만 SVG 마운트
+  3. window 밖 페이지는 `innerHTML = ''` 클리어, `cacheRef[i]`에 SVG string 보존 → 재진입 시 DOM parse만 (WASM `renderPageSvg` 재호출 X)
+- Inactive-tab guard: `scrollEl.clientHeight === 0`이면 (탭이 `display:none`) bail. 없으면 탭 스팸마다 6 page renders × N tabs
+- 메모리: 144페이지 문서 default zoom에서 ~30MB → ~2MB (≤11 페이지 마운트)
+
+**Find 문단 텍스트 캐시**
+
+- `runFindSearch`가 매 키 입력마다 `getTextRange`를 모든 문단에 호출. 144페이지 / 2656 문단 기준
+  - cold: ~4ms per query (2656 WASM calls + indexOf)
+  - warm (캐시 후): 0.3ms per query (indexOf만)
+  - → incremental 타이핑 10×~14× 가속 (예: "사" 6.1→0.4, "사업계획서" 4.3→0.3 ms)
+- 캐시 빌드 = 첫 비어있지 않은 검색에 lazy. 무효화: doc mutation 도달 시 (`refreshAfterMutation`), viewer path 변경 시. 첫 키 입력 비용은 동일, 두 번째부터가 win
+
+**e2e** — `studio-bigdoc.spec.ts`에 "스크롤 끝까지 이동 시 상단 unmount" 케이스 + 초기 마운트 상한 <20→≤12 강화. `studio-viewer.spec.ts` 이미지 테스트 polling. `scroll.spec.ts` 30→12 탭으로 트림. 검증: e2e 115/115 (2회 풀런)
+
+### 2026-04-30 — Phase 1 확장 청크 13 — 확장형 툴바 + 리스트 + 페이지 나누기 + 표 + 보기 토글
+
+**구현**
+
+- 단일 행 툴바 → 더보기 버튼으로 두 번째 행 토글
+- **글머리 기호 / 번호 매기기** — `applyParaFormat`에 `headType` + `ensureDefaultBullet/Numbering`. Selection-aware (range 안 모든 문단 토글)
+- **페이지 나누기** — caret에 `insertPageBreak`. `refreshAfterMutation`이 `doc.pageCount()` 재읽도록 확장 (페이지 수 변동 mutation)
+- **표 삽입** — 작은 8×8 hover grid (`TablePicker`) → `createTable(rows, cols)`
+- **보기 토글** — `setShowControlCodes` / `setShowTransparentBorders`가 `aria-pressed` + 재렌더 구동
+
+**범위 결정**
+
+- `ViewerHandle` / `__studioDebug`엔 추가 미공개 — 사용자 전용 surface (e2e는 DOM 클릭으로). Phase 3 Agent 모드에서 표/리스트/페이지 나누기를 프로그래매틱 호출할 때 노출
+
+**린트 정리**
+
+- doc-load effect의 `setState-in-effect` 호출(setDirty/setCanUndo/setCanRedo)을 async IIFE 안으로 이동. refs reset은 동기 유지
+
+**e2e** — `studio-features.spec.ts` 6 케이스. 검증: e2e 121/121
+
+### 2026-04-30 — Phase 1 확장 청크 14 — 표 셀 편집 v1 (클릭 → 타이핑 → 백스페이스)
+
+**문제**
+
+- 청크 13의 "표 삽입"으로 표는 만들 수 있지만 셀이 사실상 read-only — 모든 키보드 경로가 비-셀 `insertText`/`deleteText` IR variant 호출이라 외부 문단으로 fallthrough
+
+**Caret 모델 확장**
+
+- `caretRef`에 optional `cell` 필드: `{parentParaIndex, controlIndex, cellIndex, cellParaIndex}`. set 상태에선 텍스트 편집이 `*InCell` IR 경로로 라우팅:
+  - `insertAtCaret(text)` → `insertTextInCell` or `insertText`
+  - `deleteAtCaret(at, n)` → `deleteTextInCell` or `deleteText`
+  - `getCursorRect` / `getCursorRectInCell` 미러
+- `handlePageMouseDown` — hitTest의 cell 필드 읽어서 클릭이 표 안에 떨어지면 `caretRef.cell` 채움. 셀 안에서 selection / 더블·트리플 클릭은 disable (셀 selection은 v2)
+- IR의 `getCaretPosition`은 셀 레벨 offset을 추적 안 함 → cell ops 후 `refreshAfterMutation({syncCaret: false})`. 렌더러 측에서 caret을 `text.length`만큼 전진 / `at`로 후퇴 직접 갱신
+
+**디버그 surface**
+
+- `__studioDebug.enterCell(sec, parentPara, ctrl, cellIdx, cellParaIdx, charOffset?)`, `exitCell()`, `getCellText(...)`, `getCaretCell()`
+
+**e2e** — `studio-cells.spec.ts` 4 케이스. 검증: e2e 125/125
+
+**v1 한계 (v2~v4 follow-up)**
+
+- 셀 안 selection 없음 (Shift+arrow / 드래그 selection)
+- 셀 레벨 서식 없음 (B/I/U는 외부에 적용)
+- 크로스 셀 selection 없음
+- Tab으로 셀 → 다음 셀 점프 안 됨
+- 행/열 추가·삭제 UI 없음
+
+### 2026-04-30 — Phase 1 확장 청크 15 — 이미지 삽입 (툴바 + OS 드래그)
+
+**구현**
+
+- `@rhwp/core`의 `insertPicture`를 렌더러 측 `insertImage(bytes, ext, description)`으로 감쌈
+  - 인메모리 `Image` + `blob:` URL로 자연 픽셀 크기 디코드
+  - HWPUNIT 변환 (1px @ 96 DPI ≈ 75 HWPUNIT)
+  - 표시 폭을 ~47k HWPUNIT (~16cm — 일반 텍스트 영역) 으로 clamp → 스크린샷이 페이지 넘침 방지
+- 두 진입점이 helper 공유:
+  1. 툴바 (2번째 행) "이미지 삽입" 버튼 — 숨김 `<input type="file" accept="image/*">` 트리거
+  2. 외부 drop — studio scroll 컨테이너의 `onDragOver`/`onDrop`. OS 파일 드래그(`Files` in dataTransfer.types)만 수용. 폴더트리 내부 드래그(`application/x-ahwp-path`)는 제외. 드롭 타겟 ring 표시
+
+**CSP 수정**
+
+- `index.html`의 `img-src`에 `blob:` 추가 — 자연 크기 probe가 blob URL 통과. 없으면 디코드가 silent fail (Electron에선 콘솔 메시지 없음)
+
+**디버그 surface**
+
+- `__studioDebug.insertImageBase64` — e2e가 실제 파일 없이 helper 구동
+
+**e2e** — `studio-image.spec.ts` 2 케이스. 검증: e2e 127/127
+
+**v2 한계**
+
+- 외부 문단만 (셀 안 `insertPictureInCell` 미연결)
+- 표시 폭 1px=75 HWPUNIT 하드코드 (DPR 미인지)
+- 삽입 후 리사이즈/이동은 `ShapeControl` API 필요
+- 멀티 파일 드롭 시 첫 이미지만
+
+### 2026-04-30 — Phase 1 확장 청크 16 — 셀 v2 (Tab 네비 + 인-셀 서식)
+
+**구현**
+
+- Tab / Shift+Tab — caret이 표 안에 있으면 셀 사이 순회 (행우선, 마지막 셀에서 wrap-around). 표 밖에선 기본 focus traversal로 fallthrough
+- 서식 ops — `caretRef.cell` set 상태에서 `*InCell` variant로 디스패치
+  - `toggleCharFormat` → `applyCharFormatInCell` (no-selection 경로만; 셀 selection은 v3)
+  - `applyCharProps` (fontSize / textColor) → `applyCharFormatInCell`
+  - `applyAlignment` → `applyParaFormatInCell`
+
+**라이브러리 quirk**
+
+- `getCellCharPropertiesAt`이 `applyCharFormatInCell` override를 반영하지 않음 (정적 템플릿 반환). 서식 자체는 시각적으로 적용됨 — 렌더된 SVG에 올바른 font-weight / size / color. 셀 안에서의 툴바 pressed-state는 마지막 외부 reading에 stuck. 라이브러리가 read 측 수정하거나 우리가 per-cell active-format probe를 추가할 때까지 deferred
+
+**e2e** — `studio-cells.spec.ts` 2 케이스 추가 (Tab + B/I/U). 검증: e2e 129/129
+
+### 2026-04-30 — Phase 1 확장 청크 17 — 셀 v3 (우클릭 행/열 추가·삭제)
+
+**구현**
+
+- 셀 우클릭 → 컨텍스트 메뉴:
+  - 위에 / 아래에 행 추가 → `insertTableRow(rowIdx, below)`
+  - 왼쪽에 / 오른쪽에 열 추가 → `insertTableColumn(colIdx, right)`
+  - 행 삭제 / 열 삭제 → `deleteTableRow` / `deleteTableColumn`
+    - 마지막 행/열 삭제는 표 전체를 `deleteTableControl`로 제거 (0 행/열 표는 유효한 IR 상태 아님)
+  - 표 삭제 → `deleteTableControl`
+- `handlePageContextMenu` — 클릭 hit-test → cell 필드 있으면 `caretRef`를 그 셀로 이동 (Word / 한컴 동작 패리티)
+- `getTableDimensions` (rowCount × colCount) → 메뉴가 cellIndex로 현재 행/열 계산
+- `CellContextMenu` 컴포넌트 — 폴더트리 메뉴와 dismiss 모델 미러 (외부 mousedown + Esc)
+
+**디버그 surface**
+
+- `insertTableRow` / `insertTableColumn` / `deleteTableRow` / `deleteTableColumn` / `getTableDimensions` 노출 — e2e가 우클릭 시뮬 없이 IPC 직접 구동
+
+**e2e** — `studio-cells-v3.spec.ts` 5 케이스. 검증: e2e 134/134
+
+**v4 한계**
+
+- 셀 selection 모델 (셀 사이 드래그 selection)
+- 셀 merge / split (`mergeTableCells` API 존재; 셀 selection 필요)
+- 셀 레벨 paste (`pasteHtmlInCell`)
+
 ## 다음
 
 ### Phase 2 — AI 챗봇 Manual 모드 (3주)
@@ -1243,7 +1411,9 @@ HOP / rhwp-editor에 비해 명백히 부족한 핵심 일상 편집 기능 (Und
 ### Phase 1 follow-up (선택)
 
 - 탭 드래그 재배치 + 우클릭 컨텍스트 메뉴 (다른 탭 모두 닫기 등)
-- 표 / 이미지 삽입 / 머리말·꼬리말·각주 (Tier 3 구조 요소)
+- 셀 selection 모델 v4 (드래그 selection / merge·split / 셀 레벨 paste)
+- 머리말·꼬리말·각주 (Tier 3 구조 요소)
+- 셀 안 이미지 삽입 (`insertPictureInCell`)
 - temp 파일 정리 (앱 종료 시 `userData/temp/new-*.hwp` 청소)
 - typing burst grouping (현재는 글자마다 undo entry)
 

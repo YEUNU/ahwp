@@ -6,14 +6,28 @@
 
 ## [Unreleased]
 
-### Added — Phase 1-C: rhwp 뷰어 통합 + `@rhwp/core` 라운드트립
+### Added — Phase 1-C 확장: 표 / 이미지 / 리스트 / 페이지 나누기 + 확장 툴바
 
-- HWP/HWPX 뷰어 — `@rhwp/editor` v0.7.8 iframe 기반 임베드. 파일 열기/편집/페이지 표시 동작
+- 표 — 8×8 hover grid TablePicker로 삽입. 셀 편집 v1~v3:
+  - v1: 셀 클릭 → 타이핑 → 백스페이스 (`*InCell` IR 경로로 라우팅)
+  - v2: Tab / Shift+Tab 셀 사이 순회 (행우선) + 인-셀 B/I/U + 폰트 크기/색상/정렬
+  - v3: 우클릭 컨텍스트 메뉴 — 위/아래 행 추가, 좌/우 열 추가, 행/열 삭제, 표 삭제
+- 이미지 삽입 — 툴바 (2번째 행) "이미지 삽입" 버튼 또는 OS 파일 드래그. 자연 픽셀 크기 디코드 + HWPUNIT 변환 + 텍스트 영역 폭 (~16cm)으로 clamp
+- 리스트 — 글머리 기호 / 번호 매기기 (selection-aware 토글)
+- 페이지 나누기 — caret에 `insertPageBreak`. 페이지 카운트 자동 갱신
+- 확장형 툴바 — 더보기 버튼으로 두 번째 행 토글 (리스트 / 페이지 나누기 / 표 / 이미지 / 보기 토글)
+- 보기 토글 — 제어문자 표시 / 투명 테두리 표시
+- 폴더 트리 단축키 (Finder / Explorer / VS Code 패리티) — ↑↓ 탐색, ←→ 접기·펼치기·점프, ⌘N 새 파일, ⌘⇧N 새 폴더, ⌘C·⌘X·⌘V 파일 복사·이동 (`folder:copy` IPC, 충돌 시 `" (1)"` 디스앰비귀에이션)
+
+### Added — Phase 1-C: 자체 Studio viewer + `@rhwp/core` 직접 통합
+
+- HWP/HWPX 뷰어 — **자체 Studio viewer** (`src/features/studio/`). 멀티 페이지 lazy SVG, 키보드/마우스/IME, 시각 커서, dirty 추적. (이전 `@rhwp/editor` iframe은 청크 6에서 제거)
 - HWP → HWPX 자동 변환 (`electron/hwp/converter.ts`) — `@rhwp/core` (Rust+WASM 4.5MB) lazy init + `init_panic_hook` + `version()` 로깅. 동적 import로 ESM/CJS 호환성 처리
-- 저장 IPC: `file:save` / `file:save-as` — `@rhwp/core` 라운드트립 정규화 후 항상 `.hwpx`로 저장 (확장자 어긋난 경로는 자동 보정). studio의 자동 보정이 export에 미반영되는 이슈를 우리 측에서 IR 기반 재직렬화로 해결
-- 워크스페이스 복원 — `userData/session.json`에 마지막 활성 파일 경로 영속. 앱 재시작/새로고침 시 자동 재오픈
-- 매직바이트 형식 감지 (`shared/format.ts`) — fast path 최적화 전용. 권위 판별은 `HwpDocument.getSourceFormat()`
-- Playwright Electron E2E 인프라 — 격리된 임시 `userData` 디렉토리 + 사용자 예제 HWP fixture 활용. 7개 케이스 통과 (HWP→HWPX 변환, save 라운드트립, 자동 라우팅, 세션 복원, recent 갱신, 부팅, 테마 토글)
+- 저장 IPC: `file:save` / `file:save-as` — `@rhwp/core` 라운드트립 정규화 + 매직바이트 기반 `.hwp` ↔ `.hwpx` 자동 라우팅 (KNOWN_ISSUES L-001 — 임베드 이미지 보존을 위해 canonical은 HWP)
+- 워크스페이스 복원 — `userData/session.json`에 `lastFolderPath` + `lastActivePath` + `openTabPaths` 영속. 앱 재시작/새로고침 시 자동 복원
+- 탭 시스템 — 다중 파일, dirty 점, X 닫기, ⌘W, 미들 클릭, openTabPaths 영속. 모든 탭은 `display:none`으로 mount 유지 (HwpDocument + undo 보존)
+- 편집 기능 풀 — 텍스트 편집/IME, 선택 모델 (mouse drag / shift+arrow / 더블·트리플 클릭 / ⌘⇧Arrow), B/I/U + 문단 스타일 + 정렬 + 폰트 크기/색상, Undo/Redo (100 entry), Copy/Cut/Paste (시스템 클립보드 브리지), Find ⌘F (매치 하이라이트), 페이지 네비 (PageUp/Down, ⌘Home/End)
+- Playwright Electron E2E — 134/134 (smoke + 폴더트리/ops/단축키 + 탭/스크롤 + 스튜디오 청크 1~12 + 표 셀 v1~v3 + 이미지 + 확장 툴바 + 144페이지 부하)
 
 ### Added — Phase 1-B: 파일 IPC + 최근 파일 + 드래그앤드롭
 
@@ -68,6 +82,13 @@
 - 서버 측 `assertFormatMatchesPath` — `@rhwp/core` 정규화로 항상 HWPX 출력하므로 미스매치 발생 불가, 중복 검증 제거
 - 우리 측 'unknown format' 사전 검증 — `HwpDocument` 생성자가 잘못된 입력에 throw, 중복 제거
 
+### Performance
+
+- `@rhwp/core` WASM 앱 부팅 시 pre-init (`main.tsx`) — 첫 파일 열기의 ~100~200ms 콜드 컴파일 stall 제거
+- Off-viewport 페이지 unmount + lazy-render 통합 (단일 rAF-throttled 스크롤 핸들러) — 144페이지 문서 메모리 ~30MB → ~2MB (≤11 페이지 마운트). 페이지 SVG 캐시는 string으로 보존, 재진입은 DOM parse만 (WASM 재호출 X)
+- Find paragraph 텍스트 캐시 — incremental 키 입력 cold 4ms → warm 0.3ms (10×~14× 가속, 144페이지 / 2656 문단 기준)
+- Inactive-tab guard — `clientHeight === 0` 시 lazy-render bail (탭 스팸 시 N×6 페이지 렌더 회피)
+
 ### Infrastructure
 
 - Playwright + Electron 도입 (`@playwright/test`) — `npm run e2e` / `npm run e2e:headed`
@@ -76,6 +97,5 @@
 ### Notes
 
 - 브랜치(`main`/`dev`) 분리는 메인테이너가 수동 적용 필요 — [CONTRIBUTING.md](CONTRIBUTING.md) "처음 셋업"
-- `@rhwp/editor` v0.7.8 iframe은 외부 호스팅(`edwardkim.github.io/rhwp`) 의존 — Phase 4에서 자산 로컬 번들링으로 전환 예정. 현재는 첫 로드에 인터넷 필요
 - AI 챗봇 / 멀티 provider 어댑터 / 채팅 히스토리는 Phase 2부터 도입
 - better-sqlite3 도입은 Phase 2 (채팅 히스토리)와 같이 — 현재는 JSON 단일 파일 영속만
