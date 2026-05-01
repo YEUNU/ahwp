@@ -6,6 +6,15 @@
 
 ## [Unreleased]
 
+### Changed — 의존성
+
+- `@rhwp/core` 0.7.8 → 0.7.9 (backward-compatible patch). 신규 메서드 4개: `insertParagraph` / `deleteParagraph` (문단-단위 IR 조작) + `renderPageCanvasLegacy` / `renderPageToCanvasLegacy` (레거시 Canvas 경로 — 즉시 활용 안 함). 시그니처 변경/제거 없음
+
+### Added — paragraph IR ops 게이트 (Phase 3·2-E 대비)
+
+- `__studioDebug.insertParagraph(sec, idx)` / `deleteParagraph(sec, idx)` 노출. 향후 Agent tool 화이트리스트 / Manual diff 흐름에서 안전하게 wire되도록 회귀 게이트 사전 설치 (UI 노출은 Enter/Backspace로 이미 커버되므로 보류)
+- e2e 2 케이스 추가 (insertParagraph 인덱스 추가 + deleteParagraph 시프트)
+
 ### Added — Phase 2 청크 6: 메시지 액션 (2-C 완료)
 
 - assistant bubble hover 시 액션 툴바 노출 — **복사 / 재생성 / 삭제**. user bubble은 **복사**만

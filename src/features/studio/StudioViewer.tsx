@@ -2843,6 +2843,40 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           refreshAfterMutation();
           return result;
         },
+        // @rhwp/core 0.7.9 — paragraph-level IR ops. Distinct from text-level
+        // insertText/deleteText: these add or remove an entire paragraph node,
+        // shifting the indices of subsequent paragraphs by 1.
+        insertParagraph: (sectionIdx: number, paraIdx: number): string => {
+          const doc = docRef.current;
+          if (!doc) throw new Error('Document not loaded');
+          const result = doc.insertParagraph(sectionIdx, paraIdx);
+          // Page count can change because a new blank paragraph may push
+          // content past a page boundary; refreshAfterMutation re-reads it.
+          refreshAfterMutation();
+          return result;
+        },
+        deleteParagraph: (sectionIdx: number, paraIdx: number): string => {
+          const doc = docRef.current;
+          if (!doc) throw new Error('Document not loaded');
+          const result = doc.deleteParagraph(sectionIdx, paraIdx);
+          refreshAfterMutation();
+          return result;
+        },
+        getParagraphCount: (sectionIdx: number): number => {
+          const doc = docRef.current;
+          if (!doc) throw new Error('Document not loaded');
+          return doc.getParagraphCount(sectionIdx);
+        },
+        getTextRange: (
+          sectionIdx: number,
+          paraIdx: number,
+          startOffset: number,
+          endOffset: number,
+        ): string => {
+          const doc = docRef.current;
+          if (!doc) throw new Error('Document not loaded');
+          return doc.getTextRange(sectionIdx, paraIdx, startOffset, endOffset);
+        },
         getCaretPosition: (): string => {
           const doc = docRef.current;
           if (!doc) throw new Error('Document not loaded');
