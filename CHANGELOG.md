@@ -6,6 +6,25 @@
 
 ## [Unreleased]
 
+### Added — Phase 2 청크 15: 사각형 도형 (MVP)
+
+- 메뉴 "보기 → 사각형 도형…" 또는 `insert:shape` IPC로 다이얼로그 진입
+- 너비·높이 (mm) + "글자처럼 취급" 토글로 캐럿 위치에 사각형 도형 삽입
+- `createShapeControl` / `getShapeProperties` / `setShapeProperties` / `deleteShapeControl` / `changeShapeZOrder` IR API 직접 위임
+- **라인 / 곡선 / 화살표 / 도형 그룹은 후속 청크로 보류** (라이브러리가 createShapeControl JSON에 shape-type 미노출)
+
+### Added — Phase 2 청크 17: 표 / 셀 속성 (padding / spacing / verticalAlign)
+
+- `getTableProperties` / `setTableProperties` / `getCellProperties` / `setCellProperties` IR API 직접 위임
+- **현재는 `__studioDebug` + ViewerHandle 노출만** — UI 다이얼로그(셀 우클릭 v4)는 후속
+- 셀 배경색·테두리는 별도 `applyCellStyle` 메커니즘 — 후속
+
+### Added — Phase 2 청크 16: 수식 미리보기
+
+- 메뉴 "보기 → 수식 미리보기…" 또는 `insert:equation` IPC로 다이얼로그 진입
+- 한컴 수식 script textarea + 라이브 SVG 미리보기 (`renderEquationPreview` IR)
+- **본문 삽입은 후속 청크** (라이브러리에 명시적 createEquation 없음)
+
 ### Added — Phase 2 청크 14: 스타일 관리 (add / rename / delete)
 
 - 메뉴 "보기 → 스타일 관리…" 또는 `view:style-manager` IPC로 다이얼로그 진입

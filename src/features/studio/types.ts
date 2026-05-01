@@ -90,6 +90,15 @@ export interface ViewerHandle {
     fontSizeHwpunit?: number,
     color?: number,
   ) => string;
+  /**
+   * Insert a rectangle shape at the current caret (chunk 15). Returns
+   * the (paraIdx, controlIdx) of the new shape, or null on failure.
+   */
+  createRectShapeAtCaret: (
+    widthHwpunit: number,
+    heightHwpunit: number,
+    opts?: { treatAsChar?: boolean },
+  ) => { paraIdx: number; controlIdx: number } | null;
   /** Set paragraph alignment on selection / current paragraph (chunk 10). */
   applyAlignment: (a: ParagraphAlignment) => void;
   /** Apply font size in points (converted to HWPUNIT internally). */

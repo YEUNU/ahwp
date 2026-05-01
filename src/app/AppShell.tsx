@@ -18,6 +18,7 @@ import { EquationDialog } from '@/features/studio/EquationDialog';
 import { FootnoteDialog } from '@/features/studio/FootnoteDialog';
 import { HeaderFooterDialog } from '@/features/studio/HeaderFooterDialog';
 import { PageSetupDialog } from '@/features/studio/PageSetupDialog';
+import { ShapeDialog } from '@/features/studio/ShapeDialog';
 import { StudioViewer } from '@/features/studio/StudioViewer';
 import { StyleManagerDialog } from '@/features/studio/StyleManagerDialog';
 import { TabBar, type TabDescriptor } from '@/features/studio/TabBar';
@@ -64,6 +65,7 @@ export default function AppShell() {
   const [footnoteOpen, setFootnoteOpen] = useState(false);
   const [styleManagerOpen, setStyleManagerOpen] = useState(false);
   const [equationOpen, setEquationOpen] = useState(false);
+  const [shapeOpen, setShapeOpen] = useState(false);
   // viewerRef per tab (by key). The active tab's viewer is what menu /
   // shortcut actions target.
   const viewerRefsRef = useRef<Map<string, ViewerHandle | null>>(new Map());
@@ -355,6 +357,8 @@ export default function AppShell() {
         setStyleManagerOpen(true);
       } else if (action === 'insert:equation') {
         setEquationOpen(true);
+      } else if (action === 'insert:shape') {
+        setShapeOpen(true);
       }
     });
   }, [
@@ -415,6 +419,13 @@ export default function AppShell() {
         onOpenChange={setEquationOpen}
         renderEquation={(script, fontSize, color) =>
           activeViewerRef()?.renderEquationSvg(script, fontSize, color) ?? ''
+        }
+      />
+      <ShapeDialog
+        open={shapeOpen}
+        onOpenChange={setShapeOpen}
+        onInsert={(width, height, opts) =>
+          activeViewerRef()?.createRectShapeAtCaret(width, height, opts) ?? null
         }
       />
       <PanelGroup

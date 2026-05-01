@@ -1561,6 +1561,130 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     );
 
     /**
+     * Shapes — chunk 15. Insert / read / write / delete a rectangle
+     * shape control at the current caret. Z-order ops too. The IR's
+     * `createShapeControl` JSON shape:
+     *   { sectionIdx, paraIdx, charOffset, width, height, horzOffset,
+     *     vertOffset, treatAsChar, textWrap }
+     * Returns `{ok, paraIdx, controlIdx}`. Subsequent
+     * set/get/delete/zOrder calls take the (paraIdx, controlIdx) tuple.
+     */
+    const createRectShapeAtCaret = useCallback(
+      (
+        widthHwpunit: number,
+        heightHwpunit: number,
+        opts: { treatAsChar?: boolean } = {},
+      ): { paraIdx: number; controlIdx: number } | null => {
+        const doc = docRef.current;
+        if (!doc) return null;
+        const c = caretRef.current;
+        try {
+          const raw = doc.createShapeControl(
+            JSON.stringify({
+              sectionIdx: c.sectionIndex,
+              paraIdx: c.paragraphIndex,
+              charOffset: c.charOffset,
+              width: widthHwpunit,
+              height: heightHwpunit,
+              horzOffset: 0,
+              vertOffset: 0,
+              treatAsChar: opts.treatAsChar ?? true,
+              textWrap: 'Square',
+            }),
+          );
+          const result = JSON.parse(raw) as {
+            ok?: boolean;
+            paraIdx?: number;
+            controlIdx?: number;
+          };
+          if (!result.ok || typeof result.paraIdx !== 'number') return null;
+          dirtyRef.current = true;
+          setDirty(true);
+          refreshAfterMutation({ syncCaret: false });
+          return {
+            paraIdx: result.paraIdx,
+            controlIdx: result.controlIdx ?? 0,
+          };
+        } catch (err) {
+          console.warn('[studio] createShapeControl failed:', err);
+          return null;
+        }
+      },
+      [refreshAfterMutation],
+    );
+
+    const getShapeProps = useCallback(
+      (
+        sec: number,
+        parentPara: number,
+        ctrl: number,
+      ): Record<string, unknown> | null => {
+        const doc = docRef.current;
+        if (!doc) return null;
+        try {
+          return JSON.parse(
+            doc.getShapeProperties(sec, parentPara, ctrl),
+          ) as Record<string, unknown>;
+        } catch {
+          return null;
+        }
+      },
+      [],
+    );
+
+    const setShapeProps = useCallback(
+      (
+        sec: number,
+        parentPara: number,
+        ctrl: number,
+        props: Record<string, unknown>,
+      ): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        try {
+          doc.setShapeProperties(sec, parentPara, ctrl, JSON.stringify(props));
+          refreshAfterMutation({ syncCaret: false });
+        } catch (err) {
+          console.warn('[studio] setShapeProperties failed:', err);
+        }
+      },
+      [refreshAfterMutation],
+    );
+
+    const deleteShape = useCallback(
+      (sec: number, parentPara: number, ctrl: number): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        try {
+          doc.deleteShapeControl(sec, parentPara, ctrl);
+          refreshAfterMutation({ syncCaret: false });
+        } catch (err) {
+          console.warn('[studio] deleteShapeControl failed:', err);
+        }
+      },
+      [refreshAfterMutation],
+    );
+
+    const changeShapeZOrderAt = useCallback(
+      (
+        sec: number,
+        parentPara: number,
+        ctrl: number,
+        op: 'front' | 'back' | 'forward' | 'backward',
+      ): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        try {
+          doc.changeShapeZOrder(sec, parentPara, ctrl, op);
+          refreshAfterMutation({ syncCaret: false });
+        } catch (err) {
+          console.warn('[studio] changeShapeZOrder failed:', err);
+        }
+      },
+      [refreshAfterMutation],
+    );
+
+    /**
      * Table / cell properties — chunk 17. Read-modify-write helpers
      * for the IR's `{set,get}{Table,Cell}Properties`. Both setters
      * accept a JSON props bag mirroring the getter's shape:
@@ -2593,6 +2717,8 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         },
         renderEquationSvg: (script, fontSizeHwpunit = 1000, color = 0) =>
           renderEquationSvg(script, fontSizeHwpunit, color),
+        createRectShapeAtCaret: (widthHwpunit, heightHwpunit, opts) =>
+          createRectShapeAtCaret(widthHwpunit, heightHwpunit, opts),
         isDirty: () => dirtyRef.current,
       }),
       [
@@ -2617,6 +2743,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         renameStyle,
         deleteStyleById,
         renderEquationSvg,
+        createRectShapeAtCaret,
       ],
     );
 
@@ -3961,6 +4088,33 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         },
         applyPageDef: (props: Record<string, unknown>, sectionIdx = 0): void =>
           applyPageDef(props, sectionIdx),
+        // Shapes — chunk 15.
+        createRectShapeAtCaret: (
+          widthHwpunit: number,
+          heightHwpunit: number,
+          opts?: { treatAsChar?: boolean },
+        ): { paraIdx: number; controlIdx: number } | null =>
+          createRectShapeAtCaret(widthHwpunit, heightHwpunit, opts),
+        getShapeProps: (
+          sec: number,
+          parentPara: number,
+          ctrl: number,
+        ): Record<string, unknown> | null =>
+          getShapeProps(sec, parentPara, ctrl),
+        setShapeProps: (
+          sec: number,
+          parentPara: number,
+          ctrl: number,
+          props: Record<string, unknown>,
+        ): void => setShapeProps(sec, parentPara, ctrl, props),
+        deleteShape: (sec: number, parentPara: number, ctrl: number): void =>
+          deleteShape(sec, parentPara, ctrl),
+        changeShapeZOrderAt: (
+          sec: number,
+          parentPara: number,
+          ctrl: number,
+          op: 'front' | 'back' | 'forward' | 'backward',
+        ): void => changeShapeZOrderAt(sec, parentPara, ctrl, op),
         // Table / cell properties — chunk 17.
         getTableProps: (
           sec: number,
@@ -4221,6 +4375,11 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       setTableProps,
       getCellProps,
       setCellProps,
+      createRectShapeAtCaret,
+      getShapeProps,
+      setShapeProps,
+      deleteShape,
+      changeShapeZOrderAt,
     ]);
 
     // Effect 2: page indicator + mount window. On every scroll (rAF-

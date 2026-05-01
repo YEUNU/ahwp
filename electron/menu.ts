@@ -150,6 +150,10 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
         click: () => send(getWindow(), 'insert:equation'),
       },
       {
+        label: '사각형 도형…',
+        click: () => send(getWindow(), 'insert:shape'),
+      },
+      {
         label: '설정…',
         accelerator: 'CmdOrCtrl+,',
         click: () => send(getWindow(), 'view:settings'),

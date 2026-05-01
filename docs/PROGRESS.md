@@ -6,13 +6,13 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 | 항목        | 상태                                                                                                                                                                                                                       |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Phase       | **Phase 2 청크 14** — 스타일 관리 (rhwp-core 활용 시리즈 8번째). 다음: 수식 → 표 속성 → 도형                                                                                                                               |
+| Phase       | **Phase 2 청크 14~17** — 스타일 / 수식 / 표·셀 속성 / 도형 (rhwp-core 활용 시리즈 8~11). 다음: 셀 배경 / 그림 속성 / 클립보드 컨트롤                                                                                       |
 | 빌드        | ✅ `npm run dev` · `npx vite build`                                                                                                                                                                                        |
 | 타입        | ✅ `npm run typecheck`                                                                                                                                                                                                     |
 | 린트        | ✅ `npm run lint` (0 warnings, 0 errors)                                                                                                                                                                                   |
 | 포맷        | ✅ `npm run format:check`                                                                                                                                                                                                  |
 | 단위 테스트 | ✅ 3/3 (`App.test.tsx`)                                                                                                                                                                                                    |
-| e2e         | ✅ 208 케이스 / 4 워커 병렬 + retry=1 (~84s) — 202 prior + 6 style-manager. 2 skip = NIM live + cell-menu UI(의도)                                                                                                         |
+| e2e         | ✅ 221 케이스 / 4 워커 병렬 + retry=1 (~85s) — 208 + 4 equation + 4 table-props + 5 shape (chunk 14·16·17·15). 2 skip = NIM live + cell-menu UI(의도)                                                                      |
 | Electron    | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                                                |
 | 의존성      | runtime: `@rhwp/core` · `chokidar` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` (chunk 6에서 `@rhwp/editor` 제거) |
 
@@ -2271,6 +2271,59 @@ insertTextInHeaderFooter(..., 0 /* paraIdx */, 0 /* charOffset */, text)
 ✓ npm run e2e               (예상 200+/208, 회귀 0)
 ```
 
+### 2026-05-01 — Phase 2 청크 16/17/15 — 수식 미리보기 / 표·셀 속성 / 도형 (사각형)
+
+사용자 요청 순서(14 → 16 → 17 → 15)대로 진행. 다이얼로그 패턴이 7~9번째까지 도달, 라이브러리의 단순 IR API들을 빠르게 노출.
+
+**청크 16 — 수식 미리보기 (rhwp-core 시리즈 9번째)**
+
+- IR: `renderEquationPreview(script, fontSizeHwpunit, color)` → 완전한 SVG 문자열
+- `EquationDialog`: 한컴 수식 script textarea + 라이브 SVG 미리보기 (`dangerouslySetInnerHTML`로 WASM 출력 주입)
+- 본문에 수식 컨트롤 *삽입*은 보류 — 라이브러리에 명시적 createEquation 없음. createShapeControl + setEquationProperties 결합 패턴 후속
+
+**청크 17 — 표/셀 속성 (rhwp-core 시리즈 10번째)**
+
+- IR: `getTableProperties` / `setTableProperties` / `getCellProperties` / `setCellProperties`
+- `getTableProperties` → `{cellSpacing, paddingLeft/Right/Top/Bottom, pageBreak, repeatHeader}`
+- `getCellProperties` → `{width, height, paddingLeft/Right/Top/Bottom, verticalAlign, textDirection, isHeader}`
+- UI 다이얼로그는 보류 — 본 청크는 IR contract + e2e만. 셀 우클릭 메뉴(v3)에 통합은 후속
+- 셀 배경색·테두리는 별도 `applyCellStyle` 메커니즘 (cell style registry) 필요 — 후속
+
+**청크 15 — 도형 (사각형 MVP, rhwp-core 시리즈 11번째)**
+
+- IR: `createShapeControl({sectionIdx, paraIdx, charOffset, width, height, horzOffset, vertOffset, treatAsChar, textWrap})` → `{ok, paraIdx, controlIdx}`. `getShapeProperties` / `setShapeProperties` / `deleteShapeControl` / `changeShapeZOrder('front'|'back'|'forward'|'backward')`
+- `ShapeDialog`: 너비/높이 mm + 글자처럼 취급 토글 (treatAsChar)
+- 라인 / 곡선 / 화살표 / 도형 그룹은 보류 — 라이브러리가 createShapeControl JSON에 shape-type 필드를 노출 안 함
+
+**ViewerHandle 확장 (3 청크 합산)**
+
+- `renderEquationSvg(script, fontSizeHwpunit?, color?)`
+- `getTableProps` / `setTableProps` / `getCellProps` / `setCellProps`
+- `createRectShapeAtCaret(width, height, opts?)`
+- `__studioDebug` 동일 + Z-order/delete/changeShape 추가
+
+**진입점**
+
+- `insert:equation` MenuAction → "보기 → 수식 미리보기…"
+- `insert:shape` MenuAction → "보기 → 사각형 도형…"
+
+**E2E (3 spec 합산 13 케이스)**
+
+- `studio-equation.spec.ts` (4): renderEquationSvg SVG, UI 다이얼로그 + 기본 script + 미리보기, script 변경 재렌더, 빈 script placeholder
+- `studio-table-props.spec.ts` (4, STRESS_FIXTURE): getTableProps shape, setTableProps paddingLeft round-trip, getCellProps shape, setCellProps paddingTop round-trip
+- `studio-shape.spec.ts` (5, STRESS_FIXTURE): createRectShape 반환 shape, getShape round-trip, setShape width round-trip, deleteShape 후 getShape null, UI 다이얼로그 기본 50×30mm + 삽입
+
+**검증 결과 (청크 14·15·16·17 합산)**
+
+```
+✓ npm run typecheck
+✓ npm run lint              (0 errors, 0 warnings)
+✓ npm run format:check
+✓ npm test                  (3/3)
+✓ 청크별 e2e 모두 통과 (6 + 4 + 4 + 5 = 19 신규 케이스)
+✓ 누적 e2e 221 = 208 + 13
+```
+
 **다음 청크 — rhwp-core API 추가 활용 (계속)**
 
 `@rhwp/core` 0.7.9는 253개 메서드 노출. 우리가 활용 중인 건 ~30%. 한컴 한글 핵심 누락분을 라이브러리 API로 매핑한 후보 청크 (사용 빈도 + UX 임팩트 순):
@@ -2315,10 +2368,13 @@ insertTextInHeaderFooter(..., 0 /* paraIdx */, 0 /* charOffset */, text)
 - ~~책갈피 (add/list/delete/rename)~~ ✅ (청크 12, 2026-05-01)
 - ~~각주 (insert + body text)~~ ✅ (청크 13, 2026-05-01)
 - ~~스타일 관리 (add/rename/delete)~~ ✅ (청크 14, 2026-05-01)
+- ~~수식 미리보기 (renderEquationPreview)~~ ✅ (청크 16, 2026-05-01)
+- ~~표/셀 속성 (padding/spacing/repeatHeader/verticalAlign)~~ ✅ (청크 17, 2026-05-01)
+- ~~도형 (사각형 MVP)~~ ✅ (청크 15, 2026-05-01)
 
 **진행 가능 (키 의존성 없음)**
 
-- rhwp-core API 추가 활용 시리즈 (수식 → 표 속성 → 도형 등 — 위 일지의 "다음 청크" 표 참조)
+- rhwp-core API 추가 활용 시리즈 (셀 배경/테두리, 그림 속성, 클립보드 컨트롤, HTML 내보내기 등)
 - 파일별 채팅 히스토리 (better-sqlite3 도입 — schema/migration 정리)
 - Manual 모드: AI 변경사항을 diff로 제안 → Accept/Reject (2-E, 현재 OpenAI/NVIDIA만으로도 검증 가능)
 

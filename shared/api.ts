@@ -39,6 +39,7 @@ export type MenuAction =
   | 'insert:footnote'
   | 'view:style-manager'
   | 'insert:equation'
+  | 'insert:shape'
   | 'format:bold'
   | 'format:italic'
   | 'format:underline'
