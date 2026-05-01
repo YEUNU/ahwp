@@ -146,6 +146,10 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
         click: () => send(getWindow(), 'view:style-manager'),
       },
       {
+        label: '수식 미리보기…',
+        click: () => send(getWindow(), 'insert:equation'),
+      },
+      {
         label: '설정…',
         accelerator: 'CmdOrCtrl+,',
         click: () => send(getWindow(), 'view:settings'),

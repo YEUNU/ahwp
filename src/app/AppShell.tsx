@@ -14,6 +14,7 @@ import { ChatPanel } from '@/features/chat/ChatPanel';
 import { FolderTree } from '@/features/files/FolderTree';
 import { SettingsDialog } from '@/features/settings/SettingsDialog';
 import { BookmarkDialog } from '@/features/studio/BookmarkDialog';
+import { EquationDialog } from '@/features/studio/EquationDialog';
 import { FootnoteDialog } from '@/features/studio/FootnoteDialog';
 import { HeaderFooterDialog } from '@/features/studio/HeaderFooterDialog';
 import { PageSetupDialog } from '@/features/studio/PageSetupDialog';
@@ -62,6 +63,7 @@ export default function AppShell() {
   const [bookmarkOpen, setBookmarkOpen] = useState(false);
   const [footnoteOpen, setFootnoteOpen] = useState(false);
   const [styleManagerOpen, setStyleManagerOpen] = useState(false);
+  const [equationOpen, setEquationOpen] = useState(false);
   // viewerRef per tab (by key). The active tab's viewer is what menu /
   // shortcut actions target.
   const viewerRefsRef = useRef<Map<string, ViewerHandle | null>>(new Map());
@@ -351,6 +353,8 @@ export default function AppShell() {
         setFootnoteOpen(true);
       } else if (action === 'view:style-manager') {
         setStyleManagerOpen(true);
+      } else if (action === 'insert:equation') {
+        setEquationOpen(true);
       }
     });
   }, [
@@ -405,6 +409,13 @@ export default function AppShell() {
           activeViewerRef()?.renameStyle(id, name, englishName) ?? false
         }
         onDelete={(id) => activeViewerRef()?.deleteStyleById(id) ?? false}
+      />
+      <EquationDialog
+        open={equationOpen}
+        onOpenChange={setEquationOpen}
+        renderEquation={(script, fontSize, color) =>
+          activeViewerRef()?.renderEquationSvg(script, fontSize, color) ?? ''
+        }
       />
       <PanelGroup
         direction="horizontal"

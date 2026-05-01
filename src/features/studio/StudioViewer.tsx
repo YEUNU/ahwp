@@ -1561,6 +1561,30 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     );
 
     /**
+     * Equation preview — chunk 16. The IR's `renderEquationPreview`
+     * takes a script string (한컴 수식 syntax — e.g. `x^2 + y^2 = z^2`),
+     * a font size in HWPUNIT, and a color int (0xRRGGBB), and returns a
+     * complete SVG string. Used by the equation dialog for live preview.
+     *
+     * Inserting a new equation control into the doc requires shape-
+     * control machinery the lib doesn't expose as a one-liner — that
+     * lands in the next chunk. For now MVP is preview-only.
+     */
+    const renderEquationSvg = useCallback(
+      (script: string, fontSizeHwpunit = 1000, color = 0): string => {
+        const doc = docRef.current;
+        if (!doc) return '';
+        try {
+          return doc.renderEquationPreview(script, fontSizeHwpunit, color);
+        } catch (err) {
+          console.warn('[studio] renderEquationPreview failed:', err);
+          return '';
+        }
+      },
+      [],
+    );
+
+    /**
      * Styles — chunk 14. Add / rename / delete user styles. New style
      * is a "shell" with just a name; char/para shape mods are a
      * follow-up. `applyStyle` (chunk 5) already wires the toolbar.
@@ -2474,6 +2498,8 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             return null;
           }
         },
+        renderEquationSvg: (script, fontSizeHwpunit = 1000, color = 0) =>
+          renderEquationSvg(script, fontSizeHwpunit, color),
         isDirty: () => dirtyRef.current,
       }),
       [
@@ -2497,6 +2523,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         createNamedStyle,
         renameStyle,
         deleteStyleById,
+        renderEquationSvg,
       ],
     );
 
@@ -3841,6 +3868,12 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         },
         applyPageDef: (props: Record<string, unknown>, sectionIdx = 0): void =>
           applyPageDef(props, sectionIdx),
+        // Equation preview — chunk 16.
+        renderEquationSvg: (
+          script: string,
+          fontSizeHwpunit = 1000,
+          color = 0,
+        ): string => renderEquationSvg(script, fontSizeHwpunit, color),
         // Styles — chunk 14.
         createNamedStyle: (name: string, englishName?: string): number | null =>
           createNamedStyle(name, englishName),
@@ -4063,6 +4096,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       createNamedStyle,
       renameStyle,
       deleteStyleById,
+      renderEquationSvg,
     ]);
 
     // Effect 2: page indicator + mount window. On every scroll (rAF-

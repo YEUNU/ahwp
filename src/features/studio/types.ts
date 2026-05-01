@@ -81,6 +81,15 @@ export interface ViewerHandle {
   deleteStyleById: (id: number) => boolean;
   /** Read the style list as parsed JSON. */
   getStyleListJson: () => Record<string, unknown>[] | null;
+  /**
+   * Render a 한컴 수식 script to SVG via `renderEquationPreview`
+   * (chunk 16). Empty string on failure.
+   */
+  renderEquationSvg: (
+    script: string,
+    fontSizeHwpunit?: number,
+    color?: number,
+  ) => string;
   /** Set paragraph alignment on selection / current paragraph (chunk 10). */
   applyAlignment: (a: ParagraphAlignment) => void;
   /** Apply font size in points (converted to HWPUNIT internally). */
