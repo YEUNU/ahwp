@@ -224,6 +224,12 @@ function CellContextMenu({
   onInsertColRight,
   onDeleteRow,
   onDeleteCol,
+  onMergeRight,
+  onMergeBelow,
+  onSplit2x2,
+  onUnmerge,
+  canMergeRight,
+  canMergeBelow,
   onDeleteTable,
 }: {
   state: { x: number; y: number };
@@ -234,6 +240,12 @@ function CellContextMenu({
   onInsertColRight: () => void;
   onDeleteRow: () => void;
   onDeleteCol: () => void;
+  onMergeRight: () => void;
+  onMergeBelow: () => void;
+  onSplit2x2: () => void;
+  onUnmerge: () => void;
+  canMergeRight: boolean;
+  canMergeBelow: boolean;
   onDeleteTable: () => void;
 }): React.ReactElement {
   const ref = useRef<HTMLDivElement>(null);
@@ -265,14 +277,17 @@ function CellContextMenu({
     label: string,
     onClick: () => void,
     testid: string,
+    disabled = false,
   ): React.ReactElement => (
     <button
       type="button"
       onClick={() => {
+        if (disabled) return;
         onClick();
         onClose();
       }}
-      className="block w-full px-3 py-1.5 text-left text-xs hover:bg-muted"
+      disabled={disabled}
+      className="block w-full px-3 py-1.5 text-left text-xs hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
       data-testid={testid}
     >
       {label}
@@ -295,6 +310,21 @@ function CellContextMenu({
       <hr className="my-1 border-border" />
       {item('행 삭제', onDeleteRow, 'studio-cell-row-delete')}
       {item('열 삭제', onDeleteCol, 'studio-cell-col-delete')}
+      <hr className="my-1 border-border" />
+      {item(
+        '오른쪽 셀과 병합',
+        onMergeRight,
+        'studio-cell-merge-right',
+        !canMergeRight,
+      )}
+      {item(
+        '아래 셀과 병합',
+        onMergeBelow,
+        'studio-cell-merge-below',
+        !canMergeBelow,
+      )}
+      {item('셀 나누기 (2×2)', onSplit2x2, 'studio-cell-split-2x2')}
+      {item('병합 해제', onUnmerge, 'studio-cell-unmerge')}
       <hr className="my-1 border-border" />
       {item('표 삭제', onDeleteTable, 'studio-cell-table-delete')}
     </div>
@@ -2951,6 +2981,113 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       [refreshAfterMutation],
     );
 
+    /**
+     * Merge a rectangular range of cells into one (chunk 9). Use case from
+     * the context menu: merge the right-hand or below neighbor into the
+     * current cell. The caller passes the rectangle in cell coordinates;
+     * the IR collapses them to a single cell whose content is the original
+     * top-left cell's content (other cell text is dropped — this matches
+     * 한컴 한글's "셀 합치기" behavior).
+     */
+    const mergeCells = useCallback(
+      (
+        sec: number,
+        parentPara: number,
+        ctrl: number,
+        startRow: number,
+        startCol: number,
+        endRow: number,
+        endCol: number,
+      ): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        try {
+          doc.mergeTableCells(
+            sec,
+            parentPara,
+            ctrl,
+            startRow,
+            startCol,
+            endRow,
+            endCol,
+          );
+          // Caret was inside one of the merged cells; cell coords are now
+          // stale. Drop the cell pointer — the user can click into the
+          // merged cell to re-anchor.
+          caretRef.current = { ...caretRef.current, cell: undefined };
+          refreshAfterMutation();
+        } catch (err) {
+          console.warn('[studio] mergeTableCells failed:', err);
+        }
+      },
+      [refreshAfterMutation],
+    );
+
+    /**
+     * Split a single cell into N×M smaller cells (chunk 9). The default
+     * context-menu invocation is 2×2; the IR also supports 1×N (vertical
+     * split) and N×1 (horizontal split) via the same call.
+     */
+    const splitCellInto = useCallback(
+      (
+        sec: number,
+        parentPara: number,
+        ctrl: number,
+        row: number,
+        col: number,
+        nRows: number,
+        mCols: number,
+      ): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        try {
+          doc.splitTableCellInto(
+            sec,
+            parentPara,
+            ctrl,
+            row,
+            col,
+            nRows,
+            mCols,
+            true /* equalRowHeight */,
+            false /* mergeFirst — start fresh */,
+          );
+          caretRef.current = { ...caretRef.current, cell: undefined };
+          refreshAfterMutation();
+        } catch (err) {
+          console.warn('[studio] splitTableCellInto failed:', err);
+        }
+      },
+      [refreshAfterMutation],
+    );
+
+    /**
+     * Restore a previously-merged cell back to its constituent cells. Calls
+     * the IR's `splitTableCell` which knows the original geometry from the
+     * merge metadata; if the cell wasn't merged this is a no-op (with a
+     * warning logged from the IR).
+     */
+    const unmergeCell = useCallback(
+      (
+        sec: number,
+        parentPara: number,
+        ctrl: number,
+        row: number,
+        col: number,
+      ): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        try {
+          doc.splitTableCell(sec, parentPara, ctrl, row, col);
+          caretRef.current = { ...caretRef.current, cell: undefined };
+          refreshAfterMutation();
+        } catch (err) {
+          console.warn('[studio] splitTableCell failed:', err);
+        }
+      },
+      [refreshAfterMutation],
+    );
+
     const deleteWholeTable = useCallback(
       (sec: number, parentPara: number, ctrl: number): void => {
         const doc = docRef.current;
@@ -3350,6 +3487,33 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             return null;
           }
         },
+        // Cell merge / split — chunk 9.
+        mergeCells: (
+          sec: number,
+          parentPara: number,
+          ctrl: number,
+          startRow: number,
+          startCol: number,
+          endRow: number,
+          endCol: number,
+        ): void =>
+          mergeCells(sec, parentPara, ctrl, startRow, startCol, endRow, endCol),
+        splitCellInto: (
+          sec: number,
+          parentPara: number,
+          ctrl: number,
+          row: number,
+          col: number,
+          nRows: number,
+          mCols: number,
+        ): void => splitCellInto(sec, parentPara, ctrl, row, col, nRows, mCols),
+        unmergeCell: (
+          sec: number,
+          parentPara: number,
+          ctrl: number,
+          row: number,
+          col: number,
+        ): void => unmergeCell(sec, parentPara, ctrl, row, col),
         // Image insert hook for e2e — bytes encoded as base64 to keep
         // the test deterministic without needing real image files.
         insertImageBase64: async (
@@ -3455,6 +3619,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       insertTableColumnAt,
       deleteTableRowAt,
       deleteTableColumnAt,
+      mergeCells,
+      splitCellInto,
+      unmergeCell,
     ]);
 
     // Effect 2: page indicator + mount window. On every scroll (rAF-
@@ -4168,6 +4335,63 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                 );
               }
             }}
+            onMergeRight={() => {
+              const row = Math.floor(cellMenu.cellIndex / cellMenu.colCount);
+              const col = cellMenu.cellIndex % cellMenu.colCount;
+              mergeCells(
+                cellMenu.sectionIndex,
+                cellMenu.parentParaIndex,
+                cellMenu.controlIndex,
+                row,
+                col,
+                row,
+                col + 1,
+              );
+            }}
+            onMergeBelow={() => {
+              const row = Math.floor(cellMenu.cellIndex / cellMenu.colCount);
+              const col = cellMenu.cellIndex % cellMenu.colCount;
+              mergeCells(
+                cellMenu.sectionIndex,
+                cellMenu.parentParaIndex,
+                cellMenu.controlIndex,
+                row,
+                col,
+                row + 1,
+                col,
+              );
+            }}
+            onSplit2x2={() => {
+              const row = Math.floor(cellMenu.cellIndex / cellMenu.colCount);
+              const col = cellMenu.cellIndex % cellMenu.colCount;
+              splitCellInto(
+                cellMenu.sectionIndex,
+                cellMenu.parentParaIndex,
+                cellMenu.controlIndex,
+                row,
+                col,
+                2,
+                2,
+              );
+            }}
+            onUnmerge={() => {
+              const row = Math.floor(cellMenu.cellIndex / cellMenu.colCount);
+              const col = cellMenu.cellIndex % cellMenu.colCount;
+              unmergeCell(
+                cellMenu.sectionIndex,
+                cellMenu.parentParaIndex,
+                cellMenu.controlIndex,
+                row,
+                col,
+              );
+            }}
+            canMergeRight={
+              (cellMenu.cellIndex % cellMenu.colCount) + 1 < cellMenu.colCount
+            }
+            canMergeBelow={
+              Math.floor(cellMenu.cellIndex / cellMenu.colCount) + 1 <
+              cellMenu.rowCount
+            }
             onDeleteTable={() =>
               deleteWholeTable(
                 cellMenu.sectionIndex,

@@ -6,13 +6,13 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 | 항목        | 상태                                                                                                                                                                                                                       |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Phase       | **Phase 2 청크 8** — 줄 간격/들여쓰기/문단 간격 + 하단 status bar(undo/redo/zoom 분리). 다음: 셀 합치기 → 머리말/꼬리말                                                                                                    |
+| Phase       | **Phase 2 청크 9** — 셀 합치기/나누기 (rhwp-core 활용 시리즈 3번째). 다음: 머리말/꼬리말 → 각주 → 페이지 설정                                                                                                              |
 | 빌드        | ✅ `npm run dev` · `npx vite build`                                                                                                                                                                                        |
 | 타입        | ✅ `npm run typecheck`                                                                                                                                                                                                     |
 | 린트        | ✅ `npm run lint` (0 warnings, 0 errors)                                                                                                                                                                                   |
 | 포맷        | ✅ `npm run format:check`                                                                                                                                                                                                  |
 | 단위 테스트 | ✅ 3/3 (`App.test.tsx`)                                                                                                                                                                                                    |
-| e2e         | ✅ 177 케이스 / 4 워커 병렬 + retry=1 (~73s) — 173 prior + 4 paraspacing. 1 skip = NIM live(env)                                                                                                                           |
+| e2e         | ✅ 181 케이스 / 4 워커 병렬 + retry=1 (~77s) — 177 prior + 4 cells-merge. 2 skip = NIM live + cell-menu UI(의도)                                                                                                           |
 | Electron    | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                                                |
 | 의존성      | runtime: `@rhwp/core` · `chokidar` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` (chunk 6에서 `@rhwp/editor` 제거) |
 
@@ -1914,6 +1914,54 @@ WASM strings probe + e2e raw probe로 확인. `ParaProps` interface와 핸들러
 ✓ npm run e2e               (176/177, 1 skip = NIM live env, 회귀 0)
 ```
 
+### 2026-05-01 — Phase 2 청크 9 — 셀 합치기/나누기 (rhwp-core 활용 시리즈 3번째)
+
+표 v3 위에 v4 진입. 한컴 한글의 셀 병합/분할 UX를 IR API로 노출. 우클릭 메뉴에 4 항목 추가.
+
+**구현 — IR 핸들러**
+
+세 라이브러리 메서드를 셀 좌표 받는 헬퍼로 감쌈. 모든 호출 후 `caretRef.current.cell = undefined` (cell 좌표가 stale) + `refreshAfterMutation`.
+
+| 헬퍼                                   | 위임                                                                             |
+| -------------------------------------- | -------------------------------------------------------------------------------- |
+| `mergeCells(s, p, c, sR, sC, eR, eC)`  | `doc.mergeTableCells(...)`                                                       |
+| `splitCellInto(s, p, c, r, c, nR, mC)` | `doc.splitTableCellInto(..., true /* equalRowHeight */, false /* mergeFirst */)` |
+| `unmergeCell(s, p, c, r, c)`           | `doc.splitTableCell(...)` (이전 merge 메타로 원래 geometry 복원)                 |
+
+**UX — 우클릭 메뉴 4 항목 추가**
+
+`CellContextMenu`에 새 행 (행 삭제 / 열 삭제와 표 삭제 사이):
+
+- 오른쪽 셀과 병합 (canMergeRight: 마지막 열 아닐 때만 활성)
+- 아래 셀과 병합 (canMergeBelow: 마지막 행 아닐 때만 활성)
+- 셀 나누기 (2×2) — `splitTableCellInto(..., 2, 2)`
+- 병합 해제
+
+`item()` 헬퍼를 `disabled` 받도록 확장 — disabled 항목은 클릭 무시 + opacity-50.
+
+**디버그 surface**
+
+`__studioDebug.{mergeCells, splitCellInto, unmergeCell}` 노출. e2e가 IR 라운드트립을 직접 검증.
+
+**e2e — `tests/e2e/studio-cells-merge.spec.ts`** (4 케이스, 1 의도적 skip)
+
+STRESS_FIXTURE para 5에 3×3 표 plant (v3 패턴 재사용).
+
+1. `mergeCells(0,0)-(0,1)` → cellCount 9 → 8, rowCount/colCount는 3×3 유지 (logical span)
+2. merge 후 `unmergeCell(0,0)` → cellCount 9 복원
+3. `splitCellInto(0,0,2,2)` → cellCount ≥ 12 (1 셀 → 4 셀, +3)
+4. UI cell-menu 우클릭 — 헤드리스 우클릭 platform-flaky라 의도적 skip. 같은 메뉴 컴포넌트 클릭 흐름은 v3에서 검증됨
+
+**검증 결과**
+
+```
+✓ npm run typecheck
+✓ npm run lint              (0 errors, 0 warnings)
+✓ npm run format:check
+✓ npm test                  (3/3)
+✓ npm run e2e               (178/181, 1 flaky→retry pass, 2 skip = NIM live + cell-menu UI 의도, 회귀 0)
+```
+
 **다음 청크 — rhwp-core API 추가 활용 (계속)**
 
 `@rhwp/core` 0.7.9는 253개 메서드 노출. 우리가 활용 중인 건 ~30%. 한컴 한글 핵심 누락분을 라이브러리 API로 매핑한 후보 청크 (사용 빈도 + UX 임팩트 순):
@@ -1952,10 +2000,11 @@ WASM strings probe + e2e raw probe로 확인. `ParaProps` interface와 핸들러
 - ~~메시지 복사 / 재생성 / 삭제 (2-C 완료)~~ ✅ (청크 6, 2026-05-01)
 - ~~찾아 바꾸기 (⌘H, replaceOne/replaceAll IR) + examples/ git 추적 + e2e retry~~ ✅ (청크 7, 2026-05-01)
 - ~~줄 간격 / 들여쓰기 / 문단 간격 + 하단 status bar (undo/redo/zoom 분리)~~ ✅ (청크 8, 2026-05-01)
+- ~~셀 합치기 / 나누기 / 병합 해제~~ ✅ (청크 9, 2026-05-01)
 
 **진행 가능 (키 의존성 없음)**
 
-- rhwp-core API 추가 활용 시리즈 (셀 합치기 → 머리말/꼬리말 → 각주 → 페이지 설정 등 — 위 일지의 "다음 청크" 표 참조)
+- rhwp-core API 추가 활용 시리즈 (머리말/꼬리말 → 각주 → 페이지 설정 등 — 위 일지의 "다음 청크" 표 참조)
 - 파일별 채팅 히스토리 (better-sqlite3 도입 — schema/migration 정리)
 - Manual 모드: AI 변경사항을 diff로 제안 → Accept/Reject (2-E, 현재 OpenAI/NVIDIA만으로도 검증 가능)
 
