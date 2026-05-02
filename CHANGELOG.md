@@ -14,6 +14,14 @@
 - **chunk 58 — 목차 사이드바 (⌘⇧O, 0.2.61)**: `viewer.getOutline()` — 단락 styleId를 styleList에서 "제목 N" / "Heading N"로 매칭, level 추출. `OutlineSidebar` 컴포넌트가 viewer 옆에 토글 + 클릭 시 scrollToParagraph
 - **chunk 57 — AI inline diff (0.2.61)**: `viewer.snapshotParagraphs()` + `markChangedParagraphsSince(before)`. AppShell의 applyHtml/runTools가 before/after로 bracket. 변경된 단락 좌측에 amber 3px 막대 + animate-pulse + 15s 후 페이드
 
+### Added — Phase D (2차 부분): 불연속 셀 ops (0.2.84)
+
+- 0.2.83에서 visual-only였던 Ctrl+클릭 셀을 ops에서도 사용. 별도 `discontiguousCellsRef` (ops iteration용 list)에 추가.
+- **S (셀 나누기)** — anchor/focus rectangle의 모든 셀 + 불연속 셀 모두 per-cell `splitTableCell` 호출. 단일 셀이면 1×1 split (현 lib에선 no-op 안전).
+- **M (셀 합치기)** — `mergeTableCells` 라이브러리가 rectangular range만 받으므로 anchor/focus rectangle만 처리. 불연속 셀이 rectangle 밖에 있으면 자동 무시 (lib 제약 — 후속에서 별도 알림/disable 검토).
+- 불연속 cells는 plain mousedown / Esc / clearSelection / 새 drag 시작 / merge·split 후 자동 리셋.
+- format apply (toggleCharFormat in cell)는 추후 — 현재는 selection.anchor/focus 한 셀만 적용.
+
 ### Added — Phase D (1차): Ctrl+클릭 불연속 셀 추가 (0.2.83)
 
 - 셀-block이 활성인 상태에서 같은 표의 다른 셀을 **Ctrl/Cmd+클릭** → 그 셀이 highlight에 추가됨 (rectangular range 외 추가 셀). v1은 시각 표시만 — anchor/focus는 안 건드림.

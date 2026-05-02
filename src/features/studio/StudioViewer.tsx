@@ -800,6 +800,16 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     const [cellBlockHighlights, setCellBlockHighlights] = useState<
       Record<number, { x: number; y: number; width: number; height: number }[]>
     >({});
+    // Phase D — 불연속 셀 추적. Ctrl+클릭으로 추가된 cells (rectangle
+    // range 외 추가). M/S/format ops iteration 시 사용. Plain mousedown /
+    // Esc / drag 시작 시 모두 리셋.
+    const discontiguousCellsRef = useRef<
+      Array<{
+        parentParaIndex: number;
+        controlIndex: number;
+        cellIndex: number;
+      }>
+    >([]);
     // True while the user is mouse-dragging — mousemove updates focus.
     const draggingRef = useRef(false);
     // Cleanup callback for the active drag — set in handlePageMouseDown,
@@ -1445,6 +1455,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       setSelectionRectsByPage({});
       setSelectedControlBboxes({});
       setCellBlockHighlights({});
+      discontiguousCellsRef.current = [];
     }, [setSelection]);
 
     /**
@@ -4946,6 +4957,11 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                     fcCell.col + fcCell.colSpan - 1,
                   );
                   if (e.key === 'm' || e.key === 'M') {
+                    // M: 셀 합치기. 라이브러리는 startRow/Col~endRow/Col
+                    // rectangle만 받음. anchor·focus rectangle은 처리.
+                    // 불연속 셀 (Ctrl+클릭 추가본)은 mergeTableCells 한
+                    // 호출에 포함 불가 — discontiguous cells가 rectangle
+                    // 안에 들어오는 경우만 자동 포함됨. 그 외엔 무시.
                     doc.mergeTableCells(
                       cur.anchor.sectionIndex,
                       ac.parentParaIndex,
@@ -4956,21 +4972,38 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                       endCol,
                     );
                   } else {
-                    // S: 셀 나누기 — 1×1로 split (단일 셀이면 1×1 no-op
-                    // 안전. block 단위 split는 splitTableCellsInRange로
-                    // 후속 가능).
-                    doc.splitTableCell(
-                      cur.anchor.sectionIndex,
-                      ac.parentParaIndex,
-                      ac.controlIndex,
-                      acCell.row,
-                      acCell.col,
-                    );
+                    // S: 셀 나누기 — anchor/focus rectangle의 모든 셀에
+                    // 1×1 split 적용. 불연속 셀(Ctrl+클릭)도 동일하게
+                    // per-cell split 호출.
+                    const targetCells = cells.filter((cellInfo) => {
+                      const inRect =
+                        cellInfo.row + cellInfo.rowSpan - 1 >= startRow &&
+                        cellInfo.row <= endRow &&
+                        cellInfo.col + cellInfo.colSpan - 1 >= startCol &&
+                        cellInfo.col <= endCol;
+                      const inDiscontig = discontiguousCellsRef.current.some(
+                        (d) =>
+                          d.parentParaIndex === ac.parentParaIndex &&
+                          d.controlIndex === ac.controlIndex &&
+                          d.cellIndex === cellInfo.cellIdx,
+                      );
+                      return inRect || inDiscontig;
+                    });
+                    for (const tc of targetCells) {
+                      doc.splitTableCell(
+                        cur.anchor.sectionIndex,
+                        ac.parentParaIndex,
+                        ac.controlIndex,
+                        tc.row,
+                        tc.col,
+                      );
+                    }
                   }
                   refreshAfterMutation({ syncCaret: false });
                   setCellBlockHighlights({});
                   setSelection(null);
                   setCellBlockExtendMode(false);
+                  discontiguousCellsRef.current = [];
                 }
               } catch (err) {
                 console.warn('[studio] cell merge/split failed:', err);
@@ -5609,6 +5642,17 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                       ],
                     };
                   });
+                  // ops iteration 용 ref에도 추가 (dedupe).
+                  const ref = discontiguousCellsRef.current;
+                  const dup = ref.some(
+                    (x) =>
+                      x.parentParaIndex === cell.parentParaIndex &&
+                      x.controlIndex === cell.controlIndex &&
+                      x.cellIndex === cell.cellIndex,
+                  );
+                  if (!dup) {
+                    discontiguousCellsRef.current = [...ref, cell];
+                  }
                 }
               } catch (err) {
                 console.warn('[studio] discontiguous cell add failed:', err);
@@ -5619,6 +5663,8 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             draggingRef.current = false;
             return;
           }
+          // Plain click in cell — reset discontiguous list.
+          discontiguousCellsRef.current = [];
           caretRef.current = baseCaret;
           if (result.cursorRect) {
             setCursorRect(result.cursorRect);
