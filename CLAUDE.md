@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-ahwp — Electron + React desktop app for viewing/editing Korean HWP/HWPX documents with AI assistance (OpenAI / NVIDIA NIM live; Anthropic / Google / custom OpenAI-compatible endpoints scaffolded but blocked on maintainer keys — `custom` covers any /v1-compatible endpoint including self-hosted Ollama, vLLM, LM Studio). **Phase 1 complete + Phase 2 in flight (chunk 7)**: full editor (text/IME/selection/format/Undo/Copy/Find/Replace/page-nav), table cell editing v3, image insert, VS Code-style folder tree, browser-style tabs, BYOK Settings dialog, OpenAI/NVIDIA streaming chat with markdown + syntax highlighting, message actions (copy/regenerate/delete), find & replace via `replaceOne`/`replaceAll` IR. See `docs/PROGRESS.md` for the up-to-date phase status — never assume features named in the README are implemented yet.
+ahwp — Electron + React desktop app for viewing/editing Korean HWP/HWPX documents with AI assistance (OpenAI / NVIDIA NIM live; Anthropic / Google / custom OpenAI-compatible endpoints scaffolded but blocked on maintainer keys — `custom` covers any /v1-compatible endpoint including self-hosted Ollama, vLLM, LM Studio). **Phase 1 + Phase 2 + 1차 UX 라운드 완료** (current `0.2.55`, chunks 1~55 + UX rounds): full editor with visual-line caret nav (ArrowUp/Down) / shift+click selection / drag auto-scroll / ⌘A IR-scoped, table cell editing v3 + table props + cell props + cell style + table formula evaluator, multi-line headers/footers with odd/even/both templates, image insert + picture props, control clipboard (⌘⇧C/V), HTML export, **Manual AI mode** (HTML round-trip + `ahwp-tools` JSON dispatcher + 11 whitelisted tools + grouped undo per turn + "되돌리기" toast + multi-paragraph excerpts + multi-doc context + chat history with inline rename + per-tab dirty + 60s `.ahwp-draft` autosave + `.bak` sidecar), VS Code-style folder tree with chokidar + cross-tab external-change detection, browser-style tabs with **pinning + drag reorder + context menu**, command palette (⌘K) + shortcut cheatsheet (⌘/) + status bar counters, BYOK Settings with model dropdown auto-fetched from provider `/v1/models` + 24h cache. See `docs/PROGRESS.md` for the up-to-date phase status — never assume features named in the README are implemented yet.
 
 ## Commands
 
@@ -15,7 +15,7 @@ npm run build:dir    # same, unpacked (faster, no installer)
 npm run build:all    # build for mac+win+linux (CI)
 npm test             # vitest run (renderer unit tests)
 npm run test:watch   # vitest watch
-npm run e2e          # vite build + Playwright Electron e2e (173 cases, 4 workers / retries=1)
+npm run e2e          # vite build + Playwright Electron e2e (~303 cases, 4 workers / retries=1)
 npm run e2e:headed   # same, with visible window
 npm run typecheck    # tsc -p tsconfig.json && tsc -p tsconfig.node.json (both must pass)
 npm run lint         # eslint .
@@ -33,8 +33,8 @@ Standard Electron 2-process model with strict isolation. Read `docs/ARCHITECTURE
 
 **Process split**
 
-- `electron/` — Main process (Node). All file I/O, folder watching (chokidar), AI provider calls, keychain access (`safeStorage`), and `@rhwp/core` (WASM) calls. Built by `vite-plugin-electron/simple` to `dist-electron/{main,preload}.js`. Subdirs: `electron/ipc/` (per-domain IPC handlers — file, folder, clipboard, session, secrets, ai), `electron/ai/` (provider adapters + registry, env-gated fake for tests), `electron/store/` (JSON-backed persistence — `recent.json` legacy, `session.json`, `secrets.json` encrypted), `electron/hwp/` (`@rhwp/core` wrapper + base64 blank seed), `electron/menu.ts` (native app menu).
-- `src/` — Renderer (React + Vite). Sandboxed: `nodeIntegration: false`, `contextIsolation: true`, `sandbox: true`. The renderer **cannot** import from `electron/` and has no Node access — `process` is undefined here (don't reference it; pass platform info from main if needed). Only `preload.ts`-exposed API is visible via `contextBridge`. Subdirs: `src/app/` (AppShell, ThemeProvider, ThemeToggle), `src/features/{files,studio,chat,settings}/` (per-pane components — `FolderTree`, `StudioViewer`, `TabBar`, `ChatPanel`, `SettingsDialog`), `src/components/ui/` (shadcn primitives — Button, Dialog, Input), `src/lib/{utils,rhwp-core}.ts`.
+- `electron/` — Main process (Node). All file I/O, folder watching (chokidar), AI provider calls + model-list 24h cache, keychain access (`safeStorage`), and `@rhwp/core` (WASM) calls. Built by `vite-plugin-electron/simple` to `dist-electron/{main,preload}.js`. Subdirs: `electron/ipc/` (per-domain IPC handlers — file, folder, clipboard, session, secrets, ai, chat-history), `electron/ai/` (provider adapters + registry, env-gated fake for tests), `electron/store/` (`recent.json` legacy, `session.json`, `secrets.json` encrypted, `model-cache.json`, `chat-history.db` better-sqlite3), `electron/hwp/` (`@rhwp/core` wrapper + base64 blank seed), `electron/menu.ts` (native app menu).
+- `src/` — Renderer (React + Vite). Sandboxed: `nodeIntegration: false`, `contextIsolation: true`, `sandbox: true`. The renderer **cannot** import from `electron/` and has no Node access — `process` is undefined here (don't reference it; pass platform info from main if needed). Only `preload.ts`-exposed API is visible via `contextBridge`. Subdirs: `src/app/` (AppShell, TitleBar, WelcomePane, ThemeProvider, ThemeToggle), `src/features/{files,studio,chat,settings,cmdk}/` (per-pane components — `FolderTree`, `StudioViewer`, `TabBar`, `ChatPanel`, `SettingsDialog`, `CommandPalette` + `ShortcutsDialog`), `src/components/ui/` (shadcn primitives — Button, Dialog, Input), `src/lib/{utils,rhwp-core}.ts`.
 - `shared/` — Types shared between main and renderer. The IPC contract lives here (`shared/api.ts` defines `AhwpApi`, augments `Window.api`). `shared/format.ts` has the magic-byte format sniff. **All main↔renderer shared types MUST go in `shared/`** per CONTRIBUTING.md.
 - `tests/e2e/` — Playwright + Electron tests (`launch.ts` helper, `*.spec.ts` cases).
 
@@ -46,7 +46,7 @@ Every IPC channel is added in three places, in lockstep:
 2. Handler registered in `electron/ipc/*.ts` (e.g. `electron/ipc/file.ts`'s `registerFileIpc()`), called from `electron/main.ts`'s `registerIpcHandlers()`.
 3. Wrapper in `electron/preload.ts` calling `ipcRenderer.invoke('domain:action', req)` (or `ipcRenderer.on(...)` for events like `menu:action`).
 
-Channel naming is `domain:action` (`file:open`, `file:save`, `session:get`, `menu:action`, `ipc:ping`). Streaming responses (Phase 2+ AI tokens) will use `ipcRenderer.on` events keyed by request ID, not `invoke`.
+Channel naming is `domain:action` (`file:open`, `file:save`, `session:get`, `menu:action`, `ipc:ping`). Streaming responses (AI tokens) use `ipcRenderer.on` events on a per-request channel (`ai:chat-event:<id>`), not `invoke` — main spawns an `AbortController` keyed by `id` and the renderer can cancel by invoking `ai:chat-abort` with that `id`. External-change push events (`folder:changed`, `file:external-change`) follow the same `on(...)` event pattern.
 
 **HWP/HWPX content boundary**
 
@@ -67,6 +67,7 @@ Channel naming is `domain:action` (`file:open`, `file:save`, `session:get`, `men
 
 - **Branches**: target `dev` for all PRs (`feat/*`, `fix/*`, `chore/*`); `main` is release-only. See `CONTRIBUTING.md`.
 - **Commits**: Conventional Commits (`feat(chat): …`, `fix(hwp): …`).
+- **Docs (압축 정책)**: 청크당 (a) `CHANGELOG.md`에 1-3줄 + (b) commit body에 디테일 + (c) `ROADMAP.md` 체크박스 토글만. **`PROGRESS.md`는 라운드/Phase 단위로만 일지 추가** — 청크별 작업 디테일은 `git log` + `git show <hash>`에 위임. `PROGRESS.md`를 매 청크마다 업데이트하지 말 것 (이전 패턴이라 누적되어 압축 작업 필요).
 - **Strict mode is non-negotiable** — `tsconfig.json` has `strict`, `noUnusedLocals`, `noUnusedParameters`, `noUncheckedSideEffectImports`. Don't disable; fix the type.
 - **Security model**: never relax the sandbox (`nodeIntegration: false`, `contextIsolation: true`, `sandbox: true` in `electron/main.ts`). API keys (Phase 2+) go through `safeStorage`, never plaintext on disk. AI tool calls are whitelisted — never `eval` model output. CSP allows `'wasm-unsafe-eval'` for `@rhwp/core` WASM compilation; no `frame-src` (no external iframes after chunk 6).
 - **Package manager is npm** — pnpm was tried and abandoned (corepack EPERM on Windows, see `docs/PROGRESS.md`). Don't reintroduce a `pnpm-lock.yaml`.
