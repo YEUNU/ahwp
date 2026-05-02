@@ -56,6 +56,19 @@ export interface RecentFile {
 
 export interface FileOpenResult {
   path: string;
+  /**
+   * When the main process auto-routed the requested path's extension to a
+   * different one (e.g. `.hwpx` → `.hwp` because of the HWPX round-trip
+   * limitation in `@rhwp/core`), this holds the original requested path so
+   * the renderer can surface a notice. Undefined when no rerouting happened.
+   */
+  routedFrom?: string;
+  /**
+   * Sidecar `.bak` path written before the save replaced the original.
+   * Undefined for new files (no original existed). Used by the renderer to
+   * tell the user a backup is available if they need to recover.
+   */
+  backupPath?: string;
 }
 
 export interface FileSaveRequest {
@@ -96,6 +109,20 @@ export interface FileApi {
     defaultPath?: string;
   }) => Promise<FileOpenResult | null>;
   /**
+   * Reconfigure the external-change watcher to track exactly the paths
+   * passed in. Pass `[]` to stop watching all files. The previous set is
+   * always replaced — the renderer just resends the full path list when
+   * tabs open/close. Idempotent.
+   */
+  watchPaths: (paths: string[]) => Promise<void>;
+  /**
+   * Subscribe to external (off-app) modifications of the watched files.
+   * Returns an unsubscriber. Fires once per change event from chokidar.
+   */
+  onExternalChange: (
+    handler: (event: ExternalFileChangeEvent) => void,
+  ) => () => void;
+  /**
    * Resolve a renderer-side File object to its absolute disk path.
    * Wraps Electron's webUtils.getPathForFile (replacement for the removed File.path).
    */
@@ -129,6 +156,17 @@ export interface FolderChangeEvent {
   type: 'add' | 'addDir' | 'unlink' | 'unlinkDir' | 'change';
   path: string;
   parent: string;
+}
+
+/**
+ * Push event fired when a file the renderer asked to watch (open tab
+ * paths) was modified by an external process. The renderer compares to
+ * the active tabs' dirty state and decides whether to silently reload
+ * (`!dirty`) or surface a conflict notice (`dirty`).
+ */
+export interface ExternalFileChangeEvent {
+  type: 'change' | 'unlink';
+  path: string;
 }
 
 export interface FolderApi {

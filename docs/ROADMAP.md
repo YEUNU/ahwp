@@ -69,7 +69,9 @@
 - [x] **탭 시스템** — 다중 파일, dirty 점, X 닫기, ⌘W, 미들 클릭, openTabPaths 영속
 - [x] **편집 기능 풀**:
   - [x] 텍스트 편집 (insert/delete/IME)
-  - [x] 선택 모델 (mouse drag / shift+arrow / 더블·트리플 클릭 / ⌘⇧Arrow)
+  - [x] 선택 모델 (mouse drag / shift+arrow / shift+click / 더블·트리플 클릭 / ⌘⇧Arrow / ⌘A 전체 선택)
+  - [x] **편집 UX 회귀 fix** (2026-05-02) — 화살표 nav 후 툴바 pressed-state 동기화, 페이지 경계 넘는 드래그(window 레벨 mousemove/up 리스너), ⌘A 시 IR 활성 섹션 한정(브라우저 기본 fallthrough 차단). 회귀 e2e 5건(`tests/e2e/studio-ux-fixes.spec.ts`)
+  - [x] **P0 편집 UX 보강** (2026-05-02) — ArrowUp/Down 시각 라인 nav (cursorRect+hitTest), shift+click selection 확장, 드래그 자동 스크롤(rAF + 36px edge zone), Esc로 드래그 취소 + selection 롤백, `commitCaretMove` helper 추출. 회귀 e2e 6건(`tests/e2e/studio-ux-round2.spec.ts`). 큰 keymap dispatch table 분할은 후속 청크
   - [x] Bold/Italic/Underline + 문단 스타일 + ⌘B/⌘I/⌘U
   - [x] 정렬 (좌/우/중/양쪽) + 폰트 크기 + 색상
   - [x] Undo/Redo (⌘Z/⌘⇧Z, 100 entry cap)
@@ -96,6 +98,11 @@
   - [x] 이미지 삽입 (툴바 + OS 드래그)
   - [x] 확장형 툴바 (더보기 행) + 보기 토글 (제어문자 / 투명 테두리)
 - [x] 144페이지 부하 측정 e2e gate
+- [x] **저장 안전망** (2026-05-02):
+  - [x] atomic write (tmp + rename) — 처음부터 구현됨
+  - [x] `.bak` 사이드카 — 첫 덮어쓰기 시 한 번 작성, 후속 저장은 보존
+  - [x] HWPX 자동 라우팅 알림 — `routedFrom` IPC + AppShell `Notice` banner
+  - [x] 외부 파일 변경 감지 — `file:watch-paths` + chokidar + dirty-aware reload/notice
 - [x] **성능 최적화**:
   - [x] `@rhwp/core` WASM 앱 부팅 시 pre-init (첫 파일 열기 stall 제거)
   - [x] Off-viewport 페이지 unmount + lazy-render 통합 (메모리 ~30MB → ~2MB)

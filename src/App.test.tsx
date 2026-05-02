@@ -23,6 +23,8 @@ describe('App', () => {
         saveAs: vi.fn().mockResolvedValue(null),
         exportHtml: vi.fn().mockResolvedValue(null),
         getPathForFile: vi.fn().mockReturnValue(''),
+        watchPaths: vi.fn().mockResolvedValue(undefined),
+        onExternalChange: vi.fn().mockReturnValue(() => {}),
       },
       session: {
         get: vi.fn().mockResolvedValue({ lastActivePath: null }),
@@ -76,7 +78,9 @@ describe('App', () => {
     // No folder selected → left panel header shows "폴더" placeholder.
     expect(screen.getByText('폴더')).toBeInTheDocument();
     expect(screen.getByText('챗봇')).toBeInTheDocument();
-    expect(screen.getByText('Hello, ahwp')).toBeInTheDocument();
+    // Welcome screen greeting (UI revamp — "Hello, ahwp" was removed
+    // when the marketing area was redesigned).
+    expect(screen.getByText('안녕하세요.')).toBeInTheDocument();
   });
 
   it('calls ipc:ping on mount', async () => {

@@ -569,6 +569,24 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     >({});
     // True while the user is mouse-dragging — mousemove updates focus.
     const draggingRef = useRef(false);
+    // Cleanup callback for the active drag — set in handlePageMouseDown,
+    // invoked from Esc handler / unmount to release window listeners and
+    // cancel any auto-scroll loop. `null` when no drag is active.
+    const dragCleanupRef = useRef<(() => void) | null>(null);
+    // Drag origin selection — captured at mousedown so Esc can revert to
+    // the pre-drag state (selection or null).
+    const dragOriginSelectionRef = useRef<{
+      anchor: {
+        sectionIndex: number;
+        paragraphIndex: number;
+        charOffset: number;
+      };
+      focus: {
+        sectionIndex: number;
+        paragraphIndex: number;
+        charOffset: number;
+      };
+    } | null>(null);
     // Undo/Redo (chunk 7). The doc IR exposes snapshot save/restore as a
     // bidirectional stack: each saveSnapshot returns an integer id; we
     // record IDs in chronological order along with an index pointer to
@@ -3547,6 +3565,54 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     );
 
     /**
+     * Caret-move helper used by every nav branch in `handleKeyDown`. Handles
+     * the four pieces every move repeats: (1) update caretRef, (2) extend
+     * the existing selection when shift is held (or anchor a new one at
+     * `prior` if there was none), (3) collapse any selection on plain nav,
+     * (4) refresh the visual cursor + toolbar pressed-state.
+     *
+     * Replaces ~6 inline copies of the same pattern; future nav bindings
+     * (PageUp/Down with caret movement, etc.) plug in here too. The keymap
+     * dispatch-table refactor (P2-1 ROADMAP) is the bigger move; this is a
+     * proof-of-concept that the pattern extracts cleanly.
+     */
+    const commitCaretMove = useCallback(
+      (
+        nextCaret: {
+          sectionIndex: number;
+          paragraphIndex: number;
+          charOffset: number;
+        },
+        prior: {
+          sectionIndex: number;
+          paragraphIndex: number;
+          charOffset: number;
+        },
+        shift: boolean,
+        sel0: typeof selection,
+      ): void => {
+        caretRef.current = { ...caretRef.current, ...nextCaret };
+        if (shift) {
+          const sel = sel0 ?? { anchor: prior, focus: prior };
+          const next = { ...sel, focus: nextCaret };
+          setSelection(next);
+          refreshSelectionRects(next);
+        } else if (sel0) {
+          clearSelection();
+        }
+        refreshCursorRect();
+        refreshActiveFormat();
+      },
+      [
+        clearSelection,
+        refreshActiveFormat,
+        refreshCursorRect,
+        refreshSelectionRects,
+        setSelection,
+      ],
+    );
+
+    /**
      * Keyboard input. ASCII typing routes through here; Korean IME composition
      * routes through `compositionend` (the browser delivers the final composed
      * string in `event.data`). Caret nav (arrow keys / Home) is local to our
@@ -3588,33 +3654,18 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             c.charOffset,
             dir,
           );
-          const nextCaret = { ...c, charOffset: nextOff };
-          caretRef.current = nextCaret;
-          if (e.shiftKey) {
-            const sel = sel0 ?? { anchor: c, focus: c };
-            const next = { ...sel, focus: nextCaret };
-            setSelection(next);
-            refreshSelectionRects(next);
-          } else if (sel0) {
-            clearSelection();
-          }
-          refreshCursorRect();
+          commitCaretMove({ ...c, charOffset: nextOff }, c, e.shiftKey, sel0);
           e.preventDefault();
           return;
         }
         if (e.key === 'ArrowLeft') {
           if (c.charOffset > 0) {
-            const nextCaret = { ...c, charOffset: c.charOffset - 1 };
-            caretRef.current = nextCaret;
-            if (e.shiftKey) {
-              const sel = sel0 ?? { anchor: c, focus: c };
-              const next = { ...sel, focus: nextCaret };
-              setSelection(next);
-              refreshSelectionRects(next);
-            } else if (sel0) {
-              clearSelection();
-            }
-            refreshCursorRect();
+            commitCaretMove(
+              { ...c, charOffset: c.charOffset - 1 },
+              c,
+              e.shiftKey,
+              sel0,
+            );
           } else if (!e.shiftKey && sel0) {
             clearSelection();
           }
@@ -3622,55 +3673,104 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           return;
         }
         if (e.key === 'ArrowRight') {
-          const nextCaret = { ...c, charOffset: c.charOffset + 1 };
-          caretRef.current = nextCaret;
-          if (e.shiftKey) {
-            const sel = sel0 ?? { anchor: c, focus: c };
-            const next = { ...sel, focus: nextCaret };
-            setSelection(next);
-            refreshSelectionRects(next);
-          } else if (sel0) {
+          commitCaretMove(
+            { ...c, charOffset: c.charOffset + 1 },
+            c,
+            e.shiftKey,
+            sel0,
+          );
+          e.preventDefault();
+          return;
+        }
+        // Visual-line ArrowUp/Down — IR has no line concept (paragraphs may
+        // wrap), so we walk via cursor geometry: take the current cursor
+        // rect, step y by ±lineHeight, and hitTest the same x to find the
+        // offset on the previous/next visual line. Falls through to the
+        // adjacent page when stepping off the current page's bounds.
+        // In-cell caret is not yet supported here — cells use a separate
+        // hit-test path; punt to no-op until cell-line nav v2.
+        if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !c.cell) {
+          const rect = cursorRect;
+          if (!rect) {
+            e.preventDefault();
+            return;
+          }
+          const dirDown = e.key === 'ArrowDown';
+          // Step half a line height past the line so we land squarely in the
+          // adjacent line, not on the boundary.
+          const step = rect.height * 1.4;
+          let targetPage = rect.pageIndex;
+          let targetY = dirDown ? rect.y + step : rect.y - step;
+          const pageH = pageDims?.h ?? 0;
+          if (dirDown && targetY > pageH && targetPage + 1 < pageCount) {
+            targetPage += 1;
+            targetY = targetY - pageH;
+          } else if (!dirDown && targetY < 0 && targetPage > 0) {
+            targetPage -= 1;
+            targetY = pageH + targetY;
+          }
+          let hit: {
+            sectionIndex: number;
+            paragraphIndex: number;
+            charOffset: number;
+          } | null;
+          try {
+            hit = JSON.parse(doc.hitTest(targetPage, rect.x, targetY)) as {
+              sectionIndex: number;
+              paragraphIndex: number;
+              charOffset: number;
+            };
+          } catch {
+            hit = null;
+          }
+          if (hit) {
+            commitCaretMove(
+              {
+                sectionIndex: hit.sectionIndex,
+                paragraphIndex: hit.paragraphIndex,
+                charOffset: hit.charOffset,
+              },
+              c,
+              e.shiftKey,
+              sel0,
+            );
+          }
+          e.preventDefault();
+          return;
+        }
+        // Esc during an active mouse drag — cancel and roll back the
+        // selection to its pre-drag state. Also closes the find bar
+        // (handled separately further below if Find is open).
+        if (e.key === 'Escape' && draggingRef.current) {
+          dragCleanupRef.current?.();
+          dragCleanupRef.current = null;
+          draggingRef.current = false;
+          const origin = dragOriginSelectionRef.current;
+          if (origin) {
+            setSelection(origin);
+            refreshSelectionRects(origin);
+          } else {
             clearSelection();
           }
-          refreshCursorRect();
+          dragOriginSelectionRef.current = null;
           e.preventDefault();
           return;
         }
         if (e.key === 'Home') {
           // Cmd/Ctrl + Home → jump to start of document (chunk 12).
           if (e.metaKey || e.ctrlKey) {
-            const nextCaret = {
-              sectionIndex: 0,
-              paragraphIndex: 0,
-              charOffset: 0,
-            };
-            caretRef.current = nextCaret;
-            if (e.shiftKey) {
-              const sel = sel0 ?? { anchor: c, focus: c };
-              const next = { ...sel, focus: nextCaret };
-              setSelection(next);
-              refreshSelectionRects(next);
-            } else if (sel0) {
-              clearSelection();
-            }
-            refreshCursorRect();
-            refreshActiveFormat();
+            commitCaretMove(
+              { sectionIndex: 0, paragraphIndex: 0, charOffset: 0 },
+              c,
+              e.shiftKey,
+              sel0,
+            );
             scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
             e.preventDefault();
             return;
           }
           // Plain Home → start of current line/paragraph.
-          const nextCaret = { ...c, charOffset: 0 };
-          caretRef.current = nextCaret;
-          if (e.shiftKey) {
-            const sel = sel0 ?? { anchor: c, focus: c };
-            const next = { ...sel, focus: nextCaret };
-            setSelection(next);
-            refreshSelectionRects(next);
-          } else if (sel0) {
-            clearSelection();
-          }
-          refreshCursorRect();
+          commitCaretMove({ ...c, charOffset: 0 }, c, e.shiftKey, sel0);
           e.preventDefault();
           return;
         }
@@ -3681,22 +3781,16 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               const lastSec = doc.getSectionCount() - 1;
               const lastPara = doc.getParagraphCount(lastSec) - 1;
               const lastOffset = doc.getParagraphLength(lastSec, lastPara);
-              const nextCaret = {
-                sectionIndex: lastSec,
-                paragraphIndex: lastPara,
-                charOffset: lastOffset,
-              };
-              caretRef.current = nextCaret;
-              if (e.shiftKey) {
-                const sel = sel0 ?? { anchor: c, focus: c };
-                const next = { ...sel, focus: nextCaret };
-                setSelection(next);
-                refreshSelectionRects(next);
-              } else if (sel0) {
-                clearSelection();
-              }
-              refreshCursorRect();
-              refreshActiveFormat();
+              commitCaretMove(
+                {
+                  sectionIndex: lastSec,
+                  paragraphIndex: lastPara,
+                  charOffset: lastOffset,
+                },
+                c,
+                e.shiftKey,
+                sel0,
+              );
               const scroll = scrollRef.current;
               if (scroll) {
                 scroll.scrollTo({
@@ -3716,17 +3810,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               c.sectionIndex,
               c.paragraphIndex,
             );
-            const nextCaret = { ...c, charOffset: len };
-            caretRef.current = nextCaret;
-            if (e.shiftKey) {
-              const sel = sel0 ?? { anchor: c, focus: c };
-              const next = { ...sel, focus: nextCaret };
-              setSelection(next);
-              refreshSelectionRects(next);
-            } else if (sel0) {
-              clearSelection();
-            }
-            refreshCursorRect();
+            commitCaretMove({ ...c, charOffset: len }, c, e.shiftKey, sel0);
           } catch {
             /* keep caret */
           }
@@ -3789,6 +3873,42 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           }
           if (!e.shiftKey && k === 'h') {
             openReplace();
+            e.preventDefault();
+            return;
+          }
+          // Cmd/Ctrl+A — select all body text in the active section.
+          // Without preventDefault the browser falls back to selecting
+          // every text node in the chrome (toolbar, sidebar, status bar);
+          // user-visible symptom is "the whole program flashes blue."
+          // We restrict to section 0 because the IR's selection model is
+          // single-section. Multi-section docs are rare in practice.
+          if (!e.shiftKey && k === 'a') {
+            try {
+              const sec = c.sectionIndex;
+              const lastPara = doc.getParagraphCount(sec) - 1;
+              if (lastPara < 0) {
+                e.preventDefault();
+                return;
+              }
+              const lastOffset = doc.getParagraphLength(sec, lastPara);
+              const start = {
+                sectionIndex: sec,
+                paragraphIndex: 0,
+                charOffset: 0,
+              };
+              const end = {
+                sectionIndex: sec,
+                paragraphIndex: lastPara,
+                charOffset: lastOffset,
+              };
+              caretRef.current = end;
+              setSelection({ anchor: start, focus: end });
+              refreshSelectionRects({ anchor: start, focus: end });
+              refreshCursorRect();
+              refreshActiveFormat();
+            } catch (err) {
+              console.warn('[studio] select-all failed:', err);
+            }
             e.preventDefault();
             return;
           }
@@ -3924,6 +4044,10 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         stepWordOffset,
         insertAtCaret,
         deleteAtCaret,
+        cursorRect,
+        pageDims,
+        pageCount,
+        commitCaretMove,
       ],
     );
 
@@ -4019,6 +4143,15 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     const handlePageMouseDown = useCallback(
       (idx: number, e: ReactMouseEvent<HTMLDivElement>): void => {
         if (e.button !== 0) return; // primary only
+        // Move focus to the scroll container so subsequent keystrokes
+        // (Ctrl+A, arrow keys, etc.) hit our `handleKeyDown` instead of
+        // whatever button/input was last focused. Without this, Ctrl+A
+        // falls through to the browser default and selects every visible
+        // text node in the chrome.
+        scrollRef.current?.focus({ preventScroll: true });
+        // Snapshot caret BEFORE we mutate caretRef below — Shift+click
+        // without prior selection anchors at this position.
+        const priorCaret = { ...caretRef.current };
         const result = hitTestAt(idx, e.clientX, e.clientY, e.currentTarget);
         if (!result) return;
         // Cell info present when the click lands inside a table cell.
@@ -4106,10 +4239,137 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           refreshCursorRect();
         }
         refreshActiveFormat();
-        // Reset selection — anchor at click, drag will extend focus.
-        setSelection({ anchor: baseCaret, focus: baseCaret });
-        setSelectionRectsByPage({});
+        // Shift+click extends the existing selection (or creates one
+        // anchored at the previous caret) — matches Word/한컴/PDF readers.
+        // Plain click resets the selection.
+        const sel0 = selectionRef.current;
+        const initSel =
+          e.shiftKey && sel0
+            ? { anchor: sel0.anchor, focus: baseCaret }
+            : e.shiftKey
+              ? { anchor: priorCaret, focus: baseCaret }
+              : { anchor: baseCaret, focus: baseCaret };
+        // Capture the pre-drag selection so Esc can revert.
+        dragOriginSelectionRef.current = e.shiftKey && sel0 ? sel0 : null;
+        setSelection(initSel);
+        if (e.shiftKey) {
+          refreshSelectionRects(initSel);
+        } else {
+          setSelectionRectsByPage({});
+        }
         draggingRef.current = true;
+
+        // PDF-style drag: attach window-level listeners so the drag survives
+        // (a) crossing the gap between pages, (b) leaving the scroll
+        // container, and (c) mouseup outside any page. Without these, the
+        // per-page `onMouseLeave` would prematurely commit the selection
+        // the moment the cursor left the originating page.
+        const lastClient = { x: e.clientX, y: e.clientY };
+        let autoScrollRaf: number | null = null;
+        const AUTO_SCROLL_ZONE = 36; // px from edge that triggers scroll
+        const AUTO_SCROLL_MAX_SPEED = 24; // px per frame at edge
+        const tickAutoScroll = (): void => {
+          autoScrollRaf = null;
+          if (!draggingRef.current) return;
+          const scroller = scrollRef.current;
+          if (!scroller) return;
+          const sr = scroller.getBoundingClientRect();
+          let dy = 0;
+          if (lastClient.y < sr.top + AUTO_SCROLL_ZONE) {
+            const ratio = Math.min(
+              1,
+              (sr.top + AUTO_SCROLL_ZONE - lastClient.y) / AUTO_SCROLL_ZONE,
+            );
+            dy = -Math.ceil(ratio * AUTO_SCROLL_MAX_SPEED);
+          } else if (lastClient.y > sr.bottom - AUTO_SCROLL_ZONE) {
+            const ratio = Math.min(
+              1,
+              (lastClient.y - (sr.bottom - AUTO_SCROLL_ZONE)) /
+                AUTO_SCROLL_ZONE,
+            );
+            dy = Math.ceil(ratio * AUTO_SCROLL_MAX_SPEED);
+          }
+          if (dy !== 0) {
+            scroller.scrollBy({ top: dy });
+            // Re-trigger hit-test against the new scroll position so the
+            // selection grows even when the user holds the mouse still
+            // near the edge.
+            applyPointerToSelection(lastClient.x, lastClient.y);
+            autoScrollRaf = requestAnimationFrame(tickAutoScroll);
+          }
+        };
+        const applyPointerToSelection = (cx: number, cy: number): void => {
+          const refs = pageRefsRef.current;
+          let pageIdx = -1;
+          let pageEl: HTMLElement | null = null;
+          for (let i = 0; i < refs.length; i++) {
+            const el = refs[i];
+            if (!el) continue;
+            const r = el.getBoundingClientRect();
+            if (cx >= r.left && cx < r.right && cy >= r.top && cy < r.bottom) {
+              pageIdx = i;
+              pageEl = el;
+              break;
+            }
+          }
+          if (pageIdx < 0 || !pageEl) return;
+          const moveResult = hitTestAt(pageIdx, cx, cy, pageEl);
+          if (!moveResult) return;
+          const focus = {
+            sectionIndex: moveResult.sectionIndex,
+            paragraphIndex: moveResult.paragraphIndex,
+            charOffset: moveResult.charOffset,
+          };
+          caretRef.current = focus;
+          if (moveResult.cursorRect) setCursorRect(moveResult.cursorRect);
+          setSelection((prev) => {
+            if (!prev) return null;
+            const next = { ...prev, focus };
+            refreshSelectionRects(next);
+            return next;
+          });
+        };
+        const onWinMove = (ev: MouseEvent): void => {
+          if (!draggingRef.current) return;
+          lastClient.x = ev.clientX;
+          lastClient.y = ev.clientY;
+          applyPointerToSelection(ev.clientX, ev.clientY);
+          // Auto-scroll if the cursor is close to the scroll container's
+          // top/bottom edge. We only kick the rAF loop when not already
+          // running; the loop self-renews while the cursor stays in zone.
+          if (autoScrollRaf === null) {
+            autoScrollRaf = requestAnimationFrame(tickAutoScroll);
+          }
+        };
+        const cleanup = (): void => {
+          document.removeEventListener('mousemove', onWinMove);
+          document.removeEventListener('mouseup', onWinUp);
+          if (autoScrollRaf !== null) cancelAnimationFrame(autoScrollRaf);
+          autoScrollRaf = null;
+          dragCleanupRef.current = null;
+        };
+        const onWinUp = (): void => {
+          cleanup();
+          if (!draggingRef.current) return;
+          draggingRef.current = false;
+          dragOriginSelectionRef.current = null;
+          setSelection((prev) => {
+            if (!prev) return null;
+            const empty =
+              prev.anchor.paragraphIndex === prev.focus.paragraphIndex &&
+              prev.anchor.charOffset === prev.focus.charOffset;
+            if (empty) {
+              setSelectionRectsByPage({});
+              return null;
+            }
+            return prev;
+          });
+          // Sync toolbar to the focus position once the drag commits.
+          refreshActiveFormat();
+        };
+        dragCleanupRef.current = cleanup;
+        document.addEventListener('mousemove', onWinMove);
+        document.addEventListener('mouseup', onWinUp);
       },
       [
         hitTestAt,
@@ -4119,30 +4379,6 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         findWordBoundsAt,
         refreshSelectionRects,
       ],
-    );
-
-    const handlePageMouseMove = useCallback(
-      (idx: number, e: ReactMouseEvent<HTMLDivElement>): void => {
-        if (!draggingRef.current) return;
-        const result = hitTestAt(idx, e.clientX, e.clientY, e.currentTarget);
-        if (!result) return;
-        const focus = {
-          sectionIndex: result.sectionIndex,
-          paragraphIndex: result.paragraphIndex,
-          charOffset: result.charOffset,
-        };
-        caretRef.current = focus;
-        if (result.cursorRect) {
-          setCursorRect(result.cursorRect);
-        }
-        setSelection((prev) => {
-          if (!prev) return null;
-          const next = { ...prev, focus };
-          refreshSelectionRects(next);
-          return next;
-        });
-      },
-      [hitTestAt, refreshSelectionRects, setSelection],
     );
 
     /**
@@ -4396,24 +4632,6 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       },
       [refreshAfterMutation],
     );
-
-    const handlePageMouseUp = useCallback((): void => {
-      if (!draggingRef.current) return;
-      draggingRef.current = false;
-      // If the drag never moved (anchor === focus), drop the empty selection
-      // so caret-only behaviors don't accidentally trip the selection path.
-      setSelection((prev) => {
-        if (!prev) return null;
-        const empty =
-          prev.anchor.paragraphIndex === prev.focus.paragraphIndex &&
-          prev.anchor.charOffset === prev.focus.charOffset;
-        if (empty) {
-          setSelectionRectsByPage({});
-          return null;
-        }
-        return prev;
-      });
-    }, [setSelection]);
 
     /**
      * Test/dev hook on `window.__studioDebug` so e2e specs can drive
@@ -5860,9 +6078,10 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                     height: pageDims.h * zoom,
                   }}
                   onMouseDown={(e) => handlePageMouseDown(i, e)}
-                  onMouseMove={(e) => handlePageMouseMove(i, e)}
-                  onMouseUp={handlePageMouseUp}
-                  onMouseLeave={handlePageMouseUp}
+                  // Mouse move / up / leave are handled at the document
+                  // level by listeners attached in handlePageMouseDown.
+                  // This keeps drag selection consistent across page gaps
+                  // and chrome (PDF-like behavior).
                   onContextMenu={(e) => handlePageContextMenu(i, e)}
                 >
                   {/* SVG mount target — kept as a separate child so the

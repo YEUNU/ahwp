@@ -5,7 +5,7 @@ import type { PingRequest, PingResponse } from '../shared/api';
 import { registerAiIpc } from './ipc/ai';
 import { registerChatHistoryIpc } from './ipc/chat-history';
 import { registerClipboardIpc } from './ipc/clipboard';
-import { registerFileIpc } from './ipc/file';
+import { registerFileIpc, teardownTabsWatcher } from './ipc/file';
 import { registerFolderIpc, shutdownFolderIpc } from './ipc/folder';
 import { registerSecretsIpc } from './ipc/secrets';
 import { registerSessionIpc } from './ipc/session';
@@ -95,6 +95,7 @@ app.on('will-quit', (e) => {
   const tempDir = path.join(app.getPath('userData'), 'temp');
   void Promise.allSettled([
     shutdownFolderIpc(),
+    teardownTabsWatcher(),
     rm(tempDir, { recursive: true, force: true }),
   ]).finally(() => {
     app.exit(0);

@@ -7,6 +7,7 @@ import {
 import type { ChatStreamEvent } from '../shared/ai';
 import type {
   AhwpApi,
+  ExternalFileChangeEvent,
   FolderChangeEvent,
   MenuAction,
   PingRequest,
@@ -32,6 +33,17 @@ const api: AhwpApi = {
     saveAs: (req) => ipcRenderer.invoke('file:save-as', req),
     exportHtml: (req) => ipcRenderer.invoke('file:export-html', req),
     getPathForFile: (file) => webUtils.getPathForFile(file),
+    watchPaths: (paths) => ipcRenderer.invoke('file:watch-paths', paths),
+    onExternalChange: (handler) => {
+      const listener = (
+        _event: IpcRendererEvent,
+        event: ExternalFileChangeEvent,
+      ) => handler(event);
+      ipcRenderer.on('file:external-change', listener);
+      return () => {
+        ipcRenderer.off('file:external-change', listener);
+      };
+    },
   },
   session: {
     get: () => ipcRenderer.invoke('session:get'),

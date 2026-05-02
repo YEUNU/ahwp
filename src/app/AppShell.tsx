@@ -90,6 +90,14 @@ export default function AppShell() {
   const [picturePropsOpen, setPicturePropsOpen] = useState(false);
   // chunk 42 — cell style picker (KNOWN_ISSUES L-006 workaround).
   const [cellStylePickerOpen, setCellStylePickerOpen] = useState(false);
+  // Lightweight in-app notice — surfaces non-fatal save-time messages
+  // (e.g. "saved as .hwp because .hwpx round-trip is lossy"). Auto-clears
+  // after a short delay; see `showNotice` below.
+  const [notice, setNotice] = useState<{
+    kind: 'info' | 'warn';
+    text: string;
+  } | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
   // viewerRef per tab (by key). The active tab's viewer is what menu /
   // shortcut actions target.
   const viewerRefsRef = useRef<Map<string, ViewerHandle | null>>(new Map());
@@ -346,6 +354,76 @@ export default function AppShell() {
     });
   }, [tabsState, activeTab, folderRoot]);
 
+  // Surfaces a non-fatal message inline at the top of the app for
+  // ~5 seconds — used for save-time notices (HWPX → HWP route),
+  // external-change conflicts, etc. Replaces any in-flight notice; the
+  // timer auto-clears unless `dismissNotice` is called sooner.
+  const showNotice = useCallback(
+    (text: string, kind: 'info' | 'warn' = 'info'): void => {
+      setNotice({ kind, text });
+      if (noticeTimerRef.current !== null) {
+        window.clearTimeout(noticeTimerRef.current);
+      }
+      noticeTimerRef.current = window.setTimeout(() => {
+        setNotice(null);
+        noticeTimerRef.current = null;
+      }, 5000);
+    },
+    [],
+  );
+  const dismissNotice = useCallback(() => {
+    if (noticeTimerRef.current !== null) {
+      window.clearTimeout(noticeTimerRef.current);
+      noticeTimerRef.current = null;
+    }
+    setNotice(null);
+  }, []);
+
+  // External file watcher — keep main's chokidar tracking exactly the
+  // currently open tab paths. Resends the full list on every tab change,
+  // which main treats idempotently (rebuilds the watcher).
+  useEffect(() => {
+    if (!sessionRestoredRef.current) return;
+    void window.api.file.watchPaths(tabsState.map((t) => t.path));
+  }, [tabsState]);
+
+  // React to off-app file modifications:
+  //   - !dirty → silently bump the tab key so the viewer remounts and
+  //     re-reads the file from disk.
+  //   - dirty  → surface a notice; user keeps in-memory edits unless
+  //     they explicitly act. (No prompt UI in this round; the notice
+  //     is enough to avoid silent data loss.)
+  useEffect(() => {
+    const off = window.api.file.onExternalChange((evt) => {
+      setTabsState((prev) => {
+        const idx = prev.findIndex((t) => t.path === evt.path);
+        if (idx < 0) return prev;
+        const tab = prev[idx];
+        const fname = evt.path.split(/[\\/]/).pop() ?? evt.path;
+        if (evt.type === 'unlink') {
+          showNotice(`'${fname}' 파일이 외부에서 삭제되었습니다.`, 'warn');
+          return prev;
+        }
+        if (tab.dirty) {
+          showNotice(
+            `'${fname}' 파일이 외부에서 변경되었습니다. 저장 시 외부 변경분을 덮어쓰게 됩니다.`,
+            'warn',
+          );
+          return prev;
+        }
+        // Clean tab: remount viewer to re-read disk content.
+        const next = [...prev];
+        next[idx] = { ...tab, key: makeTabKey() };
+        showNotice(
+          `'${fname}' 파일이 외부에서 변경되어 다시 불러왔습니다.`,
+          'info',
+        );
+        return next;
+      });
+    });
+    return off;
+  }, [showNotice]);
+
   const openFromDialog = useCallback(async () => {
     const result = await window.api.file.open();
     if (result) openTab(result.path);
@@ -387,7 +465,16 @@ export default function AppShell() {
     if (!bytes) return;
     const result = await window.api.file.save({ path: tab.path, bytes });
     if (result.path !== tab.path) replaceTabPath(tab.path, result.path);
-  }, [activeTab, exportBytes, replaceTabPath]);
+    if (result.routedFrom) {
+      // The user requested .hwpx but @rhwp/core's HWPX round-trip drops
+      // images (KNOWN_ISSUES L-001), so file:save auto-routes to .hwp.
+      // Tell them so they don't go looking for a missing .hwpx.
+      showNotice(
+        `'.hwpx' 저장은 라이브러리 한계로 일시 비활성화되어 있어 ${result.path.split(/[\\/]/).pop()} 로 저장했습니다.`,
+        'warn',
+      );
+    }
+  }, [activeTab, exportBytes, replaceTabPath, showNotice]);
 
   const saveAsCurrent = useCallback(async () => {
     const tab = activeTab;
@@ -398,8 +485,14 @@ export default function AppShell() {
     if (result) {
       if (tab) replaceTabPath(tab.path, result.path);
       else openTab(result.path);
+      if (result.routedFrom) {
+        showNotice(
+          `'.hwpx' 저장은 라이브러리 한계로 일시 비활성화되어 있어 ${result.path.split(/[\\/]/).pop()} 로 저장했습니다.`,
+          'warn',
+        );
+      }
     }
-  }, [activeTab, exportBytes, replaceTabPath, openTab]);
+  }, [activeTab, exportBytes, replaceTabPath, openTab, showNotice]);
 
   // ⌘W / Ctrl+W: close the active tab. Bound at the document level
   // because the StudioViewer's keydown handler doesn't run when the
@@ -710,6 +803,30 @@ export default function AppShell() {
           dirty={activeTab?.dirty ?? false}
           onOpenSettings={() => setSettingsOpen(true)}
         />
+        {notice && (
+          <div
+            data-testid="app-notice"
+            data-kind={notice.kind}
+            role="status"
+            className={
+              'flex items-center justify-between gap-3 border-b px-4 py-2 text-xs ' +
+              (notice.kind === 'warn'
+                ? 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200'
+                : 'border-sky-300 bg-sky-50 text-sky-900 dark:border-sky-700 dark:bg-sky-950/40 dark:text-sky-200')
+            }
+          >
+            <span className="truncate">{notice.text}</span>
+            <button
+              type="button"
+              onClick={dismissNotice}
+              className="shrink-0 rounded px-2 py-0.5 hover:bg-black/5 dark:hover:bg-white/10"
+              aria-label="알림 닫기"
+              data-testid="app-notice-dismiss"
+            >
+              ✕
+            </button>
+          </div>
+        )}
         <PanelGroup
           direction="horizontal"
           autoSaveId="ahwp:shell"

@@ -4,17 +4,17 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 ## 현재 스냅샷
 
-| 항목        | 상태                                                                                                                                                                                                                                                                                                                                                     |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Phase       | **Phase 2 청크 18~42 완료** — 채팅 파이프라인(HTML 라운드트립/ahwp-tools/발췌/멀티 문서/drag/묶음 undo/multi-para/SQLite 히스토리) + UI/UX 1차 리뉴얼(warm paper + 36px 타이틀바 + 웰컴 카드) + IR-only 기능 UI 노출(청크 38~42: 표/셀/그림 속성, 컨트롤 클립보드 단축키, HTML 내보내기, 셀 스타일 적용). 다음: Phase 3 진입 또는 Phase 2-B(provider 키) |
-| 빌드        | ✅ `npm run dev` · `npx vite build`                                                                                                                                                                                                                                                                                                                      |
-| 타입        | ✅ `npm run typecheck`                                                                                                                                                                                                                                                                                                                                   |
-| 린트        | ✅ `npm run lint` (0 warnings, 0 errors)                                                                                                                                                                                                                                                                                                                 |
-| 포맷        | ✅ `npm run format:check`                                                                                                                                                                                                                                                                                                                                |
-| 단위 테스트 | ✅ 3/3 (`App.test.tsx`)                                                                                                                                                                                                                                                                                                                                  |
-| e2e         | ✅ 277 케이스 / 4 워커 병렬 + retry=1 — chunk 22(3) + 26(6) + rhwp-extras(5) + tabs-reorder(4) + dialogs-ui(4 chunks 38~42 UI smoke) 추가. 270 passed / 6 skipped (NIM 5개 키 게이트 + cell-menu 1개 의도). live NIM 5/5 (`qwen/qwen3.5-122b-a10b`)                                                                                                      |
-| Electron    | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                                                                                                                                                                              |
-| 의존성      | runtime: `@rhwp/core` · `chokidar` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` (chunk 6에서 `@rhwp/editor` 제거)                                                                                                                               |
+| 항목        | 상태                                                                                                                                                                                                                                                                                                                                                                         |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Phase       | **Phase 2 청크 18~42 완료 + UX 회귀 3건 fix + P0/P1 보강** — 채팅 파이프라인 + UI/UX 1차 리뉴얼 + IR-only 기능 UI 노출(38~42) + 편집 UX fix(caret 상태 / 드래그 / Cmd+A) + P0/P1 보강(ArrowUp/Down 시각 nav · shift+click · 드래그 자동 스크롤 · Esc-cancel · .bak 백업 · HWPX 라우팅 알림 · 외부 변경 감지 · Notice banner). 다음: Phase 3 진입 또는 Phase 2-B(provider 키) |
+| 빌드        | ✅ `npm run dev` · `npx vite build`                                                                                                                                                                                                                                                                                                                                          |
+| 타입        | ✅ `npm run typecheck`                                                                                                                                                                                                                                                                                                                                                       |
+| 린트        | ✅ `npm run lint` (0 warnings, 0 errors)                                                                                                                                                                                                                                                                                                                                     |
+| 포맷        | ✅ `npm run format:check`                                                                                                                                                                                                                                                                                                                                                    |
+| 단위 테스트 | ✅ 3/3 (`App.test.tsx`)                                                                                                                                                                                                                                                                                                                                                      |
+| e2e         | ✅ 288 케이스 / 4 워커 병렬 + retry=1 — chunk 22(3) + 26(6) + rhwp-extras(5) + tabs-reorder(4) + dialogs-ui(4) + studio-ux-fixes(5) + studio-ux-round2(6) 추가. 281 passed / 6 skipped (NIM 5개 키 게이트 + cell-menu 1개 의도). live NIM 5/5 (`qwen/qwen3.5-122b-a10b`)                                                                                                     |
+| Electron    | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                                                                                                                                                                                                  |
+| 의존성      | runtime: `@rhwp/core` · `chokidar` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` (chunk 6에서 `@rhwp/editor` 제거)                                                                                                                                                   |
 
 ## 일지
 
@@ -2585,6 +2585,57 @@ interface ExcerptAttachment {
 ✓ 누적 e2e 255 = 249 + 5 (chat-multidoc) + 1 (nvidia-live chunk 21). 249 passed / 6 skipped (NIM 5개 키 게이트 + cell-menu 1개 의도)
 ✓ NVIDIA NIM live 5/5 (qwen/qwen3.5-122b-a10b — chunk 18·19·20·21 round-trip 모두 포함)
 ```
+
+### 2026-05-02 — P0/P1/P2 보강 (visual nav · shift+click · auto-scroll · 저장 안전망 · 외부 변경)
+
+오전 회귀 3건 fix 완료 후 사용자 "P0/P1/P2 다 진행" 요청. 청크 분리 안 하고 한 묶음으로 처리.
+
+**P0 — 편집 UX (StudioViewer.tsx 단일 파일)**
+
+| #   | 항목                      | 구현 요지                                                                                                                                                                            |
+| --- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | ArrowUp / ArrowDown nav   | `cursorRect.{x,y,height}` + `hitTest(pageIdx, x, y±height*1.4)`. 페이지 경계 cross-over (target page = pageIndex±1, y rebase). shift 확장 + `commitCaretMove` helper로 일관 처리     |
+| 2   | Shift+클릭 selection 확장 | `handlePageMouseDown`에서 `e.shiftKey && selectionRef.current` 분기 — anchor 보존, focus만 click 위치로. prior caret을 fallback anchor로 사용                                        |
+| 3   | 드래그 자동 스크롤        | window mousemove 안에 lastClient(x,y) + rAF 루프. scroll container 위/아래 36px zone 진입 시 거리 비례 dy(최대 24px/frame). 정지 상태에서도 zone 안이면 selection 확장 + 계속 스크롤 |
+| 4   | Esc 드래그 취소           | `dragCleanupRef` + `dragOriginSelectionRef`로 cleanup 함수와 시작 직전 selection 보관. handleKeyDown의 Esc 분기에서 cleanup() 호출 + 원래 selection 복원                             |
+| 5   | HWPX 저장 라우팅 알림     | IPC `FileOpenResult.routedFrom` 신설. AppShell의 saveCurrent / saveAsCurrent가 routedFrom 감지 시 `showNotice` warn 톤으로 5초 banner 표시                                           |
+
+**P1 — 데이터 보호 / 일관성**
+
+| #   | 항목                    | 구현 요지                                                                                                                                                                                                                                                                   |
+| --- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `.bak` 사이드카         | `electron/ipc/file.ts`의 `maybeWriteBackup(target)` — 첫 덮어쓰기 시 `<target>.bak` 생성, 후속 저장은 기존 .bak 보존(편집 세션 시작 시점 박제). `FileOpenResult.backupPath`로 노출. atomic write는 기존부터 OK                                                              |
+| 2   | 외부 파일 변경 감지     | 신규 IPC `file:watch-paths(paths[])` + `file:external-change` 이벤트. main 단일 chokidar (awaitWriteFinish 200ms). AppShell이 탭 path 목록 변할 때마다 watchPaths 재호출. !dirty 자동 reload (key bump), dirty 시 warn 토스트. 우리 자신의 저장은 1500ms suppression window |
+| 3   | 동일 파일 dual-tab 가드 | 이미 `openTab`에 `existing >= 0` 체크 존재. e2e 추가로 회귀 박제                                                                                                                                                                                                            |
+
+**P2 — 구조 부채**
+
+- `commitCaretMove(nextCaret, prior, shift, sel0)` helper 추출 — `handleKeyDown` 6곳에 반복되던 caret update + selection extend + cursor/format refresh 패턴을 single useCallback으로 묶음. 기존 ~80줄 boilerplate를 ~30줄로 압축. 회귀 0건
+- 큰 keymap dispatch table 분할은 별도 청크로 박제 (StudioViewer 6,300줄 모듈화는 회귀 영향 큼 — Phase 3 진입 전 별도 cycle 필요)
+
+**검증**
+
+- 신규 e2e 6종 (`tests/e2e/studio-ux-round2.spec.ts`): ArrowUp/Down 양방향 visual nav, shift+click anchor 보존, save IPC routedFrom 계약, .bak 작성 + 후속 저장 시 보존 확인, dual-tab 가드 — 6/6 pass
+- 회귀 검증: 전체 e2e 281 passed / 6 skipped / 1 flaky(folder DnD parallel race — 본 변경 무관, retry로 흡수). NIM live 제외
+- typecheck / lint / format 청정
+
+### 2026-05-02 — UX 회귀 3건 fix (caret 상태 / 드래그 / Cmd+A)
+
+사용자 보고 — "1) bold 글자 옆 plain 글자에 캐럿 두면 Bold 버튼이 계속 눌려 있음 2) PDF 드래그처럼 일관되게 안 됨 3) Ctrl+A 누르면 프로그램 전체가 파랗게 됨". 셋 다 `StudioViewer.tsx` 단일 파일 한 묶음 fix.
+
+**원인 / 수정**
+
+| #   | 증상                                    | 원인                                                                                                                        | 수정                                                                                                                                                                                                                |
+| --- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | 화살표 nav 후 toolbar 미반영            | `handleKeyDown`의 ArrowLeft / Right / Home / End / Cmd+Arrow(word) 분기에서 `caretRef`만 갱신, `refreshActiveFormat()` 누락 | 모든 nav 분기에 `refreshActiveFormat()` 호출 추가 (5개 위치)                                                                                                                                                        |
+| 2   | 페이지 밖으로 드래그하면 selection 끊김 | `<div onMouseLeave={handlePageMouseUp}>` — 페이지 div를 떠나는 즉시 드래그 종료                                             | `handlePageMouseDown`에서 `document` 레벨 mousemove / mouseup 리스너를 attach. window 리스너가 모든 페이지를 walk하여 hit-test, 페이지 사이 갭·외부 mouseup도 살아남음. per-page mouseMove/Up/Leave 핸들러 제거     |
+| 3   | Ctrl+A가 프로그램 전체 선택             | 키 핸들러에 'a' 분기 없음 → 브라우저 기본 selectAll fallthrough                                                             | `Cmd/Ctrl+A` 분기 추가 — IR 활성 섹션 (단락 0:0 → 마지막:끝) selection 생성 + `preventDefault()`. 추가로 page mousedown 시 `scrollRef.focus({preventScroll:true})`로 후속 키 입력이 viewer 핸들러에 도달하도록 보강 |
+
+**검증**
+
+- 신규 e2e 5종 (`tests/e2e/studio-ux-fixes.spec.ts`): 화살표 nav 후 activeFormat / aria-pressed 검증, Cmd+A 후 IR selection 범위 + 브라우저 selection 비검증, 페이지 외부 mouseup 후 드래그 상태 정상 종료 검증, 페이지 내 드래그 commit 검증 — 5/5 pass
+- 회귀 검증: studio-selection / studio-format / studio-paraformat / studio-input / studio-cells / studio-cells-v3 36/36 pass — 화살표 nav, 마우스 클릭 caret, 셀 Tab, Cmd+B/I/U 모두 정상
+- typecheck / lint 청정
 
 ### 2026-05-02 — Phase 2 청크 22~28 일괄 + Phase 1 잔여 마무리
 

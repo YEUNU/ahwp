@@ -6,6 +6,36 @@
 
 ## [Unreleased]
 
+### Added — P0/P1 편집 UX 보강 (visual line nav · shift+click · auto-scroll · Esc-cancel · 저장 보호)
+
+오늘 fix한 UX 회귀 3건과 같은 클래스의 잔여 디테일을 한 묶음으로 보강:
+
+- **ArrowUp / ArrowDown 시각 라인 nav** — `cursorRect` (page-local x/y/height)와 `hitTest`를 조합해 현재 라인의 ±lineHeight × 1.4 위치에서 동일 x의 offset을 찾아 이동. 페이지 경계를 넘어가면 인접 페이지로 자동 전환. Shift 확장도 동일 패턴
+- **Shift+클릭 selection 확장** — 기존 selection이 있으면 anchor를 보존하고 focus만 클릭 위치로, 없으면 직전 caret을 anchor로 사용. Word/한컴/PDF 표준 동작
+- **드래그 자동 스크롤** — 드래그 중 cursor가 scroll container 위/아래 36px 이내로 들어오면 거리에 비례한 속도(최대 24px/frame)로 `requestAnimationFrame` 루프로 스크롤. 마우스 정지 상태에서도 끝부분에 머물면 계속 스크롤 + selection 확장. PDF reader 표준
+- **Esc로 드래그 취소** — 드래그 중 Esc → window 리스너 detach + auto-scroll rAF cancel + 드래그 시작 직전 selection 상태로 롤백
+- **`commitCaretMove` 헬퍼** — `handleKeyDown` 내부 6곳에 반복되던 "caretRef 갱신 / shift extend / cursor·toolbar 갱신" 패턴을 하나의 useCallback으로 묶음. 향후 Page Up/Down에 caret 동행 같은 nav 추가 시 동일 helper 재사용. P2-1 keymap dispatch table 분할은 별도 청크로 박제
+
+### Added — 저장 안전망 (`.bak` 백업 + HWPX 라우팅 알림 + 외부 변경 감지)
+
+- **`.bak` 사이드카** — `file:save` / `file:save-as`가 기존 파일을 덮어쓰기 직전 `<target>.bak` 복사본을 한 번 작성. 같은 경로의 후속 저장은 기존 `.bak`를 그대로 둠 (= 편집 세션 시작 직전 상태가 보존됨). 새 파일은 백업 생략. `FileOpenResult.backupPath`로 결과에 노출. 작성 실패는 non-fatal
+- **HWPX 자동 라우팅 알림** — 사용자가 `.hwpx`로 저장 요청 시 `@rhwp/core` 라이브러리 한계로 `.hwp`로 자동 라우팅되어 왔지만 무음이었음. `FileOpenResult.routedFrom`에 원래 요청 경로를 실어 보내고, AppShell에서 상단 노란 banner (`data-testid="app-notice"`)로 5초간 표시 + 직접 닫기 버튼
+- **외부 파일 변경 감지** — 새 IPC `file:watch-paths(paths[])` + `file:external-change` 이벤트. AppShell이 열린 탭 path 목록을 main에 전달, main에서 단일 chokidar 인스턴스로 watch. 외부 변경 시 (a) 탭 dirty=false면 viewer key bump으로 자동 reload + info 토스트, (b) dirty=true면 warn 토스트로 알림 (덮어쓰기 시 외부 변경분 손실 경고). 우리 자신의 저장은 1.5초 suppression window로 self-loop 방지
+
+### Added — 일반 알림 banner (`<AppShell>` notice slot)
+
+- 작은 status banner를 TitleBar 아래에 가변 슬롯으로 추가 (`info` / `warn` 두 톤). 5초 자동 dismiss + 수동 ✕ 버튼. 향후 다른 비치명 안내(저장 충돌, 권한 거절 등)에서 재사용
+
+### Fixed — UX 회귀 3건 (caret 상태 동기화 / 드래그 / Ctrl+A)
+
+리팩토링 라운드 중 발견된 편집 UX 회귀 3건을 한 묶음으로 수정. 모두 `StudioViewer.tsx`의 `handleKeyDown` + page mouse 핸들러 경로 단일 변경:
+
+- **캐럿 이동 시 툴바 pressed-state 미반영** — 화살표 / Home / End / Cmd+화살표(단어 단위) 캐럿 이동에서 `caretRef`만 갱신하고 `refreshActiveFormat()` 호출이 빠져 있었음. Bold 글자 옆 plain 글자로 캐럿을 옮겨도 Bold 버튼이 계속 눌린 상태로 남았음. 모든 nav 분기에 `refreshActiveFormat()` 추가 (마우스 클릭은 이미 호출 중)
+- **드래그 selection이 페이지 경계에서 끊김** — 페이지 div의 `onMouseLeave={handlePageMouseUp}`이 cursor가 페이지를 벗어나는 즉시 드래그를 종료시키고 있었음 (PDF 드래그처럼 일관된 동작 X). 드래그 시 `document` 레벨 mousemove / mouseup 리스너를 `handlePageMouseDown`에서 attach해 페이지 사이 갭·외부 chrome·바깥쪽 mouseup까지 살아남도록 수정. 페이지별 mouseMove/mouseUp/mouseLeave 핸들러는 제거 (window 리스너로 일원화)
+- **Ctrl+A가 프로그램 전체 선택** — 키 핸들러에 'a' 분기가 없어 브라우저 기본 selectAll로 빠져 toolbar / sidebar / status bar까지 파랗게 칠해졌음. `Cmd/Ctrl+A` 분기 추가 — 활성 섹션 전체(0번 단락 0번 offset → 마지막 단락 끝)를 IR selection으로 만들고 `preventDefault()`. 추가로 페이지 mousedown 시 `scrollRef.focus({preventScroll:true})`를 호출해 툴바 버튼 클릭 후에도 후속 키 입력이 viewer 핸들러로 들어오도록 보강
+
+회귀 방지 e2e 5종 추가 (`tests/e2e/studio-ux-fixes.spec.ts`): 화살표 nav 후 activeFormat / aria-pressed 검증, Cmd+A 후 IR selection 범위 + 브라우저 selection 비검증, 페이지 외부 mouseup 후 드래그 상태 정상 종료 검증, 페이지 내 드래그 commit 검증.
+
 ### Added — Phase 2 청크 38~42: IR-only 기능 UI 노출
 
 이전 라운드에서 IR + ViewerHandle만 구현되고 사용자 UI가 없었던 기능 5종을 일괄 UI로 노출:

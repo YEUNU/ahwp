@@ -1,7 +1,9 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import chokidar, { type FSWatcher } from 'chokidar';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type {
+  ExternalFileChangeEvent,
   FileOpenResult,
   FileSaveAsRequest,
   FileSaveRequest,
@@ -118,14 +120,25 @@ export function registerFileIpc(): void {
       // Output is always HWP; route the path's extension to match. Caller's
       // requested .hwpx path becomes the sibling .hwp; .hwp passes through.
       const target = correctExtension(req.path, 'hwp');
-      if (target !== req.path) {
+      const routed = target !== req.path;
+      if (routed) {
         console.info(
           `[file:save] auto-routing extension ${req.path} → ${target}`,
         );
       }
+      // Sidecar `.bak` of the prior on-disk content — written ONCE per
+      // path so we don't churn `.bak` on every save. If a `.bak` already
+      // exists from an earlier save, it stays put (preserves the
+      // pre-edit-session original). New files (no prior content) skip
+      // backup entirely.
+      const backupPath = await maybeWriteBackup(target);
       await writeAtomic(target, normalized);
+      noteOwnWrite(target);
       await addRecent(target);
-      return { path: target };
+      const result: FileOpenResult = { path: target };
+      if (routed) result.routedFrom = req.path;
+      if (backupPath) result.backupPath = backupPath;
+      return result;
     },
   );
 
@@ -185,16 +198,91 @@ ${req.html}
       }
       const normalized = await normalizeToHwp(toUint8(req.bytes));
       const target = correctExtension(picked, 'hwp');
-      if (target !== picked) {
+      const routed = target !== picked;
+      if (routed) {
         console.info(
           `[file:save-as] auto-routing extension ${picked} → ${target}`,
         );
       }
+      const backupPath = await maybeWriteBackup(target);
       await writeAtomic(target, normalized);
+      noteOwnWrite(target);
       await addRecent(target);
-      return { path: target };
+      const out: FileOpenResult = { path: target };
+      if (routed) out.routedFrom = picked;
+      if (backupPath) out.backupPath = backupPath;
+      return out;
     },
   );
+
+  // External file watcher — chokidar instance shared across all open tabs.
+  // The renderer resends the full path list whenever its tabs change; we
+  // tear down the previous watcher and start a fresh one. Reload-during-
+  // save false positives are suppressed by `recentlySavedPaths` (we
+  // record each successful write here and ignore the next change event
+  // for that path within a short window).
+  ipcMain.handle(
+    'file:watch-paths',
+    async (event, paths: string[]): Promise<void> => {
+      const window = BrowserWindow.fromWebContents(event.sender);
+      tabsWatcherWindow = window;
+      // Always tear down before reconfiguring — chokidar's `.unwatch()` +
+      // `.add()` is incremental but tracking incremental state at this
+      // small scale is more bug-prone than just rebuilding.
+      if (tabsWatcher) {
+        await tabsWatcher.close();
+        tabsWatcher = null;
+      }
+      const list = (paths ?? []).filter(
+        (p) => typeof p === 'string' && p.length > 0,
+      );
+      if (list.length === 0) return;
+      const w = chokidar.watch(list, {
+        ignoreInitial: true,
+        awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 },
+      });
+      const emit = (
+        type: ExternalFileChangeEvent['type'],
+        changedPath: string,
+      ): void => {
+        // Suppress events for our own writes.
+        const until = recentlySavedPaths.get(changedPath);
+        if (until !== undefined && Date.now() < until) return;
+        if (!tabsWatcherWindow || tabsWatcherWindow.isDestroyed()) return;
+        const evt: ExternalFileChangeEvent = { type, path: changedPath };
+        tabsWatcherWindow.webContents.send('file:external-change', evt);
+      };
+      w.on('change', (p: string) => emit('change', p));
+      w.on('unlink', (p: string) => emit('unlink', p));
+      tabsWatcher = w;
+    },
+  );
+}
+
+// Module-scope state for the tab-watcher (one per main process; the app
+// has a single window in normal use).
+let tabsWatcher: FSWatcher | null = null;
+let tabsWatcherWindow: BrowserWindow | null = null;
+const recentlySavedPaths = new Map<string, number>(); // path → epoch ms
+
+/** Mark a path as recently-saved by us so external-change events for the
+ *  next ~1.5s are suppressed. Called from save / save-as / new flows. */
+function noteOwnWrite(p: string): void {
+  recentlySavedPaths.set(p, Date.now() + 1500);
+  // Lazy GC — drop entries older than 5s on each insert.
+  const cutoff = Date.now() - 5000;
+  for (const [k, v] of recentlySavedPaths) {
+    if (v < cutoff) recentlySavedPaths.delete(k);
+  }
+}
+
+/** Called from main during shutdown to release the tab watcher. */
+export async function teardownTabsWatcher(): Promise<void> {
+  if (tabsWatcher) {
+    await tabsWatcher.close();
+    tabsWatcher = null;
+  }
+  tabsWatcherWindow = null;
 }
 
 function toUint8(input: ArrayBuffer | Uint8Array): Uint8Array {
@@ -207,4 +295,24 @@ async function writeAtomic(target: string, data: Uint8Array): Promise<void> {
   const tmp = `${target}.tmp-${process.pid}-${Date.now()}`;
   await fs.writeFile(tmp, data);
   await fs.rename(tmp, target);
+}
+
+/**
+ * Side-car backup of the prior on-disk content. The first save of an
+ * existing file produces `<target>.bak`; subsequent saves of the same path
+ * leave the existing `.bak` alone so the pre-edit-session snapshot is
+ * preserved across the entire run. New files (no prior content) return
+ * null. Failures are non-fatal: a missing `.bak` shouldn't block a save.
+ */
+async function maybeWriteBackup(target: string): Promise<string | undefined> {
+  try {
+    if (!(await exists(target))) return undefined;
+    const backup = `${target}.bak`;
+    if (await exists(backup)) return backup; // keep existing
+    await fs.copyFile(target, backup);
+    return backup;
+  } catch (err) {
+    console.warn('[file] backup failed (non-fatal):', err);
+    return undefined;
+  }
 }
