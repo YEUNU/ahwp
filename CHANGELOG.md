@@ -14,6 +14,12 @@
 - **chunk 58 — 목차 사이드바 (⌘⇧O, 0.2.61)**: `viewer.getOutline()` — 단락 styleId를 styleList에서 "제목 N" / "Heading N"로 매칭, level 추출. `OutlineSidebar` 컴포넌트가 viewer 옆에 토글 + 클릭 시 scrollToParagraph
 - **chunk 57 — AI inline diff (0.2.61)**: `viewer.snapshotParagraphs()` + `markChangedParagraphsSince(before)`. AppShell의 applyHtml/runTools가 before/after로 bracket. 변경된 단락 좌측에 amber 3px 막대 + animate-pulse + 15s 후 페이드
 
+### Added — control(표) 영역 highlight 시각화 (0.2.74)
+
+- 0.2.72에서 드래그가 control 위 통과 시 그 control이 속한 본문 단락이 selection에 포함되도록 처리했지만 시각적으로 control 자체는 highlight 안 됐음. 이제 표 bounding box를 selection 색상(`bg-primary/25`)으로 오버레이해서 표 자체도 "선택된" 것처럼 보이게 함.
+- 구현: `applyPointerToSelection`이 control hit을 감지해 focus를 부모 단락 경계로 점프시킨 직후, `getTableBBox`로 표의 페이지 좌표를 받아 `selectedControlBboxes` state에 추가. mousedown 본문 시 / Esc / mouseup-empty 시 자동 클리어.
+- 한계: v1은 표만 처리 (이미지/도형은 라이브러리가 통합 bbox API publish 후 추가 예정). 또한 사용자가 마우스를 빠르게 움직여 control 영역 위 hit이 1번도 발생하지 않으면 logically 포함된 control이라도 highlight 누락 가능 — 추후 paragraph 범위 enumeration으로 보강.
+
 ### Added — 셀 안 글자 드래그 selection v1 (0.2.73)
 
 - 표 셀 내부에서 글자 드래그로 부분 선택 가능 (mousedown 위치 → 같은 셀 내 다른 위치로 mouseup). 같은 셀 + 같은 cellParaIndex 안에서만 동작 — 셀 경계를 넘으면 focus freeze (cross-cell drag는 v2).

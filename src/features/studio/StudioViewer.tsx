@@ -782,6 +782,14 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     const [selectionRectsByPage, setSelectionRectsByPage] = useState<
       Record<number, { x: number; y: number; width: number; height: number }[]>
     >({});
+    // Per-page bounding boxes for controls (tables for v1) that the
+    // drag passed over. Rendered as a tinted overlay so the user sees
+    // the object as "selected" alongside the surrounding text rects.
+    // Collected during applyPointerToSelection's control-hit branch
+    // and cleared on body mousedown / Esc / drag-collapse.
+    const [selectedControlBboxes, setSelectedControlBboxes] = useState<
+      Record<number, { x: number; y: number; width: number; height: number }[]>
+    >({});
     // True while the user is mouse-dragging — mousemove updates focus.
     const draggingRef = useRef(false);
     // Cleanup callback for the active drag — set in handlePageMouseDown,
@@ -1404,6 +1412,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     const clearSelection = useCallback((): void => {
       setSelection(null);
       setSelectionRectsByPage({});
+      setSelectedControlBboxes({});
     }, [setSelection]);
 
     /**
@@ -4897,6 +4906,8 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           } else {
             setSelectionRectsByPage({});
           }
+          // New drag begins: drop any control bboxes from a prior drag.
+          setSelectedControlBboxes({});
           draggingRef.current = true;
         }
 
@@ -5079,6 +5090,55 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                 refreshSelectionRects(next);
                 return next;
               });
+              // Visual feedback: for tables we can fetch the full
+              // bounding box and render an overlay so the table is
+              // highlighted alongside the surrounding text. Tables
+              // are the only control type with a published `getTableBBox`
+              // in 0.7.9 — image/shape highlighting follows once the
+              // lib publishes a unified bbox API.
+              if (moveResult.controlIndex !== undefined) {
+                const doc = docRef.current;
+                if (doc) {
+                  try {
+                    const bbox = JSON.parse(
+                      doc.getTableBBox(
+                        moveResult.sectionIndex,
+                        parentPara,
+                        moveResult.controlIndex,
+                      ),
+                    ) as {
+                      pageIndex: number;
+                      x: number;
+                      y: number;
+                      width: number;
+                      height: number;
+                    };
+                    setSelectedControlBboxes((prev) => {
+                      const arr = prev[bbox.pageIndex] ?? [];
+                      const exists = arr.some(
+                        (b) =>
+                          Math.abs(b.x - bbox.x) < 0.5 &&
+                          Math.abs(b.y - bbox.y) < 0.5,
+                      );
+                      if (exists) return prev;
+                      return {
+                        ...prev,
+                        [bbox.pageIndex]: [
+                          ...arr,
+                          {
+                            x: bbox.x,
+                            y: bbox.y,
+                            width: bbox.width,
+                            height: bbox.height,
+                          },
+                        ],
+                      };
+                    });
+                  } catch {
+                    /* not a table (image/shape) — skipped for now */
+                  }
+                }
+              }
             }
             return;
           }
@@ -5166,6 +5226,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               prev.anchor.charOffset === prev.focus.charOffset;
             if (empty) {
               setSelectionRectsByPage({});
+              setSelectedControlBboxes({});
               return null;
             }
             return prev;
@@ -7126,6 +7187,25 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                             /* dataTransfer can throw under hardened CSP */
                           }
                         }}
+                        style={{
+                          left: r.x * zoom,
+                          top: r.y * zoom,
+                          width: r.width * zoom,
+                          height: r.height * zoom,
+                        }}
+                      />
+                    ))}
+                    {/* Control highlight overlay — drag selection that
+                      passed over a table (bbox via getTableBBox).
+                      Rendered with same color as text selection so the
+                      object reads as "selected" alongside the lines.
+                      pointer-events-none so it doesn't intercept the
+                      page's mousedown. */}
+                    {(selectedControlBboxes[i] ?? []).map((r, ri) => (
+                      <div
+                        key={`ctrl-${ri}`}
+                        data-testid="studio-control-selection-rect"
+                        className="pointer-events-none absolute bg-primary/25"
                         style={{
                           left: r.x * zoom,
                           top: r.y * zoom,
