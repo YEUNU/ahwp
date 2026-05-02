@@ -137,6 +137,90 @@ export default function AppShell() {
     });
   }, []);
 
+  // Phase 1 잔여 — drag-reorder + context menu.
+  const reorderTab = useCallback((from: number, to: number): void => {
+    setTabsState((prev) => {
+      if (from < 0 || from >= prev.length || to < 0 || to >= prev.length)
+        return prev;
+      if (from === to) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      // Keep the same logical tab active by chasing the moved id.
+      setActiveIndex((curIdx) => {
+        if (curIdx === from) return to;
+        // Closing a tab on either side may shift the active index.
+        if (from < curIdx && to >= curIdx) return curIdx - 1;
+        if (from > curIdx && to <= curIdx) return curIdx + 1;
+        return curIdx;
+      });
+      return next;
+    });
+  }, []);
+
+  const closeOtherTabs = useCallback((keepIndex: number): void => {
+    setTabsState((prev) => {
+      const keep = prev[keepIndex];
+      if (!keep) return prev;
+      // Confirm if any of the tabs to close are dirty.
+      const dirtyNames = prev
+        .filter((t, i) => i !== keepIndex && t.dirty)
+        .map((t) => t.path.split(/[/\\]/).pop() ?? t.path);
+      if (dirtyNames.length > 0) {
+        const ok = window.confirm(
+          `저장하지 않은 변경사항이 있는 탭을 닫습니다 (${dirtyNames.length}개). 계속하시겠습니까?`,
+        );
+        if (!ok) return prev;
+      }
+      for (const t of prev) {
+        if (t.key !== keep.key) viewerRefsRef.current.delete(t.key);
+      }
+      setActiveIndex(0);
+      return [keep];
+    });
+  }, []);
+
+  const closeTabsToRight = useCallback((index: number): void => {
+    setTabsState((prev) => {
+      if (index < 0 || index >= prev.length - 1) return prev;
+      const dirtyNames = prev
+        .slice(index + 1)
+        .filter((t) => t.dirty)
+        .map((t) => t.path.split(/[/\\]/).pop() ?? t.path);
+      if (dirtyNames.length > 0) {
+        const ok = window.confirm(
+          `저장하지 않은 변경사항이 있는 탭을 닫습니다 (${dirtyNames.length}개). 계속하시겠습니까?`,
+        );
+        if (!ok) return prev;
+      }
+      for (const t of prev.slice(index + 1)) {
+        viewerRefsRef.current.delete(t.key);
+      }
+      setActiveIndex((curIdx) => Math.min(curIdx, index));
+      return prev.slice(0, index + 1);
+    });
+  }, []);
+
+  const copyTabPath = useCallback((index: number): void => {
+    setTabsState((prev) => {
+      const tab = prev[index];
+      if (tab) {
+        void window.api.clipboard.writeText(tab.path);
+      }
+      return prev;
+    });
+  }, []);
+
+  const revealTab = useCallback((index: number): void => {
+    setTabsState((prev) => {
+      const tab = prev[index];
+      if (tab) {
+        void window.api.folder.reveal(tab.path);
+      }
+      return prev;
+    });
+  }, []);
+
   const handleDirtyChange = useCallback((key: string, dirty: boolean): void => {
     setTabsState((prev) => {
       const idx = prev.findIndex((t) => t.key === key);
@@ -502,6 +586,11 @@ export default function AppShell() {
                 activeIndex={activeIndex}
                 onActivate={setActiveIndex}
                 onClose={closeTab}
+                onReorder={reorderTab}
+                onCloseOthers={closeOtherTabs}
+                onCloseRight={closeTabsToRight}
+                onCopyPath={copyTabPath}
+                onReveal={revealTab}
               />
             )}
             <div className="relative flex-1 overflow-hidden">

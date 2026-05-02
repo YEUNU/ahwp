@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, Menu } from 'electron';
+import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { PingRequest, PingResponse } from '../shared/api';
 import { registerAiIpc } from './ipc/ai';
@@ -76,9 +77,16 @@ app.on('window-all-closed', () => {
 app.on('will-quit', (e) => {
   // Release the chokidar watcher before exit. This is async so we
   // gate the quit with `e.preventDefault()` and re-call `app.quit()`
-  // once teardown finishes.
+  // once teardown finishes. Also clear the userData/temp dir — file:new
+  // creates `new-<timestamp>.hwp` files there as scratch buffers; the
+  // user only persists them via Save As, after which the temp copy is
+  // unreferenced.
   e.preventDefault();
-  void shutdownFolderIpc().finally(() => {
+  const tempDir = path.join(app.getPath('userData'), 'temp');
+  void Promise.allSettled([
+    shutdownFolderIpc(),
+    rm(tempDir, { recursive: true, force: true }),
+  ]).finally(() => {
     app.exit(0);
   });
 });

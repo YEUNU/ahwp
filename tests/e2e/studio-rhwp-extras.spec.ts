@@ -77,6 +77,7 @@ interface StudioDebug {
     endOffset: number;
     text: string;
   } | null;
+  getParagraphCount(s: number): number;
   getParagraphLength(s: number, p: number): number;
   getTextRange(s: number, p: number, off: number, len: number): string;
 }
