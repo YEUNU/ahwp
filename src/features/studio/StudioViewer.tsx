@@ -2989,6 +2989,32 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           }
         },
         isDirty: () => dirtyRef.current,
+        applyCellStyle: (sec, parentPara, ctrl, cell, cellPara, styleId) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            const r = JSON.parse(
+              doc.applyCellStyle(
+                sec,
+                parentPara,
+                ctrl,
+                cell,
+                cellPara,
+                styleId,
+              ),
+            ) as { ok?: boolean };
+            if (r.ok) {
+              dirtyRef.current = true;
+              setDirty(true);
+              refreshAfterMutation({ syncCaret: false });
+              return true;
+            }
+            return false;
+          } catch (err) {
+            console.warn('[studio] applyCellStyle failed:', err);
+            return false;
+          }
+        },
         // chunk 20 — excerpt capture + stale verification. Selection
         // must be non-empty AND single-paragraph; multi-paragraph
         // excerpts need a span anchor model that the IR's
@@ -3037,6 +3063,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       }),
       [
         captureExcerpt,
+        refreshAfterMutation,
         toggleCharFormat,
         undo,
         redo,

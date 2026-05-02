@@ -25,6 +25,7 @@ export const AHWP_TOOL_NAMES = [
   'applyPageDef',
   'createNamedStyle',
   'createRectShape',
+  'applyCellStyle',
 ] as const;
 
 export type AhwpToolName = (typeof AHWP_TOOL_NAMES)[number];
@@ -57,6 +58,17 @@ export interface AhwpToolArgs {
     widthHwpunit: number;
     heightHwpunit: number;
     opts?: { treatAsChar?: boolean };
+  };
+  /** Apply a pre-existing named style to a cell — chunk 23. The
+   * library has no direct cell background-color setter; the only
+   * route is via styles. See KNOWN_ISSUES L-006. */
+  applyCellStyle: {
+    sectionIdx: number;
+    parentParaIdx: number;
+    controlIdx: number;
+    cellIdx: number;
+    cellParaIdx: number;
+    styleId: number;
   };
 }
 
@@ -259,6 +271,24 @@ function validateArgs<T extends AhwpToolName>(
           opts: opts === undefined ? undefined : { treatAsChar },
         } as AhwpToolArgs[T],
       };
+    }
+    case 'applyCellStyle': {
+      const keys = [
+        'sectionIdx',
+        'parentParaIdx',
+        'controlIdx',
+        'cellIdx',
+        'cellParaIdx',
+        'styleId',
+      ] as const;
+      const out: Record<string, number> = {};
+      for (const k of keys) {
+        const v = args[k];
+        if (typeof v !== 'number' || !Number.isInteger(v) || v < 0)
+          return { ok: false, reason: `${k}-not-non-negative-int` };
+        out[k] = v;
+      }
+      return { ok: true, value: out as AhwpToolArgs[T] };
     }
     default: {
       // Exhaustiveness — the AHWP_TOOL_NAMES guard above already filters

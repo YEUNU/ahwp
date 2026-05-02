@@ -122,6 +122,20 @@ export interface ViewerHandle {
   /** Whether the doc has unsaved changes (mirrors internal dirtyRef). */
   isDirty: () => boolean;
   /**
+   * Apply a pre-existing named style to a cell — chunk 23. Routes
+   * through `@rhwp/core`'s `applyCellStyle(sec, parentPara, ctrl, cell,
+   * cellPara, styleId)`. The library has no direct cell-color setter;
+   * see KNOWN_ISSUES L-006.
+   */
+  applyCellStyle: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+    cellIdx: number,
+    cellParaIdx: number,
+    styleId: number,
+  ) => boolean;
+  /**
    * Capture the current viewer selection as a portable excerpt — chunk
    * 20. Returns null when no selection is active or the selection
    * spans multiple paragraphs (multi-paragraph excerpts are deferred:

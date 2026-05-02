@@ -113,3 +113,17 @@ CSP `script-src 'self'`가 WASM 컴파일 차단. `'wasm-unsafe-eval'` 추가로
 ### ✅ Resolved — `HwpViewer` 생성자가 `HwpDocument` consume
 
 WASM 패닉 `null pointer passed to rust`로 표면화. `HwpViewer` 사용 폐기, `HwpDocument` 자체에 `pageCount`/`renderPageSvg`/`renderPageHtml` 모두 있어 viewer 인스턴스 불필요 (chunk 4-A).
+
+---
+
+## L-006 — 셀 배경색 / 테두리 직접 설정 API 부재
+
+**상태**: 우회 가이드만 제공. 대기 중
+
+**증상**: `@rhwp/core` 0.7.9의 `setCellProperties`는 `paddingLeft/Right/Top/Bottom`, `verticalAlign`, `textDirection`, `isHeader`, `width`, `height`만 허용. 셀 배경색·테두리는 이 props 셋에 포함 안 됨. 노출되는 셀 색깔 API는 `applyCellStyle(sec, parent_para, ctrl, cell, cell_para, style_id)` 단 한 가지로, 미리 정의된 named style의 id를 받음.
+
+**검증**: `tests/e2e/studio-table-props.spec.ts` (현재 paddingLeft round-trip만 검증). `@rhwp/core` 0.7.9 `rhwp.d.ts` 검토 결과 `Cell.*Color` / `Cell.*Background` 프로퍼티 일체 미노출
+
+**해결 조건**: 라이브러리에 (a) `setCellProperties` JSON 키 확장(`backgroundColor`, `borderTop/Right/Bottom/Left` 등) 또는 (b) named style의 char/para shape를 사후 update할 수 있는 `updateStyle` API. 현재 `createStyle`은 빈 셸만 생성 가능 (chunk 14 노트)
+
+**우회**: chunk 23은 직접 set API 노출 보류. AI 에이전트 워크플로우 가이드만 문서화: ① `getStyleListJson`으로 색깔 있는 style 후보 검색 → ② 해당 style id를 `applyCellStyle`로 셀에 적용. 사용자 HWP 문서 안에 색깔 style이 이미 있을 때만 동작. chunk 28+에서 라이브러리 update 시 직접 setter로 전환

@@ -73,6 +73,24 @@ function runOne(viewer: ViewerHandle, call: AhwpToolCall): AhwpToolResult {
           return { ok: false, tool: call.tool, reason: 'createShape-failed' };
         return { ok: true, tool: call.tool };
       }
+      case 'applyCellStyle': {
+        const a = call.args;
+        const ok = viewer.applyCellStyle(
+          a.sectionIdx,
+          a.parentParaIdx,
+          a.controlIdx,
+          a.cellIdx,
+          a.cellParaIdx,
+          a.styleId,
+        );
+        if (!ok)
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: 'applyCellStyle-failed',
+          };
+        return { ok: true, tool: call.tool };
+      }
       default: {
         // The pre-flight validator narrows AhwpToolCall to the union, so
         // this is unreachable without a registry/type drift.
@@ -154,5 +172,7 @@ export function previewArgs(call: AhwpToolCall): string {
         : call.args.name;
     case 'createRectShape':
       return `${call.args.widthHwpunit}×${call.args.heightHwpunit} HWPUNIT`;
+    case 'applyCellStyle':
+      return `cell=${call.args.cellIdx} → styleId=${call.args.styleId}`;
   }
 }
