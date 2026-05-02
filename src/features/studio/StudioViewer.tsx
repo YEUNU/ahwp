@@ -40,6 +40,7 @@ import {
 } from 'react';
 import { Button } from '@/components/ui/button';
 import { ensureRhwpCore, HwpDocument } from '@/lib/rhwp-core';
+import { primaryModifier } from '@/lib/platform';
 import { SlashMenu } from './SlashMenu';
 import type { CharFormatKey, ViewerHandle } from './types';
 
@@ -4572,7 +4573,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         // extends the current selection. Without Shift it collapses any
         // selection to the new position.
         const isWordKey =
-          (e.metaKey || e.ctrlKey) &&
+          primaryModifier(e) &&
           !e.altKey &&
           (e.key === 'ArrowLeft' || e.key === 'ArrowRight');
         if (isWordKey) {
@@ -4677,7 +4678,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         //    after mouseup.
         // Phase D 2차 — ⌘⇧M (Cmd+Shift+M) 토글 마퀴 모드.
         if (
-          (e.metaKey || e.ctrlKey) &&
+          primaryModifier(e) &&
           e.shiftKey &&
           !e.altKey &&
           e.key.toLowerCase() === 'm'
@@ -5262,7 +5263,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         }
         if (e.key === 'Home') {
           // Cmd/Ctrl + Home → jump to start of document (chunk 12).
-          if (e.metaKey || e.ctrlKey) {
+          if (primaryModifier(e)) {
             commitCaretMove(
               { sectionIndex: 0, paragraphIndex: 0, charOffset: 0 },
               c,
@@ -5280,7 +5281,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         }
         if (e.key === 'End') {
           // Cmd/Ctrl + End → jump to end of document.
-          if (e.metaKey || e.ctrlKey) {
+          if (primaryModifier(e)) {
             try {
               const lastSec = doc.getSectionCount() - 1;
               const lastPara = doc.getParagraphCount(lastSec) - 1;
@@ -5337,7 +5338,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
 
         // Undo / Redo: Cmd/Ctrl + Z (undo), Cmd/Ctrl + Shift + Z (redo).
         // Cmd+Y is a Windows alternative for redo — accept it too.
-        if ((e.metaKey || e.ctrlKey) && !e.altKey) {
+        if (primaryModifier(e) && !e.altKey) {
           const k = e.key.toLowerCase();
           if (k === 'z') {
             if (e.shiftKey) {
@@ -5420,7 +5421,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
 
         // Format shortcuts: Cmd/Ctrl + B/I/U toggle the current paragraph.
         // Must come before the generic modifier early-return.
-        if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
+        if (primaryModifier(e) && !e.altKey && !e.shiftKey) {
           const k = e.key.toLowerCase();
           if (k === 'b' || k === 'i' || k === 'u') {
             toggleCharFormat(
@@ -5467,6 +5468,10 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         }
 
         // Don't intercept other browser shortcuts (Ctrl+S, Cmd+R, etc.).
+        // 여기는 platform-aware primaryModifier가 아니라 원래 OR 패턴
+        // 유지 — "어떤 modifier든 잡혀있으면 typing으로 처리하지 말고
+        // 흘려보낸다"가 의도. Mac에서 Ctrl+A를 잘못 'a' 입력으로
+        // 해석하는 회귀 방지.
         if (e.metaKey || e.ctrlKey || e.altKey) return;
 
         if (e.key === 'Backspace') {
@@ -5869,11 +5874,14 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         // skip the body-level double/triple-click handlers below since
         // word/paragraph selection inside a cell isn't wired yet.
         if (cell) {
-          // Phase D — Ctrl/Cmd+click on a cell adds it to the existing
-          // cell-block highlights (불연속 셀 추가). 같은 표 안의 기존
-          // block에 추가만 하고 anchor/focus는 안 건드림.
+          // Phase D — Cmd(Mac) / Ctrl(Win) +click on a cell adds it to
+          // the existing cell-block highlights (불연속 셀 추가). 같은
+          // 표 안의 기존 block에 추가만 하고 anchor/focus는 안 건드림.
+          // Mac에서는 Ctrl+click이 secondary click (= 우클릭)으로
+          // 변환되므로 ctrl 단독은 contextmenu로 빠지고 여기 안 옴 —
+          // primaryModifier(e)는 Mac은 metaKey, Win은 ctrlKey만 true.
           const isDiscontiguousAdd =
-            (e.ctrlKey || e.metaKey) &&
+            primaryModifier(e) &&
             !e.altKey &&
             !e.shiftKey &&
             (() => {

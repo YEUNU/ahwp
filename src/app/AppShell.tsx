@@ -12,6 +12,7 @@ import type { MenuAction, PingResponse } from '@shared/api';
 import { correctExtension } from '@shared/format';
 import { ChatPanel, type ChatPanelHandle } from '@/features/chat/ChatPanel';
 import { runTools } from '@/features/chat/tools';
+import { primaryModifier } from '@/lib/platform';
 import {
   CommandPalette,
   type CommandItem,
@@ -696,7 +697,7 @@ export default function AppShell() {
   // it lives at document level: we want to open it from anywhere.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
+      if (primaryModifier(e) && !e.altKey && !e.shiftKey) {
         if (e.key.toLowerCase() === 'w') {
           if (activeIndex >= 0) {
             closeTab(activeIndex);
@@ -711,7 +712,7 @@ export default function AppShell() {
           e.preventDefault();
         }
       } else if (
-        (e.metaKey || e.ctrlKey) &&
+        primaryModifier(e) &&
         e.shiftKey &&
         !e.altKey &&
         e.key.toLowerCase() === 'f'
@@ -720,7 +721,7 @@ export default function AppShell() {
         setSearchMode(true);
         e.preventDefault();
       } else if (
-        (e.metaKey || e.ctrlKey) &&
+        primaryModifier(e) &&
         e.shiftKey &&
         !e.altKey &&
         e.key.toLowerCase() === 'o'

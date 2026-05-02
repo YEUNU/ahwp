@@ -6,6 +6,25 @@
 
 ## [Unreleased]
 
+### Changed — 플랫폼별 단축키 컨벤션 통일 (0.2.88)
+
+Mac에서 Ctrl+좌클릭이 우클릭(secondary click → contextmenu)으로
+변환되어 우리 primary-modifier 핸들러와 충돌하던 문제 해결.
+
+- `src/lib/platform.ts` 신설 — `isMac` (UA/platform sniff) +
+  `primaryModifier(e)` (Mac=metaKey / Win·Linux=ctrlKey) +
+  `plainPrimaryModifier(e)` (modifier 단독).
+- `StudioViewer.tsx` / `AppShell.tsx`의 단축키 핸들러 전반을
+  `(e.metaKey || e.ctrlKey)` → `primaryModifier(e)`로 치환.
+  - 영향 범위: Ctrl/Cmd+클릭 (불연속 셀 추가), Ctrl/Cmd+A (전체),
+    Ctrl/Cmd+C/V/X (클립보드), Ctrl/Cmd+Z/Y (undo/redo),
+    Ctrl/Cmd+B/I/U (글자), Ctrl/Cmd+K (커맨드 팔레트), 외 다수.
+- typing fall-through 가드 (`if (e.metaKey || e.ctrlKey || e.altKey)
+return;`)는 OR 패턴 그대로 유지 — "어떤 modifier든 잡혀있으면
+  글자 입력으로 처리하지 말 것"이 의도라 platform-aware 변환
+  대상이 아님.
+- 회귀 검증: studio 전체 e2e 208케이스 — 207 통과 / 1 skipped.
+
 ### Added — 2차 UX 라운드 chunks 56~ (0.2.56~)
 
 - **chunk 56 — AI 우클릭 메뉴 (0.2.56)**: body selection 우클릭 → "다듬기 / 요약 / 영어 번역 / 격식체 / 평어" 메뉴. 클릭 시 `ChatPanel.prefillAndSend()`로 즉시 chat 턴 발사 (선택 텍스트를 prompt 템플릿에 inline). ChatPanel을 forwardRef + `ChatPanelHandle` 신설
