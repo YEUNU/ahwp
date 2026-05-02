@@ -4297,6 +4297,11 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           if (!doc) throw new Error('Document not loaded');
           return doc.getParagraphCount(sectionIdx);
         },
+        getParagraphLength: (sectionIdx: number, paraIdx: number): number => {
+          const doc = docRef.current;
+          if (!doc) throw new Error('Document not loaded');
+          return doc.getParagraphLength(sectionIdx, paraIdx);
+        },
         getTextRange: (
           sectionIdx: number,
           paraIdx: number,
@@ -4715,6 +4720,154 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           cellIdx: number,
           props: Record<string, unknown>,
         ): void => setCellProps(sec, parentPara, ctrl, cellIdx, props),
+        // Cell style apply — chunk 23 (KNOWN_ISSUES L-006: lib has no
+        // direct cell-color setter; this routes a pre-existing styleId).
+        applyCellStyle: (
+          sec: number,
+          parentPara: number,
+          ctrl: number,
+          cell: number,
+          cellPara: number,
+          styleId: number,
+        ): boolean => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            const r = JSON.parse(
+              doc.applyCellStyle(
+                sec,
+                parentPara,
+                ctrl,
+                cell,
+                cellPara,
+                styleId,
+              ),
+            ) as { ok?: boolean };
+            if (r.ok) {
+              dirtyRef.current = true;
+              setDirty(true);
+              refreshAfterMutation({ syncCaret: false });
+              return true;
+            }
+            return false;
+          } catch {
+            return false;
+          }
+        },
+        // Picture properties — chunk 24.
+        getPictureProps: (
+          sec: number,
+          parentPara: number,
+          ctrl: number,
+        ): Record<string, unknown> | null => {
+          const doc = docRef.current;
+          if (!doc) return null;
+          try {
+            return JSON.parse(
+              doc.getPictureProperties(sec, parentPara, ctrl),
+            ) as Record<string, unknown>;
+          } catch {
+            return null;
+          }
+        },
+        setPictureProps: (
+          sec: number,
+          parentPara: number,
+          ctrl: number,
+          props: Record<string, unknown>,
+        ): boolean => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            const r = JSON.parse(
+              doc.setPictureProperties(
+                sec,
+                parentPara,
+                ctrl,
+                JSON.stringify(props),
+              ),
+            ) as { ok?: boolean };
+            if (r.ok) {
+              dirtyRef.current = true;
+              setDirty(true);
+              refreshAfterMutation({ syncCaret: false });
+              return true;
+            }
+            return false;
+          } catch {
+            return false;
+          }
+        },
+        deletePictureControl: (
+          sec: number,
+          parentPara: number,
+          ctrl: number,
+        ): boolean => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            const r = JSON.parse(
+              doc.deletePictureControl(sec, parentPara, ctrl),
+            ) as { ok?: boolean };
+            if (r.ok) {
+              dirtyRef.current = true;
+              setDirty(true);
+              refreshAfterMutation({ syncCaret: false });
+              return true;
+            }
+            return false;
+          } catch {
+            return false;
+          }
+        },
+        // Control clipboard — chunk 25.
+        copyControl: (sec: number, para: number, ctrl: number): boolean => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            const r = JSON.parse(doc.copyControl(sec, para, ctrl)) as {
+              ok?: boolean;
+            };
+            return Boolean(r.ok);
+          } catch {
+            return false;
+          }
+        },
+        pasteControlAt: (
+          sec: number,
+          para: number,
+          charOffset: number,
+        ): boolean => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            const r = JSON.parse(doc.pasteControl(sec, para, charOffset)) as {
+              ok?: boolean;
+            };
+            if (r.ok) {
+              dirtyRef.current = true;
+              setDirty(true);
+              refreshAfterMutation({ syncCaret: false });
+              return true;
+            }
+            return false;
+          } catch {
+            return false;
+          }
+        },
+        // Bundled undo — chunk 27.
+        beginUndoGroup: (): void => {
+          undoGroupDepthRef.current += 1;
+        },
+        endUndoGroup: (): void => {
+          undoGroupDepthRef.current = Math.max(
+            0,
+            undoGroupDepthRef.current - 1,
+          );
+          if (undoGroupDepthRef.current === 0) {
+            pushHistory();
+          }
+        },
         // Equation preview — chunk 16.
         renderEquationSvg: (
           script: string,
@@ -4887,6 +5040,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       phase,
       isActive,
       pageCount,
+      pushHistory,
       refreshAfterMutation,
       renderPageInto,
       toggleCharFormat,
