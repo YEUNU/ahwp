@@ -4,17 +4,17 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 ## 현재 스냅샷
 
-| 항목        | 상태                                                                                                                                                                                                                           |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Phase       | **Phase 2 청크 21** — 멀티 문서 컨텍스트 (target/reference 칩 + `[참조 문서]:` 시스템 블록). 활성 탭=잠긴 target, 다른 탭=reference 체크박스. write tool은 active dispatch로 target 한정. 다음: 청크 22 drag UX, 23 multi-para |
-| 빌드        | ✅ `npm run dev` · `npx vite build`                                                                                                                                                                                            |
-| 타입        | ✅ `npm run typecheck`                                                                                                                                                                                                         |
-| 린트        | ✅ `npm run lint` (0 warnings, 0 errors)                                                                                                                                                                                       |
-| 포맷        | ✅ `npm run format:check`                                                                                                                                                                                                      |
-| 단위 테스트 | ✅ 3/3 (`App.test.tsx`)                                                                                                                                                                                                        |
-| e2e         | ✅ 255 케이스 / 4 워커 병렬 + retry=1 — 249 + 5 chat-multidoc + 1 NIM chunk 21. 249 passed / 6 skipped (NIM 5개 키 게이트 + cell-menu UI 의도). live NIM 5/5 통과(`qwen/qwen3.5-122b-a10b`)                                    |
-| Electron    | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                                                    |
-| 의존성      | runtime: `@rhwp/core` · `chokidar` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` (chunk 6에서 `@rhwp/editor` 제거)     |
+| 항목        | 상태                                                                                                                                                                                                                                                                                                                             |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Phase       | **Phase 2 청크 18~28 + Phase 1 잔여 마무리** — 핵심 채팅 컨텍스트 파이프라인 (HTML 라운드트립 / ahwp-tools 디스패처 / 발췌 첨부 / 멀티 문서 / drag UX / 묶음 undo / 다중 문단 발췌 / SQLite 히스토리), rhwp 시리즈 12개 매핑, Phase 1 잔여 (탭 DnD + 컨텍스트 메뉴, temp 정리). 다음: Phase 2 확장 (chunk 29~) 또는 Phase 3 진입 |
+| 빌드        | ✅ `npm run dev` · `npx vite build`                                                                                                                                                                                                                                                                                              |
+| 타입        | ✅ `npm run typecheck`                                                                                                                                                                                                                                                                                                           |
+| 린트        | ✅ `npm run lint` (0 warnings, 0 errors)                                                                                                                                                                                                                                                                                         |
+| 포맷        | ✅ `npm run format:check`                                                                                                                                                                                                                                                                                                        |
+| 단위 테스트 | ✅ 3/3 (`App.test.tsx`)                                                                                                                                                                                                                                                                                                          |
+| e2e         | ✅ 273 케이스 / 4 워커 병렬 + retry=1 — chunk 22(3) + 26(6) + rhwp-extras(5) + tabs-reorder(4) 추가. 266 passed / 6 skipped (NIM 5개 키 게이트 + cell-menu 1개 의도) + 1 flaky retry-pass. live NIM 5/5 (`qwen/qwen3.5-122b-a10b`)                                                                                               |
+| Electron    | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                                                                                                                                                      |
+| 의존성      | runtime: `@rhwp/core` · `chokidar` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` (chunk 6에서 `@rhwp/editor` 제거)                                                                                                       |
 
 ## 일지
 
@@ -2585,6 +2585,60 @@ interface ExcerptAttachment {
 ✓ 누적 e2e 255 = 249 + 5 (chat-multidoc) + 1 (nvidia-live chunk 21). 249 passed / 6 skipped (NIM 5개 키 게이트 + cell-menu 1개 의도)
 ✓ NVIDIA NIM live 5/5 (qwen/qwen3.5-122b-a10b — chunk 18·19·20·21 round-trip 모두 포함)
 ```
+
+### 2026-05-02 — Phase 2 청크 22~28 일괄 + Phase 1 잔여 마무리
+
+사용자 "페이즈2 다 진행해줘" 요청에 따라 7개 청크를 한 번에 정리. 각 청크 commit + e2e + 버전 bump 분리하되 회귀 영향 작은 것부터 큰 것 (chat history) 순으로 진행.
+
+| 청크 | 항목                                                                                                       | Commit    |
+| ---- | ---------------------------------------------------------------------------------------------------------- | --------- |
+| 22   | HTML5 drag UX (selection rect → chat 칩)                                                                   | `dd1a735` |
+| 23   | 셀 스타일 적용 도구 (applyCellStyle) — 직접 cell-color setter는 라이브러리 미지원, KNOWN_ISSUES L-006 박제 | `9bd2965` |
+| 24   | 그림 속성 IR (get/set/delete)                                                                              | `5060363` |
+| 25   | 컨트롤 클립보드 (copy/paste)                                                                               | `a3b1645` |
+| 26   | **채팅 히스토리 (better-sqlite3 + WAL + 마이그레이션 토대)**                                               | `90a868b` |
+| 27   | 묶음 Undo (AI 턴 한 번에 되돌리기)                                                                         | `cb8214e` |
+| 28   | Multi-paragraph excerpts (span anchor 모델)                                                                | `4d28e91` |
+| -    | e2e 보강 — chunk 23/24/25/27/28 회귀 케이스 (5 신규)                                                       | `89bd421` |
+| -    | Phase 1 잔여 — 탭 DnD + 컨텍스트 메뉴 (4 e2e) + temp 정리 + L-007                                          | `e8386e3` |
+
+**핵심 지표**
+
+- 누적 e2e: ~280 (chunk 26 6 + chunk 22 3 + rhwp-extras 5 + tabs-reorder 4 + 기존 ~262)
+- NVIDIA NIM live 5/5 통과 (`qwen/qwen3.5-122b-a10b`로 chunk 18·19·20·21 round-trip)
+- typecheck / lint / format / unit 모두 청정
+- 버전 0.2.26 (chunk 26 marker; chunk 27/28은 26 이전에 작업한 관계로 패치 backward 1번 발생, private app이라 영향 없음)
+
+**라이브러리 한계 박제**
+
+- L-006 셀 직접 색깔 setter — `setCellProperties`가 padding/spacing/verticalAlign/isHeader만 받음
+- L-007 셀 안 그림 삽입 — `insertPicture`만 본문용. `*InCell` 변종 없음
+
+### Phase 2 확장 계획 (chunk 29~) — 진행 예정 박제
+
+핵심 채팅 컨텍스트 파이프라인은 chunk 28까지 완성. 남은 작업은 (a) Manual 모드 UX 폴리시, (b) rhwp-core 시리즈 잔여, (c) Phase 3 진입 정비로 분류:
+
+| 청크 | 항목                                                                                                                    | 우선순위 | 의존               |
+| ---- | ----------------------------------------------------------------------------------------------------------------------- | -------- | ------------------ |
+| 29   | Manual 모드 diff/Reject UX — AI 적용 후 변경 위치 하이라이트 + Reject 버튼 (현재는 ⌘Z만)                                | High     | 없음               |
+| 30   | 채팅 히스토리 인라인 rename — DB는 `chat-history:rename` IPC 있음. popover에 inline edit UI만 추가                      | High     | 청크 26            |
+| 31   | conversation 자동 제목 요약 — 현재 첫 user 메시지 60자. 5턴 이상 대화 시 AI 호출로 짧은 제목 생성                       | Med      | 청크 26            |
+| 32   | 셀 selection 모델 v4 — 드래그 셀 selection / 셀 레벨 paste / merge·split 우클릭 통합                                    | Med      | 청크 8 (이미 완료) |
+| 33   | 도형 라인 / 곡선 / 화살표 / 그룹 — `groupShapes` 외 8개 IR. 라이브러리 createShapeControl JSON에 shape-type 노출 필요   | Low      | rhwp 0.8           |
+| 34   | 표 수식 평가 — `evaluateTableFormula` IR 노출, 셀 우클릭 메뉴 통합                                                      | Low      | 없음               |
+| 35   | 머리말 / 꼬리말 다중 라인 + 페이지 템플릿(홀수/짝수) — 현재는 단일 라인 MVP                                             | Low      | 없음               |
+| 36   | 스타일에 char/para shape 캡처 — 현재 createStyle은 빈 셸. lib `updateStyle` 또는 createStyle에 shape 파라미터 추가 필요 | Low      | rhwp 0.8           |
+| 37   | conversation outline 분기 — 같은 대화에서 여러 시도 (같은 user msg에 N개 assistant 응답)                                | Low      | 청크 26            |
+
+**Phase 3 진입 전 정비 항목**
+
+- provider tool-use API 바인딩 — Anthropic / OpenAI function calling 정식 통합. 현재 chunk 19는 응답-텍스트 기반 결정론적 dispatcher. 정비 후 같은 도구 카탈로그를 양 진입점에서 공유
+- docId-aware 라우팅 — chunk 19 single-target dispatch를 `runTools(docId, items)`로 확장. reference write 시도는 `write-on-reference` 거절 결과로 사용자에 알림
+- 다중 턴 자동 실행 + tool-result 응답 루프 — Phase 3 Agent 모드 핵심
+- 턴당 화이트리스트 호출 상한 / 영향 길이 상한 / abort 전파 — 안전 장치는 `docs/AI_INTEGRATION.md` §Agent 모드 사양에 이미 박제됨
+
+**메인테이너 키 대기 (Phase 2-B)**
+Anthropic / Google / Ollama / 커스텀 OpenAI-호환 어댑터. OpenAI·NVIDIA 패턴 확립되어 키 확보 시 즉시 합류 가능.
 
 **다음 청크 — rhwp-core API 추가 활용 (계속)**
 

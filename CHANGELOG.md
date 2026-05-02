@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+### Added — Phase 1 잔여 마무리 (탭 DnD + 컨텍스트 메뉴 / temp 정리)
+
+- **탭 드래그 재배치** — 탭 strip에서 탭을 잡아 다른 위치로 드래그. HTML5 native drag (`text/x-ahwp-tab` MIME)
+- **탭 우클릭 컨텍스트 메뉴** — 닫기 / 다른 탭 모두 닫기 / 오른쪽 탭 모두 닫기 / 경로 복사 / 파일 관리자에서 보기. dirty 탭이 포함되면 confirm 프롬프트로 데이터 보호. Escape / 외부 클릭으로 메뉴 닫힘
+- **temp 파일 자동 정리** — `file:new`로 만들어진 `userData/temp/new-*.hwp` 스크래치 파일을 앱 종료 시 자동 삭제 (will-quit 훅)
+
 ### Added — Phase 2 청크 26: 채팅 히스토리 (better-sqlite3 영속)
 
 - **모든 대화 자동 저장 + 다시 열기** — ChatPanel 헤더에 📚 (대화 목록) + ➕ (새 대화) 버튼. 첫 메시지 보낼 때 자동으로 conversation row 생성, 사용자/어시스턴트 메시지 모두 SQLite에 append

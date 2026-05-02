@@ -407,6 +407,15 @@ AI는 변경 의도를 다음 한 블록 안에 직렬화:
 - **표 셀 병합 / 셀 배경 / 그림 삽입** — Phase 2 시리즈 13~ 별도 청크
 - **각 op 별 진단 위치 (anchor)** — 현재는 caret 기반. paragraph anchor는 chunk 20+ Edit Proposal 합쳐서
 
+## Phase 3 진입 정비 (chunk 37+)
+
+청크 19~28까지 결정론적 응답-텍스트 dispatcher로 Manual 모드를 완성. Phase 3 Agent 모드 진입 전 다음 정비 필요:
+
+1. **provider tool-use API 바인딩** — Anthropic / OpenAI function calling 정식 통합. 같은 `AhwpToolName` 카탈로그(`shared/ai-tools.ts`)를 양 진입점에서 공유 — 응답 파싱 경로 vs SDK tool_calls 경로
+2. **docId-aware 라우팅** — 현재 `runTools(viewer, items)`는 single-target dispatch. Phase 3에서 `runTools(docId, items)`로 확장하고 reference docId 대상 write 시도는 `write-on-reference` 거절 결과 반환
+3. **다중 턴 자동 실행 + tool-result 응답 루프** — 모델이 tool 호출 → ahwp가 결과 반환 → 모델이 다음 호출 또는 final 응답. 턴당 화이트리스트 호출 상한 / 영향 길이 상한 / abort 전파 (이미 §Agent 모드 안전 장치에 박제)
+4. **chunk 28 multi-paragraph 발췌의 prompt 직렬화 검증** — span anchor가 시스템 프롬프트의 `[발췌]` 블록에 정확히 표현되는지 + Phase 3 read_range tool이 같은 anchor 형식 받도록 정합
+
 ## Agent 모드 — Tool Use
 
 각 provider의 tool 정의로 hwpctl 호환 함수를 노출. 화이트리스트 정의는 §멀티 다큐먼트 모델의 표 참고. 예시 schema:

@@ -141,21 +141,40 @@
 
 ### 2-D. 히스토리
 
-- [ ] 파일별 conversations / messages SQLite 스키마 적용
-- [ ] 히스토리 탭: 대화 목록 (제목, 마지막 메시지, 시각)
-- [ ] 대화 클릭 → Chat 탭으로 로드
-- [ ] 새 대화 시작 / 대화 이름 변경 / 삭제
+- [x] 파일별 conversations / messages SQLite 스키마 적용 ✅ chunk 26 (better-sqlite3 + WAL + `PRAGMA user_version` 마이그레이션 토대)
+- [x] 히스토리 탭: 대화 목록 (제목, 마지막 메시지, 시각) ✅ chunk 26 (📚 popover, 활성 문서 기준 필터)
+- [x] 대화 클릭 → Chat 탭으로 로드 ✅ chunk 26
+- [x] 새 대화 시작 / 삭제 ✅ chunk 26 (➕ 버튼 + × 삭제)
+- [ ] **대화 이름 변경 (인라인 UI)** — chunk 30 예정. IPC `chat-history:rename`은 이미 있음, popover에 inline edit만 추가
+- [ ] **자동 제목 요약** — chunk 31 예정. 현재 첫 user 메시지 60자. 5턴 이상 대화에서 AI 호출로 짧은 제목 생성
 
 ### 2-E. Manual 편집 흐름
 
 - [x] 시스템 프롬프트 작성 (현재 문서 컨텍스트 주입) — chunk 18: 한컴 한글 양식 가이드 + `[현재 문서]:` HTML 첨부 (`exportDocumentHtml`). chunk 19에 tool 카탈로그 + JSON schema 추가
 - [x] AI 응답 파싱 + 적용 (양식) — chunk 18: ` ```html``` ` 블록 자동 감지 → "문서에 적용" 버튼 → `applyHtmlAtCaret`. 정렬·줄간격·들여쓰기·문단간격·글자 서식 round-trip 검증 (`nvidia-live.spec.ts` chunk 18)
 - [x] AI 응답 파싱 + 적용 (컨트롤) — chunk 19: ` ```ahwp-tools``` ` JSON 블록 자동 감지 → ops 미리보기 + "도구 실행" 버튼 → 화이트리스트 IR 호출. 각주·머리말·책갈피·페이지 설정·스타일·도형 11개 tool 카탈로그. provider tool-use API 바인딩은 Phase 3
-- [x] **발췌 첨부** ✅ chunk 20: `📌 발췌 첨부` 버튼으로 활성 viewer 선택을 칩으로 캡처 → `[발췌]:` 시스템 블록이 통째 첨부를 대체. send 시 anchor stale 검증 + 자동 재바인딩 + missing은 송신 차단. HTML5 drag UX는 SVG selection 침투 회피 위해 chunk 22로 분리
-- [x] **멀티 문서 컨텍스트** ✅ chunk 21: ChatPanel 상단 멀티 문서 칩 행 — 🎯 target (활성 탭, 잠김) + 📚 reference (다른 탭 체크박스). reference 옵트인 시 `[참조 문서]:` 시스템 블록에 첫 20문단 outline 주입. write tool은 active dispatch로 target 한정 (single-target dispatch 패턴 — docId-aware 라우팅은 Phase 3로). HTML5 drag UX는 chunk 22로 분리
-- [ ] 변경 위치를 에디터에서 하이라이트 + diff 패널 표시 (현재는 caret 위치에 적용 — diff 미리보기는 후속)
-- [ ] Reject → 변경사항 폐기 (현재는 Undo로 복구 가능, 전용 Reject UX는 후속)
-- [ ] op별 한 묶음 Undo grouping (chunk 19는 op마다 독립 snapshot — 사용자가 ⌘Z로 단계적 되돌리기)
+- [x] **발췌 첨부** ✅ chunk 20: `📌 발췌 첨부` 버튼으로 활성 viewer 선택을 칩으로 캡처 → `[발췌]:` 시스템 블록이 통째 첨부를 대체. send 시 anchor stale 검증 + 자동 재바인딩 + missing은 송신 차단
+- [x] **멀티 문서 컨텍스트** ✅ chunk 21: ChatPanel 상단 멀티 문서 칩 행 — 🎯 target (활성 탭, 잠김) + 📚 reference (다른 탭 체크박스). reference 옵트인 시 `[참조 문서]:` 시스템 블록에 첫 20문단 outline 주입. write tool은 active dispatch로 target 한정
+- [x] **HTML5 drag UX** ✅ chunk 22: selection rect를 채팅 입력 폼에 끌어다 놓으면 칩으로 승격 (`application/x-ahwp-excerpt` MIME)
+- [x] **op별 한 묶음 Undo** ✅ chunk 27: `runTools`가 `beginUndoGroup` / `endUndoGroup` 브래킷으로 N op를 1 undo entry로 collapse
+- [x] **Multi-paragraph 발췌** ✅ chunk 28: span anchor 모델로 여러 문단 across selection 지원 (`startParagraphIndex` + `endParagraphIndex`, '\n' join)
+- [ ] **변경 위치 하이라이트 + diff 패널 + Reject 버튼** — chunk 29 예정 (가장 중요한 폴리시). 현재는 적용 후 ⌘Z로만 되돌림
+
+### 2-F. rhwp 시리즈 — Phase 2 잔여 (chunk 32~36)
+
+이미 12개 청크가 완료됨. 남은 라이브러리 활용 후보:
+
+- [ ] **셀 selection 모델 v4 (chunk 32)** — 드래그 셀 selection / 셀 레벨 paste / merge·split 우클릭 통합. `mergeTableCells` / `splitTableCell` IR은 이미 노출 (chunk 9). UX 통합만 남음
+- [ ] **도형 라인 / 곡선 / 화살표 / 그룹 (chunk 33)** — `groupShapes` 외 8개. **rhwp 0.8 대기** — 현재 `createShapeControl` JSON에 shape-type 미노출
+- [ ] **표 수식 평가 (chunk 34)** — `evaluateTableFormula` IR. 셀 우클릭 메뉴에 "수식 다시 계산" 추가
+- [ ] **머리말/꼬리말 다중 라인 + 페이지 템플릿 (chunk 35)** — 현재 chunk 11은 단일 라인 MVP. 홀수/짝수 페이지 템플릿 + 다중 paragraph 지원
+- [ ] **스타일 char/para shape 캡처 (chunk 36)** — chunk 14의 `createNamedStyle`은 빈 셸. **rhwp 0.8 대기** — `updateStyle` 또는 createStyle에 shape 파라미터 추가 필요. 해소되면 chunk 23 cell background coloring 같이 풀림 (KNOWN_ISSUES L-006)
+
+### 2-G. Phase 3 진입 정비 (chunk 37~)
+
+- [ ] provider tool-use API 바인딩 — Anthropic / OpenAI function calling 정식 통합. 현재 chunk 19는 응답-텍스트 dispatcher. 같은 도구 카탈로그를 양 진입점에서 공유
+- [ ] docId-aware 라우팅 — chunk 19 single-target dispatch를 `runTools(docId, items)`로 확장. reference write 시도는 거절 결과로 사용자에 알림
+- [ ] 다중 턴 자동 실행 + tool-result 응답 루프 (Phase 3 Agent 모드 핵심)
 
 검증: 실제 문서를 열고 "이 단락 요약해서 다시 써줘" 같은 작업이 정상 동작.
 
