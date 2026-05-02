@@ -718,6 +718,38 @@ export default function AppShell() {
         // chunk 58 — ⌘⇧O toggles the outline (TOC) sidebar.
         setOutlineOpen((v) => !v);
         e.preventDefault();
+      } else if (
+        // Phase B-5 — 한글 호환 본문 도움 단축키.
+        e.key === 'F6' &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.shiftKey
+      ) {
+        // F6 = 스타일 관리 다이얼로그 (한글 reflex).
+        setStyleManagerOpen(true);
+        e.preventDefault();
+      } else if (
+        e.altKey &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.shiftKey &&
+        e.key.toLowerCase() === 'p'
+      ) {
+        // Alt+P = PDF 내보내기 (한글에선 인쇄 — 우리는 PDF로 매핑,
+        // 본 앱이 인쇄 자체 기능 없음). 동일 path로 dispatchMenuAction
+        // 호출하여 기존 export-pdf 핸들러 재사용.
+        const v = activeViewerRef();
+        const html = v?.exportDocumentHtml(1000) ?? '';
+        if (html.length === 0) {
+          window.alert('내보낼 문서가 없습니다.');
+        } else {
+          void window.api.file.exportPdf({
+            html,
+            defaultPath: activeTab?.path,
+          });
+        }
+        e.preventDefault();
       }
     };
     window.addEventListener('keydown', onKey);

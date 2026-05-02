@@ -14,6 +14,17 @@
 - **chunk 58 — 목차 사이드바 (⌘⇧O, 0.2.61)**: `viewer.getOutline()` — 단락 styleId를 styleList에서 "제목 N" / "Heading N"로 매칭, level 추출. `OutlineSidebar` 컴포넌트가 viewer 옆에 토글 + 클릭 시 scrollToParagraph
 - **chunk 57 — AI inline diff (0.2.61)**: `viewer.snapshotParagraphs()` + `markChangedParagraphsSince(before)`. AppShell의 applyHtml/runTools가 before/after로 bracket. 변경된 단락 좌측에 amber 3px 막대 + animate-pulse + 15s 후 페이드
 
+### Added — Phase B-5 + B-2.6: 본문 도움 단축키 + 셀 블록 모드 indicator (0.2.81)
+
+- **B-5 (한글 호환 본문 단축키)**:
+  - **F6** — 스타일 관리 다이얼로그 (`StyleManagerDialog` 직접 오픈, 한글 reflex)
+  - **Alt+P** — PDF 내보내기 (한글의 "인쇄" 매핑, ahwp는 인쇄 기능 부재 → PDF export로 대체)
+  - Alt+L (글자 모양) / Alt+T (문단 모양)는 별도 다이얼로그 컴포넌트가 없어 v1 skip — 후속 작업으로 다이얼로그 신설 시 추가 가능
+- **B-2.6 (셀 블록 모드 indicator)**:
+  - F5×2 확장 모드 진입 시 status bar에 "셀 블록 모드 (F5)" 라벨 표시 (`bg-primary/15` 강조)
+  - hover 시 tooltip "화살표 키로 확장 / Esc 해제 / Enter 편집 모드"
+  - `cellBlockExtendModeRef` (동기 keydown 읽기) + `cellBlockExtendMode` state (JSX 구독) 듀얼 트래킹. helper `setCellBlockExtendMode(v)`로 둘 다 동시 업데이트.
+
 ### Added — e2e: Phase A + B 회귀 가드 (0.2.80)
 
 - 신규: `tests/e2e/studio-table-shortcuts.spec.ts` (22 케이스)

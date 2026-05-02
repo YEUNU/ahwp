@@ -838,7 +838,14 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     // Phase B-2.5 — F5 확장 모드 활성 여부. true면 화살표가 셀 단위로
     // cell-block의 focus 셀을 이동해 block 범위 확장. mousedown / Esc /
     // F5 외 다른 키 / 셀 밖으로 caret 이동 시 자동 해제.
+    // ref + state 듀얼 트래킹 — keydown handler는 동기 ref 읽기,
+    // 상태바 indicator는 state 구독 (B-2.6).
     const cellBlockExtendModeRef = useRef(false);
+    const [cellBlockExtendMode, setCellBlockExtendModeState] = useState(false);
+    const setCellBlockExtendMode = useCallback((v: boolean): void => {
+      cellBlockExtendModeRef.current = v;
+      setCellBlockExtendModeState(v);
+    }, []);
     // F3 press counter (본문 block) — 1×=block extend mode (현재
     // Shift+arrow와 동등 동작이라 noop), 2×=단어 선택 (=더블클릭),
     // 3×=단락 선택 (=트리플클릭), 4×=문서 전체 선택 (=⌘A).
@@ -4431,7 +4438,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             return;
           }
           // No valid cell selection — exit extension mode.
-          cellBlockExtendModeRef.current = false;
+          setCellBlockExtendMode(false);
         }
         // Word-wise navigation: Cmd/Ctrl + (Shift?) + Arrow Left/Right
         // moves the caret to the prev/next word boundary. With Shift this
@@ -4547,7 +4554,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             dragCleanupRef.current = null;
             draggingRef.current = false;
             cellDragRef.current = null;
-            cellBlockExtendModeRef.current = false;
+            setCellBlockExtendMode(false);
             const origin = dragOriginSelectionRef.current;
             if (origin) {
               setSelection(origin);
@@ -4560,7 +4567,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             return;
           }
           if (selectionRef.current) {
-            cellBlockExtendModeRef.current = false;
+            setCellBlockExtendMode(false);
             clearSelection();
             e.preventDefault();
             return;
@@ -4653,7 +4660,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                     x.row + x.rowSpan - 1 === maxRow &&
                     x.col + x.colSpan - 1 === maxCol,
                 ) ?? here;
-              cellBlockExtendModeRef.current = false;
+              setCellBlockExtendMode(false);
               f5PressCountRef.current = 0;
             } else if (isColumnBlockKey) {
               const cStart = here.col;
@@ -4668,7 +4675,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               anchorCell = inCol.find((x) => x.row === minRow) ?? here;
               focusCell =
                 inCol.find((x) => x.row + x.rowSpan - 1 === maxRow) ?? here;
-              cellBlockExtendModeRef.current = false;
+              setCellBlockExtendMode(false);
             } else if (isRowBlockKey) {
               const rStart = here.row;
               const rEnd = here.row + here.rowSpan - 1;
@@ -4682,14 +4689,14 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               anchorCell = inRow.find((x) => x.col === minCol) ?? here;
               focusCell =
                 inRow.find((x) => x.col + x.colSpan - 1 === maxCol) ?? here;
-              cellBlockExtendModeRef.current = false;
+              setCellBlockExtendMode(false);
             } else if (isCellBlockKey) {
               // F5×1 = 현재 셀, F5×2 = 확장 모드 진입 (block 그대로).
               if (f5PressCountRef.current === 2) {
-                cellBlockExtendModeRef.current = true;
+                setCellBlockExtendMode(true);
                 // Block 자체는 그대로 두고 mode flag만 set.
               } else {
-                cellBlockExtendModeRef.current = false;
+                setCellBlockExtendMode(false);
               }
             }
             const anchorCaret = {
@@ -5503,7 +5510,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           // highlights from a prior drag, exit cell-block extension mode.
           setSelectedControlBboxes({});
           setCellBlockHighlights({});
-          cellBlockExtendModeRef.current = false;
+          setCellBlockExtendMode(false);
           draggingRef.current = true;
         }
 
@@ -8181,8 +8188,21 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             >
               <Maximize2 className="size-4" />
             </Button>
+            {cellBlockExtendMode && (
+              <span
+                className="ml-auto rounded bg-primary/15 px-2 py-0.5 text-primary"
+                data-testid="studio-cell-block-mode"
+                title="화살표 키로 셀 블록을 확장 / Esc로 해제 / Enter로 편집 모드 복귀"
+              >
+                셀 블록 모드 (F5)
+              </span>
+            )}
             <span
-              className="ml-auto text-muted-foreground"
+              className={
+                cellBlockExtendMode
+                  ? 'ml-2 text-muted-foreground'
+                  : 'ml-auto text-muted-foreground'
+              }
               data-testid="studio-doc-stats"
               title={`단어 ${docStats.words.toLocaleString()} · 글자 ${docStats.chars.toLocaleString()} · 단락 ${docStats.paragraphs.toLocaleString()}`}
             >
