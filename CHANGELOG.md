@@ -14,6 +14,13 @@
 - **chunk 58 — 목차 사이드바 (⌘⇧O, 0.2.61)**: `viewer.getOutline()` — 단락 styleId를 styleList에서 "제목 N" / "Heading N"로 매칭, level 추출. `OutlineSidebar` 컴포넌트가 viewer 옆에 토글 + 클릭 시 scrollToParagraph
 - **chunk 57 — AI inline diff (0.2.61)**: `viewer.snapshotParagraphs()` + `markChangedParagraphsSince(before)`. AppShell의 applyHtml/runTools가 before/after로 bracket. 변경된 단락 좌측에 amber 3px 막대 + animate-pulse + 15s 후 페이드
 
+### Fixed — 드래그 시 페이지 전체 highlight + ESC 선택 해제 (0.2.70)
+
+- **진짜 근본 원인** — 드래그할 때 보이던 "페이지 전체가 파란색으로 highlight" 현상은 우리 IR-level selection이 아니라 **네이티브 브라우저 selection**이 SVG `<text>` 요소 위에서 동시에 발생한 것. 우리 `handlePageMouseDown` 핸들러는 IR overlay rect로 자체 selection을 그리는데, 페이지 paper div에 `select-none`이 없어서 브라우저의 기본 텍스트 선택이 같이 진행됨. 결과: 우리 IR selection은 작은데 native가 페이지 전체를 잡아 "거대한 highlight" 시각 효과
+- 모든 증상 설명: trace 상의 IR state는 정상(작음)인데 visual은 와이드 / ESC 안 먹힘 (native selection은 ESC로 해제 안 됨) / 표는 안 잡힘 (표는 별도 control이라 native text selection 대상 외)
+- 수정: 페이지 paper div에 `select-none` Tailwind 클래스 추가. 네이티브 브라우저 selection 비활성화. 우리 IR selection은 `handlePageMouseDown` + `selectionRectsByPage` overlay로 단독 운영. Cmd+A/C/V는 menu 라우팅으로 IR handle에 연결돼 있어 영향 없음
+- ESC 핸들러 보강 — 기존엔 `draggingRef.current` 가드로 인해 mouseup 이후엔 ESC가 no-op이었음. 드래그 종료 후에도 selection이 있으면 ESC로 해제되도록 분기 추가
+
 ### Fixed — 드래그가 표 위 통과 시 selection 점프 (0.2.69)
 
 - **진짜 근본 원인** — 사용자가 보고한 "빈칸 들어가면 그 아래 전체 선택" 현상의 진짜 트리거는 빈 행간이 아니라 **표(table)** 였음. 본문에서 시작한 drag selection 도중 마우스가 표를 통과할 때, IR의 `hitTest`가 셀 내부 좌표를 반환 (`controlIndex`/`cellIndex`/`cellParaIndex`/`parentParaIndex` 채워서 옴). 그런데 `paragraphIndex`는 이때 **셀 안에서의 단락 인덱스**(cell-local)이고 섹션 단위가 아님. `applyPointerToSelection`이 이걸 그대로 섹션 단위로 써서 focus가 섹션 para 0(문서 맨 처음)으로 점프 → selection이 [para 0 ~ anchor]로 펼쳐짐 → 시각적으로 "위→아래 드래그한 것처럼" 보임 (anchor가 본문 아래쪽인 경우)

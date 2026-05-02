@@ -4196,23 +4196,35 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           e.preventDefault();
           return;
         }
-        // Esc during an active mouse drag — cancel and roll back the
-        // selection to its pre-drag state. Also closes the find bar
-        // (handled separately further below if Find is open).
-        if (e.key === 'Escape' && draggingRef.current) {
-          dragCleanupRef.current?.();
-          dragCleanupRef.current = null;
-          draggingRef.current = false;
-          const origin = dragOriginSelectionRef.current;
-          if (origin) {
-            setSelection(origin);
-            refreshSelectionRects(origin);
-          } else {
-            clearSelection();
+        // Esc — clears selection in two scenarios:
+        // 1) Active drag: cancel and roll back to pre-drag state
+        //    (or clear if there was none).
+        // 2) Post-drag (selection committed but no longer dragging):
+        //    just clear the selection. Without this branch the user
+        //    had no keyboard way to dismiss a stale selection — the
+        //    `&& draggingRef.current` guard meant ESC silently no-op'd
+        //    after mouseup.
+        if (e.key === 'Escape') {
+          if (draggingRef.current) {
+            dragCleanupRef.current?.();
+            dragCleanupRef.current = null;
+            draggingRef.current = false;
+            const origin = dragOriginSelectionRef.current;
+            if (origin) {
+              setSelection(origin);
+              refreshSelectionRects(origin);
+            } else {
+              clearSelection();
+            }
+            dragOriginSelectionRef.current = null;
+            e.preventDefault();
+            return;
           }
-          dragOriginSelectionRef.current = null;
-          e.preventDefault();
-          return;
+          if (selectionRef.current) {
+            clearSelection();
+            e.preventDefault();
+            return;
+          }
         }
         if (e.key === 'Home') {
           // Cmd/Ctrl + Home → jump to start of document (chunk 12).
@@ -6799,7 +6811,21 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                     // matching `bg-background` would make text invisible
                     // on a dark theme. Chrome around the page (toolbar,
                     // sidebar, status bar) follows the theme normally.
-                    className="relative cursor-text bg-[hsl(var(--paper))] text-[hsl(var(--paper-foreground))] shadow-md"
+                    //
+                    // `select-none` — drag selection is fully owned by our
+                    // IR-level handlers (handlePageMouseDown + the
+                    // selectionRectsByPage overlay). Without this, the
+                    // browser ALSO runs native text selection over the
+                    // SVG `<text>` elements in parallel, producing a wide
+                    // blue highlight that is independent of our IR state
+                    // (and not clearable via ESC since ESC doesn't reset
+                    // native selection). User-perceived symptom: drag
+                    // results in "the entire page is highlighted" while
+                    // our debug log shows the IR selection is tiny.
+                    // Native copy/select-all still works because the menu
+                    // layer routes Cmd+A/C to our IR handlers when Studio
+                    // is focused.
+                    className="relative cursor-text select-none bg-[hsl(var(--paper))] text-[hsl(var(--paper-foreground))] shadow-md"
                     style={{
                       width: pageDims.w * zoom,
                       height: pageDims.h * zoom,
