@@ -14,6 +14,18 @@
 - **chunk 58 — 목차 사이드바 (⌘⇧O, 0.2.61)**: `viewer.getOutline()` — 단락 styleId를 styleList에서 "제목 N" / "Heading N"로 매칭, level 추출. `OutlineSidebar` 컴포넌트가 viewer 옆에 토글 + 클릭 시 scrollToParagraph
 - **chunk 57 — AI inline diff (0.2.61)**: `viewer.snapshotParagraphs()` + `markChangedParagraphsSince(before)`. AppShell의 applyHtml/runTools가 before/after로 bracket. 변경된 단락 좌측에 amber 3px 막대 + animate-pulse + 15s 후 페이드
 
+### Added — Phase B-1: 한글 호환 F3 본문 block 단축키 (0.2.78)
+
+- 본문 caret 시 F3 연속 입력 (600ms 윈도우):
+  - F3 1× — block 시작 모드 진입 (v1 no-op, Shift+arrow와 동등)
+  - F3 2× — 현재 단어 선택 (= 더블클릭)
+  - F3 3× — 현재 단락 선택 (= 트리플클릭)
+  - F3 4× — 문서 전체 선택 (= ⌘A)
+- 셀 안 caret이면 F3 fall-through (한글 reflex와 동일 — 셀에선 F5/F7/F8을 사용).
+- F3 외 다른 키 누르면 카운터 리셋.
+- ⌘A / 더블·트리플 클릭이 이미 동일 효과를 주지만 한글 reflex 사용자 호환 편의용.
+- 기준: [한글 표 단축키 일람](https://help.hancom.com/hoffice/multi/ko_kr/hwp/view/toolbar/shortcut%28table%29.htm) — "F3을 두 번 누르면 그 낱말이 블록으로 설정됩니다. 세 번 누르면 그 문단이..."
+
 ### Added — Phase B-3: 표 navigation 단축키 (0.2.77)
 
 - **Tab** (셀 안) — 다음 셀로 caret 이동. row-major 순회 (행 끝이면 다음 행 첫 셀).

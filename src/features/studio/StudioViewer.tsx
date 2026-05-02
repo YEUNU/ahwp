@@ -835,6 +835,11 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     // Reset whenever caret moves or any non-F5 key fires.
     const f5PressCountRef = useRef(0);
     const f5LastPressRef = useRef(0);
+    // F3 press counter (본문 block) — 1×=block extend mode (현재
+    // Shift+arrow와 동등 동작이라 noop), 2×=단어 선택 (=더블클릭),
+    // 3×=단락 선택 (=트리플클릭), 4×=문서 전체 선택 (=⌘A).
+    const f3PressCountRef = useRef(0);
+    const f3LastPressRef = useRef(0);
     // Undo/Redo (chunk 7). The doc IR exposes snapshot save/restore as a
     // bidirectional stack: each saveSnapshot returns an integer id; we
     // record IDs in chronological order along with an index pointer to
@@ -4579,6 +4584,80 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         // the F5×3 chain).
         if (e.key !== 'F5') {
           f5PressCountRef.current = 0;
+        }
+        // Phase B-1 — 한글 호환 본문 block 단축키 (F3 시리즈).
+        // F3 1× = block mode entry (Shift+arrow와 동등이라 v1 no-op),
+        // F3 2× = 단어 선택, F3 3× = 단락 선택, F3 4× = 문서 전체.
+        // 셀 안 caret이면 fall-through (한글 reflex와 동일).
+        if (e.key === 'F3' && !c.cell) {
+          const now = performance.now();
+          if (now - f3LastPressRef.current < 600) {
+            f3PressCountRef.current += 1;
+          } else {
+            f3PressCountRef.current = 1;
+          }
+          f3LastPressRef.current = now;
+          const count = f3PressCountRef.current;
+          if (count === 2) {
+            const w = findWordBoundsAt(
+              c.sectionIndex,
+              c.paragraphIndex,
+              c.charOffset,
+            );
+            if (w && w.endOffset > w.startOffset) {
+              const start = { ...c, charOffset: w.startOffset };
+              const end = { ...c, charOffset: w.endOffset };
+              caretRef.current = end;
+              setSelection({ anchor: start, focus: end });
+              refreshSelectionRects({ anchor: start, focus: end });
+              refreshActiveFormat();
+            }
+          } else if (count === 3) {
+            try {
+              const len = doc.getParagraphLength(
+                c.sectionIndex,
+                c.paragraphIndex,
+              );
+              const start = { ...c, charOffset: 0 };
+              const end = { ...c, charOffset: len };
+              caretRef.current = end;
+              setSelection({ anchor: start, focus: end });
+              refreshSelectionRects({ anchor: start, focus: end });
+              refreshActiveFormat();
+            } catch {
+              /* ignore */
+            }
+          } else if (count >= 4) {
+            try {
+              const sec = c.sectionIndex;
+              const lastPara = doc.getParagraphCount(sec) - 1;
+              if (lastPara >= 0) {
+                const lastOffset = doc.getParagraphLength(sec, lastPara);
+                const start = {
+                  sectionIndex: sec,
+                  paragraphIndex: 0,
+                  charOffset: 0,
+                };
+                const end = {
+                  sectionIndex: sec,
+                  paragraphIndex: lastPara,
+                  charOffset: lastOffset,
+                };
+                caretRef.current = end;
+                setSelection({ anchor: start, focus: end });
+                refreshSelectionRects({ anchor: start, focus: end });
+                refreshActiveFormat();
+              }
+            } catch {
+              /* ignore */
+            }
+          }
+          // count === 1 은 v1에선 no-op (Shift+arrow가 같은 효과).
+          e.preventDefault();
+          return;
+        }
+        if (e.key !== 'F3') {
+          f3PressCountRef.current = 0;
         }
         // Phase B-3 — 표 안 navigation 단축키:
         //   Tab / Shift+Tab → 다음/이전 셀로 caret 이동
