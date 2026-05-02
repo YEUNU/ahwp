@@ -8,8 +8,10 @@ import {
   Trash2,
 } from 'lucide-react';
 import {
+  forwardRef,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
@@ -183,6 +185,21 @@ export interface ChatPanelProps {
   undoLastApply?: () => boolean;
 }
 
+/**
+ * Imperative handle for cross-pane triggers — chunk 56. The studio
+ * viewer's selection context menu calls `prefillAndSend` to fire an
+ * AI command (e.g. "다듬어주세요") with the selected text inline, so
+ * the user gets a one-click path from selection → AI request without
+ * dictating into the chat input by hand.
+ */
+export interface ChatPanelHandle {
+  /**
+   * Compose and send a chat turn with `text` as the user message body.
+   * No-op while a stream is in flight (we won't queue).
+   */
+  prefillAndSend: (text: string) => void;
+}
+
 const HTML_BLOCK_RE = /```html\n?([\s\S]*?)```/i;
 const TOOLS_BLOCK_RE = /```ahwp-tools\n?([\s\S]*?)```/i;
 
@@ -275,1107 +292,1159 @@ function buildExcerptSystemPrompt(excerpts: ExcerptAttachment[]): string {
   return lines.join('\n');
 }
 
-export function ChatPanel({
-  onOpenSettings,
-  getDocHtml,
-  applyHtml,
-  runTools,
-  captureExcerpt,
-  activeDocPath,
-  verifyExcerpt,
-  getOpenDocs,
-  getDocOutline,
-  undoLastApply,
-}: ChatPanelProps = {}): JSX.Element {
-  const [messages, setMessages] = useState<UiMessage[]>([]);
-  const [input, setInput] = useState('');
-  const [streaming, setStreaming] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [hasKey, setHasKey] = useState<boolean | null>(null);
-  const [provider, setProvider] = useState<ChatProviderId>(() =>
-    loadProvider(),
-  );
-  const [models, setModels] = useState<Record<ChatProviderId, string>>(() =>
-    loadModels(),
-  );
-  // chunk 48 — model list per provider. The renderer asks main for the
-  // catalog (cached 24h), then keeps the result in memory so the
-  // dropdown is responsive. `idle` before first fetch; `loading` while
-  // a fetch is in flight; `ok` / `stale` / `error` after. The free-text
-  // input is always available — the dropdown just *suggests* values
-  // (datalist), so a missing list (`error`) doesn't block chat.
-  type ModelListState =
-    | { kind: 'idle' }
-    | { kind: 'loading' }
-    | { kind: 'ok'; models: string[]; fetchedAt: number }
-    | { kind: 'stale'; models: string[]; fetchedAt: number; reason: string }
-    | { kind: 'error'; reason: string };
-  const [modelList, setModelList] = useState<
-    Record<ChatProviderId, ModelListState>
-  >({
-    openai: { kind: 'idle' },
-    nvidia: { kind: 'idle' },
-  });
-  const [attachDoc, setAttachDoc] = useState(false);
-  // chunk 20 — excerpt chips. When non-empty, the system message
-  // injects a structured `[발췌]:` block instead of the whole-doc
-  // HTML (the toggle still appears but the docHtml path is suppressed).
-  const [excerpts, setExcerpts] = useState<ExcerptAttachment[]>([]);
-  // Toast for send-side blocking events (e.g. all chips went stale).
-  const [excerptError, setExcerptError] = useState<string | null>(null);
-  // chunk 26 — chat history persistence. Conversation id is null until
-  // the user sends the first message of a fresh chat; from then on
-  // every send/assistant turn is appended via IPC. Switching to a
-  // saved conversation loads its messages and sets this id.
-  const [conversationId, setConversationId] = useState<number | null>(null);
-  const conversationIdRef = useRef<number | null>(null);
-  useEffect(() => {
-    conversationIdRef.current = conversationId;
-  }, [conversationId]);
-  // chunk 26 — history list for the popover. Loaded on demand when
-  // the user opens the dropdown; refreshed after rename/delete.
-  const [historyList, setHistoryList] = useState<
+export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
+  function ChatPanel(
     {
-      id: number;
-      docPath: string | null;
-      title: string;
-      updatedAt: number;
-    }[]
-  >([]);
-  const [historyOpen, setHistoryOpen] = useState(false);
-  // chunk 21 — paths the user opted in as references. Active tab is
-  // implicit target (always included) and never appears in this set.
-  // Stored as an array (not Set) so React equality is straightforward.
-  const [referencePaths, setReferencePaths] = useState<string[]>([]);
-  const handleRef = useRef<AiChatHandle | null>(null);
-  const scrollerRef = useRef<HTMLDivElement>(null);
-  const assistantIdRef = useRef<string | null>(null);
-
-  const model = models[provider];
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_PROVIDER, provider);
-    } catch {
-      /* no-op */
-    }
-  }, [provider]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_MODELS, JSON.stringify(models));
-    } catch {
-      /* no-op */
-    }
-  }, [models]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void window.api.secrets.has(provider).then((v) => {
-      if (!cancelled) setHasKey(v);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [provider]);
-
-  const onProviderChange = useCallback((next: ChatProviderId) => {
-    // Reset the indicator to the loading state immediately so the user sees
-    // feedback while the new has() call is in flight. Doing this in the
-    // change handler (not an effect) avoids react-hooks/set-state-in-effect.
-    setHasKey(null);
-    setProvider(next);
-  }, []);
-
-  // chunk 48 — model list fetcher. Sets `loading` first, then commits
-  // the IPC result. Re-runs on provider change and key transitions
-  // (false → true). `force=true` bypasses the 24h cache for a manual
-  // 새로고침 click.
-  const fetchModels = useCallback(
-    async (target: ChatProviderId, force = false): Promise<void> => {
-      setModelList((prev) => ({ ...prev, [target]: { kind: 'loading' } }));
-      try {
-        const res = await window.api.ai.listModels(target, { force });
-        if (res.status === 'ok') {
-          setModelList((prev) => ({
-            ...prev,
-            [target]: {
-              kind: 'ok',
-              models: res.models,
-              fetchedAt: res.fetchedAt,
-            },
-          }));
-          return;
-        }
-        if (res.status === 'stale-cache') {
-          setModelList((prev) => ({
-            ...prev,
-            [target]: {
-              kind: 'stale',
-              models: res.models,
-              fetchedAt: res.fetchedAt,
-              reason: res.reason,
-            },
-          }));
-          return;
-        }
-        setModelList((prev) => ({
-          ...prev,
-          [target]: { kind: 'error', reason: res.reason },
-        }));
-      } catch (err) {
-        setModelList((prev) => ({
-          ...prev,
-          [target]: {
-            kind: 'error',
-            reason: err instanceof Error ? err.message : String(err),
-          },
-        }));
-      }
-    },
-    [],
-  );
-
-  // Auto-fetch on provider change + key transition. The cache layer in
-  // main makes the cost trivial — most calls return synchronously from
-  // disk. Refetch only fires when key first becomes available; we don't
-  // want to spam the API on transient flips.
-  useEffect(() => {
-    if (hasKey !== true) return;
-    void fetchModels(provider);
-  }, [provider, hasKey, fetchModels]);
-
-  useEffect(() => {
-    const el = scrollerRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [messages]);
-
-  useEffect(() => {
-    return () => {
-      handleRef.current?.abort();
-    };
-  }, []);
-
-  /** Buffer the assistant's streamed text so we can persist it once
-   * — chunk 26. setMessages would also work but reading state from
-   * onEvent (a useCallback with [] deps) requires an extra ref hop;
-   * a local string ref is cleaner.
-   */
-  const assistantBufferRef = useRef('');
-
-  const onEvent = useCallback((evt: ChatStreamEvent) => {
-    if (evt.type === 'text-delta') {
-      // Capture the id eagerly: the setMessages updater may run later in a
-      // React batch, by which point a terminal event might have cleared
-      // assistantIdRef. Reading it inside the updater drops late deltas.
-      const id = assistantIdRef.current;
-      if (!id) return;
-      assistantBufferRef.current += evt.text;
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === id ? { ...m, content: m.content + evt.text } : m,
-        ),
-      );
-      return;
-    }
-    if (evt.type === 'error') {
-      setError(evt.message);
-    }
-    // chunk 26 — persist the assistant turn (best-effort). Errors here
-    // are logged but don't surface to the user; a chat history blip
-    // shouldn't block the conversation flow.
-    const convId = conversationIdRef.current;
-    const buf = assistantBufferRef.current;
-    if (convId !== null && buf.length > 0) {
-      void window.api.chatHistory
-        .append(convId, 'assistant', buf)
-        .catch((err: unknown) =>
-          console.warn('[chat] history.append assistant failed', err),
-        );
-    }
-    assistantBufferRef.current = '';
-    setStreaming(false);
-    handleRef.current = null;
-    assistantIdRef.current = null;
-  }, []);
-
-  /**
-   * Append a fresh assistant bubble to `history` and start streaming the
-   * provider's response into it. `history` should already end in the user
-   * message that the assistant is replying to. The optional
-   * `verifiedExcerpts` arg is the chip list after `send`'s stale check;
-   * passed in so we serialize exactly what the user is committing to,
-   * not whatever excerpts state happens to be by the time React has
-   * batched updates through.
-   */
-  const fireChat = useCallback(
-    (history: UiMessage[], verifiedExcerpts: ExcerptAttachment[] = []) => {
-      setError(null);
-      const assistantMsg: UiMessage = {
-        id: newId(),
-        role: 'assistant',
-        content: '',
-      };
-      assistantIdRef.current = assistantMsg.id;
-      setMessages([...history, assistantMsg]);
-      setStreaming(true);
-
-      // Build provider-bound message list. The system message
-      // composition picks one of three context strategies for the
-      // *target* doc (the active tab):
-      //   (1) excerpts present  → `[발췌]:` block, narrowly anchored
-      //   (2) attach toggle on  → `[현재 문서]:` whole-doc HTML
-      //   (3) neither           → no target body in prompt (just refs)
-      // Excerpts win over the toggle when both are set, per
-      // memory/project_chat_context_pipeline.md priority rule.
-      //
-      // Reference docs (chunk 21) are appended as an additional
-      // `[참조 문서]:` block when the user has opted any in. They are
-      // read-only — write tools (chunk 19) still target the active doc
-      // by construction since the dispatcher hands them to the active
-      // viewer's IR.
-      const messages: {
-        role: 'system' | 'user' | 'assistant';
-        content: string;
-      }[] = history.map(({ role, content }) => ({ role, content }));
-
-      const refOutlines = collectReferenceOutlines(
-        referencePaths,
-        getOpenDocs,
-        getDocOutline,
-      );
-
-      let systemContent: string | null = null;
-      if (verifiedExcerpts.length > 0) {
-        systemContent = buildExcerptSystemPrompt(verifiedExcerpts);
-      } else if (attachDoc && getDocHtml) {
-        const docHtml = getDocHtml();
-        if (docHtml.length > 0) {
-          systemContent = `${SYSTEM_PROMPT_DOC_CONTEXT}\n\n[현재 문서]:\n${docHtml}`;
-        }
-      }
-      if (refOutlines.length > 0) {
-        const refBlock = buildReferenceSystemBlock(refOutlines);
-        systemContent =
-          systemContent === null
-            ? `${SYSTEM_PROMPT_DOC_CONTEXT}\n\n${refBlock}`
-            : `${systemContent}\n\n${refBlock}`;
-      }
-      if (systemContent !== null) {
-        messages.unshift({ role: 'system', content: systemContent });
-      }
-
-      const request: ChatRequest = { provider, model, messages };
-      handleRef.current = window.api.ai.chat(request, { onEvent });
-    },
-    [
-      attachDoc,
+      onOpenSettings,
       getDocHtml,
-      getDocOutline,
+      applyHtml,
+      runTools,
+      captureExcerpt,
+      activeDocPath,
+      verifyExcerpt,
       getOpenDocs,
-      model,
-      onEvent,
-      provider,
-      referencePaths,
-    ],
-  );
+      getDocOutline,
+      undoLastApply,
+    },
+    ref,
+  ) {
+    const [messages, setMessages] = useState<UiMessage[]>([]);
+    const [input, setInput] = useState('');
+    const [streaming, setStreaming] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [hasKey, setHasKey] = useState<boolean | null>(null);
+    const [provider, setProvider] = useState<ChatProviderId>(() =>
+      loadProvider(),
+    );
+    const [models, setModels] = useState<Record<ChatProviderId, string>>(() =>
+      loadModels(),
+    );
+    // chunk 48 — model list per provider. The renderer asks main for the
+    // catalog (cached 24h), then keeps the result in memory so the
+    // dropdown is responsive. `idle` before first fetch; `loading` while
+    // a fetch is in flight; `ok` / `stale` / `error` after. The free-text
+    // input is always available — the dropdown just *suggests* values
+    // (datalist), so a missing list (`error`) doesn't block chat.
+    type ModelListState =
+      | { kind: 'idle' }
+      | { kind: 'loading' }
+      | { kind: 'ok'; models: string[]; fetchedAt: number }
+      | { kind: 'stale'; models: string[]; fetchedAt: number; reason: string }
+      | { kind: 'error'; reason: string };
+    const [modelList, setModelList] = useState<
+      Record<ChatProviderId, ModelListState>
+    >({
+      openai: { kind: 'idle' },
+      nvidia: { kind: 'idle' },
+    });
+    const [attachDoc, setAttachDoc] = useState(false);
+    // chunk 20 — excerpt chips. When non-empty, the system message
+    // injects a structured `[발췌]:` block instead of the whole-doc
+    // HTML (the toggle still appears but the docHtml path is suppressed).
+    const [excerpts, setExcerpts] = useState<ExcerptAttachment[]>([]);
+    // Toast for send-side blocking events (e.g. all chips went stale).
+    const [excerptError, setExcerptError] = useState<string | null>(null);
+    // chunk 26 — chat history persistence. Conversation id is null until
+    // the user sends the first message of a fresh chat; from then on
+    // every send/assistant turn is appended via IPC. Switching to a
+    // saved conversation loads its messages and sets this id.
+    const [conversationId, setConversationId] = useState<number | null>(null);
+    const conversationIdRef = useRef<number | null>(null);
+    useEffect(() => {
+      conversationIdRef.current = conversationId;
+    }, [conversationId]);
+    // chunk 26 — history list for the popover. Loaded on demand when
+    // the user opens the dropdown; refreshed after rename/delete.
+    const [historyList, setHistoryList] = useState<
+      {
+        id: number;
+        docPath: string | null;
+        title: string;
+        updatedAt: number;
+      }[]
+    >([]);
+    const [historyOpen, setHistoryOpen] = useState(false);
+    // chunk 21 — paths the user opted in as references. Active tab is
+    // implicit target (always included) and never appears in this set.
+    // Stored as an array (not Set) so React equality is straightforward.
+    const [referencePaths, setReferencePaths] = useState<string[]>([]);
+    const handleRef = useRef<AiChatHandle | null>(null);
+    const scrollerRef = useRef<HTMLDivElement>(null);
+    const assistantIdRef = useRef<string | null>(null);
 
-  // chunk 20 — capture the active viewer selection as a chip. The
-  // button is disabled when nothing's selectable, so the null-return
-  // path is only hit during a race (selection cleared between hover
-  // and click). Drag-and-drop wiring is a follow-up; this gives us
-  // the data model NOW.
-  /** Push a captured excerpt onto the chip list. Shared between the
-   * `📌 발췌 첨부` button click and the HTML5 drag-and-drop path
-   * (chunk 22). The payload differs only in the source: the button
-   * reads via captureExcerpt(); drop reads via dataTransfer's
-   * `application/x-ahwp-excerpt` MIME. */
-  const addExcerptFromPayload = useCallback(
-    (cap: {
-      sectionIndex: number;
-      startParagraphIndex: number;
-      startOffset: number;
-      endParagraphIndex: number;
-      endOffset: number;
-      text: string;
-      docPath?: string | null;
-    }) => {
-      if (cap.text.length > EXCERPT_HARD_CHAR_LIMIT) {
-        setExcerptError(
-          `발췌가 너무 깁니다 (${cap.text.length} / ${EXCERPT_HARD_CHAR_LIMIT}자 상한).`,
+    const model = models[provider];
+
+    useEffect(() => {
+      try {
+        localStorage.setItem(STORAGE_PROVIDER, provider);
+      } catch {
+        /* no-op */
+      }
+    }, [provider]);
+
+    useEffect(() => {
+      try {
+        localStorage.setItem(STORAGE_MODELS, JSON.stringify(models));
+      } catch {
+        /* no-op */
+      }
+    }, [models]);
+
+    useEffect(() => {
+      let cancelled = false;
+      void window.api.secrets.has(provider).then((v) => {
+        if (!cancelled) setHasKey(v);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }, [provider]);
+
+    const onProviderChange = useCallback((next: ChatProviderId) => {
+      // Reset the indicator to the loading state immediately so the user sees
+      // feedback while the new has() call is in flight. Doing this in the
+      // change handler (not an effect) avoids react-hooks/set-state-in-effect.
+      setHasKey(null);
+      setProvider(next);
+    }, []);
+
+    // chunk 48 — model list fetcher. Sets `loading` first, then commits
+    // the IPC result. Re-runs on provider change and key transitions
+    // (false → true). `force=true` bypasses the 24h cache for a manual
+    // 새로고침 click.
+    const fetchModels = useCallback(
+      async (target: ChatProviderId, force = false): Promise<void> => {
+        setModelList((prev) => ({ ...prev, [target]: { kind: 'loading' } }));
+        try {
+          const res = await window.api.ai.listModels(target, { force });
+          if (res.status === 'ok') {
+            setModelList((prev) => ({
+              ...prev,
+              [target]: {
+                kind: 'ok',
+                models: res.models,
+                fetchedAt: res.fetchedAt,
+              },
+            }));
+            return;
+          }
+          if (res.status === 'stale-cache') {
+            setModelList((prev) => ({
+              ...prev,
+              [target]: {
+                kind: 'stale',
+                models: res.models,
+                fetchedAt: res.fetchedAt,
+                reason: res.reason,
+              },
+            }));
+            return;
+          }
+          setModelList((prev) => ({
+            ...prev,
+            [target]: { kind: 'error', reason: res.reason },
+          }));
+        } catch (err) {
+          setModelList((prev) => ({
+            ...prev,
+            [target]: {
+              kind: 'error',
+              reason: err instanceof Error ? err.message : String(err),
+            },
+          }));
+        }
+      },
+      [],
+    );
+
+    // Auto-fetch on provider change + key transition. The cache layer in
+    // main makes the cost trivial — most calls return synchronously from
+    // disk. Refetch only fires when key first becomes available; we don't
+    // want to spam the API on transient flips.
+    useEffect(() => {
+      if (hasKey !== true) return;
+      void fetchModels(provider);
+    }, [provider, hasKey, fetchModels]);
+
+    useEffect(() => {
+      const el = scrollerRef.current;
+      if (!el) return;
+      el.scrollTop = el.scrollHeight;
+    }, [messages]);
+
+    useEffect(() => {
+      return () => {
+        handleRef.current?.abort();
+      };
+    }, []);
+
+    /** Buffer the assistant's streamed text so we can persist it once
+     * — chunk 26. setMessages would also work but reading state from
+     * onEvent (a useCallback with [] deps) requires an extra ref hop;
+     * a local string ref is cleaner.
+     */
+    const assistantBufferRef = useRef('');
+
+    const onEvent = useCallback((evt: ChatStreamEvent) => {
+      if (evt.type === 'text-delta') {
+        // Capture the id eagerly: the setMessages updater may run later in a
+        // React batch, by which point a terminal event might have cleared
+        // assistantIdRef. Reading it inside the updater drops late deltas.
+        const id = assistantIdRef.current;
+        if (!id) return;
+        assistantBufferRef.current += evt.text;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === id ? { ...m, content: m.content + evt.text } : m,
+          ),
         );
         return;
       }
-      setExcerptError(null);
-      const path =
-        cap.docPath !== undefined ? cap.docPath : (activeDocPath?.() ?? null);
-      const label = path ? (path.split(/[/\\]/).pop() ?? path) : '(이름 없음)';
-      const chip: ExcerptAttachment = {
-        id: newId(),
-        docPath: path,
-        docLabel: label,
-        role: 'target',
-        anchor: {
-          sectionIndex: cap.sectionIndex,
-          startParagraphIndex: cap.startParagraphIndex,
-          startOffset: cap.startOffset,
-          endParagraphIndex: cap.endParagraphIndex,
-          endOffset: cap.endOffset,
-        },
-        text: cap.text,
-        hash: hashText(cap.text),
-        status: 'fresh',
-      };
-      setExcerpts((prev) => [...prev, chip]);
-    },
-    [activeDocPath],
-  );
+      if (evt.type === 'error') {
+        setError(evt.message);
+      }
+      // chunk 26 — persist the assistant turn (best-effort). Errors here
+      // are logged but don't surface to the user; a chat history blip
+      // shouldn't block the conversation flow.
+      const convId = conversationIdRef.current;
+      const buf = assistantBufferRef.current;
+      if (convId !== null && buf.length > 0) {
+        void window.api.chatHistory
+          .append(convId, 'assistant', buf)
+          .catch((err: unknown) =>
+            console.warn('[chat] history.append assistant failed', err),
+          );
+      }
+      assistantBufferRef.current = '';
+      setStreaming(false);
+      handleRef.current = null;
+      assistantIdRef.current = null;
+    }, []);
 
-  const onCaptureExcerpt = useCallback(() => {
-    if (!captureExcerpt) return;
-    const cap = captureExcerpt();
-    if (!cap) {
-      setExcerptError(
-        '선택된 텍스트가 없습니다. 먼저 문서에서 텍스트를 선택해 주세요.',
-      );
-      return;
-    }
-    addExcerptFromPayload(cap);
-  }, [addExcerptFromPayload, captureExcerpt]);
-
-  /** Drop handler for the input form — chunk 22. Accepts the custom
-   * `application/x-ahwp-excerpt` MIME emitted by `studio-selection-rect`
-   * dragstart. Falls back to creating a chip from `text/plain` if the
-   * structured payload is missing — that case has no anchor and so is
-   * marked stale-relocated immediately on send (verifyExcerpt will
-   * either find the text or reject). */
-  const onDropExcerpt = useCallback(
-    (e: React.DragEvent<HTMLFormElement>) => {
-      const types = Array.from(e.dataTransfer.types);
-      if (!types.includes('application/x-ahwp-excerpt')) return;
-      e.preventDefault();
-      const raw = e.dataTransfer.getData('application/x-ahwp-excerpt');
-      if (!raw) return;
-      try {
-        const parsed = JSON.parse(raw) as {
-          docPath?: string | null;
-          sectionIndex: number;
-          startParagraphIndex: number;
-          startOffset: number;
-          endParagraphIndex: number;
-          endOffset: number;
-          text: string;
+    /**
+     * Append a fresh assistant bubble to `history` and start streaming the
+     * provider's response into it. `history` should already end in the user
+     * message that the assistant is replying to. The optional
+     * `verifiedExcerpts` arg is the chip list after `send`'s stale check;
+     * passed in so we serialize exactly what the user is committing to,
+     * not whatever excerpts state happens to be by the time React has
+     * batched updates through.
+     */
+    const fireChat = useCallback(
+      (history: UiMessage[], verifiedExcerpts: ExcerptAttachment[] = []) => {
+        setError(null);
+        const assistantMsg: UiMessage = {
+          id: newId(),
+          role: 'assistant',
+          content: '',
         };
-        addExcerptFromPayload(parsed);
-      } catch {
-        setExcerptError('발췌 페이로드를 읽지 못했습니다.');
-      }
-    },
-    [addExcerptFromPayload],
-  );
+        assistantIdRef.current = assistantMsg.id;
+        setMessages([...history, assistantMsg]);
+        setStreaming(true);
 
-  /** preventDefault on dragover lets the drop fire. Without it the
-   * browser rejects the drop ahead of our handler. */
-  const onDragOverExcerpt = useCallback(
-    (e: React.DragEvent<HTMLFormElement>) => {
-      const types = Array.from(e.dataTransfer.types);
-      if (!types.includes('application/x-ahwp-excerpt')) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'copy';
-    },
-    [],
-  );
+        // Build provider-bound message list. The system message
+        // composition picks one of three context strategies for the
+        // *target* doc (the active tab):
+        //   (1) excerpts present  → `[발췌]:` block, narrowly anchored
+        //   (2) attach toggle on  → `[현재 문서]:` whole-doc HTML
+        //   (3) neither           → no target body in prompt (just refs)
+        // Excerpts win over the toggle when both are set, per
+        // memory/project_chat_context_pipeline.md priority rule.
+        //
+        // Reference docs (chunk 21) are appended as an additional
+        // `[참조 문서]:` block when the user has opted any in. They are
+        // read-only — write tools (chunk 19) still target the active doc
+        // by construction since the dispatcher hands them to the active
+        // viewer's IR.
+        const messages: {
+          role: 'system' | 'user' | 'assistant';
+          content: string;
+        }[] = history.map(({ role, content }) => ({ role, content }));
 
-  // chunk 26 — history list pull. Filtered by active doc when one is
-  // loaded so the dropdown is scoped to the doc you're editing.
-  const refreshHistory = useCallback(async () => {
-    try {
-      const docPath = activeDocPath?.() ?? null;
-      const rows = await window.api.chatHistory.list(docPath);
-      setHistoryList(
-        rows.map((r) => ({
-          id: r.id,
-          docPath: r.docPath,
-          title: r.title,
-          updatedAt: r.updatedAt,
-        })),
-      );
-    } catch (err) {
-      console.warn('[chat] history.list failed', err);
-    }
-  }, [activeDocPath]);
+        const refOutlines = collectReferenceOutlines(
+          referencePaths,
+          getOpenDocs,
+          getDocOutline,
+        );
 
-  const newConversation = useCallback(() => {
-    if (streaming) return;
-    setMessages([]);
-    setConversationId(null);
-    conversationIdRef.current = null;
-    setError(null);
-    setExcerpts([]);
-    setExcerptError(null);
-    setHistoryOpen(false);
-  }, [streaming]);
-
-  const loadConversation = useCallback(async (id: number) => {
-    try {
-      const r = await window.api.chatHistory.get(id);
-      setMessages(
-        r.messages
-          .filter((m) => m.role === 'user' || m.role === 'assistant')
-          .map((m) => ({
-            id: `db-${m.id}`,
-            role: m.role,
-            content: m.content,
-          })),
-      );
-      setConversationId(id);
-      conversationIdRef.current = id;
-      setHistoryOpen(false);
-      setError(null);
-    } catch (err) {
-      console.warn('[chat] history.get failed', err);
-    }
-  }, []);
-
-  const deleteHistoryItem = useCallback(
-    async (id: number) => {
-      try {
-        await window.api.chatHistory.delete(id);
-        // If we deleted the currently-loaded conversation, reset to a fresh chat.
-        if (conversationIdRef.current === id) {
-          newConversation();
+        let systemContent: string | null = null;
+        if (verifiedExcerpts.length > 0) {
+          systemContent = buildExcerptSystemPrompt(verifiedExcerpts);
+        } else if (attachDoc && getDocHtml) {
+          const docHtml = getDocHtml();
+          if (docHtml.length > 0) {
+            systemContent = `${SYSTEM_PROMPT_DOC_CONTEXT}\n\n[현재 문서]:\n${docHtml}`;
+          }
         }
-        await refreshHistory();
-      } catch (err) {
-        console.warn('[chat] history.delete failed', err);
-      }
-    },
-    [newConversation, refreshHistory],
-  );
+        if (refOutlines.length > 0) {
+          const refBlock = buildReferenceSystemBlock(refOutlines);
+          systemContent =
+            systemContent === null
+              ? `${SYSTEM_PROMPT_DOC_CONTEXT}\n\n${refBlock}`
+              : `${systemContent}\n\n${refBlock}`;
+        }
+        if (systemContent !== null) {
+          messages.unshift({ role: 'system', content: systemContent });
+        }
 
-  // Inline rename — chunk 30. Double-click on a conversation title swaps
-  // it for an input; Enter persists, Esc cancels. The conversation row
-  // shows the new title immediately via optimistic local update; the
-  // chatHistory.rename IPC writes through to SQLite. On failure we revert
-  // by re-fetching the list.
-  const [renamingId, setRenamingId] = useState<number | null>(null);
-  const [renameDraft, setRenameDraft] = useState('');
-  const beginRename = useCallback(
-    (id: number, currentTitle: string | null): void => {
-      setRenamingId(id);
-      setRenameDraft(currentTitle ?? '');
-    },
-    [],
-  );
-  const cancelRename = useCallback(() => {
-    setRenamingId(null);
-    setRenameDraft('');
-  }, []);
-  const commitRename = useCallback(
-    async (id: number): Promise<void> => {
-      const next = renameDraft.trim();
-      if (next.length === 0) {
-        cancelRename();
+        const request: ChatRequest = { provider, model, messages };
+        handleRef.current = window.api.ai.chat(request, { onEvent });
+      },
+      [
+        attachDoc,
+        getDocHtml,
+        getDocOutline,
+        getOpenDocs,
+        model,
+        onEvent,
+        provider,
+        referencePaths,
+      ],
+    );
+
+    // chunk 20 — capture the active viewer selection as a chip. The
+    // button is disabled when nothing's selectable, so the null-return
+    // path is only hit during a race (selection cleared between hover
+    // and click). Drag-and-drop wiring is a follow-up; this gives us
+    // the data model NOW.
+    /** Push a captured excerpt onto the chip list. Shared between the
+     * `📌 발췌 첨부` button click and the HTML5 drag-and-drop path
+     * (chunk 22). The payload differs only in the source: the button
+     * reads via captureExcerpt(); drop reads via dataTransfer's
+     * `application/x-ahwp-excerpt` MIME. */
+    const addExcerptFromPayload = useCallback(
+      (cap: {
+        sectionIndex: number;
+        startParagraphIndex: number;
+        startOffset: number;
+        endParagraphIndex: number;
+        endOffset: number;
+        text: string;
+        docPath?: string | null;
+      }) => {
+        if (cap.text.length > EXCERPT_HARD_CHAR_LIMIT) {
+          setExcerptError(
+            `발췌가 너무 깁니다 (${cap.text.length} / ${EXCERPT_HARD_CHAR_LIMIT}자 상한).`,
+          );
+          return;
+        }
+        setExcerptError(null);
+        const path =
+          cap.docPath !== undefined ? cap.docPath : (activeDocPath?.() ?? null);
+        const label = path
+          ? (path.split(/[/\\]/).pop() ?? path)
+          : '(이름 없음)';
+        const chip: ExcerptAttachment = {
+          id: newId(),
+          docPath: path,
+          docLabel: label,
+          role: 'target',
+          anchor: {
+            sectionIndex: cap.sectionIndex,
+            startParagraphIndex: cap.startParagraphIndex,
+            startOffset: cap.startOffset,
+            endParagraphIndex: cap.endParagraphIndex,
+            endOffset: cap.endOffset,
+          },
+          text: cap.text,
+          hash: hashText(cap.text),
+          status: 'fresh',
+        };
+        setExcerpts((prev) => [...prev, chip]);
+      },
+      [activeDocPath],
+    );
+
+    const onCaptureExcerpt = useCallback(() => {
+      if (!captureExcerpt) return;
+      const cap = captureExcerpt();
+      if (!cap) {
+        setExcerptError(
+          '선택된 텍스트가 없습니다. 먼저 문서에서 텍스트를 선택해 주세요.',
+        );
         return;
       }
-      // Optimistic update so the row reflects the new title before the
-      // IPC round-trip completes.
-      setHistoryList((prev) =>
-        prev.map((row) => (row.id === id ? { ...row, title: next } : row)),
-      );
+      addExcerptFromPayload(cap);
+    }, [addExcerptFromPayload, captureExcerpt]);
+
+    /** Drop handler for the input form — chunk 22. Accepts the custom
+     * `application/x-ahwp-excerpt` MIME emitted by `studio-selection-rect`
+     * dragstart. Falls back to creating a chip from `text/plain` if the
+     * structured payload is missing — that case has no anchor and so is
+     * marked stale-relocated immediately on send (verifyExcerpt will
+     * either find the text or reject). */
+    const onDropExcerpt = useCallback(
+      (e: React.DragEvent<HTMLFormElement>) => {
+        const types = Array.from(e.dataTransfer.types);
+        if (!types.includes('application/x-ahwp-excerpt')) return;
+        e.preventDefault();
+        const raw = e.dataTransfer.getData('application/x-ahwp-excerpt');
+        if (!raw) return;
+        try {
+          const parsed = JSON.parse(raw) as {
+            docPath?: string | null;
+            sectionIndex: number;
+            startParagraphIndex: number;
+            startOffset: number;
+            endParagraphIndex: number;
+            endOffset: number;
+            text: string;
+          };
+          addExcerptFromPayload(parsed);
+        } catch {
+          setExcerptError('발췌 페이로드를 읽지 못했습니다.');
+        }
+      },
+      [addExcerptFromPayload],
+    );
+
+    /** preventDefault on dragover lets the drop fire. Without it the
+     * browser rejects the drop ahead of our handler. */
+    const onDragOverExcerpt = useCallback(
+      (e: React.DragEvent<HTMLFormElement>) => {
+        const types = Array.from(e.dataTransfer.types);
+        if (!types.includes('application/x-ahwp-excerpt')) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+      },
+      [],
+    );
+
+    // chunk 26 — history list pull. Filtered by active doc when one is
+    // loaded so the dropdown is scoped to the doc you're editing.
+    const refreshHistory = useCallback(async () => {
+      try {
+        const docPath = activeDocPath?.() ?? null;
+        const rows = await window.api.chatHistory.list(docPath);
+        setHistoryList(
+          rows.map((r) => ({
+            id: r.id,
+            docPath: r.docPath,
+            title: r.title,
+            updatedAt: r.updatedAt,
+          })),
+        );
+      } catch (err) {
+        console.warn('[chat] history.list failed', err);
+      }
+    }, [activeDocPath]);
+
+    const newConversation = useCallback(() => {
+      if (streaming) return;
+      setMessages([]);
+      setConversationId(null);
+      conversationIdRef.current = null;
+      setError(null);
+      setExcerpts([]);
+      setExcerptError(null);
+      setHistoryOpen(false);
+    }, [streaming]);
+
+    const loadConversation = useCallback(async (id: number) => {
+      try {
+        const r = await window.api.chatHistory.get(id);
+        setMessages(
+          r.messages
+            .filter((m) => m.role === 'user' || m.role === 'assistant')
+            .map((m) => ({
+              id: `db-${m.id}`,
+              role: m.role,
+              content: m.content,
+            })),
+        );
+        setConversationId(id);
+        conversationIdRef.current = id;
+        setHistoryOpen(false);
+        setError(null);
+      } catch (err) {
+        console.warn('[chat] history.get failed', err);
+      }
+    }, []);
+
+    const deleteHistoryItem = useCallback(
+      async (id: number) => {
+        try {
+          await window.api.chatHistory.delete(id);
+          // If we deleted the currently-loaded conversation, reset to a fresh chat.
+          if (conversationIdRef.current === id) {
+            newConversation();
+          }
+          await refreshHistory();
+        } catch (err) {
+          console.warn('[chat] history.delete failed', err);
+        }
+      },
+      [newConversation, refreshHistory],
+    );
+
+    // Inline rename — chunk 30. Double-click on a conversation title swaps
+    // it for an input; Enter persists, Esc cancels. The conversation row
+    // shows the new title immediately via optimistic local update; the
+    // chatHistory.rename IPC writes through to SQLite. On failure we revert
+    // by re-fetching the list.
+    const [renamingId, setRenamingId] = useState<number | null>(null);
+    const [renameDraft, setRenameDraft] = useState('');
+    const beginRename = useCallback(
+      (id: number, currentTitle: string | null): void => {
+        setRenamingId(id);
+        setRenameDraft(currentTitle ?? '');
+      },
+      [],
+    );
+    const cancelRename = useCallback(() => {
       setRenamingId(null);
       setRenameDraft('');
-      try {
-        await window.api.chatHistory.rename(id, next);
-      } catch (err) {
-        console.warn('[chat] history.rename failed', err);
-        // Revert: re-fetch authoritative list from SQLite.
-        await refreshHistory();
-      }
-    },
-    [renameDraft, cancelRename, refreshHistory],
-  );
-
-  const removeExcerpt = useCallback((id: string) => {
-    setExcerpts((prev) => prev.filter((e) => e.id !== id));
-  }, []);
-
-  const send = useCallback(async () => {
-    const text = input.trim();
-    if (text.length === 0 || streaming) return;
-
-    // Per-chip stale verification — chunk 20. Each chip's anchor is
-    // re-read from the IR. Fresh = pass through. Relocated = update
-    // anchor in place (silent). Missing = block send and surface a
-    // toast so the user can re-select. We reset to fresh chips so
-    // subsequent turns don't keep re-checking the same anchors.
-    const verified: ExcerptAttachment[] = [];
-    const stillMissing: string[] = [];
-    if (excerpts.length > 0 && verifyExcerpt) {
-      for (const ex of excerpts) {
-        const r = verifyExcerpt(ex.anchor, ex.text);
-        if (!r) {
-          stillMissing.push(ex.docLabel);
-          continue;
+    }, []);
+    const commitRename = useCallback(
+      async (id: number): Promise<void> => {
+        const next = renameDraft.trim();
+        if (next.length === 0) {
+          cancelRename();
+          return;
         }
-        if (r.status === 'fresh') {
-          verified.push({ ...ex, status: 'fresh' });
-        } else if (r.status === 'stale-relocated' && r.newAnchor) {
-          verified.push({
-            ...ex,
-            anchor: r.newAnchor,
-            status: 'stale-relocated',
-          });
-        } else {
-          stillMissing.push(ex.docLabel);
-        }
-      }
-      if (stillMissing.length > 0) {
-        setExcerptError(
-          `발췌 위치를 찾을 수 없습니다 (${stillMissing.join(', ')}). 다시 선택해 주세요.`,
+        // Optimistic update so the row reflects the new title before the
+        // IPC round-trip completes.
+        setHistoryList((prev) =>
+          prev.map((row) => (row.id === id ? { ...row, title: next } : row)),
         );
-        return;
+        setRenamingId(null);
+        setRenameDraft('');
+        try {
+          await window.api.chatHistory.rename(id, next);
+        } catch (err) {
+          console.warn('[chat] history.rename failed', err);
+          // Revert: re-fetch authoritative list from SQLite.
+          await refreshHistory();
+        }
+      },
+      [renameDraft, cancelRename, refreshHistory],
+    );
+
+    const removeExcerpt = useCallback((id: string) => {
+      setExcerpts((prev) => prev.filter((e) => e.id !== id));
+    }, []);
+
+    const send = useCallback(async () => {
+      const text = input.trim();
+      if (text.length === 0 || streaming) return;
+
+      // Per-chip stale verification — chunk 20. Each chip's anchor is
+      // re-read from the IR. Fresh = pass through. Relocated = update
+      // anchor in place (silent). Missing = block send and surface a
+      // toast so the user can re-select. We reset to fresh chips so
+      // subsequent turns don't keep re-checking the same anchors.
+      const verified: ExcerptAttachment[] = [];
+      const stillMissing: string[] = [];
+      if (excerpts.length > 0 && verifyExcerpt) {
+        for (const ex of excerpts) {
+          const r = verifyExcerpt(ex.anchor, ex.text);
+          if (!r) {
+            stillMissing.push(ex.docLabel);
+            continue;
+          }
+          if (r.status === 'fresh') {
+            verified.push({ ...ex, status: 'fresh' });
+          } else if (r.status === 'stale-relocated' && r.newAnchor) {
+            verified.push({
+              ...ex,
+              anchor: r.newAnchor,
+              status: 'stale-relocated',
+            });
+          } else {
+            stillMissing.push(ex.docLabel);
+          }
+        }
+        if (stillMissing.length > 0) {
+          setExcerptError(
+            `발췌 위치를 찾을 수 없습니다 (${stillMissing.join(', ')}). 다시 선택해 주세요.`,
+          );
+          return;
+        }
+        setExcerpts(verified);
+        setExcerptError(null);
       }
-      setExcerpts(verified);
-      setExcerptError(null);
-    }
 
-    const userMsg: UiMessage = { id: newId(), role: 'user', content: text };
-    setInput('');
+      const userMsg: UiMessage = { id: newId(), role: 'user', content: text };
+      setInput('');
 
-    // chunk 26 — ensure the conversation exists BEFORE starting the
-    // stream so onEvent's terminator (which persists the assistant
-    // turn) sees a non-null conversationIdRef. We await the create +
-    // user-append so persistence is in lockstep with the visual turn.
-    try {
-      if (conversationIdRef.current === null) {
-        const docPath = activeDocPath?.() ?? null;
-        const title = text.slice(0, 60);
-        const r = await window.api.chatHistory.create(docPath, title);
-        conversationIdRef.current = r.id;
-        setConversationId(r.id);
-      }
-      await window.api.chatHistory.append(
-        conversationIdRef.current,
-        'user',
-        text,
-      );
-    } catch (err) {
-      console.warn('[chat] history.append user failed', err);
-      // Persistence failure shouldn't block the chat — proceed even if
-      // the DB write threw.
-    }
-
-    fireChat([...messages, userMsg], verified);
-  }, [
-    activeDocPath,
-    excerpts,
-    fireChat,
-    input,
-    messages,
-    streaming,
-    verifyExcerpt,
-  ]);
-
-  const regenerate = useCallback(
-    (assistantId: string) => {
-      if (streaming) return;
-      const idx = messages.findIndex((m) => m.id === assistantId);
-      if (idx === -1) return;
-      const history = messages.slice(0, idx);
-      // Need a preceding user turn to regenerate from.
-      if (history.length === 0 || history[history.length - 1].role !== 'user')
-        return;
-      fireChat(history);
-    },
-    [fireChat, messages, streaming],
-  );
-
-  const deleteMessage = useCallback(
-    (id: string) => {
-      if (streaming) return;
-      setMessages((prev) => prev.filter((m) => m.id !== id));
-    },
-    [streaming],
-  );
-
-  const copyMessage = useCallback(
-    async (id: string): Promise<boolean> => {
-      const m = messages.find((x) => x.id === id);
-      if (!m) return false;
+      // chunk 26 — ensure the conversation exists BEFORE starting the
+      // stream so onEvent's terminator (which persists the assistant
+      // turn) sees a non-null conversationIdRef. We await the create +
+      // user-append so persistence is in lockstep with the visual turn.
       try {
-        await window.api.clipboard.writeText(m.content);
-        return true;
-      } catch {
-        return false;
+        if (conversationIdRef.current === null) {
+          const docPath = activeDocPath?.() ?? null;
+          const title = text.slice(0, 60);
+          const r = await window.api.chatHistory.create(docPath, title);
+          conversationIdRef.current = r.id;
+          setConversationId(r.id);
+        }
+        await window.api.chatHistory.append(
+          conversationIdRef.current,
+          'user',
+          text,
+        );
+      } catch (err) {
+        console.warn('[chat] history.append user failed', err);
+        // Persistence failure shouldn't block the chat — proceed even if
+        // the DB write threw.
       }
-    },
-    [messages],
-  );
 
-  const onSubmit = useCallback(
-    (e: FormEvent<HTMLFormElement>) => {
-      e.preventDefault();
-      void send();
-    },
-    [send],
-  );
+      fireChat([...messages, userMsg], verified);
+    }, [
+      activeDocPath,
+      excerpts,
+      fireChat,
+      input,
+      messages,
+      streaming,
+      verifyExcerpt,
+    ]);
 
-  const onKeyDown = useCallback(
-    (e: KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+    // chunk 56 — AI selection menu trigger. Builds and fires a chat turn
+    // directly from `text` (the menu wraps the user's selection in a
+    // template prompt before calling), bypassing the input field. We
+    // skip the excerpt-chip verification path because the caller has
+    // already inlined the relevant text.
+    const sendDirect = useCallback(
+      async (text: string): Promise<void> => {
+        const trimmed = text.trim();
+        if (trimmed.length === 0 || streaming) return;
+        const userMsg: UiMessage = {
+          id: newId(),
+          role: 'user',
+          content: trimmed,
+        };
+        try {
+          if (conversationIdRef.current === null) {
+            const docPath = activeDocPath?.() ?? null;
+            const title = trimmed.slice(0, 60);
+            const r = await window.api.chatHistory.create(docPath, title);
+            conversationIdRef.current = r.id;
+            setConversationId(r.id);
+          }
+          await window.api.chatHistory.append(
+            conversationIdRef.current,
+            'user',
+            trimmed,
+          );
+        } catch (err) {
+          console.warn('[chat] history.append user (direct) failed', err);
+        }
+        fireChat([...messages, userMsg], []);
+      },
+      [activeDocPath, fireChat, messages, streaming],
+    );
+
+    useImperativeHandle(
+      ref,
+      () => ({
+        prefillAndSend: (text: string) => {
+          void sendDirect(text);
+        },
+      }),
+      [sendDirect],
+    );
+
+    const regenerate = useCallback(
+      (assistantId: string) => {
+        if (streaming) return;
+        const idx = messages.findIndex((m) => m.id === assistantId);
+        if (idx === -1) return;
+        const history = messages.slice(0, idx);
+        // Need a preceding user turn to regenerate from.
+        if (history.length === 0 || history[history.length - 1].role !== 'user')
+          return;
+        fireChat(history);
+      },
+      [fireChat, messages, streaming],
+    );
+
+    const deleteMessage = useCallback(
+      (id: string) => {
+        if (streaming) return;
+        setMessages((prev) => prev.filter((m) => m.id !== id));
+      },
+      [streaming],
+    );
+
+    const copyMessage = useCallback(
+      async (id: string): Promise<boolean> => {
+        const m = messages.find((x) => x.id === id);
+        if (!m) return false;
+        try {
+          await window.api.clipboard.writeText(m.content);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      [messages],
+    );
+
+    const onSubmit = useCallback(
+      (e: FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         void send();
-      }
-    },
-    [send],
-  );
+      },
+      [send],
+    );
 
-  const stop = useCallback(() => {
-    handleRef.current?.abort();
-    handleRef.current = null;
-    setStreaming(false);
-    assistantIdRef.current = null;
-  }, []);
+    const onKeyDown = useCallback(
+      (e: KeyboardEvent<HTMLTextAreaElement>) => {
+        if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+          e.preventDefault();
+          void send();
+        }
+      },
+      [send],
+    );
 
-  const providerLabel = useMemo(
-    () => PROVIDER_OPTIONS.find((p) => p.id === provider)?.label ?? provider,
-    [provider],
-  );
+    const stop = useCallback(() => {
+      handleRef.current?.abort();
+      handleRef.current = null;
+      setStreaming(false);
+      assistantIdRef.current = null;
+    }, []);
 
-  const placeholder = useMemo(() => {
-    if (hasKey === false) return `${providerLabel} API 키가 필요합니다`;
-    return 'Enter 전송 / Shift+Enter 줄바꿈';
-  }, [hasKey, providerLabel]);
+    const providerLabel = useMemo(
+      () => PROVIDER_OPTIONS.find((p) => p.id === provider)?.label ?? provider,
+      [provider],
+    );
 
-  const onModelChange = useCallback(
-    (next: string) => {
-      setModels((prev) => ({ ...prev, [provider]: next }));
-    },
-    [provider],
-  );
+    const placeholder = useMemo(() => {
+      if (hasKey === false) return `${providerLabel} API 키가 필요합니다`;
+      return 'Enter 전송 / Shift+Enter 줄바꿈';
+    }, [hasKey, providerLabel]);
 
-  return (
-    <div className="flex h-full flex-col">
-      <div
-        className="flex items-center gap-2 border-b border-border bg-card px-3 py-2"
-        data-testid="chat-provider-bar"
-      >
-        <select
-          value={provider}
-          onChange={(e) => onProviderChange(e.target.value as ChatProviderId)}
-          className="rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
-          data-testid="chat-provider-select"
-          aria-label="Provider"
-          disabled={streaming}
+    const onModelChange = useCallback(
+      (next: string) => {
+        setModels((prev) => ({ ...prev, [provider]: next }));
+      },
+      [provider],
+    );
+
+    return (
+      <div className="flex h-full flex-col">
+        <div
+          className="flex items-center gap-2 border-b border-border bg-card px-3 py-2"
+          data-testid="chat-provider-bar"
         >
-          {PROVIDER_OPTIONS.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.label}
-            </option>
-          ))}
-        </select>
-        <input
-          value={model}
-          onChange={(e) => onModelChange(e.target.value)}
-          className="flex-1 rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
-          data-testid="chat-model-input"
-          aria-label="Model"
-          disabled={streaming}
-          spellCheck={false}
-          list={`chat-model-list-${provider}`}
-        />
-        {/* chunk 48 — datalist autocomplete. Free-text input still wins
+          <select
+            value={provider}
+            onChange={(e) => onProviderChange(e.target.value as ChatProviderId)}
+            className="rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+            data-testid="chat-provider-select"
+            aria-label="Provider"
+            disabled={streaming}
+          >
+            {PROVIDER_OPTIONS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+          <input
+            value={model}
+            onChange={(e) => onModelChange(e.target.value)}
+            className="flex-1 rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+            data-testid="chat-model-input"
+            aria-label="Model"
+            disabled={streaming}
+            spellCheck={false}
+            list={`chat-model-list-${provider}`}
+          />
+          {/* chunk 48 — datalist autocomplete. Free-text input still wins
             (user can type any model id), but a list of fetched ids
             appears as suggestions on focus. Empty list (error / idle)
             silently degrades to plain free-text. */}
-        {(() => {
-          const state = modelList[provider];
-          const list =
-            state.kind === 'ok' || state.kind === 'stale' ? state.models : [];
-          return (
-            <datalist
-              id={`chat-model-list-${provider}`}
-              data-testid="chat-model-datalist"
-            >
-              {list.map((id) => (
-                <option key={id} value={id} />
-              ))}
-            </datalist>
-          );
-        })()}
-        {/* chunk 48 — refresh button + status badge. Click forces a
+          {(() => {
+            const state = modelList[provider];
+            const list =
+              state.kind === 'ok' || state.kind === 'stale' ? state.models : [];
+            return (
+              <datalist
+                id={`chat-model-list-${provider}`}
+                data-testid="chat-model-datalist"
+              >
+                {list.map((id) => (
+                  <option key={id} value={id} />
+                ))}
+              </datalist>
+            );
+          })()}
+          {/* chunk 48 — refresh button + status badge. Click forces a
             cache-bypassing refetch. The badge tells the user whether
             we're using a fresh list, a stale-cache fallback, or a
             "확인 불가" state where the dropdown is empty and they have
             to type the model id by hand. */}
-        <button
-          type="button"
-          onClick={() => void fetchModels(provider, true)}
-          disabled={streaming || modelList[provider].kind === 'loading'}
-          className="rounded-md border border-input bg-background px-1.5 py-1 text-[10px] hover:bg-muted disabled:opacity-50"
-          data-testid="chat-model-refresh"
-          title={
-            modelList[provider].kind === 'error'
-              ? `모델 목록 확인 불가: ${(modelList[provider] as { reason: string }).reason}`
-              : modelList[provider].kind === 'stale'
-                ? `오래된 캐시: ${(modelList[provider] as { reason: string }).reason}`
-                : '모델 목록 새로고침'
-          }
-          aria-label="모델 목록 새로고침"
-        >
-          {modelList[provider].kind === 'loading'
-            ? '⟳'
-            : modelList[provider].kind === 'error'
-              ? '⚠'
-              : modelList[provider].kind === 'stale'
+          <button
+            type="button"
+            onClick={() => void fetchModels(provider, true)}
+            disabled={streaming || modelList[provider].kind === 'loading'}
+            className="rounded-md border border-input bg-background px-1.5 py-1 text-[10px] hover:bg-muted disabled:opacity-50"
+            data-testid="chat-model-refresh"
+            title={
+              modelList[provider].kind === 'error'
+                ? `모델 목록 확인 불가: ${(modelList[provider] as { reason: string }).reason}`
+                : modelList[provider].kind === 'stale'
+                  ? `오래된 캐시: ${(modelList[provider] as { reason: string }).reason}`
+                  : '모델 목록 새로고침'
+            }
+            aria-label="모델 목록 새로고침"
+          >
+            {modelList[provider].kind === 'loading'
+              ? '⟳'
+              : modelList[provider].kind === 'error'
                 ? '⚠'
-                : '↻'}
-        </button>
-        <span
-          className={cn(
-            'text-[10px]',
-            hasKey === true
-              ? 'text-emerald-600 dark:text-emerald-400'
-              : hasKey === false
-                ? 'text-muted-foreground'
-                : 'text-muted-foreground/60',
-          )}
-          data-testid="chat-key-indicator"
-          aria-label={hasKey ? 'API 키 있음' : 'API 키 없음'}
-        >
-          {hasKey === true ? '키 ●' : hasKey === false ? '키 ○' : '…'}
-        </span>
-        <button
-          type="button"
-          onClick={() => {
-            const next = !historyOpen;
-            setHistoryOpen(next);
-            if (next) void refreshHistory();
-          }}
-          disabled={streaming}
-          className="rounded-md border border-input px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
-          data-testid="chat-history-toggle"
-          aria-label="대화 목록"
-          title="대화 목록"
-        >
-          📚
-        </button>
-        <button
-          type="button"
-          onClick={newConversation}
-          disabled={streaming}
-          className="rounded-md border border-input px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
-          data-testid="chat-history-new"
-          aria-label="새 대화"
-          title="새 대화"
-        >
-          +
-        </button>
-      </div>
-      {historyOpen ? (
+                : modelList[provider].kind === 'stale'
+                  ? '⚠'
+                  : '↻'}
+          </button>
+          <span
+            className={cn(
+              'text-[10px]',
+              hasKey === true
+                ? 'text-emerald-600 dark:text-emerald-400'
+                : hasKey === false
+                  ? 'text-muted-foreground'
+                  : 'text-muted-foreground/60',
+            )}
+            data-testid="chat-key-indicator"
+            aria-label={hasKey ? 'API 키 있음' : 'API 키 없음'}
+          >
+            {hasKey === true ? '키 ●' : hasKey === false ? '키 ○' : '…'}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              const next = !historyOpen;
+              setHistoryOpen(next);
+              if (next) void refreshHistory();
+            }}
+            disabled={streaming}
+            className="rounded-md border border-input px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
+            data-testid="chat-history-toggle"
+            aria-label="대화 목록"
+            title="대화 목록"
+          >
+            📚
+          </button>
+          <button
+            type="button"
+            onClick={newConversation}
+            disabled={streaming}
+            className="rounded-md border border-input px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
+            data-testid="chat-history-new"
+            aria-label="새 대화"
+            title="새 대화"
+          >
+            +
+          </button>
+        </div>
+        {historyOpen ? (
+          <div
+            className="border-b border-border bg-card px-3 py-2"
+            data-testid="chat-history-popover"
+          >
+            {historyList.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground">
+                저장된 대화가 없습니다.
+              </p>
+            ) : (
+              <ul className="max-h-48 space-y-1 overflow-auto">
+                {historyList.map((c) => {
+                  const isRenaming = renamingId === c.id;
+                  return (
+                    <li
+                      key={c.id}
+                      className={cn(
+                        'group flex items-center gap-1 rounded px-1 text-[11px] hover:bg-muted',
+                        c.id === conversationId && 'bg-muted',
+                      )}
+                      data-testid="chat-history-item"
+                      data-id={c.id}
+                      data-active={c.id === conversationId ? 'true' : 'false'}
+                      data-renaming={isRenaming ? 'true' : 'false'}
+                    >
+                      {isRenaming ? (
+                        <input
+                          type="text"
+                          value={renameDraft}
+                          onChange={(e) => setRenameDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              void commitRename(c.id);
+                            } else if (e.key === 'Escape') {
+                              e.preventDefault();
+                              cancelRename();
+                            }
+                          }}
+                          onBlur={() => void commitRename(c.id)}
+                          autoFocus
+                          className="flex-1 rounded border border-input bg-background px-1 py-0.5 text-[11px] outline-none focus:ring-1 focus:ring-ring"
+                          data-testid="chat-history-item-rename-input"
+                          aria-label="대화 제목 수정"
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => void loadConversation(c.id)}
+                          onDoubleClick={() => beginRename(c.id, c.title)}
+                          className="flex-1 truncate text-left"
+                          data-testid="chat-history-item-load"
+                          title="더블클릭하면 제목을 수정합니다"
+                        >
+                          {c.title || '(제목 없음)'}
+                        </button>
+                      )}
+                      {!isRenaming ? (
+                        <button
+                          type="button"
+                          onClick={() => beginRename(c.id, c.title)}
+                          aria-label="대화 제목 수정"
+                          data-testid="chat-history-item-rename"
+                          className="opacity-0 hover:text-foreground group-hover:opacity-100"
+                          title="제목 수정"
+                        >
+                          ✎
+                        </button>
+                      ) : null}
+                      {!isRenaming ? (
+                        <button
+                          type="button"
+                          onClick={() => void deleteHistoryItem(c.id)}
+                          aria-label="대화 삭제"
+                          data-testid="chat-history-item-delete"
+                          className="opacity-0 hover:text-destructive group-hover:opacity-100"
+                        >
+                          ×
+                        </button>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        ) : null}
         <div
-          className="border-b border-border bg-card px-3 py-2"
-          data-testid="chat-history-popover"
+          ref={scrollerRef}
+          className="flex-1 space-y-4 overflow-auto px-4 py-4"
+          data-testid="chat-scroller"
         >
-          {historyList.length === 0 ? (
-            <p className="text-[11px] text-muted-foreground">
-              저장된 대화가 없습니다.
-            </p>
+          {messages.length === 0 ? (
+            <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-xs text-muted-foreground">
+              {hasKey === false ? (
+                <>
+                  <p>{providerLabel} API 키를 먼저 설정하세요.</p>
+                  {onOpenSettings ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={onOpenSettings}
+                      data-testid="chat-open-settings"
+                    >
+                      설정 열기
+                    </Button>
+                  ) : null}
+                </>
+              ) : (
+                <p>현재 문서에 대해 질문하거나 도움을 요청하세요.</p>
+              )}
+            </div>
           ) : (
-            <ul className="max-h-48 space-y-1 overflow-auto">
-              {historyList.map((c) => {
-                const isRenaming = renamingId === c.id;
+            messages.map((m) => (
+              <Message
+                key={m.id}
+                message={m}
+                streaming={streaming}
+                onCopy={copyMessage}
+                onRegenerate={regenerate}
+                onDelete={deleteMessage}
+                onApplyHtml={applyHtml}
+                onRunTools={runTools}
+                onUndoApply={undoLastApply}
+              />
+            ))
+          )}
+          {error ? (
+            <div
+              role="alert"
+              className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+            >
+              {error}
+            </div>
+          ) : null}
+        </div>
+
+        <form
+          onSubmit={onSubmit}
+          onDragOver={onDragOverExcerpt}
+          onDrop={onDropExcerpt}
+          className="border-t border-border bg-card p-3"
+          data-testid="chat-input-form"
+        >
+          {getOpenDocs ? (
+            <MultiDocChips
+              getOpenDocs={getOpenDocs}
+              referencePaths={referencePaths}
+              onToggleReference={(path) =>
+                setReferencePaths((prev) =>
+                  prev.includes(path)
+                    ? prev.filter((p) => p !== path)
+                    : [...prev, path],
+                )
+              }
+              disabled={streaming}
+            />
+          ) : null}
+          {getDocHtml ? (
+            <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+              <label
+                className={cn(
+                  'flex cursor-pointer items-center gap-2',
+                  excerpts.length > 0 && 'opacity-50',
+                )}
+                data-testid="chat-attach-toggle"
+                title={
+                  excerpts.length > 0
+                    ? '발췌 첨부가 있을 때는 통째 첨부 대신 발췌가 사용됩니다.'
+                    : undefined
+                }
+              >
+                <input
+                  type="checkbox"
+                  checked={attachDoc}
+                  onChange={(e) => setAttachDoc(e.target.checked)}
+                  data-testid="chat-attach-checkbox"
+                  disabled={streaming || excerpts.length > 0}
+                />
+                <span>📎 현재 문서를 컨텍스트로 첨부</span>
+              </label>
+              {captureExcerpt ? (
+                <button
+                  type="button"
+                  onClick={onCaptureExcerpt}
+                  disabled={streaming}
+                  data-testid="chat-capture-excerpt"
+                  className="rounded-md border border-input px-2 py-0.5 hover:bg-muted disabled:opacity-50"
+                >
+                  📌 발췌 첨부
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {excerpts.length > 0 ? (
+            <ul
+              className="mb-2 flex flex-wrap gap-1.5"
+              data-testid="chat-excerpt-list"
+            >
+              {excerpts.map((ex) => {
+                const tooLong = ex.text.length > EXCERPT_SOFT_CHAR_LIMIT;
                 return (
                   <li
-                    key={c.id}
+                    key={ex.id}
+                    data-testid="chat-excerpt-chip"
+                    data-status={ex.status}
+                    data-role={ex.role}
                     className={cn(
-                      'group flex items-center gap-1 rounded px-1 text-[11px] hover:bg-muted',
-                      c.id === conversationId && 'bg-muted',
+                      'flex max-w-full items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px]',
+                      ex.status === 'fresh' &&
+                        'border-input bg-muted text-foreground',
+                      ex.status === 'stale-relocated' &&
+                        'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400',
+                      ex.status === 'stale-missing' &&
+                        'border-destructive/40 bg-destructive/10 text-destructive',
                     )}
-                    data-testid="chat-history-item"
-                    data-id={c.id}
-                    data-active={c.id === conversationId ? 'true' : 'false'}
-                    data-renaming={isRenaming ? 'true' : 'false'}
+                    title={ex.text}
                   >
-                    {isRenaming ? (
-                      <input
-                        type="text"
-                        value={renameDraft}
-                        onChange={(e) => setRenameDraft(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            void commitRename(c.id);
-                          } else if (e.key === 'Escape') {
-                            e.preventDefault();
-                            cancelRename();
-                          }
-                        }}
-                        onBlur={() => void commitRename(c.id)}
-                        autoFocus
-                        className="flex-1 rounded border border-input bg-background px-1 py-0.5 text-[11px] outline-none focus:ring-1 focus:ring-ring"
-                        data-testid="chat-history-item-rename-input"
-                        aria-label="대화 제목 수정"
-                      />
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => void loadConversation(c.id)}
-                        onDoubleClick={() => beginRename(c.id, c.title)}
-                        className="flex-1 truncate text-left"
-                        data-testid="chat-history-item-load"
-                        title="더블클릭하면 제목을 수정합니다"
+                    <span className="text-muted-foreground">
+                      {ex.docLabel}:¶{ex.anchor.startParagraphIndex}
+                      {ex.anchor.endParagraphIndex !==
+                      ex.anchor.startParagraphIndex
+                        ? `..${ex.anchor.endParagraphIndex}`
+                        : ''}
+                    </span>
+                    <span className="max-w-[14rem] truncate">
+                      {ex.text.replace(/\s+/g, ' ').trim()}
+                    </span>
+                    {tooLong ? (
+                      <span
+                        className="text-amber-600"
+                        title={`긴 발췌 (${ex.text.length}자) — 토큰 사용량 주의`}
                       >
-                        {c.title || '(제목 없음)'}
-                      </button>
-                    )}
-                    {!isRenaming ? (
-                      <button
-                        type="button"
-                        onClick={() => beginRename(c.id, c.title)}
-                        aria-label="대화 제목 수정"
-                        data-testid="chat-history-item-rename"
-                        className="opacity-0 hover:text-foreground group-hover:opacity-100"
-                        title="제목 수정"
-                      >
-                        ✎
-                      </button>
+                        ⚠️
+                      </span>
                     ) : null}
-                    {!isRenaming ? (
-                      <button
-                        type="button"
-                        onClick={() => void deleteHistoryItem(c.id)}
-                        aria-label="대화 삭제"
-                        data-testid="chat-history-item-delete"
-                        className="opacity-0 hover:text-destructive group-hover:opacity-100"
-                      >
-                        ×
-                      </button>
-                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => removeExcerpt(ex.id)}
+                      disabled={streaming}
+                      aria-label="발췌 제거"
+                      data-testid="chat-excerpt-remove"
+                      className="rounded-full px-1 text-muted-foreground hover:bg-foreground/10 hover:text-foreground disabled:opacity-50"
+                    >
+                      ×
+                    </button>
                   </li>
                 );
               })}
             </ul>
-          )}
-        </div>
-      ) : null}
-      <div
-        ref={scrollerRef}
-        className="flex-1 space-y-4 overflow-auto px-4 py-4"
-        data-testid="chat-scroller"
-      >
-        {messages.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-xs text-muted-foreground">
-            {hasKey === false ? (
-              <>
-                <p>{providerLabel} API 키를 먼저 설정하세요.</p>
-                {onOpenSettings ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={onOpenSettings}
-                    data-testid="chat-open-settings"
-                  >
-                    설정 열기
-                  </Button>
-                ) : null}
-              </>
-            ) : (
-              <p>현재 문서에 대해 질문하거나 도움을 요청하세요.</p>
-            )}
-          </div>
-        ) : (
-          messages.map((m) => (
-            <Message
-              key={m.id}
-              message={m}
-              streaming={streaming}
-              onCopy={copyMessage}
-              onRegenerate={regenerate}
-              onDelete={deleteMessage}
-              onApplyHtml={applyHtml}
-              onRunTools={runTools}
-              onUndoApply={undoLastApply}
-            />
-          ))
-        )}
-        {error ? (
-          <div
-            role="alert"
-            className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
-          >
-            {error}
-          </div>
-        ) : null}
-      </div>
-
-      <form
-        onSubmit={onSubmit}
-        onDragOver={onDragOverExcerpt}
-        onDrop={onDropExcerpt}
-        className="border-t border-border bg-card p-3"
-        data-testid="chat-input-form"
-      >
-        {getOpenDocs ? (
-          <MultiDocChips
-            getOpenDocs={getOpenDocs}
-            referencePaths={referencePaths}
-            onToggleReference={(path) =>
-              setReferencePaths((prev) =>
-                prev.includes(path)
-                  ? prev.filter((p) => p !== path)
-                  : [...prev, path],
-              )
-            }
-            disabled={streaming}
-          />
-        ) : null}
-        {getDocHtml ? (
-          <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
-            <label
+          ) : null}
+          {excerptError ? (
+            <div
+              role="alert"
+              data-testid="chat-excerpt-error"
+              className="mb-2 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-[11px] text-destructive"
+            >
+              {excerptError}
+            </div>
+          ) : null}
+          <div className="flex items-end gap-2">
+            <textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={onKeyDown}
+              placeholder={placeholder}
+              rows={2}
               className={cn(
-                'flex cursor-pointer items-center gap-2',
-                excerpts.length > 0 && 'opacity-50',
+                'flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm',
+                'placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring',
+                'disabled:opacity-50',
               )}
-              data-testid="chat-attach-toggle"
-              title={
-                excerpts.length > 0
-                  ? '발췌 첨부가 있을 때는 통째 첨부 대신 발췌가 사용됩니다.'
-                  : undefined
-              }
-            >
-              <input
-                type="checkbox"
-                checked={attachDoc}
-                onChange={(e) => setAttachDoc(e.target.checked)}
-                data-testid="chat-attach-checkbox"
-                disabled={streaming || excerpts.length > 0}
-              />
-              <span>📎 현재 문서를 컨텍스트로 첨부</span>
-            </label>
-            {captureExcerpt ? (
-              <button
+              disabled={hasKey === false}
+              data-testid="chat-input"
+            />
+            {streaming ? (
+              <Button
                 type="button"
-                onClick={onCaptureExcerpt}
-                disabled={streaming}
-                data-testid="chat-capture-excerpt"
-                className="rounded-md border border-input px-2 py-0.5 hover:bg-muted disabled:opacity-50"
+                variant="secondary"
+                size="icon"
+                onClick={stop}
+                aria-label="전송 중단"
+                data-testid="chat-stop"
               >
-                📌 발췌 첨부
-              </button>
-            ) : null}
-          </div>
-        ) : null}
-        {excerpts.length > 0 ? (
-          <ul
-            className="mb-2 flex flex-wrap gap-1.5"
-            data-testid="chat-excerpt-list"
-          >
-            {excerpts.map((ex) => {
-              const tooLong = ex.text.length > EXCERPT_SOFT_CHAR_LIMIT;
-              return (
-                <li
-                  key={ex.id}
-                  data-testid="chat-excerpt-chip"
-                  data-status={ex.status}
-                  data-role={ex.role}
-                  className={cn(
-                    'flex max-w-full items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px]',
-                    ex.status === 'fresh' &&
-                      'border-input bg-muted text-foreground',
-                    ex.status === 'stale-relocated' &&
-                      'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400',
-                    ex.status === 'stale-missing' &&
-                      'border-destructive/40 bg-destructive/10 text-destructive',
-                  )}
-                  title={ex.text}
-                >
-                  <span className="text-muted-foreground">
-                    {ex.docLabel}:¶{ex.anchor.startParagraphIndex}
-                    {ex.anchor.endParagraphIndex !==
-                    ex.anchor.startParagraphIndex
-                      ? `..${ex.anchor.endParagraphIndex}`
-                      : ''}
-                  </span>
-                  <span className="max-w-[14rem] truncate">
-                    {ex.text.replace(/\s+/g, ' ').trim()}
-                  </span>
-                  {tooLong ? (
-                    <span
-                      className="text-amber-600"
-                      title={`긴 발췌 (${ex.text.length}자) — 토큰 사용량 주의`}
-                    >
-                      ⚠️
-                    </span>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => removeExcerpt(ex.id)}
-                    disabled={streaming}
-                    aria-label="발췌 제거"
-                    data-testid="chat-excerpt-remove"
-                    className="rounded-full px-1 text-muted-foreground hover:bg-foreground/10 hover:text-foreground disabled:opacity-50"
-                  >
-                    ×
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        ) : null}
-        {excerptError ? (
-          <div
-            role="alert"
-            data-testid="chat-excerpt-error"
-            className="mb-2 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-[11px] text-destructive"
-          >
-            {excerptError}
-          </div>
-        ) : null}
-        <div className="flex items-end gap-2">
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={onKeyDown}
-            placeholder={placeholder}
-            rows={2}
-            className={cn(
-              'flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm',
-              'placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring',
-              'disabled:opacity-50',
+                <Square className="h-4 w-4" />
+              </Button>
+            ) : (
+              <Button
+                type="submit"
+                size="icon"
+                disabled={input.trim().length === 0 || hasKey === false}
+                aria-label="전송"
+                data-testid="chat-send"
+              >
+                <Send className="h-4 w-4" />
+              </Button>
             )}
-            disabled={hasKey === false}
-            data-testid="chat-input"
-          />
-          {streaming ? (
-            <Button
-              type="button"
-              variant="secondary"
-              size="icon"
-              onClick={stop}
-              aria-label="전송 중단"
-              data-testid="chat-stop"
-            >
-              <Square className="h-4 w-4" />
-            </Button>
-          ) : (
-            <Button
-              type="submit"
-              size="icon"
-              disabled={input.trim().length === 0 || hasKey === false}
-              aria-label="전송"
-              data-testid="chat-send"
-            >
-              <Send className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
-      </form>
-    </div>
-  );
-}
+          </div>
+        </form>
+      </div>
+    );
+  },
+);
 
 interface MessageProps {
   message: UiMessage;

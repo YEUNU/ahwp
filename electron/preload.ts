@@ -60,6 +60,7 @@ const api: AhwpApi = {
   folder: {
     pick: () => ipcRenderer.invoke('folder:pick'),
     list: (path) => ipcRenderer.invoke('folder:list', path),
+    searchText: (req) => ipcRenderer.invoke('folder:search-text', req),
     watch: (rootPath) => ipcRenderer.invoke('folder:watch', rootPath),
     unwatch: () => ipcRenderer.invoke('folder:unwatch'),
     onChange: (handler) => {

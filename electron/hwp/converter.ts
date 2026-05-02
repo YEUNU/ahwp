@@ -25,6 +25,16 @@ interface RhwpDocLike {
   getSourceFormat(): string;
   createBlankDocument(): string;
   free(): void;
+  // Exposed for the cross-folder text search (chunk 60).
+  getSectionCount(): number;
+  getParagraphCount(sectionIdx: number): number;
+  getParagraphLength(sectionIdx: number, paraIdx: number): number;
+  getTextRange(
+    sectionIdx: number,
+    paraIdx: number,
+    startOffset: number,
+    endOffset: number,
+  ): string;
 }
 
 interface RhwpDocCtor {
@@ -43,7 +53,7 @@ interface RhwpCoreModule {
 
 let modulePromise: Promise<RhwpCoreModule> | null = null;
 
-async function loadRhwpCore(): Promise<RhwpCoreModule> {
+export async function loadRhwpCore(): Promise<RhwpCoreModule> {
   if (modulePromise) return modulePromise;
   modulePromise = (async () => {
     const t0 = performance.now();

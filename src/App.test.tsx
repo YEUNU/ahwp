@@ -41,6 +41,12 @@ describe('App', () => {
       folder: {
         pick: vi.fn().mockResolvedValue(null),
         list: vi.fn().mockResolvedValue([]),
+        searchText: vi.fn().mockResolvedValue({
+          status: 'ok',
+          hits: [],
+          scanned: 0,
+          skipped: 0,
+        }),
         watch: vi.fn().mockResolvedValue(undefined),
         unwatch: vi.fn().mockResolvedValue(undefined),
         onChange: vi.fn().mockReturnValue(() => {}),

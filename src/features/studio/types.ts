@@ -256,6 +256,12 @@ export interface ViewerHandle {
    * body caret" — chunk 40. */
   pasteControlAtCurrentCaret: () => boolean;
   /**
+   * Scroll the viewer to a specific paragraph and place the caret at
+   * its start — chunk 60. Used by the cross-folder search to jump to
+   * a matched paragraph after the file becomes the active tab.
+   */
+  scrollToParagraph: (sectionIdx: number, paraIdx: number) => void;
+  /**
    * Capture the current viewer selection as a portable excerpt — chunk
    * 20. Returns null when no selection is active or the selection
    * spans multiple paragraphs (multi-paragraph excerpts are deferred:

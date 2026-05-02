@@ -6,6 +6,11 @@
 
 ## [Unreleased]
 
+### Added — 2차 UX 라운드 chunks 56~ (0.2.56~)
+
+- **chunk 56 — AI 우클릭 메뉴 (0.2.56)**: body selection 우클릭 → "다듬기 / 요약 / 영어 번역 / 격식체 / 평어" 메뉴. 클릭 시 `ChatPanel.prefillAndSend()`로 즉시 chat 턴 발사 (선택 텍스트를 prompt 템플릿에 inline). ChatPanel을 forwardRef + `ChatPanelHandle` 신설
+- **chunk 60 — 검색 in 폴더 (⌘⇧F, 0.2.60)**: 폴더 트리 영역을 `SearchPanel`로 토글 + `folder:search-text` IPC. main에서 root walk + `@rhwp/core`로 IR 텍스트 추출 + grep (depth 5 / 200 파일 / 5MB / 50 hits 상한). 결과 클릭 시 `openTab` + `viewer.scrollToParagraph` 점프
+
 ### Added — 1차 UX 라운드 chunks 50~55: 명령 팔레트 / 카운터 / 자동 저장 / 단축키 / 다크 종이 / 탭 고정 (0.2.55)
 
 "최고의 문서 수정 프로그램" 격차 분석 후 사용자 가치 큰 6개를 한 묶음으로:

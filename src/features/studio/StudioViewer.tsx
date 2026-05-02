@@ -64,6 +64,14 @@ interface StudioViewerProps {
    * for the right-clicked cell. AppShell receives the cell coordinates
    * via `getActiveCellContext` after the click resolved. */
   onOpenFormula?: () => void;
+  /**
+   * AI selection command — chunk 56. Right-click on a body selection
+   * opens the AI menu; menu items call this with a single composed
+   * prompt string ("다듬기" / "요약" / "번역" / etc.) that already has
+   * the selected text inlined. AppShell forwards to
+   * `ChatPanelHandle.prefillAndSend` so the request fires immediately.
+   */
+  onAiCommand?: (prompt: string) => void;
 }
 
 type Phase = 'mounting' | 'reading' | 'rendering' | 'ready';
@@ -427,6 +435,107 @@ function CellContextMenu({
   );
 }
 
+/**
+ * AI selection-command menu — chunk 56. Right-click on a body selection
+ * opens this. Each item carries a prompt template with `{{TEXT}}` as
+ * the slot for the selected text; the parent substitutes the selection
+ * in before firing `onAiCommand` → ChatPanel.prefillAndSend.
+ */
+const AI_COMMANDS: { id: string; label: string; template: string }[] = [
+  {
+    id: 'polish',
+    label: '✨ 다듬기 (자연스럽게)',
+    template:
+      '다음 문단을 의미는 그대로 두되 한국어로 자연스럽고 매끄럽게 다듬어 주세요. 결과는 원문과 같은 문단 구조의 ```html``` 블록으로 답해 주세요.\n\n원문:\n"""\n{{TEXT}}\n"""',
+  },
+  {
+    id: 'summarize',
+    label: '📝 요약',
+    template:
+      '다음 단락을 핵심만 1-2 문장으로 요약해 주세요. 답변은 짧은 한국어 본문으로만 — 코드 블록 없이.\n\n원문:\n"""\n{{TEXT}}\n"""',
+  },
+  {
+    id: 'translate-en',
+    label: '🌐 영어로 번역',
+    template:
+      '다음 한국어 문단을 자연스러운 영어로 번역해 주세요. 결과를 ```html``` 블록 한 개로 답해 주세요 (원본의 단락 구조 유지).\n\n원문:\n"""\n{{TEXT}}\n"""',
+  },
+  {
+    id: 'tone-formal',
+    label: '🎩 격식체로',
+    template:
+      '다음 문단을 보고서 / 공문에 어울리는 격식체로 다듬어 주세요. 결과는 ```html``` 블록 한 개로.\n\n원문:\n"""\n{{TEXT}}\n"""',
+  },
+  {
+    id: 'tone-plain',
+    label: '💬 평어로',
+    template:
+      '다음 문단을 친근한 평어 / 일상체로 바꿔 주세요. 결과는 ```html``` 블록 한 개로.\n\n원문:\n"""\n{{TEXT}}\n"""',
+  },
+];
+
+function AiCommandMenu({
+  x,
+  y,
+  onClose,
+  onPick,
+}: {
+  x: number;
+  y: number;
+  onClose: () => void;
+  onPick: (template: string) => void;
+}): React.ReactElement {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onDown = (e: MouseEvent): void => {
+      if (
+        ref.current &&
+        e.target instanceof Node &&
+        ref.current.contains(e.target)
+      )
+        return;
+      onClose();
+    };
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose();
+    };
+    const t = window.setTimeout(() => {
+      document.addEventListener('mousedown', onDown);
+    }, 0);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      window.clearTimeout(t);
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      ref={ref}
+      role="menu"
+      data-testid="studio-ai-context-menu"
+      className="fixed z-50 min-w-[12rem] rounded-md border border-border bg-popover py-1 shadow-md"
+      style={{ left: x, top: y }}
+    >
+      <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+        선택 영역에 AI 적용
+      </div>
+      {AI_COMMANDS.map((cmd) => (
+        <button
+          key={cmd.id}
+          type="button"
+          onClick={() => onPick(cmd.template)}
+          data-testid={`studio-ai-cmd-${cmd.id}`}
+          className="block w-full px-3 py-1.5 text-left text-xs hover:bg-muted"
+        >
+          {cmd.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function parsePageDimensions(svg: string): PageDims | null {
   const parser = new DOMParser();
   const doc = parser.parseFromString(svg, 'image/svg+xml');
@@ -469,6 +578,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       onOpenCellProps,
       onOpenCellStylePicker,
       onOpenFormula,
+      onAiCommand,
     },
     ref,
   ) {
@@ -674,6 +784,10 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       rowCount: number;
       colCount: number;
     } | null>(null);
+    /** AI command menu (chunk 56) — right-click on a body selection
+     *  opens this. Coordinates only; the menu reads the current
+     *  selection text via the imperative handle. */
+    const [aiMenu, setAiMenu] = useState<{ x: number; y: number } | null>(null);
     /** Toolbar second-row visibility — collapsed by default. */
     const [toolbarExpanded, setToolbarExpanded] = useState(false);
     /** Doc-level view toggles. Mirror what setShow* set. */
@@ -3441,6 +3555,25 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             return false;
           }
         },
+        scrollToParagraph: (sectionIdx: number, paraIdx: number) => {
+          const doc = docRef.current;
+          if (!doc) return;
+          try {
+            caretRef.current = {
+              sectionIndex: sectionIdx,
+              paragraphIndex: paraIdx,
+              charOffset: 0,
+            };
+            const rect = JSON.parse(
+              doc.getCursorRect(sectionIdx, paraIdx, 0),
+            ) as { pageIndex: number; x: number; y: number; height: number };
+            const pageEl = pageRefsRef.current[rect.pageIndex];
+            pageEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            setCursorRect(rect);
+          } catch (err) {
+            console.warn('[studio] scrollToParagraph failed:', err);
+          }
+        },
         // chunk 20 — excerpt capture + stale verification. Selection
         // must be non-empty AND single-paragraph; multi-paragraph
         // excerpts need a span anchor model that the IR's
@@ -4460,31 +4593,55 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     );
 
     /**
-     * Right-click on a page → if it lands inside a table cell, show the
-     * cell context menu. We hit-test the click coords; if cell info is
-     * present we open `cellMenu`. Outside-cell right-clicks fall through
-     * (no native menu).
+     * Right-click on a page →
+     *   1. If it lands inside a table cell, open the cell context menu.
+     *   2. Else if there's an active body selection, open the AI menu
+     *      (chunk 56) — the menu items wrap the selection in a prompt
+     *      template and call `onAiCommand` (AppShell wires it to
+     *      `ChatPanelHandle.prefillAndSend`).
+     *   3. Else fall through (no native menu).
      */
     const handlePageContextMenu = useCallback(
       (idx: number, e: ReactMouseEvent<HTMLDivElement>): void => {
         const result = hitTestAt(idx, e.clientX, e.clientY, e.currentTarget);
         if (!result) return;
-        if (
-          result.controlIndex === undefined ||
-          result.cellIndex === undefined ||
-          result.parentParaIndex === undefined
-        ) {
+        const inCell =
+          result.controlIndex !== undefined &&
+          result.cellIndex !== undefined &&
+          result.parentParaIndex !== undefined;
+        if (!inCell) {
+          // chunk 56 — body right-click with active selection opens the
+          // AI command menu. We forward only the menu position; the
+          // menu component reads the current selection text via
+          // captureExcerptText() lazily.
+          const sel = selectionRef.current;
+          const hasNonEmptySel =
+            sel !== null &&
+            !(
+              sel.anchor.paragraphIndex === sel.focus.paragraphIndex &&
+              sel.anchor.charOffset === sel.focus.charOffset
+            );
+          if (hasNonEmptySel) {
+            e.preventDefault();
+            setAiMenu({ x: e.clientX, y: e.clientY });
+          }
           return;
         }
         e.preventDefault();
         const doc = docRef.current;
         if (!doc) return;
+        // TS narrowing doesn't survive across the inCell check — pin the
+        // cell fields here so the rest of the block sees `number`.
+        const parentParaIndex = result.parentParaIndex!;
+        const controlIndex = result.controlIndex!;
+        const cellIndex = result.cellIndex!;
+        const cellParaIndex = result.cellParaIndex ?? 0;
         try {
           const dims = JSON.parse(
             doc.getTableDimensions(
               result.sectionIndex,
-              result.parentParaIndex,
-              result.controlIndex,
+              parentParaIndex,
+              controlIndex,
             ),
           ) as { rowCount: number; colCount: number; cellCount: number };
           // Move caret into the right-clicked cell so subsequent ops act
@@ -4494,10 +4651,10 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             paragraphIndex: 0,
             charOffset: 0,
             cell: {
-              parentParaIndex: result.parentParaIndex,
-              controlIndex: result.controlIndex,
-              cellIndex: result.cellIndex,
-              cellParaIndex: result.cellParaIndex ?? 0,
+              parentParaIndex,
+              controlIndex,
+              cellIndex,
+              cellParaIndex,
             },
           };
           setSelection(null);
@@ -4506,9 +4663,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             x: e.clientX,
             y: e.clientY,
             sectionIndex: result.sectionIndex,
-            parentParaIndex: result.parentParaIndex,
-            controlIndex: result.controlIndex,
-            cellIndex: result.cellIndex,
+            parentParaIndex,
+            controlIndex,
+            cellIndex,
             rowCount: dims.rowCount,
             colCount: dims.colCount,
           });
@@ -5127,6 +5284,27 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         // chunk 20 — excerpt capture + stale verify mirror the
         // ViewerHandle entries so e2e specs can drive the chip flow
         // without needing to script real selection drags.
+        scrollToParagraph: (sectionIdx: number, paraIdx: number) => {
+          const doc = docRef.current;
+          if (!doc) return;
+          try {
+            // Place caret at the paragraph's start and reuse the same
+            // scroll-to-rect path as Find.
+            caretRef.current = {
+              sectionIndex: sectionIdx,
+              paragraphIndex: paraIdx,
+              charOffset: 0,
+            };
+            const rect = JSON.parse(
+              doc.getCursorRect(sectionIdx, paraIdx, 0),
+            ) as { pageIndex: number; x: number; y: number; height: number };
+            const pageEl = pageRefsRef.current[rect.pageIndex];
+            pageEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            setCursorRect(rect);
+          } catch (err) {
+            console.warn('[studio] scrollToParagraph failed:', err);
+          }
+        },
         captureExcerpt: () => captureExcerpt(),
         exportSelectionHtmlAt: (
           sec: number,
@@ -6449,6 +6627,24 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             onOpenCellProps={onOpenCellProps}
             onOpenCellStylePicker={onOpenCellStylePicker}
             onOpenFormula={onOpenFormula}
+          />
+        )}
+
+        {aiMenu && onAiCommand && (
+          <AiCommandMenu
+            x={aiMenu.x}
+            y={aiMenu.y}
+            onClose={() => setAiMenu(null)}
+            onPick={(template) => {
+              const ex = captureExcerpt();
+              if (!ex) {
+                setAiMenu(null);
+                return;
+              }
+              const prompt = template.replace('{{TEXT}}', ex.text);
+              onAiCommand(prompt);
+              setAiMenu(null);
+            }}
           />
         )}
 

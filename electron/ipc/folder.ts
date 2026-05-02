@@ -8,7 +8,13 @@ import {
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import chokidar, { type FSWatcher } from 'chokidar';
-import type { FolderChangeEvent, FolderEntry } from '../../shared/api';
+import type {
+  FolderChangeEvent,
+  FolderEntry,
+  FolderSearchHit,
+  FolderSearchResult,
+} from '../../shared/api';
+import { loadRhwpCore } from '../hwp/converter';
 
 /**
  * Folder tree IPC.
@@ -86,6 +92,156 @@ export function registerFolderIpc(): void {
     async (_event, folderPath: string): Promise<FolderEntry[]> => {
       if (typeof folderPath !== 'string' || !folderPath) return [];
       return listChildren(folderPath);
+    },
+  );
+
+  // chunk 60 — cross-file text search. Bounded walk + IR parse per file.
+  // Knobs are conservative for the first iteration — a 50-file folder
+  // with mid-sized .hwp documents settles in ~1s on M-class hardware,
+  // a 200-file project trends toward ~3-4s. We can revisit with a
+  // streaming results channel if folks bump into the cap.
+  ipcMain.handle(
+    'folder:search-text',
+    async (
+      _event,
+      req: { rootPath?: unknown; query?: unknown },
+    ): Promise<FolderSearchResult> => {
+      const rootPath = typeof req?.rootPath === 'string' ? req.rootPath : '';
+      const query = typeof req?.query === 'string' ? req.query.trim() : '';
+      if (!rootPath)
+        return { status: 'no-root', hits: [], scanned: 0, skipped: 0 };
+      if (query.length === 0)
+        return { status: 'ok', hits: [], scanned: 0, skipped: 0 };
+
+      const MAX_DEPTH = 5;
+      const MAX_FILES = 200;
+      const MAX_FILE_BYTES = 5 * 1024 * 1024;
+      const MAX_HITS = 50;
+      const PER_FILE_SNIPPETS = 5;
+
+      const queue: { dir: string; depth: number }[] = [
+        { dir: rootPath, depth: 0 },
+      ];
+      const candidates: string[] = [];
+      while (queue.length > 0 && candidates.length < MAX_FILES) {
+        const cur = queue.shift()!;
+        let entries: import('node:fs').Dirent[];
+        try {
+          entries = await fs.readdir(cur.dir, { withFileTypes: true });
+        } catch {
+          continue;
+        }
+        for (const e of entries) {
+          if (e.name.startsWith('.')) continue;
+          const full = path.join(cur.dir, e.name);
+          if (e.isDirectory()) {
+            if (cur.depth + 1 < MAX_DEPTH) {
+              queue.push({ dir: full, depth: cur.depth + 1 });
+            }
+          } else if (
+            e.isFile() &&
+            (e.name.toLowerCase().endsWith('.hwp') ||
+              e.name.toLowerCase().endsWith('.hwpx'))
+          ) {
+            candidates.push(full);
+            if (candidates.length >= MAX_FILES) break;
+          }
+        }
+      }
+
+      const { HwpDocument } = await loadRhwpCore();
+      const hits: FolderSearchHit[] = [];
+      const q = query.toLowerCase();
+      let scanned = 0;
+      let skipped = 0;
+      for (const filePath of candidates) {
+        if (hits.length >= MAX_HITS) break;
+        let stat: import('node:fs').Stats;
+        try {
+          stat = await fs.stat(filePath);
+        } catch {
+          skipped += 1;
+          continue;
+        }
+        if (stat.size > MAX_FILE_BYTES) {
+          skipped += 1;
+          continue;
+        }
+        let bytes: Buffer;
+        try {
+          bytes = await fs.readFile(filePath);
+        } catch {
+          skipped += 1;
+          continue;
+        }
+        let doc: InstanceType<typeof HwpDocument>;
+        try {
+          doc = new HwpDocument(new Uint8Array(bytes));
+        } catch {
+          skipped += 1;
+          continue;
+        }
+        try {
+          const snippets: FolderSearchHit['snippets'] = [];
+          let total = 0;
+          const sectionCount = doc.getSectionCount();
+          outer: for (let s = 0; s < sectionCount; s++) {
+            const paraCount = doc.getParagraphCount(s);
+            for (let p = 0; p < paraCount; p++) {
+              const len = doc.getParagraphLength(s, p);
+              if (len === 0) continue;
+              let text: string;
+              try {
+                text = doc.getTextRange(s, p, 0, len);
+              } catch {
+                continue;
+              }
+              const idx = text.toLowerCase().indexOf(q);
+              if (idx >= 0) {
+                total += 1;
+                if (snippets.length < PER_FILE_SNIPPETS) {
+                  const start = Math.max(0, idx - 30);
+                  const end = Math.min(text.length, idx + query.length + 30);
+                  snippets.push({
+                    sectionIndex: s,
+                    paragraphIndex: p,
+                    preview: text.slice(start, end),
+                    matchOffset: idx - start,
+                    matchLength: query.length,
+                  });
+                }
+                if (
+                  snippets.length >= PER_FILE_SNIPPETS &&
+                  total > snippets.length * 4
+                ) {
+                  break outer;
+                }
+              }
+            }
+          }
+          scanned += 1;
+          if (snippets.length > 0) {
+            hits.push({
+              path: filePath,
+              filename: path.basename(filePath),
+              matchCount: total,
+              snippets,
+            });
+          }
+        } finally {
+          try {
+            doc.free();
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+
+      const status: FolderSearchResult['status'] =
+        hits.length >= MAX_HITS || candidates.length >= MAX_FILES
+          ? 'limit-reached'
+          : 'ok';
+      return { status, hits, scanned, skipped };
     },
   );
 

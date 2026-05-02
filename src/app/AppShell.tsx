@@ -10,7 +10,7 @@ import {
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import type { MenuAction, PingResponse } from '@shared/api';
 import { correctExtension } from '@shared/format';
-import { ChatPanel } from '@/features/chat/ChatPanel';
+import { ChatPanel, type ChatPanelHandle } from '@/features/chat/ChatPanel';
 import { runTools } from '@/features/chat/tools';
 import {
   CommandPalette,
@@ -19,6 +19,7 @@ import {
 import { buildActionItems } from '@/features/cmdk/items';
 import { ShortcutsDialog } from '@/features/cmdk/ShortcutsDialog';
 import { FolderTree } from '@/features/files/FolderTree';
+import { SearchPanel } from '@/features/files/SearchPanel';
 import { SettingsDialog } from '@/features/settings/SettingsDialog';
 import { BookmarkDialog } from '@/features/studio/BookmarkDialog';
 import { EquationDialog } from '@/features/studio/EquationDialog';
@@ -117,6 +118,14 @@ export default function AppShell() {
   // sub-component (welcome screen, future help button) can also
   // trigger it.
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // chunk 56 — ChatPanel imperative handle for cross-pane AI triggers
+  // (right-click → AI command). The viewer's selection menu calls
+  // `chatRef.current.prefillAndSend(prompt)` to fire a chat turn.
+  const chatRef = useRef<ChatPanelHandle | null>(null);
+  // chunk 60 — folder text search. ⌘⇧F toggles a search panel that
+  // replaces the folder tree view; clicking a snippet opens the file
+  // (existing tab if open) and scrolls to the matched paragraph.
+  const [searchMode, setSearchMode] = useState(false);
   // chunk 53 — shortcut cheatsheet (⌘/).
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   // viewerRef per tab (by key). The active tab's viewer is what menu /
@@ -656,6 +665,15 @@ export default function AppShell() {
           setShortcutsOpen((v) => !v);
           e.preventDefault();
         }
+      } else if (
+        (e.metaKey || e.ctrlKey) &&
+        e.shiftKey &&
+        !e.altKey &&
+        e.key.toLowerCase() === 'f'
+      ) {
+        // chunk 60 — ⌘⇧F opens cross-folder search.
+        setSearchMode(true);
+        e.preventDefault();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -1076,7 +1094,23 @@ export default function AppShell() {
                 </button>
               </div>
               <div className="flex-1 overflow-hidden">
-                {folderRoot ? (
+                {searchMode ? (
+                  <SearchPanel
+                    rootPath={folderRoot}
+                    onClose={() => setSearchMode(false)}
+                    onOpenAtParagraph={(p, paraIdx) => {
+                      // Open (or focus) the file, then scroll to the
+                      // paragraph after the viewer mounts. We defer the
+                      // scroll to a microtask so React commits the new
+                      // active tab before we reach for the handle.
+                      openTab(p);
+                      setTimeout(() => {
+                        const v = activeViewerRef();
+                        v?.scrollToParagraph(0, paraIdx);
+                      }, 50);
+                    }}
+                  />
+                ) : folderRoot ? (
                   <FolderTree
                     rootPath={folderRoot}
                     activePath={activeTab?.path ?? null}
@@ -1155,6 +1189,15 @@ export default function AppShell() {
                           onOpenCellStylePicker={() =>
                             setCellStylePickerOpen(true)
                           }
+                          onAiCommand={(prompt) => {
+                            // chunk 56 — viewer's selection menu fires a
+                            // composed AI prompt; we forward to the
+                            // ChatPanel imperative handle so the request
+                            // streams immediately. Skip if no handle yet
+                            // (panel not mounted) — that should never
+                            // happen at this point of the flow.
+                            chatRef.current?.prefillAndSend(prompt);
+                          }}
                           onOpenFormula={() => {
                             // Resolve the right-clicked cell coords into
                             // a row/col pair via the table dimensions
@@ -1215,6 +1258,7 @@ export default function AppShell() {
               </div>
               <div className="flex-1 overflow-hidden">
                 <ChatPanel
+                  ref={chatRef}
                   onOpenSettings={() => setSettingsOpen(true)}
                   getDocHtml={() =>
                     activeViewerRef()?.exportDocumentHtml() ?? ''

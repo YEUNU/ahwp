@@ -187,11 +187,55 @@ export interface ExternalFileChangeEvent {
   path: string;
 }
 
+/**
+ * Cross-file text search result — chunk 60. Each match carries the
+ * source file + a lightweight snippet so the result panel can render
+ * "filename: …<match>… preview" rows. The renderer uses (path,
+ * sectionIndex, paragraphIndex) to open the file and scroll to the hit.
+ */
+export interface FolderSearchHit {
+  path: string;
+  filename: string;
+  /** Total non-zero matches found in the file (capped per-file by main). */
+  matchCount: number;
+  /** Up to 5 preview snippets per file. */
+  snippets: {
+    sectionIndex: number;
+    paragraphIndex: number;
+    /** ~60 chars of context around the match. */
+    preview: string;
+    /** Match offset within `preview`. */
+    matchOffset: number;
+    matchLength: number;
+  }[];
+}
+
+export type FolderSearchStatus = 'ok' | 'limit-reached' | 'aborted' | 'no-root';
+
+export interface FolderSearchResult {
+  status: FolderSearchStatus;
+  hits: FolderSearchHit[];
+  scanned: number;
+  /** Files skipped (too large / parse error / extension filter). */
+  skipped: number;
+}
+
 export interface FolderApi {
   /** Native dialog → returns absolute path or null on cancel. */
   pick: () => Promise<string | null>;
   /** List immediate children of `path`, sorted: folders first, alphabetical. */
   list: (path: string) => Promise<FolderEntry[]>;
+  /**
+   * Cross-file text search — chunk 60. Walks `rootPath` recursively (max
+   * depth + file-count caps applied in main), parses each `.hwp` /
+   * `.hwpx`, and greps the body text. Case-insensitive substring match.
+   * Returns up to ~50 hits across all files; the renderer paginates if
+   * needed.
+   */
+  searchText: (req: {
+    rootPath: string;
+    query: string;
+  }) => Promise<FolderSearchResult>;
   /** Start chokidar watcher on a root. Replaces any existing watcher. */
   watch: (rootPath: string) => Promise<void>;
   /** Stop the active watcher. No-op if none. */
