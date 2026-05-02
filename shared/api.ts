@@ -233,6 +233,44 @@ export interface AiApi {
   ping: (providerId: ProviderId, opts?: AiPingOptions) => Promise<void>;
 }
 
+/** Chat history persistence — chunk 26. SQLite-backed conversations
+ * and messages keyed by document path. The renderer never sees DB
+ * internals; everything flows through these IPC channels. */
+export interface ChatHistoryConversation {
+  id: number;
+  docPath: string | null;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ChatHistoryMessage {
+  id: number;
+  conversationId: number;
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+  createdAt: number;
+}
+
+export interface ChatHistoryApi {
+  /** List conversations, optionally filtered by doc path. Most-recently
+   * updated first. Pass `null` to get every conversation. */
+  list: (docPath: string | null) => Promise<ChatHistoryConversation[]>;
+  /** Read all messages of a conversation in chronological order. */
+  get: (conversationId: number) => Promise<{ messages: ChatHistoryMessage[] }>;
+  /** Start a new conversation. Returns the new id so the caller can
+   * append messages to it immediately. */
+  create: (docPath: string | null, title: string) => Promise<{ id: number }>;
+  /** Append a message. Bumps the conversation's `updatedAt`. */
+  append: (
+    conversationId: number,
+    role: 'system' | 'user' | 'assistant',
+    content: string,
+  ) => Promise<{ id: number }>;
+  rename: (id: number, title: string) => Promise<{ ok: true }>;
+  delete: (id: number) => Promise<{ ok: true }>;
+}
+
 export interface AhwpApi {
   ping: (req: PingRequest) => Promise<PingResponse>;
   onMenuAction: (handler: (action: MenuAction) => void) => () => void;
@@ -242,6 +280,7 @@ export interface AhwpApi {
   folder: FolderApi;
   secrets: SecretsApi;
   ai: AiApi;
+  chatHistory: ChatHistoryApi;
 }
 
 declare global {

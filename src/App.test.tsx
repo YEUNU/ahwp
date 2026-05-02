@@ -54,6 +54,14 @@ describe('App', () => {
         chat: vi.fn().mockReturnValue({ abort: vi.fn() }),
         ping: vi.fn().mockResolvedValue(undefined),
       },
+      chatHistory: {
+        list: vi.fn().mockResolvedValue([]),
+        get: vi.fn().mockResolvedValue({ messages: [] }),
+        create: vi.fn().mockResolvedValue({ id: 1 }),
+        append: vi.fn().mockResolvedValue({ id: 1 }),
+        rename: vi.fn().mockResolvedValue({ ok: true }),
+        delete: vi.fn().mockResolvedValue({ ok: true }),
+      },
     };
     Object.defineProperty(window, 'api', {
       value: mockApi,

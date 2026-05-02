@@ -17,7 +17,9 @@ export default defineConfig({
               // through Rollup loses the WASM asset. Keep external so Node
               // resolves from node_modules at runtime (electron-builder copies
               // dependencies into the packed app).
-              external: ['@rhwp/core'],
+              // better-sqlite3 ships native bindings (.node) — must run
+              // from node_modules unbundled, same reasoning as @rhwp/core
+              external: ['@rhwp/core', 'better-sqlite3'],
               output: {
                 entryFileNames: 'main.js',
               },

@@ -107,6 +107,22 @@ const api: AhwpApi = {
     ping: (providerId, opts) =>
       ipcRenderer.invoke('ai:ping', { providerId, ...opts }),
   },
+  chatHistory: {
+    list: (docPath) => ipcRenderer.invoke('chat-history:list', { docPath }),
+    get: (conversationId) =>
+      ipcRenderer.invoke('chat-history:get', { conversationId }),
+    create: (docPath, title) =>
+      ipcRenderer.invoke('chat-history:create', { docPath, title }),
+    append: (conversationId, role, content) =>
+      ipcRenderer.invoke('chat-history:append', {
+        conversationId,
+        role,
+        content,
+      }),
+    rename: (id, title) =>
+      ipcRenderer.invoke('chat-history:rename', { id, title }),
+    delete: (id) => ipcRenderer.invoke('chat-history:delete', { id }),
+  },
 };
 
 contextBridge.exposeInMainWorld('api', api);

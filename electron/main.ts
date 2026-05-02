@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, Menu } from 'electron';
 import path from 'node:path';
 import type { PingRequest, PingResponse } from '../shared/api';
 import { registerAiIpc } from './ipc/ai';
+import { registerChatHistoryIpc } from './ipc/chat-history';
 import { registerClipboardIpc } from './ipc/clipboard';
 import { registerFileIpc } from './ipc/file';
 import { registerFolderIpc, shutdownFolderIpc } from './ipc/folder';
@@ -55,6 +56,7 @@ function registerIpcHandlers(): void {
   registerFolderIpc();
   registerSecretsIpc();
   registerAiIpc();
+  registerChatHistoryIpc();
 }
 
 void app.whenReady().then(() => {

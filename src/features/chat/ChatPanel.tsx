@@ -296,6 +296,26 @@ export function ChatPanel({
   const [excerpts, setExcerpts] = useState<ExcerptAttachment[]>([]);
   // Toast for send-side blocking events (e.g. all chips went stale).
   const [excerptError, setExcerptError] = useState<string | null>(null);
+  // chunk 26 — chat history persistence. Conversation id is null until
+  // the user sends the first message of a fresh chat; from then on
+  // every send/assistant turn is appended via IPC. Switching to a
+  // saved conversation loads its messages and sets this id.
+  const [conversationId, setConversationId] = useState<number | null>(null);
+  const conversationIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    conversationIdRef.current = conversationId;
+  }, [conversationId]);
+  // chunk 26 — history list for the popover. Loaded on demand when
+  // the user opens the dropdown; refreshed after rename/delete.
+  const [historyList, setHistoryList] = useState<
+    {
+      id: number;
+      docPath: string | null;
+      title: string;
+      updatedAt: number;
+    }[]
+  >([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
   // chunk 21 — paths the user opted in as references. Active tab is
   // implicit target (always included) and never appears in this set.
   // Stored as an array (not Set) so React equality is straightforward.
@@ -352,6 +372,13 @@ export function ChatPanel({
     };
   }, []);
 
+  /** Buffer the assistant's streamed text so we can persist it once
+   * — chunk 26. setMessages would also work but reading state from
+   * onEvent (a useCallback with [] deps) requires an extra ref hop;
+   * a local string ref is cleaner.
+   */
+  const assistantBufferRef = useRef('');
+
   const onEvent = useCallback((evt: ChatStreamEvent) => {
     if (evt.type === 'text-delta') {
       // Capture the id eagerly: the setMessages updater may run later in a
@@ -359,6 +386,7 @@ export function ChatPanel({
       // assistantIdRef. Reading it inside the updater drops late deltas.
       const id = assistantIdRef.current;
       if (!id) return;
+      assistantBufferRef.current += evt.text;
       setMessages((prev) =>
         prev.map((m) =>
           m.id === id ? { ...m, content: m.content + evt.text } : m,
@@ -369,6 +397,19 @@ export function ChatPanel({
     if (evt.type === 'error') {
       setError(evt.message);
     }
+    // chunk 26 — persist the assistant turn (best-effort). Errors here
+    // are logged but don't surface to the user; a chat history blip
+    // shouldn't block the conversation flow.
+    const convId = conversationIdRef.current;
+    const buf = assistantBufferRef.current;
+    if (convId !== null && buf.length > 0) {
+      void window.api.chatHistory
+        .append(convId, 'assistant', buf)
+        .catch((err: unknown) =>
+          console.warn('[chat] history.append assistant failed', err),
+        );
+    }
+    assistantBufferRef.current = '';
     setStreaming(false);
     handleRef.current = null;
     assistantIdRef.current = null;
@@ -561,11 +602,78 @@ export function ChatPanel({
     [],
   );
 
+  // chunk 26 — history list pull. Filtered by active doc when one is
+  // loaded so the dropdown is scoped to the doc you're editing.
+  const refreshHistory = useCallback(async () => {
+    try {
+      const docPath = activeDocPath?.() ?? null;
+      const rows = await window.api.chatHistory.list(docPath);
+      setHistoryList(
+        rows.map((r) => ({
+          id: r.id,
+          docPath: r.docPath,
+          title: r.title,
+          updatedAt: r.updatedAt,
+        })),
+      );
+    } catch (err) {
+      console.warn('[chat] history.list failed', err);
+    }
+  }, [activeDocPath]);
+
+  const newConversation = useCallback(() => {
+    if (streaming) return;
+    setMessages([]);
+    setConversationId(null);
+    conversationIdRef.current = null;
+    setError(null);
+    setExcerpts([]);
+    setExcerptError(null);
+    setHistoryOpen(false);
+  }, [streaming]);
+
+  const loadConversation = useCallback(async (id: number) => {
+    try {
+      const r = await window.api.chatHistory.get(id);
+      setMessages(
+        r.messages
+          .filter((m) => m.role === 'user' || m.role === 'assistant')
+          .map((m) => ({
+            id: `db-${m.id}`,
+            role: m.role,
+            content: m.content,
+          })),
+      );
+      setConversationId(id);
+      conversationIdRef.current = id;
+      setHistoryOpen(false);
+      setError(null);
+    } catch (err) {
+      console.warn('[chat] history.get failed', err);
+    }
+  }, []);
+
+  const deleteHistoryItem = useCallback(
+    async (id: number) => {
+      try {
+        await window.api.chatHistory.delete(id);
+        // If we deleted the currently-loaded conversation, reset to a fresh chat.
+        if (conversationIdRef.current === id) {
+          newConversation();
+        }
+        await refreshHistory();
+      } catch (err) {
+        console.warn('[chat] history.delete failed', err);
+      }
+    },
+    [newConversation, refreshHistory],
+  );
+
   const removeExcerpt = useCallback((id: string) => {
     setExcerpts((prev) => prev.filter((e) => e.id !== id));
   }, []);
 
-  const send = useCallback(() => {
+  const send = useCallback(async () => {
     const text = input.trim();
     if (text.length === 0 || streaming) return;
 
@@ -607,8 +715,40 @@ export function ChatPanel({
 
     const userMsg: UiMessage = { id: newId(), role: 'user', content: text };
     setInput('');
+
+    // chunk 26 — ensure the conversation exists BEFORE starting the
+    // stream so onEvent's terminator (which persists the assistant
+    // turn) sees a non-null conversationIdRef. We await the create +
+    // user-append so persistence is in lockstep with the visual turn.
+    try {
+      if (conversationIdRef.current === null) {
+        const docPath = activeDocPath?.() ?? null;
+        const title = text.slice(0, 60);
+        const r = await window.api.chatHistory.create(docPath, title);
+        conversationIdRef.current = r.id;
+        setConversationId(r.id);
+      }
+      await window.api.chatHistory.append(
+        conversationIdRef.current,
+        'user',
+        text,
+      );
+    } catch (err) {
+      console.warn('[chat] history.append user failed', err);
+      // Persistence failure shouldn't block the chat — proceed even if
+      // the DB write threw.
+    }
+
     fireChat([...messages, userMsg], verified);
-  }, [excerpts, fireChat, input, messages, streaming, verifyExcerpt]);
+  }, [
+    activeDocPath,
+    excerpts,
+    fireChat,
+    input,
+    messages,
+    streaming,
+    verifyExcerpt,
+  ]);
 
   const regenerate = useCallback(
     (assistantId: string) => {
@@ -649,7 +789,7 @@ export function ChatPanel({
   const onSubmit = useCallback(
     (e: FormEvent<HTMLFormElement>) => {
       e.preventDefault();
-      send();
+      void send();
     },
     [send],
   );
@@ -658,7 +798,7 @@ export function ChatPanel({
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
         e.preventDefault();
-        send();
+        void send();
       }
     },
     [send],
@@ -731,7 +871,78 @@ export function ChatPanel({
         >
           {hasKey === true ? '키 ●' : hasKey === false ? '키 ○' : '…'}
         </span>
+        <button
+          type="button"
+          onClick={() => {
+            const next = !historyOpen;
+            setHistoryOpen(next);
+            if (next) void refreshHistory();
+          }}
+          disabled={streaming}
+          className="rounded-md border border-input px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
+          data-testid="chat-history-toggle"
+          aria-label="대화 목록"
+          title="대화 목록"
+        >
+          📚
+        </button>
+        <button
+          type="button"
+          onClick={newConversation}
+          disabled={streaming}
+          className="rounded-md border border-input px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
+          data-testid="chat-history-new"
+          aria-label="새 대화"
+          title="새 대화"
+        >
+          +
+        </button>
       </div>
+      {historyOpen ? (
+        <div
+          className="border-b border-border bg-card px-3 py-2"
+          data-testid="chat-history-popover"
+        >
+          {historyList.length === 0 ? (
+            <p className="text-[11px] text-muted-foreground">
+              저장된 대화가 없습니다.
+            </p>
+          ) : (
+            <ul className="max-h-48 space-y-1 overflow-auto">
+              {historyList.map((c) => (
+                <li
+                  key={c.id}
+                  className={cn(
+                    'group flex items-center gap-1 rounded px-1 text-[11px] hover:bg-muted',
+                    c.id === conversationId && 'bg-muted',
+                  )}
+                  data-testid="chat-history-item"
+                  data-id={c.id}
+                  data-active={c.id === conversationId ? 'true' : 'false'}
+                >
+                  <button
+                    type="button"
+                    onClick={() => void loadConversation(c.id)}
+                    className="flex-1 truncate text-left"
+                    data-testid="chat-history-item-load"
+                  >
+                    {c.title || '(제목 없음)'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void deleteHistoryItem(c.id)}
+                    aria-label="대화 삭제"
+                    data-testid="chat-history-item-delete"
+                    className="opacity-0 hover:text-destructive group-hover:opacity-100"
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ) : null}
       <div
         ref={scrollerRef}
         className="flex-1 space-y-4 overflow-auto px-4 py-4"
