@@ -14,6 +14,13 @@
 - **chunk 58 — 목차 사이드바 (⌘⇧O, 0.2.61)**: `viewer.getOutline()` — 단락 styleId를 styleList에서 "제목 N" / "Heading N"로 매칭, level 추출. `OutlineSidebar` 컴포넌트가 viewer 옆에 토글 + 클릭 시 scrollToParagraph
 - **chunk 57 — AI inline diff (0.2.61)**: `viewer.snapshotParagraphs()` + `markChangedParagraphsSince(before)`. AppShell의 applyHtml/runTools가 before/after로 bracket. 변경된 단락 좌측에 amber 3px 막대 + animate-pulse + 15s 후 페이드
 
+### Fixed — wrapped paragraph 두 번째 줄 selection rect 누락 (0.2.71)
+
+- 한 단락이 줄바꿈으로 두 줄 이상이 될 때, drag selection이 그 단락을 가로지르면 **중간 줄(wrap된 두 번째 줄)이 selection으로 highlight되지 않는** 현상.
+- 진단: `getSelectionRects`가 반환한 rect들의 DOM 좌표 (`y`, `width`, `height`)를 dump해 보니 wrapped 두 번째 줄용 rect가 **첫 번째 줄과 같은 y**에 그려져서 시각적으로 겹쳐짐. 결과적으로 두 번째 줄 자리는 비어 보임.
+- 근본 원인: `@rhwp/core` 0.7.9의 `getSelectionRects`가 wrapped continuation 줄의 y 좌표를 첫 줄과 동일하게 반환하는 라이브러리 버그.
+- 수정: `refreshSelectionRects`에서 동일 페이지 내 같은 `y`를 가진 rect들을 검출해 두 번째부터 자기 height만큼 누적 shift. 라이브러리 fix 전 임시 workaround. 본문에서 인라인 control이 한 줄을 분할하는 케이스(드뭄)에선 false positive 가능 — 발생 시 재평가.
+
 ### Fixed — 드래그 시 페이지 전체 highlight + ESC 선택 해제 (0.2.70)
 
 - **진짜 근본 원인** — 드래그할 때 보이던 "페이지 전체가 파란색으로 highlight" 현상은 우리 IR-level selection이 아니라 **네이티브 브라우저 selection**이 SVG `<text>` 요소 위에서 동시에 발생한 것. 우리 `handlePageMouseDown` 핸들러는 IR overlay rect로 자체 selection을 그리는데, 페이지 paper div에 `select-none`이 없어서 브라우저의 기본 텍스트 선택이 같이 진행됨. 결과: 우리 IR selection은 작은데 native가 페이지 전체를 잡아 "거대한 highlight" 시각 효과

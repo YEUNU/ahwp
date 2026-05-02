@@ -1258,17 +1258,55 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             width: number;
             height: number;
           }[];
+          // @rhwp/core 0.7.9 bug — for a selection that crosses a
+          // wrapped paragraph boundary the per-line rects can come
+          // back with the SAME y for the first and the wrapped
+          // continuation line(s). Visual symptom: the wrapped line
+          // appears blank because its rect is rendered on top of the
+          // first line. Detect duplicate y per page and stagger them
+          // down by the rect's own height so each wrapped line lands
+          // at its true visual row. Real same-y segments (e.g. inline
+          // controls splitting one line) are uncommon enough in HWP
+          // body text that this heuristic is safe; we re-evaluate if
+          // the lib publishes a fix.
+          const fixedRects = (() => {
+            const byPage = new Map<
+              number,
+              { x: number; y: number; width: number; height: number }[]
+            >();
+            // Stable order ensures same-y duplicates appear in source
+            // order (first-encountered = first line, next = wrapped).
+            for (const rect of rects) {
+              const arr = byPage.get(rect.pageIndex) ?? [];
+              arr.push({
+                x: rect.x,
+                y: rect.y,
+                width: rect.width,
+                height: rect.height,
+              });
+              byPage.set(rect.pageIndex, arr);
+            }
+            for (const arr of byPage.values()) {
+              const seenY = new Map<number, number>(); // original y → cumulative shift
+              for (const rect of arr) {
+                const orig = rect.y;
+                const shift = seenY.get(orig);
+                if (shift !== undefined) {
+                  rect.y = orig + shift + rect.height;
+                  seenY.set(orig, shift + rect.height);
+                } else {
+                  seenY.set(orig, 0);
+                }
+              }
+            }
+            return byPage;
+          })();
           const grouped: Record<
             number,
             { x: number; y: number; width: number; height: number }[]
           > = {};
-          for (const rect of rects) {
-            (grouped[rect.pageIndex] ??= []).push({
-              x: rect.x,
-              y: rect.y,
-              width: rect.width,
-              height: rect.height,
-            });
+          for (const [pageIndex, arr] of fixedRects) {
+            grouped[pageIndex] = arr;
           }
           setSelectionRectsByPage(grouped);
         } catch (err) {
