@@ -5551,6 +5551,74 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         // skip the body-level double/triple-click handlers below since
         // word/paragraph selection inside a cell isn't wired yet.
         if (cell) {
+          // Phase D — Ctrl/Cmd+click on a cell adds it to the existing
+          // cell-block highlights (불연속 셀 추가). 같은 표 안의 기존
+          // block에 추가만 하고 anchor/focus는 안 건드림.
+          const isDiscontiguousAdd =
+            (e.ctrlKey || e.metaKey) &&
+            !e.altKey &&
+            !e.shiftKey &&
+            (() => {
+              const cur = selectionRef.current;
+              return Boolean(
+                cur &&
+                cur.anchor.cell &&
+                cur.focus.cell &&
+                cur.anchor.cell.parentParaIndex === cell.parentParaIndex &&
+                cur.anchor.cell.controlIndex === cell.controlIndex,
+              );
+            })();
+          if (isDiscontiguousAdd) {
+            const docNow = docRef.current;
+            if (docNow) {
+              try {
+                const cells = JSON.parse(
+                  docNow.getTableCellBboxes(
+                    baseCaret.sectionIndex,
+                    cell.parentParaIndex,
+                    cell.controlIndex,
+                  ),
+                ) as {
+                  cellIdx: number;
+                  pageIndex: number;
+                  x: number;
+                  y: number;
+                  w: number;
+                  h: number;
+                }[];
+                const target = cells.find((x) => x.cellIdx === cell.cellIndex);
+                if (target) {
+                  setCellBlockHighlights((prev) => {
+                    const arr = prev[target.pageIndex] ?? [];
+                    const exists = arr.some(
+                      (b) =>
+                        Math.abs(b.x - target.x) < 0.5 &&
+                        Math.abs(b.y - target.y) < 0.5,
+                    );
+                    if (exists) return prev;
+                    return {
+                      ...prev,
+                      [target.pageIndex]: [
+                        ...arr,
+                        {
+                          x: target.x,
+                          y: target.y,
+                          width: target.w,
+                          height: target.h,
+                        },
+                      ],
+                    };
+                  });
+                }
+              } catch (err) {
+                console.warn('[studio] discontiguous cell add failed:', err);
+              }
+            }
+            // Discontiguous selection은 visual-only. drag는 비활성.
+            cellDragRef.current = null;
+            draggingRef.current = false;
+            return;
+          }
           caretRef.current = baseCaret;
           if (result.cursorRect) {
             setCursorRect(result.cursorRect);

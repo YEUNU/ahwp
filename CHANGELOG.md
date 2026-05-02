@@ -14,6 +14,15 @@
 - **chunk 58 — 목차 사이드바 (⌘⇧O, 0.2.61)**: `viewer.getOutline()` — 단락 styleId를 styleList에서 "제목 N" / "Heading N"로 매칭, level 추출. `OutlineSidebar` 컴포넌트가 viewer 옆에 토글 + 클릭 시 scrollToParagraph
 - **chunk 57 — AI inline diff (0.2.61)**: `viewer.snapshotParagraphs()` + `markChangedParagraphsSince(before)`. AppShell의 applyHtml/runTools가 before/after로 bracket. 변경된 단락 좌측에 amber 3px 막대 + animate-pulse + 15s 후 페이드
 
+### Added — Phase D (1차): Ctrl+클릭 불연속 셀 추가 (0.2.83)
+
+- 셀-block이 활성인 상태에서 같은 표의 다른 셀을 **Ctrl/Cmd+클릭** → 그 셀이 highlight에 추가됨 (rectangular range 외 추가 셀). v1은 시각 표시만 — anchor/focus는 안 건드림.
+- 셀-block이 없거나 다른 표 셀이면 무시. 일반 클릭은 기존대로 selection을 새로 시작.
+- v1 한계 (후속):
+  - 불연속 셀에 대한 ops (M 합치기 / S 나누기 / 서식 적용) 미적용 — selection state 모델 확장 필요. visual feedback만 우선 제공.
+  - **개체 선택 모드** (도형 탭 마퀴 영역 선택) — 새 mode toggle + 마퀴 마우스 핸들러 + bbox intersection 검사 필요. 큰 작업이라 후속.
+- **Phase E (중첩 표)** — `cellPath` 기반 selection 모델 확장 + 모든 cell-aware 함수의 `*ByPath` 변종 사용 필요 (`getTableCellBboxesByPath`, `getCursorRectByPath`, `mergeParagraphInCellByPath` 등 lib 지원 확인됨). 구조적으로 selection 타입과 ~10개 핸들러 동시 변경 → 별도 phase로 분리. v1은 1단계 셀만 지원.
+
 ### Added — Phase B-4: 표 편집 단축키 (0.2.82)
 
 한글 reflex 표 편집 단축키 6종:
