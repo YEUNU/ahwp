@@ -14,10 +14,15 @@
 - **chunk 58 — 목차 사이드바 (⌘⇧O, 0.2.61)**: `viewer.getOutline()` — 단락 styleId를 styleList에서 "제목 N" / "Heading N"로 매칭, level 추출. `OutlineSidebar` 컴포넌트가 viewer 옆에 토글 + 클릭 시 scrollToParagraph
 - **chunk 57 — AI inline diff (0.2.61)**: `viewer.snapshotParagraphs()` + `markChangedParagraphsSince(before)`. AppShell의 applyHtml/runTools가 before/after로 bracket. 변경된 단락 좌측에 amber 3px 막대 + animate-pulse + 15s 후 페이드
 
+### Fixed — 드래그 빈칸 가드 진짜 작동시킴 (0.2.68)
+
+- 0.2.67의 whitespace-jump 가드가 실제로는 **빈칸에서 그대로 점프**했음. 근본 원인: `hitTest`의 공식 반환은 `{sectionIndex, paragraphIndex, charOffset}`만 보장하고 `cursorRect`는 선택적 — 빈칸을 클릭하면 IR이 가장 가까운 텍스트 위치로 `paragraphIndex`/`charOffset`만 스냅하고 `cursorRect`는 빠진 채 반환할 때가 있음. 가드의 `if (moveResult.cursorRect)` 조건이 false가 되어 통째로 스킵돼서 focus가 IR 스냅 결과(섹션 끝 등)로 그대로 점프
+- `cursorRect`가 없으면 `getCursorRect(s, p, c)`로 직접 조회해 항상 가드가 작동하게 변경. 추가로 결과 rect가 입력 페이지가 아닌 **다른 페이지**에 있을 수 있어서 (`resultRect.pageIndex`), `pageRefsRef.current[resultRect.pageIndex]`로 올바른 페이지 element의 `pageRect.top`을 사용해 client-Y 변환
+
 ### Added — 앱 아이콘 적용 + 드래그 빈칸 가드 (0.2.67)
 
 - **앱 아이콘** — `build/icon.png` (1024px)을 electron-builder 패키징 default로 등록 (mac .icns / win .ico / linux .png 자동 변환). `public/icon.svg` + `favicon-{16,32}.png`를 `index.html`에 link → renderer favicon. TitleBar의 "한" 그라디언트 div를 `<img src="/icon.svg">`로 교체. style_example/icons에서 가져옴
-- **드래그 빈칸 가드** — `applyPointerToSelection`에 whitespace-jump 검사 추가. IR의 `hitTest`가 단락 사이/페이지 여백 같은 빈 영역에서 멀리 떨어진 단락 끝(혹은 섹션 끝)으로 snap해 selection이 "그 아래 전체"로 점프하던 문제. hit 결과 `cursorRect.y`가 실제 cursor y에서 80px 이상 떨어지면 update를 거절하고 last-known focus 유지. PDF/Word 동작과 일치
+- **드래그 빈칸 가드 (1차 시도)** — `applyPointerToSelection`에 whitespace-jump 검사 추가. IR의 `hitTest`가 단락 사이/페이지 여백 같은 빈 영역에서 멀리 떨어진 단락 끝(혹은 섹션 끝)으로 snap해 selection이 "그 아래 전체"로 점프하던 문제. hit 결과 `cursorRect.y`가 실제 cursor y에서 80px 이상 떨어지면 update를 거절하고 last-known focus 유지. **다만 이 시점에는 `cursorRect` 누락 케이스를 못 막음 → 0.2.68에서 보강**
 
 ### Fixed — UX 다듬기 4건 (0.2.66)
 

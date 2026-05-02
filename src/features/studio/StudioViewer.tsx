@@ -4838,19 +4838,42 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           if (pageIdx < 0 || !pageEl) return;
           const moveResult = hitTestAt(pageIdx, hitX, hitY, pageEl);
           if (!moveResult) return;
-          // Whitespace-jump guard — when the cursor lands in a vertical
-          // whitespace area (margin / inter-paragraph gap), the IR's
-          // hitTest sometimes snaps to a far-away paragraph end (e.g.
-          // bottom of section), which produces "select everything below
-          // current cursor" instead of staying at the last visible
-          // text. Reject any hit whose returned cursor-rect lives more
-          // than ~80px from the actual cursor — keeping the last good
-          // focus feels more natural and matches PDF/Word.
-          if (moveResult.cursorRect) {
-            const pageRect = pageEl.getBoundingClientRect();
-            const hitClientY = pageRect.top + moveResult.cursorRect.y * zoom;
-            if (Math.abs(hitClientY - cy) > 80) {
-              return;
+          // Whitespace-jump guard — when the cursor lands in vertical
+          // whitespace (margin / inter-paragraph gap), the IR snaps the
+          // returned (paraIdx, charOffset) to the nearest text position
+          // but often omits cursorRect (no text-box at click Y). Without
+          // cursorRect the previous guard was bypassed and focus jumped
+          // to wherever IR snapped — typically the section/page tail —
+          // selecting "everything below". Derive the rect via
+          // getCursorRect when missing, then reject any hit whose rect
+          // lives more than 80px from the actual mouse Y. Use the rect's
+          // own pageIndex (not the input pageEl) since the snap target
+          // can land on a neighbouring page.
+          let resultRect = moveResult.cursorRect;
+          if (!resultRect) {
+            const doc = docRef.current;
+            if (doc) {
+              try {
+                resultRect = JSON.parse(
+                  doc.getCursorRect(
+                    moveResult.sectionIndex,
+                    moveResult.paragraphIndex,
+                    moveResult.charOffset,
+                  ),
+                ) as typeof resultRect;
+              } catch {
+                /* keep undefined — fall through without guarding */
+              }
+            }
+          }
+          if (resultRect) {
+            const rectPageEl = pageRefsRef.current[resultRect.pageIndex];
+            if (rectPageEl) {
+              const r = rectPageEl.getBoundingClientRect();
+              const hitClientY = r.top + resultRect.y * zoom;
+              if (Math.abs(hitClientY - cy) > 80) {
+                return;
+              }
             }
           }
           const focus = {
@@ -4859,7 +4882,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             charOffset: moveResult.charOffset,
           };
           caretRef.current = focus;
-          if (moveResult.cursorRect) setCursorRect(moveResult.cursorRect);
+          if (resultRect) setCursorRect(resultRect);
           setSelection((prev) => {
             if (!prev) return null;
             const next = { ...prev, focus };
