@@ -255,23 +255,34 @@ no-op. ahwp의 F-key는 현재 미사용이라 충돌 없음 (F8은 한글에서
 (현재 본문 ↔ 표 셀 1단계만 지원. 셀 안에 다시 표가 있는 케이스는
 v2 이후)
 
-## 6. 결정 필요 사항
+## 6. 결정 사항 (2026-05-02 confirmed)
 
-각 phase 진입 전 사용자 확인:
+| #   | 결정                                                | 비고                                                                                                  |
+| --- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| 1   | Phase 순서: **A → B-2 → B-3 → B-1**                 | A의 cell-block 모델 위에 B-2가 올라가는 의존 관계. B-1은 호환 편의용으로 마지막.                      |
+| 2   | Mac 단축키: **옵션 ③ (F-key + ⌘⌥ 변환 둘 다)**      | electron menu에 두 accelerator 동시 등록. 한글 reflex 사용자(F5)와 Mac native 사용자(⌘⌥B) 모두 cover. |
+| 3   | F3 본문 block 단축키 (B-1): **구현**                | ⌘A / 더블·트리플 클릭과 중복이지만 한글 reflex 호환.                                                  |
+| 4   | Phase C 이미지·도형 bbox: **KNOWN_ISSUES에 박제만** | 우리 repo issue 없이 `docs/KNOWN_ISSUES.md`에 기록, `@rhwp/core`가 publish하면 unblock.               |
 
-1. **Phase A vs B 우선순위** — Phase A(multi-cell drag)와 Phase
-   B-2(F5 단축키)는 같은 cell-block 모델 위에 동작. A 먼저 → B-2
-   는 그 위에 수확 (권장) / 또는 B-2 단독으로 시작 가능.
-2. **F3 본문 block 단축키 (B-1)** — ⌘A / 더블·트리플 클릭이 이미
-   있으니 호환 편의용. 구현 / skip.
-3. **Phase B 확장 모드 indicator** — F5×2 (셀 block 확장 모드)
-   에서 status bar에 "셀 블록 모드" 라벨 띄울지 / 단축키 cheatsheet
-   만 보여줄지.
-4. **Phase C blocker** — `@rhwp/core` 라이브러리에 이미지/도형
-   bbox 통합 API 요청을 issue로 올릴지.
-5. **단축키 Mac 매핑** — 한글 표 단축키는 다 PC 기준 (F-keys,
-   Alt+...). Mac에선 `Fn+F5` 같은 변환 필요. Mac 사용자에게
-   `⌥` 변환 vs `F-key` 그대로 둘지.
+확장 모드 indicator (#5 미정) — Phase B-2 진입 시 결정. Status bar
+에 "셀 블록 모드" 라벨이 가장 깔끔할 듯, 일단 그 방향으로.
+
+### Mac 매핑 표 (Phase B 적용 시)
+
+| 한글 동작          | PC              | Mac (⌘⌥)               |
+| ------------------ | --------------- | ---------------------- |
+| 셀 block           | F5              | ⌘⌥B (Block)            |
+| 셀 block 확장 모드 | Shift+F5 / F5×2 | ⌘⌥⇧B                   |
+| 표 전체 block      | F5×3            | ⌘⌥A                    |
+| 칸(열) 전체 block  | F7              | ⌘⌥C (Column)           |
+| 줄(행) 전체 block  | F8              | ⌘⌥R (Row)              |
+| 표 빠져나가기      | Shift+Esc       | ⌘⌥Esc                  |
+| 본문 단어 block    | F3×2            | (더블 클릭으로 대체)   |
+| 본문 단락 block    | F3×3            | (트리플 클릭으로 대체) |
+| 본문 모두 선택     | F3×4            | ⌘A (기존)              |
+
+위 매핑은 작업하면서 microsoft Word for Mac / Pages 컨벤션과
+충돌 없는지 final check 후 확정.
 
 ## 7. 회귀 방지 (E2E)
 
