@@ -78,22 +78,31 @@ ESC로 언제든 (드래그 중이든 드래그 후든) 해제. 본문 드래그
 | 셀 안 드래그 (셀 경계 넘음)      | 셀 단위 multi-cell block                                             | 동일  | **셀 단위 multi-cell block**                 | **Hancom 모델 채택** — 셀 경계 넘으면 셀 단위 block 모드로 전환                                                     |
 | ESC                              | 항상 selection 해제                                                  | 동일  | 항상 해제                                    | 0.2.70에서 추가 ✅                                                                                                  |
 
-## 3. 현재 ahwp 구현 상태 (0.2.74 시점)
+## 3. 현재 ahwp 구현 상태 (0.2.83 시점)
 
-| 항목                                                         | 상태         | commit     |
-| ------------------------------------------------------------ | ------------ | ---------- |
-| 본문 텍스트 드래그                                           | ✅           | (chunk 5b) |
-| ESC 해제 (드래그 중 + 드래그 후)                             | ✅           | 0.2.70     |
-| 본문 드래그 → 페이지 전체 highlight 버그 (native selection)  | ✅ fix       | 0.2.70     |
-| Wrapped paragraph 두 번째 줄 rect 누락 (lib 버그 workaround) | ✅ fix       | 0.2.71     |
-| 본문 드래그가 control 통과 시 control 부모 단락 포함         | ✅           | 0.2.72     |
-| 셀 안 글자 드래그 (같은 셀 + 같은 cellParaIndex)             | ✅ v1        | 0.2.73     |
-| 표 bbox 시각 highlight (control 영역도 selection 색상)       | ✅ v1 (표만) | 0.2.74     |
-| 셀 경계 넘는 드래그 → 셀 단위 multi-cell block               | ❌           | —          |
-| F5 셀 블록 단축키                                            | ❌           | —          |
-| 이미지/도형 bbox highlight                                   | ❌           | —          |
-| Ctrl+클릭 불연속 셀 추가                                     | ❌           | —          |
-| 개체 선택 모드 (도형 탭)                                     | ❌           | —          |
+| 항목                                                          | 상태                      | commit     |
+| ------------------------------------------------------------- | ------------------------- | ---------- |
+| 본문 텍스트 드래그                                            | ✅                        | (chunk 5b) |
+| ESC 해제 (드래그 중 + 드래그 후)                              | ✅                        | 0.2.70     |
+| 본문 드래그 → 페이지 전체 highlight 버그 (native selection)   | ✅ fix                    | 0.2.70     |
+| Wrapped paragraph 두 번째 줄 rect 누락 (lib 버그 workaround)  | ✅ fix                    | 0.2.71     |
+| 본문 드래그가 control 통과 시 control 부모 단락 포함          | ✅                        | 0.2.72     |
+| 셀 안 글자 드래그 (같은 셀 + 같은 cellParaIndex)              | ✅ v1                     | 0.2.73     |
+| 표 bbox 시각 highlight (control 영역도 selection 색상)        | ✅ v1 (표만)              | 0.2.74     |
+| 셀 경계 넘는 드래그 → 셀 단위 multi-cell block                | ✅                        | 0.2.75     |
+| F5/F7/F8 셀·열·행 block 단축키 + Mac variants                 | ✅                        | 0.2.76     |
+| Tab/Shift+Tab/Alt+arrows/Shift+ESC 셀 nav                     | ✅                        | 0.2.77     |
+| F3 본문 block 단축키 (×2 word / ×3 단락 / ×4 전체)            | ✅                        | 0.2.78     |
+| F5 확장 모드 (arrow로 block 확장)                             | ✅                        | 0.2.79     |
+| Phase A+B e2e 22 케이스                                       | ✅                        | 0.2.80     |
+| F6 스타일 / Alt+P PDF / 셀 블록 모드 indicator                | ✅                        | 0.2.81     |
+| 표 편집 단축키 (Ctrl+Enter/Backspace, Alt+Insert/Delete, M/S) | ✅                        | 0.2.82     |
+| Ctrl+클릭 불연속 셀 추가 (visual)                             | ✅ v1                     | 0.2.83     |
+| 이미지/도형 bbox highlight                                    | ❌ blocked                | L-008      |
+| 불연속 셀 ops (M/S/format)                                    | ❌                        | —          |
+| 개체 선택 모드 (도형 탭 마퀴)                                 | ❌                        | —          |
+| 중첩 표 (cellPath 기반)                                       | ❌                        | —          |
+| Alt+L 글자 모양 / Alt+T 문단 모양 다이얼로그                  | ❌ (다이얼로그 신설 필요) | —          |
 
 ## 4. 갭 분석 — 한글 reference 기준
 
