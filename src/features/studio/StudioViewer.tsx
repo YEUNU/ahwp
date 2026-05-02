@@ -3015,6 +3015,61 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             return false;
           }
         },
+        getPictureProps: (sec, parentPara, ctrl) => {
+          const doc = docRef.current;
+          if (!doc) return null;
+          try {
+            return JSON.parse(
+              doc.getPictureProperties(sec, parentPara, ctrl),
+            ) as Record<string, unknown>;
+          } catch (err) {
+            console.warn('[studio] getPictureProperties failed:', err);
+            return null;
+          }
+        },
+        setPictureProps: (sec, parentPara, ctrl, props) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            const r = JSON.parse(
+              doc.setPictureProperties(
+                sec,
+                parentPara,
+                ctrl,
+                JSON.stringify(props),
+              ),
+            ) as { ok?: boolean };
+            if (r.ok) {
+              dirtyRef.current = true;
+              setDirty(true);
+              refreshAfterMutation({ syncCaret: false });
+              return true;
+            }
+            return false;
+          } catch (err) {
+            console.warn('[studio] setPictureProperties failed:', err);
+            return false;
+          }
+        },
+        deletePictureControl: (sec, parentPara, ctrl) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            const r = JSON.parse(
+              doc.deletePictureControl(sec, parentPara, ctrl),
+            ) as { ok?: boolean };
+            if (r.ok) {
+              dirtyRef.current = true;
+              setDirty(true);
+              refreshAfterMutation({ syncCaret: false });
+              return true;
+            }
+            return false;
+          } catch (err) {
+            console.warn('[studio] deletePictureControl failed:', err);
+            return false;
+          }
+        },
         // chunk 20 — excerpt capture + stale verification. Selection
         // must be non-empty AND single-paragraph; multi-paragraph
         // excerpts need a span anchor model that the IR's

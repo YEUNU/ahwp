@@ -135,6 +135,27 @@ export interface ViewerHandle {
     cellParaIdx: number,
     styleId: number,
   ) => boolean;
+  /** Read picture-control properties — chunk 24. Shape: `{ width,
+   * height, treatAsChar, ... }` (HWPUNIT). `null` when bounds invalid. */
+  getPictureProps: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+  ) => Record<string, unknown> | null;
+  /** Update picture-control properties — chunk 24. Pass any subset
+   * (`width`, `height`, `treatAsChar`, etc.). Returns ok flag. */
+  setPictureProps: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+    props: Record<string, unknown>,
+  ) => boolean;
+  /** Remove a picture control — chunk 24. */
+  deletePictureControl: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+  ) => boolean;
   /**
    * Capture the current viewer selection as a portable excerpt — chunk
    * 20. Returns null when no selection is active or the selection
