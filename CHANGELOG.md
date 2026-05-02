@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+### Changed — UI/UX 1차 리뉴얼 (style_example 기반)
+
+- **워밍 페이퍼 / 잉크 팔레트** — `--background`(off-white #f6f4ef) / `--card`(#fbfaf6) / `--popover`(#ffffff 종이) / `--primary`(deep teal-ink #2b6a6b) / `--muted`(#efece5 chrome) / 다크 모드는 #17171a 베이스 + bright teal #5fb4b3 액센트. 기존 shadcn 토큰 이름은 유지하면서 HSL 값만 교체 — 컴포넌트 레이어 영향 없음
+- **커스텀 36px 타이틀바** — macOS는 `hiddenInset`로 신호등 영역만 남기고 OS 타이틀 숨김. Win/Linux는 OS chrome 완전 제거 후 렌더러 측에서 paint. "한" 그라디언트 로고 + ahwp 워드마크 + 활성 파일 basename + dirty dot + 다크 토글 + 설정 버튼. 드래그 영역(`-webkit-app-region: drag`)
+- **웰컴 화면 리뉴얼** — 빈 상태에서 "안녕하세요." 인사 + ⌘N "빈 문서로 시작" 카드 + ⌘O "파일 열기" 카드(드래그앤드롭) + 최근 파일 3-col 그리드(종이 미리보기 + HWP 배지 + 상대 시간). 기존 testid (`welcome-new-doc` / `welcome-open`) 유지 — e2e 호환
+- **타이포그래피** — 기본 13px / -0.005em letter-spacing. Pretendard 우선, Apple SD Gothic Neo / Malgun Gothic / Noto Sans KR 폴백
+- 기존 12px 상단 헤더(편집기 위 ahwp + ThemeToggle) 제거 — 타이틀바가 그 역할 흡수
+
 ### Added — Phase 1 잔여 마무리 (탭 DnD + 컨텍스트 메뉴 / temp 정리)
 
 - **탭 드래그 재배치** — 탭 strip에서 탭을 잡아 다른 위치로 드래그. HTML5 native drag (`text/x-ahwp-tab` MIME)

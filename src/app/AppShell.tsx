@@ -24,7 +24,8 @@ import { StudioViewer } from '@/features/studio/StudioViewer';
 import { StyleManagerDialog } from '@/features/studio/StyleManagerDialog';
 import { TabBar, type TabDescriptor } from '@/features/studio/TabBar';
 import type { ViewerHandle } from '@/features/studio/types';
-import { ThemeToggle } from './theme-toggle';
+import { TitleBar } from './TitleBar';
+import { WelcomePane } from './WelcomePane';
 
 /**
  * Multi-tab editor shell.
@@ -513,210 +514,192 @@ export default function AppShell() {
           activeViewerRef()?.createRectShapeAtCaret(width, height, opts) ?? null
         }
       />
-      <PanelGroup
-        direction="horizontal"
-        autoSaveId="ahwp:shell"
-        className="h-screen bg-background text-foreground"
-      >
-        <Panel
-          id="files"
-          order={1}
-          defaultSize={18}
-          minSize={12}
-          maxSize={40}
-          className="border-r border-border bg-card"
+      <div className="flex h-screen flex-col bg-background text-foreground">
+        <TitleBar
+          activeFileName={
+            activeTab
+              ? (activeTab.path.split(/[/\\]/).pop() ?? activeTab.path)
+              : ''
+          }
+          dirty={activeTab?.dirty ?? false}
+          onOpenSettings={() => setSettingsOpen(true)}
+        />
+        <PanelGroup
+          direction="horizontal"
+          autoSaveId="ahwp:shell"
+          className="flex-1"
         >
-          <aside className="flex h-full flex-col">
-            <div className="flex h-12 items-center justify-between gap-2 border-b border-border px-3">
-              <h2
-                className="truncate text-xs font-semibold uppercase tracking-wide text-muted-foreground"
-                title={folderRoot ?? undefined}
-                data-testid="folder-tree-root-label"
-              >
-                {folderRoot ? folderRoot.split('/').pop() : '폴더'}
-              </h2>
-              <button
-                type="button"
-                onClick={() => void openFolder()}
-                className="rounded p-1 hover:bg-muted"
-                aria-label="폴더 열기"
-                title="폴더 열기"
-                data-testid="folder-tree-open"
-              >
-                <FolderInput className="size-4" />
-              </button>
-            </div>
-            <div className="flex-1 overflow-hidden">
-              {folderRoot ? (
-                <FolderTree
-                  rootPath={folderRoot}
-                  activePath={activeTab?.path ?? null}
-                  onOpenPath={openByPath}
-                />
-              ) : (
-                <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-xs text-muted-foreground">
-                  <p>열린 폴더가 없습니다.</p>
-                  <button
-                    type="button"
-                    onClick={() => void openFolder()}
-                    className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted"
-                    data-testid="folder-tree-empty-open"
-                  >
-                    폴더 열기
-                  </button>
-                </div>
-              )}
-            </div>
-          </aside>
-        </Panel>
-
-        <PanelResizeHandle className="w-px bg-border transition-colors hover:bg-ring data-[resize-handle-state=drag]:bg-ring" />
-
-        <Panel id="editor" order={2} defaultSize={56} minSize={30}>
-          <main className="flex h-full flex-col">
-            <div className="flex h-12 items-center justify-between border-b border-border px-6">
-              <span className="truncate text-sm text-muted-foreground">
-                {activeTab?.path ?? 'ahwp'}
-              </span>
-              <ThemeToggle />
-            </div>
-            {tabsState.length > 0 && (
-              <TabBar
-                tabs={tabsState}
-                activeIndex={activeIndex}
-                onActivate={setActiveIndex}
-                onClose={closeTab}
-                onReorder={reorderTab}
-                onCloseOthers={closeOtherTabs}
-                onCloseRight={closeTabsToRight}
-                onCopyPath={copyTabPath}
-                onReveal={revealTab}
-              />
-            )}
-            <div className="relative flex-1 overflow-hidden">
-              {tabsState.length === 0 ? (
-                <div className="flex h-full flex-col items-center justify-center gap-4 p-8">
-                  <h1 className="text-2xl font-semibold">Hello, ahwp</h1>
-                  <p className="text-sm text-muted-foreground">
-                    새 문서를 만들거나 좌측 패널에 파일을 끌어 놓으세요.
-                  </p>
-                  <div className="flex gap-3">
+          <Panel
+            id="files"
+            order={1}
+            defaultSize={18}
+            minSize={12}
+            maxSize={40}
+            className="border-r border-border bg-card"
+          >
+            <aside className="flex h-full flex-col">
+              <div className="flex h-12 items-center justify-between gap-2 border-b border-border px-3">
+                <h2
+                  className="truncate text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+                  title={folderRoot ?? undefined}
+                  data-testid="folder-tree-root-label"
+                >
+                  {folderRoot ? folderRoot.split('/').pop() : '폴더'}
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => void openFolder()}
+                  className="rounded p-1 hover:bg-muted"
+                  aria-label="폴더 열기"
+                  title="폴더 열기"
+                  data-testid="folder-tree-open"
+                >
+                  <FolderInput className="size-4" />
+                </button>
+              </div>
+              <div className="flex-1 overflow-hidden">
+                {folderRoot ? (
+                  <FolderTree
+                    rootPath={folderRoot}
+                    activePath={activeTab?.path ?? null}
+                    onOpenPath={openByPath}
+                  />
+                ) : (
+                  <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-xs text-muted-foreground">
+                    <p>열린 폴더가 없습니다.</p>
                     <button
                       type="button"
-                      onClick={() => void newDocument()}
-                      className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-                      data-testid="welcome-new-doc"
+                      onClick={() => void openFolder()}
+                      className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted"
+                      data-testid="folder-tree-empty-open"
                     >
-                      새 문서
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void openFromDialog()}
-                      className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
-                      data-testid="welcome-open"
-                    >
-                      파일 열기
+                      폴더 열기
                     </button>
                   </div>
-                  {pingError && (
-                    <pre className="mt-4 max-w-md text-xs text-destructive">
-                      {pingError}
-                    </pre>
-                  )}
-                  {!pingError && !pingResult && (
-                    <span className="mt-4 text-xs text-muted-foreground">
-                      초기화 중…
-                    </span>
-                  )}
-                </div>
-              ) : (
-                tabsState.map((tab, idx) => {
-                  const isActive = idx === activeIndex;
-                  return (
-                    <div
-                      key={tab.key}
-                      // Mount every tab; hide inactive ones with display:none
-                      // so they keep their HwpDocument + edit state. We use
-                      // `style.display` rather than `hidden` because some
-                      // children rely on layout (refs/sizes) computed at mount.
-                      style={{
-                        position: 'absolute',
-                        inset: 0,
-                        display: isActive ? 'block' : 'none',
-                      }}
-                      data-testid="studio-tab-pane"
-                      data-tab-key={tab.key}
-                      data-tab-active={isActive ? 'true' : 'false'}
-                    >
-                      <StudioViewer
-                        path={tab.path}
-                        isActive={isActive}
-                        onDirtyChange={dirtyCallbacks.get(tab.key)}
-                        ref={refCallbackFor(tab.key)}
-                      />
-                    </div>
-                  );
-                })
+                )}
+              </div>
+            </aside>
+          </Panel>
+
+          <PanelResizeHandle className="w-px bg-border transition-colors hover:bg-ring data-[resize-handle-state=drag]:bg-ring" />
+
+          <Panel id="editor" order={2} defaultSize={56} minSize={30}>
+            <main className="flex h-full flex-col">
+              {tabsState.length > 0 && (
+                <TabBar
+                  tabs={tabsState}
+                  activeIndex={activeIndex}
+                  onActivate={setActiveIndex}
+                  onClose={closeTab}
+                  onReorder={reorderTab}
+                  onCloseOthers={closeOtherTabs}
+                  onCloseRight={closeTabsToRight}
+                  onCopyPath={copyTabPath}
+                  onReveal={revealTab}
+                />
               )}
-            </div>
-          </main>
-        </Panel>
+              <div className="relative flex-1 overflow-hidden">
+                {tabsState.length === 0 ? (
+                  <WelcomePane
+                    onNewDoc={() => void newDocument()}
+                    onOpen={() => void openFromDialog()}
+                    onOpenPath={(p) => void openByPath(p)}
+                    pingError={pingError}
+                    pingResult={pingResult}
+                  />
+                ) : (
+                  tabsState.map((tab, idx) => {
+                    const isActive = idx === activeIndex;
+                    return (
+                      <div
+                        key={tab.key}
+                        // Mount every tab; hide inactive ones with display:none
+                        // so they keep their HwpDocument + edit state. We use
+                        // `style.display` rather than `hidden` because some
+                        // children rely on layout (refs/sizes) computed at mount.
+                        style={{
+                          position: 'absolute',
+                          inset: 0,
+                          display: isActive ? 'block' : 'none',
+                        }}
+                        data-testid="studio-tab-pane"
+                        data-tab-key={tab.key}
+                        data-tab-active={isActive ? 'true' : 'false'}
+                      >
+                        <StudioViewer
+                          path={tab.path}
+                          isActive={isActive}
+                          onDirtyChange={dirtyCallbacks.get(tab.key)}
+                          ref={refCallbackFor(tab.key)}
+                        />
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </main>
+          </Panel>
 
-        <PanelResizeHandle className="w-px bg-border transition-colors hover:bg-ring data-[resize-handle-state=drag]:bg-ring" />
+          <PanelResizeHandle className="w-px bg-border transition-colors hover:bg-ring data-[resize-handle-state=drag]:bg-ring" />
 
-        <Panel
-          id="chat"
-          order={3}
-          defaultSize={26}
-          minSize={18}
-          maxSize={50}
-          className="border-l border-border bg-card"
-        >
-          <aside className="flex h-full flex-col">
-            <div className="flex h-12 items-center border-b border-border px-4">
-              <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                챗봇
-              </h2>
-            </div>
-            <div className="flex-1 overflow-hidden">
-              <ChatPanel
-                onOpenSettings={() => setSettingsOpen(true)}
-                getDocHtml={() => activeViewerRef()?.exportDocumentHtml() ?? ''}
-                applyHtml={(html) => activeViewerRef()?.applyHtmlAtCaret(html)}
-                runTools={(items) => {
-                  const v = activeViewerRef();
-                  if (!v) return [];
-                  return runTools(v, items);
-                }}
-                captureExcerpt={() =>
-                  activeViewerRef()?.captureExcerpt() ?? null
-                }
-                activeDocPath={() => activeTab?.path ?? null}
-                verifyExcerpt={(anchor, expected) =>
-                  activeViewerRef()?.verifyExcerpt(anchor, expected) ?? null
-                }
-                getOpenDocs={() =>
-                  tabsState.map((tab, idx) => ({
-                    path: tab.path,
-                    label: tab.path.split(/[/\\]/).pop() ?? tab.path,
-                    isActive: idx === activeIndex,
-                  }))
-                }
-                getDocOutline={(path) => {
-                  // Look up the (still-mounted) viewer for this tab and
-                  // pull a short HTML outline. Inactive viewers stay
-                  // mounted (display:none), so reading their IR is just
-                  // a method call. 20 paragraphs trades cost vs context.
-                  const tab = tabsState.find((t) => t.path === path);
-                  if (!tab) return '';
-                  const ref = viewerRefsRef.current.get(tab.key);
-                  return ref?.exportDocumentHtml(20) ?? '';
-                }}
-              />
-            </div>
-          </aside>
-        </Panel>
-      </PanelGroup>
+          <Panel
+            id="chat"
+            order={3}
+            defaultSize={26}
+            minSize={18}
+            maxSize={50}
+            className="border-l border-border bg-card"
+          >
+            <aside className="flex h-full flex-col">
+              <div className="flex h-12 items-center border-b border-border px-4">
+                <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  챗봇
+                </h2>
+              </div>
+              <div className="flex-1 overflow-hidden">
+                <ChatPanel
+                  onOpenSettings={() => setSettingsOpen(true)}
+                  getDocHtml={() =>
+                    activeViewerRef()?.exportDocumentHtml() ?? ''
+                  }
+                  applyHtml={(html) =>
+                    activeViewerRef()?.applyHtmlAtCaret(html)
+                  }
+                  runTools={(items) => {
+                    const v = activeViewerRef();
+                    if (!v) return [];
+                    return runTools(v, items);
+                  }}
+                  captureExcerpt={() =>
+                    activeViewerRef()?.captureExcerpt() ?? null
+                  }
+                  activeDocPath={() => activeTab?.path ?? null}
+                  verifyExcerpt={(anchor, expected) =>
+                    activeViewerRef()?.verifyExcerpt(anchor, expected) ?? null
+                  }
+                  getOpenDocs={() =>
+                    tabsState.map((tab, idx) => ({
+                      path: tab.path,
+                      label: tab.path.split(/[/\\]/).pop() ?? tab.path,
+                      isActive: idx === activeIndex,
+                    }))
+                  }
+                  getDocOutline={(path) => {
+                    // Look up the (still-mounted) viewer for this tab and
+                    // pull a short HTML outline. Inactive viewers stay
+                    // mounted (display:none), so reading their IR is just
+                    // a method call. 20 paragraphs trades cost vs context.
+                    const tab = tabsState.find((t) => t.path === path);
+                    if (!tab) return '';
+                    const ref = viewerRefsRef.current.get(tab.key);
+                    return ref?.exportDocumentHtml(20) ?? '';
+                  }}
+                />
+              </div>
+            </aside>
+          </Panel>
+        </PanelGroup>
+      </div>
     </>
   );
 }

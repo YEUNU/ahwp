@@ -22,6 +22,16 @@ function createWindow(): void {
     minWidth: 1024,
     minHeight: 600,
     title: 'ahwp',
+    // Custom titlebar — UI/UX revamp. macOS keeps the traffic-light
+    // controls but hides the OS title strip; Win/Linux remove the OS
+    // chrome entirely so our renderer-side bar paints edge-to-edge.
+    // The renderer's TitleBar honors `paddingLeft:78` on macOS to make
+    // room for the traffic lights.
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
+    titleBarOverlay:
+      process.platform === 'darwin'
+        ? undefined
+        : { color: '#efece5', symbolColor: '#1c1a16', height: 36 },
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

@@ -131,9 +131,13 @@ test.describe('session restoration', () => {
     const page = await app.firstWindow();
     await page.waitForLoadState('domcontentloaded');
 
-    // Renderer auto-opens lastActivePath on mount → wait for path to land
-    // in the editor header (which renders activePath).
-    await expect(page.getByText(EXAMPLE_HWP)).toBeVisible({ timeout: 10_000 });
+    // Renderer auto-opens lastActivePath on mount → wait for the basename
+    // to land in the titlebar (UI/UX revamp: titlebar shows basename, not
+    // full path; full path lives in session.json + tab title attribute).
+    const basename = EXAMPLE_HWP.split(/[/\\]/).pop()!;
+    await expect(page.getByText(basename).first()).toBeVisible({
+      timeout: 10_000,
+    });
 
     // Sanity check: session.json still has the path.
     const stored = await page.evaluate(async () => {
