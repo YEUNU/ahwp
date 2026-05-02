@@ -14,6 +14,13 @@
 - **chunk 58 — 목차 사이드바 (⌘⇧O, 0.2.61)**: `viewer.getOutline()` — 단락 styleId를 styleList에서 "제목 N" / "Heading N"로 매칭, level 추출. `OutlineSidebar` 컴포넌트가 viewer 옆에 토글 + 클릭 시 scrollToParagraph
 - **chunk 57 — AI inline diff (0.2.61)**: `viewer.snapshotParagraphs()` + `markChangedParagraphsSince(before)`. AppShell의 applyHtml/runTools가 before/after로 bracket. 변경된 단락 좌측에 amber 3px 막대 + animate-pulse + 15s 후 페이드
 
+### Added — 셀 안 글자 드래그 selection v1 (0.2.73)
+
+- 표 셀 내부에서 글자 드래그로 부분 선택 가능 (mousedown 위치 → 같은 셀 내 다른 위치로 mouseup). 같은 셀 + 같은 cellParaIndex 안에서만 동작 — 셀 경계를 넘으면 focus freeze (cross-cell drag는 v2).
+- selection state에 `cell` 필드(`parentParaIndex`/`controlIndex`/`cellIndex`/`cellParaIndex`) 추가. `refreshSelectionRects`가 anchor/focus 둘 다 같은 cell 컨텍스트면 `getSelectionRectsInCell` 경로 사용, 아니면 기존 본문 `getSelectionRects` 경로.
+- `cellDragRef`로 드래그 모드 추적. mousedown 셀 분기에서 anchor=focus 셀 caret으로 selection 초기화 후 drag listener 부착. 셀에서 시작한 더블/트리플 클릭은 비활성 (word/paragraph in-cell은 후속).
+- 다음 commit에서 control 영역 highlight 시각화 추가 예정 (드래그가 표/이미지/도형 위 통과 시 그 객체 자체에도 selection 색상 표시).
+
 ### Changed — 드래그 시 표/이미지/도형 영역 통째로 선택 (0.2.72)
 
 - 기존(0.2.69): 본문 드래그 selection이 control(표·이미지·도형) 위를 통과할 때 focus update를 freeze (=control 영역만 selection에서 제외) — 단순 보호 동작이라 사용자가 "object를 포함시키려면 어떻게?"라는 케이스 미해결.

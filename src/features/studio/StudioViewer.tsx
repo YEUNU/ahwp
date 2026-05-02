@@ -735,11 +735,23 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         sectionIndex: number;
         paragraphIndex: number;
         charOffset: number;
+        cell?: {
+          parentParaIndex: number;
+          controlIndex: number;
+          cellIndex: number;
+          cellParaIndex: number;
+        };
       };
       focus: {
         sectionIndex: number;
         paragraphIndex: number;
         charOffset: number;
+        cell?: {
+          parentParaIndex: number;
+          controlIndex: number;
+          cellIndex: number;
+          cellParaIndex: number;
+        };
       };
     } | null>(null);
     // Mirror selection state into a ref so keyboard / mouse handlers see
@@ -789,6 +801,16 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         paragraphIndex: number;
         charOffset: number;
       };
+    } | null>(null);
+    // Cell-drag context. When mousedown lands inside a table cell, we
+    // enable drag selection scoped to that cell — anchor and focus
+    // both stay inside it. Set in handlePageMouseDown's cell branch,
+    // cleared on mouseup / Esc / mousedown outside cell.
+    const cellDragRef = useRef<{
+      parentParaIndex: number;
+      controlIndex: number;
+      cellIndex: number;
+      cellParaIndex: number;
     } | null>(null);
     // Undo/Redo (chunk 7). The doc IR exposes snapshot save/restore as a
     // bidirectional stack: each saveSnapshot returns an integer id; we
@@ -1235,6 +1257,68 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         const doc = docRef.current;
         if (!doc || !sel) {
           setSelectionRectsByPage({});
+          return;
+        }
+        // Cell-internal selection: both anchor and focus must live in
+        // the same cell + same cell-paragraph. Route to
+        // getSelectionRectsInCell. Cross-cell or cell↔body selection
+        // is not yet supported (cell selection v1 — anchor.cell ===
+        // focus.cell required at the same cellParaIndex).
+        const ac = sel.anchor.cell;
+        const fc = sel.focus.cell;
+        if (
+          ac &&
+          fc &&
+          ac.parentParaIndex === fc.parentParaIndex &&
+          ac.controlIndex === fc.controlIndex &&
+          ac.cellIndex === fc.cellIndex &&
+          ac.cellParaIndex === fc.cellParaIndex
+        ) {
+          if (sel.anchor.charOffset === sel.focus.charOffset) {
+            setSelectionRectsByPage({});
+            return;
+          }
+          const startOff = Math.min(
+            sel.anchor.charOffset,
+            sel.focus.charOffset,
+          );
+          const endOff = Math.max(sel.anchor.charOffset, sel.focus.charOffset);
+          try {
+            const rects = JSON.parse(
+              doc.getSelectionRectsInCell(
+                sel.anchor.sectionIndex,
+                ac.parentParaIndex,
+                ac.controlIndex,
+                ac.cellIndex,
+                ac.cellParaIndex,
+                startOff,
+                ac.cellParaIndex,
+                endOff,
+              ),
+            ) as {
+              pageIndex: number;
+              x: number;
+              y: number;
+              width: number;
+              height: number;
+            }[];
+            const grouped: Record<
+              number,
+              { x: number; y: number; width: number; height: number }[]
+            > = {};
+            for (const rect of rects) {
+              (grouped[rect.pageIndex] ??= []).push({
+                x: rect.x,
+                y: rect.y,
+                width: rect.width,
+                height: rect.height,
+              });
+            }
+            setSelectionRectsByPage(grouped);
+          } catch (err) {
+            console.warn('[studio] getSelectionRectsInCell failed:', err);
+            setSelectionRectsByPage({});
+          }
           return;
         }
         const r = sortRange(sel.anchor, sel.focus);
@@ -4247,6 +4331,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             dragCleanupRef.current?.();
             dragCleanupRef.current = null;
             draggingRef.current = false;
+            cellDragRef.current = null;
             const origin = dragOriginSelectionRef.current;
             if (origin) {
               setSelection(origin);
@@ -4718,8 +4803,13 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           charOffset: result.charOffset,
           cell,
         };
-        // For now, double/triple-click + drag-select are disabled when
-        // the click lands in a cell — selection model in cells is v2.
+        // Cell-internal drag selection (v1). When mousedown lands in a
+        // cell we initialize anchor=focus=baseCaret with cell context
+        // and enable drag scoped to that cell. Cross-cell drag is
+        // out-of-scope (focus stays in the same cell + same cellParaIndex
+        // — see applyPointerToSelection's cellDragRef branch). We still
+        // skip the body-level double/triple-click handlers below since
+        // word/paragraph selection inside a cell isn't wired yet.
         if (cell) {
           caretRef.current = baseCaret;
           if (result.cursorRect) {
@@ -4727,15 +4817,19 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           } else {
             refreshCursorRect();
           }
-          // Cell formatting follow-up (v2): for now we just clear the
-          // outer selection so existing format toggles don't accidentally
-          // apply to outer paragraphs while the caret is in a cell.
-          setSelection(null);
+          refreshActiveFormat();
+          const initSel = { anchor: baseCaret, focus: baseCaret };
+          setSelection(initSel);
           setSelectionRectsByPage({});
-          draggingRef.current = false;
-          return;
+          cellDragRef.current = cell;
+          dragOriginSelectionRef.current = null;
+          draggingRef.current = true;
+          // Fall through to the shared drag listener attachment below
+          // (skip body-only word/paragraph + shift-click handling).
+        } else {
+          cellDragRef.current = null;
         }
-        if (e.detail === 3) {
+        if (!cell && e.detail === 3) {
           // Triple click → entire paragraph.
           const doc = docRef.current;
           if (doc) {
@@ -4758,7 +4852,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             }
           }
         }
-        if (e.detail === 2) {
+        if (!cell && e.detail === 2) {
           // Double click → word at offset.
           const w = findWordBoundsAt(
             baseCaret.sectionIndex,
@@ -4777,32 +4871,34 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             return;
           }
         }
-        caretRef.current = baseCaret;
-        if (result.cursorRect) {
-          setCursorRect(result.cursorRect);
-        } else {
-          refreshCursorRect();
+        if (!cell) {
+          caretRef.current = baseCaret;
+          if (result.cursorRect) {
+            setCursorRect(result.cursorRect);
+          } else {
+            refreshCursorRect();
+          }
+          refreshActiveFormat();
+          // Shift+click extends the existing selection (or creates one
+          // anchored at the previous caret) — matches Word/한컴/PDF readers.
+          // Plain click resets the selection.
+          const sel0 = selectionRef.current;
+          const initSel =
+            e.shiftKey && sel0
+              ? { anchor: sel0.anchor, focus: baseCaret }
+              : e.shiftKey
+                ? { anchor: priorCaret, focus: baseCaret }
+                : { anchor: baseCaret, focus: baseCaret };
+          // Capture the pre-drag selection so Esc can revert.
+          dragOriginSelectionRef.current = e.shiftKey && sel0 ? sel0 : null;
+          setSelection(initSel);
+          if (e.shiftKey) {
+            refreshSelectionRects(initSel);
+          } else {
+            setSelectionRectsByPage({});
+          }
+          draggingRef.current = true;
         }
-        refreshActiveFormat();
-        // Shift+click extends the existing selection (or creates one
-        // anchored at the previous caret) — matches Word/한컴/PDF readers.
-        // Plain click resets the selection.
-        const sel0 = selectionRef.current;
-        const initSel =
-          e.shiftKey && sel0
-            ? { anchor: sel0.anchor, focus: baseCaret }
-            : e.shiftKey
-              ? { anchor: priorCaret, focus: baseCaret }
-              : { anchor: baseCaret, focus: baseCaret };
-        // Capture the pre-drag selection so Esc can revert.
-        dragOriginSelectionRef.current = e.shiftKey && sel0 ? sel0 : null;
-        setSelection(initSel);
-        if (e.shiftKey) {
-          refreshSelectionRects(initSel);
-        } else {
-          setSelectionRectsByPage({});
-        }
-        draggingRef.current = true;
 
         // PDF-style drag: attach window-level listeners so the drag survives
         // (a) crossing the gap between pages, (b) leaving the scroll
@@ -4888,6 +4984,49 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           if (pageIdx < 0 || !pageEl) return;
           const moveResult = hitTestAt(pageIdx, hitX, hitY, pageEl);
           if (!moveResult) return;
+          // Cell-drag mode (anchor was inside a cell): only update focus
+          // when the cursor stays in the same cell + same cellParaIndex.
+          // Cross-cell drag is out-of-scope for v1 — leaving the cell
+          // simply freezes focus at the last good position in that cell.
+          const cd = cellDragRef.current;
+          if (cd) {
+            const moveCell =
+              moveResult.controlIndex !== undefined &&
+              moveResult.cellIndex !== undefined &&
+              moveResult.cellParaIndex !== undefined &&
+              moveResult.parentParaIndex !== undefined
+                ? {
+                    parentParaIndex: moveResult.parentParaIndex,
+                    controlIndex: moveResult.controlIndex,
+                    cellIndex: moveResult.cellIndex,
+                    cellParaIndex: moveResult.cellParaIndex,
+                  }
+                : undefined;
+            if (
+              !moveCell ||
+              moveCell.parentParaIndex !== cd.parentParaIndex ||
+              moveCell.controlIndex !== cd.controlIndex ||
+              moveCell.cellIndex !== cd.cellIndex ||
+              moveCell.cellParaIndex !== cd.cellParaIndex
+            ) {
+              return;
+            }
+            const focus = {
+              sectionIndex: moveResult.sectionIndex,
+              paragraphIndex: moveResult.paragraphIndex,
+              charOffset: moveResult.charOffset,
+              cell: moveCell,
+            };
+            caretRef.current = focus;
+            if (moveResult.cursorRect) setCursorRect(moveResult.cursorRect);
+            setSelection((prev) => {
+              if (!prev) return null;
+              const next = { ...prev, focus };
+              refreshSelectionRects(next);
+              return next;
+            });
+            return;
+          }
           // Cell-hit guard — when drag started at body level but the
           // cursor passes over a table during the drag, IR returns
           // cell-internal hit info (`controlIndex`/`cellIndex`/
@@ -5018,6 +5157,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           cleanup();
           if (!draggingRef.current) return;
           draggingRef.current = false;
+          cellDragRef.current = null;
           dragOriginSelectionRef.current = null;
           setSelection((prev) => {
             if (!prev) return null;
