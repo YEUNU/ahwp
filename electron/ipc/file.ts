@@ -215,6 +215,62 @@ ${req.html}
     },
   );
 
+  // chunk 52 — auto-save draft sidecar (`<path>.ahwp-draft`). Each open
+  // dirty tab is dumped every 60s by the renderer; on next launch the
+  // user gets a recovery toast. Drafts are not read back automatically;
+  // restoration is an explicit user choice.
+  ipcMain.handle(
+    'file:save-draft',
+    async (
+      _event,
+      req: { path: string; bytes: ArrayBuffer | Uint8Array },
+    ): Promise<void> => {
+      if (!req || typeof req.path !== 'string' || !req.path) return;
+      try {
+        await writeAtomic(`${req.path}.ahwp-draft`, toUint8(req.bytes));
+        noteOwnWrite(`${req.path}.ahwp-draft`);
+      } catch (err) {
+        console.warn('[file] save-draft failed (non-fatal):', err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'file:has-draft',
+    async (_event, p: unknown): Promise<boolean> => {
+      if (typeof p !== 'string' || !p) return false;
+      return await exists(`${p}.ahwp-draft`);
+    },
+  );
+
+  ipcMain.handle(
+    'file:load-draft',
+    async (_event, p: unknown): Promise<ArrayBuffer | null> => {
+      if (typeof p !== 'string' || !p) return null;
+      try {
+        const buf = await fs.readFile(`${p}.ahwp-draft`);
+        return buf.buffer.slice(
+          buf.byteOffset,
+          buf.byteOffset + buf.byteLength,
+        ) as ArrayBuffer;
+      } catch {
+        return null;
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'file:clear-draft',
+    async (_event, p: unknown): Promise<void> => {
+      if (typeof p !== 'string' || !p) return;
+      try {
+        await fs.unlink(`${p}.ahwp-draft`);
+      } catch {
+        /* nothing to clear */
+      }
+    },
+  );
+
   // External file watcher — chokidar instance shared across all open tabs.
   // The renderer resends the full path list whenever its tabs change; we
   // tear down the previous watcher and start a fresh one. Reload-during-

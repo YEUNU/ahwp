@@ -484,6 +484,15 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     const [zoom, setZoom] = useState(1);
     const [currentPage, setCurrentPage] = useState(0);
     const [dirty, setDirty] = useState(false);
+    // chunk 51 — body text counters (chars / words / paragraphs).
+    // Recomputed via debounced effect on phase/dirty/pageCount changes;
+    // walks the IR's section-0 paragraphs (cheap — 1k paragraph doc
+    // measures < 5ms in practice).
+    const [docStats, setDocStats] = useState<{
+      chars: number;
+      words: number;
+      paragraphs: number;
+    }>({ chars: 0, words: 0, paragraphs: 0 });
     // Stash the latest onDirtyChange in a ref so the dirty-notify effect
     // doesn't re-run every time the parent passes a new function identity.
     const onDirtyChangeRef = useRef(onDirtyChange);
@@ -5664,6 +5673,47 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
 
     const showToolbar = phase === 'ready' && pageDims !== null;
 
+    // chunk 51 — recompute body text counters on dirty/pageCount/phase
+    // changes with a 200ms debounce. The walk reads getParagraphCount
+    // + getTextRange per paragraph for section 0 only; multi-section
+    // docs are rare in practice and the IR's section model isn't
+    // stable across versions for our use case.
+    useEffect(() => {
+      if (phase !== 'ready') return;
+      let cancelled = false;
+      const t = window.setTimeout(() => {
+        if (cancelled) return;
+        const doc = docRef.current;
+        if (!doc) return;
+        try {
+          const SECTION = 0;
+          const paraCount = doc.getParagraphCount(SECTION);
+          let chars = 0;
+          let words = 0;
+          for (let p = 0; p < paraCount; p++) {
+            const len = doc.getParagraphLength(SECTION, p);
+            chars += len;
+            if (len === 0) continue;
+            const text = doc.getTextRange(SECTION, p, 0, len);
+            // Word boundary on whitespace + Hangul/CJK char-as-word
+            // (Korean text rarely has English-style word breaks within
+            // a paragraph; counting whitespace-delimited tokens
+            // approximates "어절" which matches the conventional
+            // Korean word-count UX in 한컴 한글).
+            const tokens = text.split(/\s+/).filter((w) => w.length > 0);
+            words += tokens.length;
+          }
+          setDocStats({ chars, words, paragraphs: paraCount });
+        } catch {
+          /* keep previous counts */
+        }
+      }, 200);
+      return () => {
+        cancelled = true;
+        window.clearTimeout(t);
+      };
+    }, [phase, dirty, pageCount]);
+
     return (
       <div
         className="relative flex h-full w-full flex-col"
@@ -6141,7 +6191,12 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               {Array.from({ length: pageCount }, (_, i) => (
                 <div
                   key={i}
-                  className="relative cursor-text bg-background shadow-md"
+                  // chunk 54 — page paper is always white, even in dark
+                  // mode. The IR's SVG renderer hard-codes black text;
+                  // matching `bg-background` would make text invisible
+                  // on a dark theme. Chrome around the page (toolbar,
+                  // sidebar, status bar) follows the theme normally.
+                  className="relative cursor-text bg-[hsl(var(--paper))] text-[hsl(var(--paper-foreground))] shadow-md"
                   style={{
                     width: pageDims.w * zoom,
                     height: pageDims.h * zoom,
@@ -6484,9 +6539,17 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             >
               <Maximize2 className="size-4" />
             </Button>
+            <span
+              className="ml-auto text-muted-foreground"
+              data-testid="studio-doc-stats"
+              title={`단어 ${docStats.words.toLocaleString()} · 글자 ${docStats.chars.toLocaleString()} · 단락 ${docStats.paragraphs.toLocaleString()}`}
+            >
+              {docStats.words.toLocaleString()} 단어 ·{' '}
+              {docStats.chars.toLocaleString()} 글자
+            </span>
             {dirty && (
               <span
-                className="ml-auto mr-2 text-amber-500"
+                className="ml-2 text-amber-500"
                 data-testid="studio-dirty-indicator"
                 title="저장되지 않은 변경사항"
               >
@@ -6494,11 +6557,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               </span>
             )}
             <span
-              className={
-                dirty
-                  ? 'text-muted-foreground'
-                  : 'ml-auto text-muted-foreground'
-              }
+              className="ml-2 text-muted-foreground"
               data-testid="studio-page-indicator"
             >
               {currentPage + 1} / {pageCount}

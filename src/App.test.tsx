@@ -25,6 +25,10 @@ describe('App', () => {
         getPathForFile: vi.fn().mockReturnValue(''),
         watchPaths: vi.fn().mockResolvedValue(undefined),
         onExternalChange: vi.fn().mockReturnValue(() => {}),
+        saveDraft: vi.fn().mockResolvedValue(undefined),
+        hasDraft: vi.fn().mockResolvedValue(false),
+        loadDraft: vi.fn().mockResolvedValue(null),
+        clearDraft: vi.fn().mockResolvedValue(undefined),
       },
       session: {
         get: vi.fn().mockResolvedValue({ lastActivePath: null }),

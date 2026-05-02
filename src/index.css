@@ -40,6 +40,11 @@
     --input: 42 28% 85%;
     --ring: 181 42% 29%;
     --radius: 0.375rem; /* slightly tighter than 0.5rem default */
+    /* chunk 54 — page paper. Always near-white regardless of dark mode
+     * (the SVG body content is rendered with absolute color stops by
+     * @rhwp/core, so a dark page bg makes black text vanish). */
+    --paper: 0 0% 100%;
+    --paper-foreground: 30 13% 10%;
   }
 
   .dark {
@@ -63,6 +68,10 @@
     --border: 234 11% 19%; /* #2c2c34 */
     --input: 234 11% 19%;
     --ring: 179 36% 54%;
+    /* Dark mode keeps paper near-white — IR text is hard-coded black
+     * by the SVG renderer, so a dark page bg would erase the body. */
+    --paper: 0 0% 100%;
+    --paper-foreground: 30 13% 10%;
   }
 
   * {

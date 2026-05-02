@@ -1,4 +1,4 @@
-import { X } from 'lucide-react';
+import { Pin, X } from 'lucide-react';
 import {
   useEffect,
   useRef,
@@ -23,6 +23,9 @@ export interface TabDescriptor {
   path: string;
   /** Renderer-side dirty state, kept in AppShell. */
   dirty: boolean;
+  /** Pinned tabs render with a 📌 indicator and protect against
+   * `closeOthers` / `closeRight` bulk actions — chunk 55. */
+  pinned?: boolean;
 }
 
 interface TabBarProps {
@@ -40,6 +43,8 @@ interface TabBarProps {
   onReveal?: (index: number) => void;
   /** Copy the tab's absolute path to the clipboard. */
   onCopyPath?: (index: number) => void;
+  /** Toggle the tab's pinned state — chunk 55. */
+  onTogglePin?: (index: number) => void;
 }
 
 function basenameOf(p: string): string {
@@ -61,6 +66,7 @@ export function TabBar({
   onCloseRight,
   onReveal,
   onCopyPath,
+  onTogglePin,
 }: TabBarProps): React.ReactElement {
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
   const [menuFor, setMenuFor] = useState<{
@@ -170,6 +176,13 @@ export function TabBar({
               className="flex min-w-0 flex-1 items-center gap-1.5 py-2 text-left"
               title={tab.path}
             >
+              {tab.pinned && (
+                <Pin
+                  className="size-3 shrink-0 -rotate-45 fill-current text-primary"
+                  aria-hidden="true"
+                  data-testid="studio-tab-pin-indicator"
+                />
+              )}
               {tab.dirty && (
                 <span
                   className="inline-block size-1.5 shrink-0 rounded-full bg-amber-500"
@@ -203,6 +216,22 @@ export function TabBar({
           className="fixed z-50 min-w-[12rem] rounded-md border border-border bg-popover py-1 text-xs text-popover-foreground shadow-md"
           style={{ top: menuFor.y, left: menuFor.x }}
         >
+          {onTogglePin ? (
+            <li>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  onTogglePin(menuFor.index);
+                  setMenuFor(null);
+                }}
+                className="block w-full px-3 py-1.5 text-left hover:bg-muted"
+                data-testid="studio-tab-menu-toggle-pin"
+              >
+                {tabs[menuFor.index]?.pinned ? '고정 해제' : '탭 고정'}
+              </button>
+            </li>
+          ) : null}
           <li>
             <button
               type="button"

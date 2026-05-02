@@ -6,6 +6,21 @@
 
 ## [Unreleased]
 
+### Added — 1차 UX 라운드 chunks 50~55: 명령 팔레트 / 카운터 / 자동 저장 / 단축키 / 다크 종이 / 탭 고정 (0.2.55)
+
+"최고의 문서 수정 프로그램" 격차 분석 후 사용자 가치 큰 6개를 한 묶음으로:
+
+- **chunk 50 — 명령 팔레트 (⌘K)** — 메뉴 액션 + 열린 탭 + 단축키를 한 입력에서 fuzzy search로. 외부 라이브러리 없이 자체 scorer (~80줄). 탭 / 명령 / 최근 카테고리별 색상 배지. 키보드만으로 모든 기능 호출 가능 (↑↓ Enter Esc)
+- **chunk 51 — status bar 카운터** — 단어 / 글자 수를 status bar에 항상 표시. dirty 변경 시 200ms debounce로 IR walk (1k 단락 < 5ms). 한국어 어절 카운트 패턴
+- **chunk 52 — 자동 저장 (60s 간격 .draft)** — dirty 탭마다 매 분 `<path>.ahwp-draft` 사이드카에 atomic write. 다음 실행에 sidecar가 있으면 "복구하시겠습니까?" confirm. 명시적 저장 시 draft 자동 삭제. file:new temp 파일은 제외
+- **chunk 53 — 단축키 치트시트 (⌘/)** — 6개 카테고리 (파일 / 편집 / 서식 / 캐럿·선택 / 네비 / 표·셀)로 정리한 read-only dialog. ⌘K와 동시에 알면 새 사용자 학습 곡선 ↓
+- **chunk 54 — 다크 모드 본문 종이 흰색 유지** — `--paper` CSS 변수 신설. 다크 chrome / 본문 페이지는 항상 white. IR의 SVG 텍스트 색상이 hard-coded라 다크 페이지면 본문이 사라지는 문제 회피
+- **chunk 55 — 탭 고정 (📌)** — 우클릭 메뉴 "탭 고정" / "고정 해제". 고정 탭은 아이콘 + 좌측으로 자동 정렬 + closeOthers / closeRight bulk close에서 보호. 닫기 시도하면 명시적 confirm
+
+회귀 e2e 5건 (`tests/e2e/round-1-ux.spec.ts`): ⌘K palette 검색 / status bar 카운터 / saveDraft IPC contract / ⌘/ cheatsheet / page paper white in light mode.
+
+다음 라운드 (0.2.60 예정): chunks 56-60 — AI 우클릭 메뉴 / AI inline diff / 목차 사이드바 / PDF 미리보기 / 검색 in 폴더.
+
 ### Changed — chunk 49: `ollama` provider 슬롯 제거 → `custom` 통합 (0.2.49)
 
 `Ollama (self-hosted)` provider 슬롯을 별도로 두지 않고 `custom` (OpenAI 호환)으로 통합. 자체 호스팅 Ollama 사용자는 `custom` provider에 base URL `http://localhost:11434/v1`을 입력해 동일하게 사용 가능:

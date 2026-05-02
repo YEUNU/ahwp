@@ -4,17 +4,17 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 ## 현재 스냅샷
 
-| 항목        | 상태                                                                                                                                                                                                                                                                                                                                                       |
-| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Phase       | **Phase 2 마무리 + chunk 48 모델 동적 fetch + chunk 49 provider 통합** — Phase 2 사용자-facing 작업 종료 + provider 모델 카탈로그 24h 캐시 fetch (OpenAI / NIM) + `ollama` provider 슬롯 제거(`custom` OpenAI 호환에 흡수). 다음: Phase 3 진입(provider tool-use 정식 통합 + Agent 모드) 또는 Phase 2-B(Anthropic / Google / `custom` 키·어댑터 잠금 해제) |
-| 빌드        | ✅ `npm run dev` · `npx vite build`                                                                                                                                                                                                                                                                                                                        |
-| 타입        | ✅ `npm run typecheck`                                                                                                                                                                                                                                                                                                                                     |
-| 린트        | ✅ `npm run lint` (0 warnings, 0 errors)                                                                                                                                                                                                                                                                                                                   |
-| 포맷        | ✅ `npm run format:check`                                                                                                                                                                                                                                                                                                                                  |
-| 단위 테스트 | ✅ 3/3 (`App.test.tsx`)                                                                                                                                                                                                                                                                                                                                    |
-| e2e         | ✅ 298 케이스 / 4 워커 병렬 + retry=1 — chunk 22(3) + 26(6) + rhwp-extras(5) + tabs-reorder(4) + dialogs-ui(4) + studio-ux-fixes(5) + studio-ux-round2(6) + phase2-finale(5) + chat-model-list(5 chunk 48) 추가. 291 passed / 6 skipped (NIM 5개 키 게이트 + cell-menu 1개 의도). live NIM 5/5 (`qwen/qwen3.5-122b-a10b`)                                  |
-| Electron    | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                                                                                                                                                                                |
-| 의존성      | runtime: `@rhwp/core` · `chokidar` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` (chunk 6에서 `@rhwp/editor` 제거)                                                                                                                                 |
+| 항목        | 상태                                                                                                                                                                                                                                                                                                                                        |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Phase       | **Phase 2 + 1차 UX 라운드 (chunks 50~55)** — Phase 2 사용자-facing + 명령 팔레트(⌘K) + status bar 단어/글자 카운터 + 자동 저장(60s .draft 사이드카) + 단축키 치트시트(⌘/) + 다크 모드 본문 종이 흰색 유지 + 탭 고정(📌). 다음: 2차 UX 라운드 (chunks 56~60) — AI 우클릭 메뉴 / AI inline diff / 목차 사이드바 / PDF 미리보기 / 검색 in 폴더 |
+| 빌드        | ✅ `npm run dev` · `npx vite build`                                                                                                                                                                                                                                                                                                         |
+| 타입        | ✅ `npm run typecheck`                                                                                                                                                                                                                                                                                                                      |
+| 린트        | ✅ `npm run lint` (0 warnings, 0 errors)                                                                                                                                                                                                                                                                                                    |
+| 포맷        | ✅ `npm run format:check`                                                                                                                                                                                                                                                                                                                   |
+| 단위 테스트 | ✅ 3/3 (`App.test.tsx`)                                                                                                                                                                                                                                                                                                                     |
+| e2e         | ✅ 303 케이스 / 4 워커 병렬 + retry=1 — chunks 22/26/rhwp-extras/tabs-reorder/dialogs-ui/studio-ux-fixes/studio-ux-round2/phase2-finale/chat-model-list/round-1-ux(5) 추가. 296 passed / 6 skipped. live NIM 5/5 (`qwen/qwen3.5-122b-a10b`)                                                                                                 |
+| Electron    | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                                                                                                                                                                 |
+| 의존성      | runtime: `@rhwp/core` · `chokidar` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` (chunk 6에서 `@rhwp/editor` 제거)                                                                                                                  |
 
 ## 일지
 
@@ -2585,6 +2585,33 @@ interface ExcerptAttachment {
 ✓ 누적 e2e 255 = 249 + 5 (chat-multidoc) + 1 (nvidia-live chunk 21). 249 passed / 6 skipped (NIM 5개 키 게이트 + cell-menu 1개 의도)
 ✓ NVIDIA NIM live 5/5 (qwen/qwen3.5-122b-a10b — chunk 18·19·20·21 round-trip 모두 포함)
 ```
+
+### 2026-05-02 — 1차 UX 라운드 (chunks 50~55) — 0.2.55
+
+사용자 "전부 다 적용" 지시. UI/UX 분석에서 도출한 16개 격차를 3차 묶음으로 분할, 1차 묶음 6개 우선 처리.
+
+**처리**
+
+| 청크 | 항목                          | 핵심                                                                                                                                                                                                                 |
+| ---- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 50   | 명령 팔레트 (⌘K)              | `CommandPalette` + `items.ts` (MenuAction 카탈로그 → 자동 노출). 자체 fuzzy scorer (~80줄, fuse.js 미도입). 카테고리 배지 + ↑↓ Enter Esc + click handler 직접 dispatch                                               |
+| 51   | status bar 단어/글자 카운터   | StudioViewer에 `docStats` 상태 + 200ms debounce useEffect. section 0 walk + getTextRange로 어절 카운트. 한글 어절 패턴                                                                                               |
+| 52   | 자동 저장 (60s 간격 .draft)   | 새 IPC 4종(`file:save-draft/has-draft/load-draft/clear-draft`). AppShell 60s setInterval로 dirty 탭 dump. openTab 시 `<path>.ahwp-draft` 발견하면 confirm 후 정식 path에 덮어쓰기 + tab key bump으로 viewer remount  |
+| 53   | 단축키 치트시트 (⌘/)          | `ShortcutsDialog` — 6 카테고리. ⌘K + ⌘/ 두 입구로 학습 곡선 ↓                                                                                                                                                        |
+| 54   | 다크 모드 본문 종이 흰색 유지 | `--paper` / `--paper-foreground` CSS 변수 신설. light/dark 양쪽 모두 white. StudioViewer 페이지 div를 `bg-[hsl(var(--paper))]`로 교체 — IR SVG의 hard-coded black text와 호환                                        |
+| 55   | 탭 고정 (📌)                  | `TabDescriptor.pinned` 신설 + Pin lucide 아이콘 + 우클릭 "탭 고정" / "고정 해제". `togglePinTab`이 pinned 탭을 좌측으로 sort. closeOthers / closeTabsToRight가 pinned 탭 보호. 단일 closeTab도 pinned면 추가 confirm |
+
+**검증**
+
+- 신규 e2e 5건 (`tests/e2e/round-1-ux.spec.ts`): ⌘K 검색 + Esc, status 카운터 갱신, saveDraft IPC contract, ⌘/ cheatsheet, page paper white(light) — 5/5 pass
+- 회귀: smoke / file-roundtrip / studio-edit / studio-input / studio-format / studio-selection / studio-ux-fixes / studio-ux-round2 43/43 pass
+- typecheck / lint / format / 단위 청정
+
+**구현 노트**
+
+- CommandPalette 모듈은 `react-refresh/only-export-components` 위해 `items.ts`로 헬퍼 분리
+- `react-hooks/refs` 위해 `dispatchRef` (useRef + useEffect 동기화) 패턴 채택 — useMemo factory가 transitive ref 접근을 catch하는 lint 회피
+- AppShell `paletteItems`는 `tabsState` 변경 시만 재계산. recent files는 lazy(현재 미연결, 후속 청크에 추가 예정)
 
 ### 2026-05-02 — chunk 49: `ollama` provider 슬롯 제거 → `custom` 통합 — 0.2.49
 

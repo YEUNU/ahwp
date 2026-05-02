@@ -12,6 +12,12 @@ import type { MenuAction, PingResponse } from '@shared/api';
 import { correctExtension } from '@shared/format';
 import { ChatPanel } from '@/features/chat/ChatPanel';
 import { runTools } from '@/features/chat/tools';
+import {
+  CommandPalette,
+  type CommandItem,
+} from '@/features/cmdk/CommandPalette';
+import { buildActionItems } from '@/features/cmdk/items';
+import { ShortcutsDialog } from '@/features/cmdk/ShortcutsDialog';
 import { FolderTree } from '@/features/files/FolderTree';
 import { SettingsDialog } from '@/features/settings/SettingsDialog';
 import { BookmarkDialog } from '@/features/studio/BookmarkDialog';
@@ -107,6 +113,12 @@ export default function AppShell() {
     text: string;
   } | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
+  // chunk 50 — command palette (⌘K). Open state lives here so any
+  // sub-component (welcome screen, future help button) can also
+  // trigger it.
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  // chunk 53 — shortcut cheatsheet (⌘/).
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   // viewerRef per tab (by key). The active tab's viewer is what menu /
   // shortcut actions target.
   const viewerRefsRef = useRef<Map<string, ViewerHandle | null>>(new Map());
@@ -125,12 +137,14 @@ export default function AppShell() {
   // Add a new tab for `path` (or focus an existing one). Returns the
   // index of the resulting active tab.
   const openTab = useCallback((path: string): void => {
+    let isNewTab = false;
     setTabsState((prev) => {
       const existing = prev.findIndex((t) => t.path === path);
       if (existing >= 0) {
         setActiveIndex(existing);
         return prev;
       }
+      isNewTab = true;
       const next: TabState[] = [
         ...prev,
         { path, dirty: false, key: makeTabKey() },
@@ -138,6 +152,42 @@ export default function AppShell() {
       setActiveIndex(next.length - 1);
       return next;
     });
+    // chunk 52 — auto-save recovery. After a fresh tab mount, check if
+    // an `<path>.ahwp-draft` sidecar exists from a previous crashed
+    // session. Skip temp paths (file:new scratch files) — drafts are
+    // never written for those.
+    if (isNewTab && !path.includes('/temp/') && !path.includes('\\temp\\')) {
+      void (async () => {
+        const has = await window.api.file.hasDraft(path);
+        if (!has) return;
+        const fname = path.split(/[\\/]/).pop() ?? path;
+        const ok = window.confirm(
+          `'${fname}' 파일에 자동 저장된 변경사항이 있습니다. 복구하시겠습니까?\n\n취소하면 자동 저장 사본이 삭제됩니다.`,
+        );
+        if (ok) {
+          // Load the draft bytes, save them through the regular path so
+          // the file:save flow handles HWPX routing + .bak + watcher
+          // suppression, then bump the tab key to remount the viewer
+          // off the freshly-saved content.
+          try {
+            const bytes = await window.api.file.loadDraft(path);
+            if (bytes) {
+              await window.api.file.save({ path, bytes });
+              setTabsState((prev) =>
+                prev.map((t) =>
+                  t.path === path ? { ...t, key: makeTabKey() } : t,
+                ),
+              );
+            }
+          } catch (err) {
+            console.warn('[autosave] recovery failed:', err);
+          }
+        }
+        // Either way (recovered or declined), the draft is no longer
+        // useful — drop it so we don't keep prompting on every open.
+        await window.api.file.clearDraft(path);
+      })();
+    }
   }, []);
 
   // Replace the path of a tab — used after Save As or after the main
@@ -153,11 +203,17 @@ export default function AppShell() {
     [],
   );
 
-  // Close a tab. If dirty, prompt the user first.
+  // Close a tab. If dirty, prompt the user first. Pinned tabs (chunk 55)
+  // are protected here too — closing requires explicit confirmation
+  // even when clean.
   const closeTab = useCallback((index: number): void => {
     setTabsState((prev) => {
       const tab = prev[index];
       if (!tab) return prev;
+      if (tab.pinned) {
+        const ok = window.confirm('고정된 탭입니다. 정말로 닫으시겠습니까?');
+        if (!ok) return prev;
+      }
       if (tab.dirty) {
         const ok = window.confirm(
           '저장하지 않은 변경사항이 있습니다. 정말로 닫으시겠습니까?',
@@ -174,6 +230,37 @@ export default function AppShell() {
         return curIdx;
       });
       return next;
+    });
+  }, []);
+
+  // chunk 55 — toggle a tab's pinned flag. Pinned tabs sort to the
+  // left of unpinned tabs and survive bulk close-others / close-right.
+  const togglePinTab = useCallback((index: number): void => {
+    setTabsState((prev) => {
+      if (index < 0 || index >= prev.length) return prev;
+      const target = prev[index];
+      const willPin = !target.pinned;
+      const next = prev.map((t, i) =>
+        i === index ? { ...t, pinned: willPin } : t,
+      );
+      // Re-sort so all pinned tabs come first, preserving relative order
+      // within each group. Active index follows the moved tab.
+      const indexed = next.map((t, i) => ({ t, i }));
+      indexed.sort((a, b) => {
+        const ap = a.t.pinned ? 0 : 1;
+        const bp = b.t.pinned ? 0 : 1;
+        if (ap !== bp) return ap - bp;
+        return a.i - b.i;
+      });
+      const sorted = indexed.map((x) => x.t);
+      const newIdx = sorted.findIndex((t) => t.key === target.key);
+      setActiveIndex((curIdx) => {
+        const cur = next[curIdx];
+        if (!cur) return curIdx;
+        return sorted.findIndex((t) => t.key === cur.key);
+      });
+      void newIdx;
+      return sorted;
     });
   }, []);
 
@@ -202,29 +289,13 @@ export default function AppShell() {
     setTabsState((prev) => {
       const keep = prev[keepIndex];
       if (!keep) return prev;
-      // Confirm if any of the tabs to close are dirty.
-      const dirtyNames = prev
-        .filter((t, i) => i !== keepIndex && t.dirty)
-        .map((t) => t.path.split(/[/\\]/).pop() ?? t.path);
-      if (dirtyNames.length > 0) {
-        const ok = window.confirm(
-          `저장하지 않은 변경사항이 있는 탭을 닫습니다 (${dirtyNames.length}개). 계속하시겠습니까?`,
-        );
-        if (!ok) return prev;
-      }
-      for (const t of prev) {
-        if (t.key !== keep.key) viewerRefsRef.current.delete(t.key);
-      }
-      setActiveIndex(0);
-      return [keep];
-    });
-  }, []);
-
-  const closeTabsToRight = useCallback((index: number): void => {
-    setTabsState((prev) => {
-      if (index < 0 || index >= prev.length - 1) return prev;
-      const dirtyNames = prev
-        .slice(index + 1)
+      // chunk 55 — pinned tabs (and the keep target) survive the bulk
+      // close. Confirm only on the dirty subset that's actually about
+      // to disappear.
+      const willClose = prev.filter((t, i) => i !== keepIndex && !t.pinned);
+      const willKeep = prev.filter((t, i) => i === keepIndex || t.pinned);
+      if (willClose.length === 0) return prev;
+      const dirtyNames = willClose
         .filter((t) => t.dirty)
         .map((t) => t.path.split(/[/\\]/).pop() ?? t.path);
       if (dirtyNames.length > 0) {
@@ -233,11 +304,35 @@ export default function AppShell() {
         );
         if (!ok) return prev;
       }
-      for (const t of prev.slice(index + 1)) {
-        viewerRefsRef.current.delete(t.key);
+      for (const t of willClose) viewerRefsRef.current.delete(t.key);
+      // Re-locate the active tab (keep target) within the shrunken array.
+      const newIdx = willKeep.findIndex((t) => t.key === keep.key);
+      setActiveIndex(newIdx >= 0 ? newIdx : 0);
+      return willKeep;
+    });
+  }, []);
+
+  const closeTabsToRight = useCallback((index: number): void => {
+    setTabsState((prev) => {
+      if (index < 0 || index >= prev.length - 1) return prev;
+      // chunk 55 — pinned tabs to the right are preserved.
+      const right = prev.slice(index + 1);
+      const willClose = right.filter((t) => !t.pinned);
+      const pinnedRight = right.filter((t) => t.pinned);
+      if (willClose.length === 0) return prev;
+      const dirtyNames = willClose
+        .filter((t) => t.dirty)
+        .map((t) => t.path.split(/[/\\]/).pop() ?? t.path);
+      if (dirtyNames.length > 0) {
+        const ok = window.confirm(
+          `저장하지 않은 변경사항이 있는 탭을 닫습니다 (${dirtyNames.length}개). 계속하시겠습니까?`,
+        );
+        if (!ok) return prev;
       }
-      setActiveIndex((curIdx) => Math.min(curIdx, index));
-      return prev.slice(0, index + 1);
+      for (const t of willClose) viewerRefsRef.current.delete(t.key);
+      const next = [...prev.slice(0, index + 1), ...pinnedRight];
+      setActiveIndex((curIdx) => Math.min(curIdx, next.length - 1));
+      return next;
     });
   }, []);
 
@@ -396,6 +491,36 @@ export default function AppShell() {
     void window.api.file.watchPaths(tabsState.map((t) => t.path));
   }, [tabsState]);
 
+  // chunk 52 — auto-save dirty tabs to `<path>.ahwp-draft` every 60s.
+  // Skips temp paths (`file:new` scratch files in userData/temp), since
+  // those have no stable path to recover to. The renderer initiates
+  // because main has no view of which tab is dirty.
+  useEffect(() => {
+    if (!sessionRestoredRef.current) return;
+    const t = window.setInterval(() => {
+      void (async () => {
+        for (const tab of tabsState) {
+          if (!tab.dirty) continue;
+          // file:new temp paths live under userData and have no
+          // recoverable destination — skip them. Sidecar drafts only
+          // make sense alongside user-saved files.
+          if (tab.path.includes('/temp/') || tab.path.includes('\\temp\\')) {
+            continue;
+          }
+          const handle = viewerRefsRef.current.get(tab.key);
+          if (!handle) continue;
+          try {
+            const bytes = await handle.exportBytes();
+            await window.api.file.saveDraft({ path: tab.path, bytes });
+          } catch (err) {
+            console.warn('[autosave] failed for', tab.path, err);
+          }
+        }
+      })();
+    }, 60_000);
+    return () => window.clearInterval(t);
+  }, [tabsState]);
+
   // React to off-app file modifications:
   //   - !dirty → silently bump the tab key so the viewer remounts and
   //     re-reads the file from disk.
@@ -474,6 +599,11 @@ export default function AppShell() {
     if (!bytes) return;
     const result = await window.api.file.save({ path: tab.path, bytes });
     if (result.path !== tab.path) replaceTabPath(tab.path, result.path);
+    // chunk 52 — explicit save invalidates the auto-save draft.
+    void window.api.file.clearDraft(tab.path);
+    if (result.path !== tab.path) {
+      void window.api.file.clearDraft(result.path);
+    }
     if (result.routedFrom) {
       // The user requested .hwpx but @rhwp/core's HWPX round-trip drops
       // images (KNOWN_ISSUES L-001), so file:save auto-routes to .hwp.
@@ -494,6 +624,8 @@ export default function AppShell() {
     if (result) {
       if (tab) replaceTabPath(tab.path, result.path);
       else openTab(result.path);
+      void window.api.file.clearDraft(result.path);
+      if (tab) void window.api.file.clearDraft(tab.path);
       if (result.routedFrom) {
         showNotice(
           `'.hwpx' 저장은 라이브러리 한계로 일시 비활성화되어 있어 ${result.path.split(/[\\/]/).pop()} 로 저장했습니다.`,
@@ -506,6 +638,8 @@ export default function AppShell() {
   // ⌘W / Ctrl+W: close the active tab. Bound at the document level
   // because the StudioViewer's keydown handler doesn't run when the
   // user's focus is outside the scroll container (e.g. on a tab button).
+  // ⌘K / Ctrl+K toggles the command palette (chunk 50) — same reason
+  // it lives at document level: we want to open it from anywhere.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
@@ -514,6 +648,13 @@ export default function AppShell() {
             closeTab(activeIndex);
             e.preventDefault();
           }
+        } else if (e.key.toLowerCase() === 'k') {
+          setPaletteOpen((v) => !v);
+          e.preventDefault();
+        } else if (e.key === '/') {
+          // chunk 53 — ⌘/ toggles the shortcuts cheatsheet.
+          setShortcutsOpen((v) => !v);
+          e.preventDefault();
         }
       }
     };
@@ -521,8 +662,12 @@ export default function AppShell() {
     return () => window.removeEventListener('keydown', onKey);
   }, [activeIndex, closeTab]);
 
-  useEffect(() => {
-    return window.api.onMenuAction((action: MenuAction) => {
+  // Single dispatch function for every MenuAction. Lifted out of the
+  // onMenuAction useEffect so the command palette (chunk 50) can fire
+  // the same actions through the same code path. The native menu and
+  // ⌘K both feed into this.
+  const dispatchMenuAction = useCallback(
+    (action: MenuAction): void => {
       const handle = activeViewerRef();
       if (action === 'file:new') {
         void newDocument();
@@ -587,18 +732,61 @@ export default function AppShell() {
       } else if (action === 'view:picture-props') {
         setPicturePropsOpen(true);
       }
-    });
-  }, [
-    activeTab?.path,
-    activeViewerRef,
-    newDocument,
-    openFromDialog,
-    saveCurrent,
-    saveAsCurrent,
-  ]);
+    },
+    [
+      activeTab?.path,
+      activeViewerRef,
+      newDocument,
+      openFromDialog,
+      saveCurrent,
+      saveAsCurrent,
+    ],
+  );
+
+  useEffect(() => {
+    return window.api.onMenuAction(dispatchMenuAction);
+  }, [dispatchMenuAction]);
+
+  // Build the command-palette item list. The lint rule `react-hooks/refs`
+  // flags passing dispatchMenuAction (or anything closing over the
+  // dispatch ref) into a helper during render — even though the callbacks
+  // only fire on user click. We work around it by deriving the action
+  // items from a stable factory that only takes MenuAction strings, and
+  // resolving them through a ref-backed stable dispatcher inside the
+  // run callback at click time.
+  const dispatchRef = useRef(dispatchMenuAction);
+  useEffect(() => {
+    dispatchRef.current = dispatchMenuAction;
+  }, [dispatchMenuAction]);
+  const paletteItems = useMemo<CommandItem[]>(() => {
+    // dispatch fires on user click, not during render
+    const items: CommandItem[] =
+      // eslint-disable-next-line react-hooks/refs
+      buildActionItems((action) => dispatchRef.current(action));
+    // Tabs — let the user jump to an open document.
+    for (let i = 0; i < tabsState.length; i++) {
+      const t = tabsState[i];
+      const fname = t.path.split(/[\\/]/).pop() ?? t.path;
+      items.push({
+        id: `tab:${t.key}`,
+        kind: 'tab',
+        label: fname,
+        hint: t.path,
+        keywords: [fname, t.path],
+        run: () => setActiveIndex(i),
+      });
+    }
+    return items;
+  }, [tabsState]);
 
   return (
     <>
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        items={paletteItems}
+      />
+      <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
       <PageSetupDialog
         open={pageSetupOpen}
@@ -926,6 +1114,7 @@ export default function AppShell() {
                   onCloseRight={closeTabsToRight}
                   onCopyPath={copyTabPath}
                   onReveal={revealTab}
+                  onTogglePin={togglePinTab}
                 />
               )}
               <div className="relative flex-1 overflow-hidden">

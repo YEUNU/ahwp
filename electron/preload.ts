@@ -34,6 +34,10 @@ const api: AhwpApi = {
     exportHtml: (req) => ipcRenderer.invoke('file:export-html', req),
     getPathForFile: (file) => webUtils.getPathForFile(file),
     watchPaths: (paths) => ipcRenderer.invoke('file:watch-paths', paths),
+    saveDraft: (req) => ipcRenderer.invoke('file:save-draft', req),
+    hasDraft: (p) => ipcRenderer.invoke('file:has-draft', p),
+    loadDraft: (p) => ipcRenderer.invoke('file:load-draft', p),
+    clearDraft: (p) => ipcRenderer.invoke('file:clear-draft', p),
     onExternalChange: (handler) => {
       const listener = (
         _event: IpcRendererEvent,

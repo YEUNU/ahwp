@@ -121,6 +121,19 @@ export interface FileApi {
    */
   watchPaths: (paths: string[]) => Promise<void>;
   /**
+   * chunk 52 — auto-save draft sidecar. The renderer dumps each dirty
+   * tab to `<path>.ahwp-draft` every minute; on next launch
+   * `hasDraft(path)` lets us surface a recovery toast and `loadDraft`
+   * pulls the bytes back when the user chooses to restore.
+   */
+  saveDraft: (req: {
+    path: string;
+    bytes: ArrayBuffer | Uint8Array;
+  }) => Promise<void>;
+  hasDraft: (path: string) => Promise<boolean>;
+  loadDraft: (path: string) => Promise<ArrayBuffer | null>;
+  clearDraft: (path: string) => Promise<void>;
+  /**
    * Subscribe to external (off-app) modifications of the watched files.
    * Returns an unsubscriber. Fires once per change event from chokidar.
    */
