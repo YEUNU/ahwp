@@ -14,6 +14,18 @@
 - **chunk 58 — 목차 사이드바 (⌘⇧O, 0.2.61)**: `viewer.getOutline()` — 단락 styleId를 styleList에서 "제목 N" / "Heading N"로 매칭, level 추출. `OutlineSidebar` 컴포넌트가 viewer 옆에 토글 + 클릭 시 scrollToParagraph
 - **chunk 57 — AI inline diff (0.2.61)**: `viewer.snapshotParagraphs()` + `markChangedParagraphsSince(before)`. AppShell의 applyHtml/runTools가 before/after로 bracket. 변경된 단락 좌측에 amber 3px 막대 + animate-pulse + 15s 후 페이드
 
+### Added — e2e: Phase A + B 회귀 가드 (0.2.80)
+
+- 신규: `tests/e2e/studio-table-shortcuts.spec.ts` (22 케이스)
+  - Phase A: multi-cell drag block (F5×3로 표 전체 highlight 검증)
+  - Phase B-2: F5 / F5×3 / F7 / F8 셀·열·행 block + Mac variants ⌘⌥B/T/C/R + 셀 밖 no-op
+  - Phase B-2.5: F5×2 진입 후 ArrowRight / ArrowDown / 둘 다 — block 확장 검증
+  - Phase B-3: Tab / Shift+Tab / Alt+→ / Alt+↓ / Shift+ESC — caret 이동 검증
+  - Phase B-1: F3×2 단어 / F3×3 단락 / F3×4 섹션 전체 + 셀 안 fall-through
+- Bug fix discovered: ArrowLeft/Right body 핸들러가 `!c.cell` 가드 없이 cell context에서도 실행되어 F5 확장 모드의 ArrowRight + B-3의 Alt+ArrowRight 모두 가로챘던 버그. body 핸들러에 가드 추가.
+- 확장 모드 핸들러를 body arrow 핸들러보다 먼저 위치시켜 cell context 우선 보장.
+- 기존 drag/cell/selection/edit e2e 31개 회귀 없음.
+
 ### Added — Phase B-2.5: F5 확장 모드 (0.2.79)
 
 - F5 두 번 누르면 확장 모드 진입. 그 다음 화살표 키로 cell-block의 focus 셀이 row/col 단위로 이동해 block 범위 확장. anchor 셀은 고정.

@@ -4348,6 +4348,91 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         // see updates from external drivers (e2e debug API) before the
         // next render attaches a fresh handler.
         const sel0 = selectionRef.current;
+        // Phase B-2.5 — F5 확장 모드: arrow가 cell-block의 focus 셀을
+        // row/col 단위로 이동시켜 block 범위 확장. 본문 arrow 핸들러
+        // 보다 먼저 검사해야 cell context에서 confused 안 됨.
+        if (
+          cellBlockExtendModeRef.current &&
+          (e.key === 'ArrowLeft' ||
+            e.key === 'ArrowRight' ||
+            e.key === 'ArrowUp' ||
+            e.key === 'ArrowDown')
+        ) {
+          const cur = selectionRef.current;
+          if (
+            cur &&
+            cur.anchor.cell &&
+            cur.focus.cell &&
+            cur.anchor.cell.parentParaIndex ===
+              cur.focus.cell.parentParaIndex &&
+            cur.anchor.cell.controlIndex === cur.focus.cell.controlIndex
+          ) {
+            try {
+              const ac = cur.anchor.cell;
+              const fc = cur.focus.cell;
+              const cells = JSON.parse(
+                doc.getTableCellBboxes(
+                  cur.anchor.sectionIndex,
+                  ac.parentParaIndex,
+                  ac.controlIndex,
+                ),
+              ) as {
+                cellIdx: number;
+                row: number;
+                col: number;
+                rowSpan: number;
+                colSpan: number;
+              }[];
+              const fCell = cells.find((x) => x.cellIdx === fc.cellIndex);
+              if (fCell) {
+                const dr =
+                  e.key === 'ArrowDown'
+                    ? fCell.rowSpan
+                    : e.key === 'ArrowUp'
+                      ? -1
+                      : 0;
+                const dc =
+                  e.key === 'ArrowRight'
+                    ? fCell.colSpan
+                    : e.key === 'ArrowLeft'
+                      ? -1
+                      : 0;
+                const targetR = fCell.row + dr;
+                const targetC = fCell.col + dc;
+                const next = cells.find(
+                  (x) =>
+                    targetR >= x.row &&
+                    targetR <= x.row + x.rowSpan - 1 &&
+                    targetC >= x.col &&
+                    targetC <= x.col + x.colSpan - 1,
+                );
+                if (next) {
+                  const newFocus = {
+                    sectionIndex: cur.focus.sectionIndex,
+                    paragraphIndex: 0,
+                    charOffset: 0,
+                    cell: {
+                      parentParaIndex: fc.parentParaIndex,
+                      controlIndex: fc.controlIndex,
+                      cellIndex: next.cellIdx,
+                      cellParaIndex: 0,
+                    },
+                  };
+                  const newSel = { anchor: cur.anchor, focus: newFocus };
+                  caretRef.current = newFocus;
+                  setSelection(newSel);
+                  refreshCellBlockHighlights(newSel);
+                }
+              }
+            } catch (err) {
+              console.warn('[studio] cell-block extension failed:', err);
+            }
+            e.preventDefault();
+            return;
+          }
+          // No valid cell selection — exit extension mode.
+          cellBlockExtendModeRef.current = false;
+        }
         // Word-wise navigation: Cmd/Ctrl + (Shift?) + Arrow Left/Right
         // moves the caret to the prev/next word boundary. With Shift this
         // extends the current selection. Without Shift it collapses any
@@ -4368,7 +4453,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           e.preventDefault();
           return;
         }
-        if (e.key === 'ArrowLeft') {
+        if (e.key === 'ArrowLeft' && !c.cell) {
           if (c.charOffset > 0) {
             commitCaretMove(
               { ...c, charOffset: c.charOffset - 1 },
@@ -4382,7 +4467,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           e.preventDefault();
           return;
         }
-        if (e.key === 'ArrowRight') {
+        if (e.key === 'ArrowRight' && !c.cell) {
           commitCaretMove(
             { ...c, charOffset: c.charOffset + 1 },
             c,
@@ -4656,91 +4741,6 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           )
         ) {
           f5PressCountRef.current = 0;
-        }
-        // Phase B-2.5 — F5 확장 모드: arrow가 cell block의 focus 셀을
-        // row/col 단위로 이동시켜 block 범위 확장. anchor.cell은
-        // 고정. mousedown / Esc / 다른 키 / 셀 밖 caret 시 자동 해제.
-        if (
-          cellBlockExtendModeRef.current &&
-          (e.key === 'ArrowLeft' ||
-            e.key === 'ArrowRight' ||
-            e.key === 'ArrowUp' ||
-            e.key === 'ArrowDown')
-        ) {
-          const cur = selectionRef.current;
-          if (
-            !cur ||
-            !cur.anchor.cell ||
-            !cur.focus.cell ||
-            cur.anchor.cell.parentParaIndex !==
-              cur.focus.cell.parentParaIndex ||
-            cur.anchor.cell.controlIndex !== cur.focus.cell.controlIndex
-          ) {
-            cellBlockExtendModeRef.current = false;
-          } else {
-            try {
-              const ac = cur.anchor.cell;
-              const fc = cur.focus.cell;
-              const cells = JSON.parse(
-                doc.getTableCellBboxes(
-                  cur.anchor.sectionIndex,
-                  ac.parentParaIndex,
-                  ac.controlIndex,
-                ),
-              ) as {
-                cellIdx: number;
-                row: number;
-                col: number;
-                rowSpan: number;
-                colSpan: number;
-              }[];
-              const fCell = cells.find((x) => x.cellIdx === fc.cellIndex);
-              if (fCell) {
-                const dr =
-                  e.key === 'ArrowDown'
-                    ? fCell.rowSpan
-                    : e.key === 'ArrowUp'
-                      ? -1
-                      : 0;
-                const dc =
-                  e.key === 'ArrowRight'
-                    ? fCell.colSpan
-                    : e.key === 'ArrowLeft'
-                      ? -1
-                      : 0;
-                const targetR = fCell.row + dr;
-                const targetC = fCell.col + dc;
-                const next = cells.find(
-                  (x) =>
-                    targetR >= x.row &&
-                    targetR <= x.row + x.rowSpan - 1 &&
-                    targetC >= x.col &&
-                    targetC <= x.col + x.colSpan - 1,
-                );
-                if (next) {
-                  const newFocus = {
-                    sectionIndex: cur.focus.sectionIndex,
-                    paragraphIndex: 0,
-                    charOffset: 0,
-                    cell: {
-                      parentParaIndex: fc.parentParaIndex,
-                      controlIndex: fc.controlIndex,
-                      cellIndex: next.cellIdx,
-                      cellParaIndex: 0,
-                    },
-                  };
-                  const newSel = { anchor: cur.anchor, focus: newFocus };
-                  caretRef.current = newFocus;
-                  setSelection(newSel);
-                  refreshCellBlockHighlights(newSel);
-                }
-              }
-            } catch (err) {
-              console.warn('[studio] cell-block extension failed:', err);
-            }
-            e.preventDefault();
-            return;
-          }
         }
         // Phase B-1 — 한글 호환 본문 block 단축키 (F3 시리즈).
         // F3 1× = block mode entry (Shift+arrow와 동등이라 v1 no-op),
