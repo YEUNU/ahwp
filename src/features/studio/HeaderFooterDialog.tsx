@@ -8,19 +8,30 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 
 /**
- * Header / footer editor — chunk 11. Single-line MVP that lets the user
- * pick header vs footer (the "kind" toggle), enter the text, and apply.
- * Multi-line / multi-paragraph editing + per-page templates (홀수만 / 짝수만)
- * are deferred — for now applyTo=0 ("양 쪽" = all pages) covers the most
- * common case.
+ * Header / footer editor — chunk 11 + chunk 35 (multi-line + per-page
+ * templates). The user picks header vs footer, picks the page-template
+ * scope (양쪽 / 홀수만 / 짝수만), enters multi-line text in a textarea,
+ * and applies. Each page-template scope persists independently in the IR
+ * — switching between 양쪽/홀수/짝수 pulls each slot's saved value.
  */
 
 type HfKind = 'header' | 'footer';
 
 const APPLY_TO_BOTH = 0;
+const APPLY_TO_ODD = 1;
+const APPLY_TO_EVEN = 2;
+type ApplyTo =
+  | typeof APPLY_TO_BOTH
+  | typeof APPLY_TO_ODD
+  | typeof APPLY_TO_EVEN;
+
+const APPLY_LABELS: Record<ApplyTo, string> = {
+  [APPLY_TO_BOTH]: '양쪽',
+  [APPLY_TO_ODD]: '홀수 페이지',
+  [APPLY_TO_EVEN]: '짝수 페이지',
+};
 
 export interface HeaderFooterDialogProps {
   open: boolean;
@@ -47,32 +58,37 @@ export function HeaderFooterDialog({
   onApply,
 }: HeaderFooterDialogProps): JSX.Element {
   const [kind, setKind] = useState<HfKind>('header');
+  const [applyTo, setApplyTo] = useState<ApplyTo>(APPLY_TO_BOTH);
   const [text, setText] = useState('');
 
   // Reload the current slot's text whenever the dialog opens or the user
-  // toggles the kind. This keeps the form in sync with the IR — flipping
-  // header ↔ footer pulls each slot's saved value.
+  // toggles the kind / applyTo. Each combination is its own IR slot, so
+  // switching pulls a different saved value.
   useEffect(() => {
     if (!open) return;
-    const slot = getCurrent(0, kind === 'header', APPLY_TO_BOTH);
-    if (!slot) return;
+    const slot = getCurrent(0, kind === 'header', applyTo);
+    if (!slot) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setText('');
+      return;
+    }
     const exists = (slot as { exists?: boolean }).exists === true;
     const value =
       exists && typeof (slot as { text?: unknown }).text === 'string'
         ? (slot as { text: string }).text
         : '';
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+
     setText(value);
-  }, [open, kind, getCurrent]);
+  }, [open, kind, applyTo, getCurrent]);
 
   const onSubmit = (e: FormEvent<HTMLFormElement>): void => {
     e.preventDefault();
-    onApply(0, kind === 'header', APPLY_TO_BOTH, text);
+    onApply(0, kind === 'header', applyTo, text);
     onOpenChange(false);
   };
 
   const onRemove = (): void => {
-    onApply(0, kind === 'header', APPLY_TO_BOTH, '');
+    onApply(0, kind === 'header', applyTo, '');
     onOpenChange(false);
   };
 
@@ -85,7 +101,7 @@ export function HeaderFooterDialog({
         <DialogHeader>
           <DialogTitle>머리말 / 꼬리말</DialogTitle>
           <DialogDescription>
-            모든 페이지에 같은 텍스트를 표시합니다.
+            여러 줄 텍스트와 홀수 / 짝수 페이지 템플릿을 지원합니다.
           </DialogDescription>
         </DialogHeader>
 
@@ -119,14 +135,40 @@ export function HeaderFooterDialog({
             </Button>
           </div>
 
+          <div
+            className="flex flex-wrap gap-2"
+            role="radiogroup"
+            aria-label="페이지 템플릿 선택"
+          >
+            {([APPLY_TO_BOTH, APPLY_TO_ODD, APPLY_TO_EVEN] as const).map(
+              (v) => (
+                <Button
+                  key={v}
+                  type="button"
+                  size="sm"
+                  variant={applyTo === v ? 'secondary' : 'outline'}
+                  onClick={() => setApplyTo(v)}
+                  aria-pressed={applyTo === v}
+                  data-testid={`hf-applyto-${v}`}
+                >
+                  {APPLY_LABELS[v]}
+                </Button>
+              ),
+            )}
+          </div>
+
           <label className="flex flex-col gap-1 text-xs">
-            <span className="text-muted-foreground">텍스트</span>
-            <Input
+            <span className="text-muted-foreground">
+              텍스트 (Enter로 줄바꿈)
+            </span>
+            <textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
               placeholder="비워두면 제거됩니다"
+              rows={4}
               data-testid="hf-text-input"
               autoFocus
+              className="rounded-md border border-input bg-background px-3 py-2 font-mono text-xs outline-none focus:ring-2 focus:ring-ring"
             />
           </label>
 

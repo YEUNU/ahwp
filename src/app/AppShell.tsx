@@ -37,6 +37,10 @@ import {
   type CellStylePickerCtx,
   type StyleOption,
 } from '@/features/studio/CellStylePickerDialog';
+import {
+  TableFormulaDialog,
+  type FormulaCellContext,
+} from '@/features/studio/TableFormulaDialog';
 import { TabBar, type TabDescriptor } from '@/features/studio/TabBar';
 import type { ViewerHandle } from '@/features/studio/types';
 import { TitleBar } from './TitleBar';
@@ -90,6 +94,11 @@ export default function AppShell() {
   const [picturePropsOpen, setPicturePropsOpen] = useState(false);
   // chunk 42 — cell style picker (KNOWN_ISSUES L-006 workaround).
   const [cellStylePickerOpen, setCellStylePickerOpen] = useState(false);
+  // chunk 34 — table-formula recalc dialog. Captures the right-clicked
+  // cell's coords at open time; the dialog state only carries the ctx
+  // until apply / cancel.
+  const [formulaOpen, setFormulaOpen] = useState(false);
+  const [formulaCtx, setFormulaCtx] = useState<FormulaCellContext | null>(null);
   // Lightweight in-app notice — surfaces non-fatal save-time messages
   // (e.g. "saved as .hwp because .hwpx round-trip is lossy"). Auto-clears
   // after a short delay; see `showNotice` below.
@@ -760,6 +769,24 @@ export default function AppShell() {
           );
         }}
       />
+      <TableFormulaDialog
+        open={formulaOpen}
+        onOpenChange={setFormulaOpen}
+        ctx={formulaCtx}
+        onEvaluate={(ctx, formula, writeResult) => {
+          const v = activeViewerRef();
+          if (!v) return null;
+          return v.evaluateTableFormula(
+            ctx.sectionIndex,
+            ctx.parentParaIdx,
+            ctx.controlIdx,
+            ctx.targetRow,
+            ctx.targetCol,
+            formula,
+            writeResult,
+          );
+        }}
+      />
       <CellPropsDialog
         open={cellPropsOpen}
         onOpenChange={setCellPropsOpen}
@@ -939,6 +966,39 @@ export default function AppShell() {
                           onOpenCellStylePicker={() =>
                             setCellStylePickerOpen(true)
                           }
+                          onOpenFormula={() => {
+                            // Resolve the right-clicked cell coords into
+                            // a row/col pair via the table dimensions
+                            // exposed on the active viewer. The cell
+                            // context menu has already moved caret into
+                            // the cell, so getActiveCellContext returns
+                            // the click's coordinates.
+                            const v = activeViewerRef();
+                            if (!v) return;
+                            const cell = v.getActiveCellContext();
+                            if (!cell) return;
+                            const tableProps = v.getTableProps(
+                              cell.sectionIndex,
+                              cell.parentParaIdx,
+                              cell.controlIdx,
+                            );
+                            const colCount =
+                              typeof tableProps?.['colCount'] === 'number'
+                                ? (tableProps['colCount'] as number)
+                                : 1;
+                            const targetRow = Math.floor(
+                              cell.cellIdx / colCount,
+                            );
+                            const targetCol = cell.cellIdx % colCount;
+                            setFormulaCtx({
+                              sectionIndex: cell.sectionIndex,
+                              parentParaIdx: cell.parentParaIdx,
+                              controlIdx: cell.controlIdx,
+                              targetRow,
+                              targetCol,
+                            });
+                            setFormulaOpen(true);
+                          }}
                         />
                       </div>
                     );
@@ -1001,6 +1061,18 @@ export default function AppShell() {
                     if (!tab) return '';
                     const ref = viewerRefsRef.current.get(tab.key);
                     return ref?.exportDocumentHtml(20) ?? '';
+                  }}
+                  undoLastApply={() => {
+                    // chunk 29 — "되돌리기" button on apply/run-tools.
+                    // Routes through the active viewer's undo stack;
+                    // chunk 27 grouped undo guarantees the entire AI
+                    // turn collapses into one entry, so a single click
+                    // reverses every op the model just applied.
+                    const v = activeViewerRef();
+                    if (!v) return false;
+                    if (!v.canUndo()) return false;
+                    v.undo();
+                    return true;
                   }}
                 />
               </div>

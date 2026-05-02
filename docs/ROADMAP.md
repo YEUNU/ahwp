@@ -156,8 +156,8 @@
 - [x] 히스토리 탭: 대화 목록 (제목, 마지막 메시지, 시각) ✅ chunk 26 (📚 popover, 활성 문서 기준 필터)
 - [x] 대화 클릭 → Chat 탭으로 로드 ✅ chunk 26
 - [x] 새 대화 시작 / 삭제 ✅ chunk 26 (➕ 버튼 + × 삭제)
-- [ ] **대화 이름 변경 (인라인 UI)** — chunk 30 예정. IPC `chat-history:rename`은 이미 있음, popover에 inline edit만 추가
-- [ ] **자동 제목 요약** — chunk 31 예정. 현재 첫 user 메시지 60자. 5턴 이상 대화에서 AI 호출로 짧은 제목 생성
+- [x] **대화 이름 변경 (인라인 UI)** ✅ chunk 30: 📚 popover의 conversation 행에 ✎ 버튼 + 더블클릭. input swap → Enter 저장 / Esc 취소 / blur 자동 커밋. 낙관적 갱신 + IPC 실패 시 SQLite 재조회로 롤백
+- [ ] **자동 제목 요약** — chunk 31 예정. 현재 첫 user 메시지 60자. 5턴 이상 대화에서 AI 호출로 짧은 제목 생성. (deferred — AI call 복잡)
 
 ### 2-E. Manual 편집 흐름
 
@@ -169,16 +169,16 @@
 - [x] **HTML5 drag UX** ✅ chunk 22: selection rect를 채팅 입력 폼에 끌어다 놓으면 칩으로 승격 (`application/x-ahwp-excerpt` MIME)
 - [x] **op별 한 묶음 Undo** ✅ chunk 27: `runTools`가 `beginUndoGroup` / `endUndoGroup` 브래킷으로 N op를 1 undo entry로 collapse
 - [x] **Multi-paragraph 발췌** ✅ chunk 28: span anchor 모델로 여러 문단 across selection 지원 (`startParagraphIndex` + `endParagraphIndex`, '\n' join)
-- [ ] **변경 위치 하이라이트 + diff 패널 + Reject 버튼** — chunk 29 예정 (가장 중요한 폴리시). 현재는 적용 후 ⌘Z로만 되돌림
+- [x] **AI 변경 되돌리기 토스트** ✅ chunk 29: `applied`/`toolsRun` 상태에 "되돌리기" 버튼 + 15초 노출. chunk 27 묶음 undo로 AI 턴 전체를 1회 클릭에 롤백. 변경 위치 시각 diff 하이라이트는 후속 (현재는 ⌘Z + 토스트 버튼 양쪽 다 가능)
 
 ### 2-F. rhwp 시리즈 — Phase 2 잔여 (chunk 32~36)
 
 이미 12개 청크가 완료됨. 남은 라이브러리 활용 후보:
 
-- [ ] **셀 selection 모델 v4 (chunk 32)** — 드래그 셀 selection / 셀 레벨 paste / merge·split 우클릭 통합. `mergeTableCells` / `splitTableCell` IR은 이미 노출 (chunk 9). UX 통합만 남음
+- [ ] **셀 selection 모델 v4 (chunk 32)** — 드래그 셀 selection / 셀 레벨 paste / merge·split 우클릭 통합. `mergeTableCells` / `splitTableCell` IR은 이미 노출 (chunk 9). UX 통합만 남음. (deferred — 대형 작업)
 - [ ] **도형 라인 / 곡선 / 화살표 / 그룹 (chunk 33)** — `groupShapes` 외 8개. **rhwp 0.8 대기** — 현재 `createShapeControl` JSON에 shape-type 미노출
-- [ ] **표 수식 평가 (chunk 34)** — `evaluateTableFormula` IR. 셀 우클릭 메뉴에 "수식 다시 계산" 추가
-- [ ] **머리말/꼬리말 다중 라인 + 페이지 템플릿 (chunk 35)** — 현재 chunk 11은 단일 라인 MVP. 홀수/짝수 페이지 템플릿 + 다중 paragraph 지원
+- [x] **표 수식 평가 (chunk 34)** ✅ — `evaluateTableFormula` IR + 셀 우클릭 메뉴 "수식 다시 계산…" + `TableFormulaDialog` (수식 입력 → 미리 보기 → 셀에 적용). 라이브러리 한계로 `getCellFormula`는 없음 (per-cell live recalc 불가능)
+- [x] **머리말/꼬리말 다중 라인 + 페이지 템플릿 (chunk 35)** ✅ — `HeaderFooterDialog`의 Input → 4행 textarea, applyTo 토글(양쪽/홀수/짝수) 추가. `setHeaderFooterText` 내부에서 `\n` 감지 시 `splitParagraphInHeaderFooter`로 라인별 단락 분리
 - [ ] **스타일 char/para shape 캡처 (chunk 36)** — chunk 14의 `createNamedStyle`은 빈 셸. **rhwp 0.8 대기** — `updateStyle` 또는 createStyle에 shape 파라미터 추가 필요. 해소되면 chunk 23 cell background coloring 같이 풀림 (KNOWN_ISSUES L-006)
 
 ### 2-G. Phase 3 진입 정비 (chunk 37~)

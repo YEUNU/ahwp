@@ -18,6 +18,10 @@ export interface ViewerHandle {
   toggleCharFormat: (key: CharFormatKey) => void;
   /** Undo the most recent mutation (snapshot-based — chunk 7). */
   undo: () => void;
+  /** True when the undo stack has an entry available — chunk 29.
+   * AppShell uses this to decide whether to surface the "되돌리기"
+   * button next to apply/run-tools affordances. */
+  canUndo: () => boolean;
   /** Redo a previously-undone mutation. No-op if no redo available. */
   redo: () => void;
   /** Copy current selection to internal + system clipboard. No-op if empty. */
@@ -160,6 +164,23 @@ export interface ViewerHandle {
     cellIdx: number,
     props: Record<string, unknown>,
   ) => void;
+  /**
+   * Evaluate a table-cell formula and (optionally) write the result
+   * into the target cell — chunk 34. Wraps `@rhwp/core`'s
+   * `evaluateTableFormula(sec, parentPara, ctrl, row, col, formula,
+   * write_result)`. Returns the parsed JSON result (`{ok, value, ...}`)
+   * or `null` on failure. Formulas use HWP syntax — `=SUM(A1:A5)`,
+   * `=A1+B2*3`, etc.
+   */
+  evaluateTableFormula: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+    targetRow: number,
+    targetCol: number,
+    formula: string,
+    writeResult: boolean,
+  ) => Record<string, unknown> | null;
   /**
    * Apply a pre-existing named style to a cell — chunk 23. Routes
    * through `@rhwp/core`'s `applyCellStyle(sec, parentPara, ctrl, cell,

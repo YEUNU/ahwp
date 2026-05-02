@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+### Added — Phase 2 마무리: chunks 29 / 30 / 34 / 35 (0.2.47)
+
+Phase 2의 잔여 4개 청크를 일괄 완료:
+
+- **청크 29 — AI 변경 되돌리기 토스트** — `applyHtml` / `runTools` 성공 후 "되돌리기" 버튼이 "✓ 적용됨" / "✓ 적용됨 (N/M)" 옆에 함께 노출. 15초 동안 유지되다가 자동 사라짐. 클릭 시 chunk 27의 묶음 undo로 AI 턴 전체를 한 번에 롤백 (도구 N개를 한 응답에서 실행해도 1회 클릭으로 모두 복원). `ViewerHandle.canUndo()` 신설로 undo 가능 여부 검사
+- **청크 30 — 채팅 히스토리 인라인 이름 변경** — 📚 popover의 conversation 행에 ✎ 버튼 + 더블클릭 진입. input swap → Enter 저장 (`chatHistory.rename` IPC) / Esc 취소 / blur 시 자동 커밋. 낙관적 로컬 갱신 + IPC 실패 시 SQLite 원본 재조회로 롤백
+- **청크 34 — 표 수식 다시 계산** — 셀 우클릭 메뉴에 "수식 다시 계산…" 추가. `TableFormulaDialog`로 수식 입력(`=SUM(A1:A5)`, `=A1+B2*3` 등) → "미리 보기"(write_result=false)로 결과 확인 → "셀에 적용"(write_result=true)으로 셀에 결과 텍스트 작성. `ViewerHandle.evaluateTableFormula(sec, parentPara, ctrl, row, col, formula, writeResult)` 위임
+- **청크 35 — 머리말/꼬리말 다중 라인 + 페이지 템플릿** — `HeaderFooterDialog`의 단일 라인 Input을 4행 textarea로 교체. 페이지 템플릿 토글 추가 — 양쪽(applyTo=0) / 홀수(=1) / 짝수(=2) 각각 독립 슬롯으로 IR에 저장. `setHeaderFooterText` 내부에서 `\n` 감지 시 `splitParagraphInHeaderFooter` 호출로 라인별 단락 분리
+
+회귀 e2e 5건(`tests/e2e/phase2-finale.spec.ts`): 머리말 다중 라인 round-trip + 홀/짝 슬롯 독립 + 셀 우클릭 메뉴 "수식 다시 계산…" 노출 + 되돌리기 버튼이 alignment를 right→default로 롤백 + 인라인 rename input swap.
+
+이 4개 청크 마무리로 Phase 2의 사용자-facing 작업은 모두 종료. 후속 잔여(deferred): chunk 31(자동 title summary, AI call 복잡), chunk 32(셀 selection v4, 대형), chunk 33(도형 라인/곡선/그룹, rhwp 0.8 대기), chunk 36(스타일 char/para shape 캡처, rhwp 0.8 대기). Phase 2-G(provider tool-use API 정식 통합 / docId-aware 라우팅 / 다중 턴 자동 실행)는 Phase 3 진입과 병행.
+
 ### Added — P0/P1 편집 UX 보강 (visual line nav · shift+click · auto-scroll · Esc-cancel · 저장 보호)
 
 오늘 fix한 UX 회귀 3건과 같은 클래스의 잔여 디테일을 한 묶음으로 보강:

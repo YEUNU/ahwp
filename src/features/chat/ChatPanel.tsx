@@ -173,6 +173,14 @@ export interface ChatPanelProps {
    * activating that tab.
    */
   getDocOutline?: (path: string) => string;
+  /**
+   * Roll back the most recent AI-applied change — chunk 29. Wraps the
+   * active viewer's `undo()`, which on AI-driven mutations covers an
+   * entire turn (chunk 27 grouped undo). Returns true when a change was
+   * actually undone. Surfaced as a "되돌리기" button next to the
+   * "✓ 적용됨" / "도구 실행" affordances for ~15 seconds after apply.
+   */
+  undoLastApply?: () => boolean;
 }
 
 const HTML_BLOCK_RE = /```html\n?([\s\S]*?)```/i;
@@ -277,6 +285,7 @@ export function ChatPanel({
   verifyExcerpt,
   getOpenDocs,
   getDocOutline,
+  undoLastApply,
 }: ChatPanelProps = {}): JSX.Element {
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState('');
@@ -669,6 +678,49 @@ export function ChatPanel({
     [newConversation, refreshHistory],
   );
 
+  // Inline rename — chunk 30. Double-click on a conversation title swaps
+  // it for an input; Enter persists, Esc cancels. The conversation row
+  // shows the new title immediately via optimistic local update; the
+  // chatHistory.rename IPC writes through to SQLite. On failure we revert
+  // by re-fetching the list.
+  const [renamingId, setRenamingId] = useState<number | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  const beginRename = useCallback(
+    (id: number, currentTitle: string | null): void => {
+      setRenamingId(id);
+      setRenameDraft(currentTitle ?? '');
+    },
+    [],
+  );
+  const cancelRename = useCallback(() => {
+    setRenamingId(null);
+    setRenameDraft('');
+  }, []);
+  const commitRename = useCallback(
+    async (id: number): Promise<void> => {
+      const next = renameDraft.trim();
+      if (next.length === 0) {
+        cancelRename();
+        return;
+      }
+      // Optimistic update so the row reflects the new title before the
+      // IPC round-trip completes.
+      setHistoryList((prev) =>
+        prev.map((row) => (row.id === id ? { ...row, title: next } : row)),
+      );
+      setRenamingId(null);
+      setRenameDraft('');
+      try {
+        await window.api.chatHistory.rename(id, next);
+      } catch (err) {
+        console.warn('[chat] history.rename failed', err);
+        // Revert: re-fetch authoritative list from SQLite.
+        await refreshHistory();
+      }
+    },
+    [renameDraft, cancelRename, refreshHistory],
+  );
+
   const removeExcerpt = useCallback((id: string) => {
     setExcerpts((prev) => prev.filter((e) => e.id !== id));
   }, []);
@@ -909,36 +961,78 @@ export function ChatPanel({
             </p>
           ) : (
             <ul className="max-h-48 space-y-1 overflow-auto">
-              {historyList.map((c) => (
-                <li
-                  key={c.id}
-                  className={cn(
-                    'group flex items-center gap-1 rounded px-1 text-[11px] hover:bg-muted',
-                    c.id === conversationId && 'bg-muted',
-                  )}
-                  data-testid="chat-history-item"
-                  data-id={c.id}
-                  data-active={c.id === conversationId ? 'true' : 'false'}
-                >
-                  <button
-                    type="button"
-                    onClick={() => void loadConversation(c.id)}
-                    className="flex-1 truncate text-left"
-                    data-testid="chat-history-item-load"
+              {historyList.map((c) => {
+                const isRenaming = renamingId === c.id;
+                return (
+                  <li
+                    key={c.id}
+                    className={cn(
+                      'group flex items-center gap-1 rounded px-1 text-[11px] hover:bg-muted',
+                      c.id === conversationId && 'bg-muted',
+                    )}
+                    data-testid="chat-history-item"
+                    data-id={c.id}
+                    data-active={c.id === conversationId ? 'true' : 'false'}
+                    data-renaming={isRenaming ? 'true' : 'false'}
                   >
-                    {c.title || '(제목 없음)'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void deleteHistoryItem(c.id)}
-                    aria-label="대화 삭제"
-                    data-testid="chat-history-item-delete"
-                    className="opacity-0 hover:text-destructive group-hover:opacity-100"
-                  >
-                    ×
-                  </button>
-                </li>
-              ))}
+                    {isRenaming ? (
+                      <input
+                        type="text"
+                        value={renameDraft}
+                        onChange={(e) => setRenameDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            void commitRename(c.id);
+                          } else if (e.key === 'Escape') {
+                            e.preventDefault();
+                            cancelRename();
+                          }
+                        }}
+                        onBlur={() => void commitRename(c.id)}
+                        autoFocus
+                        className="flex-1 rounded border border-input bg-background px-1 py-0.5 text-[11px] outline-none focus:ring-1 focus:ring-ring"
+                        data-testid="chat-history-item-rename-input"
+                        aria-label="대화 제목 수정"
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void loadConversation(c.id)}
+                        onDoubleClick={() => beginRename(c.id, c.title)}
+                        className="flex-1 truncate text-left"
+                        data-testid="chat-history-item-load"
+                        title="더블클릭하면 제목을 수정합니다"
+                      >
+                        {c.title || '(제목 없음)'}
+                      </button>
+                    )}
+                    {!isRenaming ? (
+                      <button
+                        type="button"
+                        onClick={() => beginRename(c.id, c.title)}
+                        aria-label="대화 제목 수정"
+                        data-testid="chat-history-item-rename"
+                        className="opacity-0 hover:text-foreground group-hover:opacity-100"
+                        title="제목 수정"
+                      >
+                        ✎
+                      </button>
+                    ) : null}
+                    {!isRenaming ? (
+                      <button
+                        type="button"
+                        onClick={() => void deleteHistoryItem(c.id)}
+                        aria-label="대화 삭제"
+                        data-testid="chat-history-item-delete"
+                        className="opacity-0 hover:text-destructive group-hover:opacity-100"
+                      >
+                        ×
+                      </button>
+                    ) : null}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
@@ -979,6 +1073,7 @@ export function ChatPanel({
               onDelete={deleteMessage}
               onApplyHtml={applyHtml}
               onRunTools={runTools}
+              onUndoApply={undoLastApply}
             />
           ))
         )}
@@ -1168,6 +1263,13 @@ interface MessageProps {
   onApplyHtml?: (html: string) => void;
   /** Run an `ahwp-tools` op list against the active document (chunk 19). */
   onRunTools?: (items: AhwpPreflightItem[]) => AhwpToolResult[];
+  /**
+   * Roll back the last AI-applied change — chunk 29. Routes through the
+   * active viewer's undo stack which is grouped per AI turn (chunk 27),
+   * so a single click reverses all ops the model just ran. Returns true
+   * when something was actually undone.
+   */
+  onUndoApply?: () => boolean;
 }
 
 /** Multi-doc chip strip — chunk 21. Reads `getOpenDocs` each render so
@@ -1249,6 +1351,7 @@ function Message({
   onDelete,
   onApplyHtml,
   onRunTools,
+  onUndoApply,
 }: MessageProps): JSX.Element {
   const isUser = message.role === 'user';
   const isAssistantStreaming =
@@ -1285,7 +1388,14 @@ function Message({
       ? HTML_BLOCK_RE.exec(message.content)
       : null;
   const htmlPayload = htmlMatch ? htmlMatch[1].trim() : null;
+  // chunk 29 — applied/toolsRun feedback persists ~15s instead of ~2s
+  // so the user has time to click "되돌리기" before the affordance hides.
+  // The badge collapses back to its original state once `undone` flips
+  // true (we keep the affordance idempotent — second undo click is a
+  // no-op).
+  const APPLIED_TOAST_MS = 15000;
   const [applied, setApplied] = useState(false);
+  const [undone, setUndone] = useState(false);
   const appliedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     return () => {
@@ -1296,8 +1406,26 @@ function Message({
     if (!htmlPayload || !onApplyHtml) return;
     onApplyHtml(htmlPayload);
     setApplied(true);
+    setUndone(false);
     if (appliedTimerRef.current) clearTimeout(appliedTimerRef.current);
-    appliedTimerRef.current = setTimeout(() => setApplied(false), 2000);
+    appliedTimerRef.current = setTimeout(
+      () => setApplied(false),
+      APPLIED_TOAST_MS,
+    );
+  };
+  const handleUndoApply = () => {
+    if (!onUndoApply || undone) return;
+    const ok = onUndoApply();
+    if (ok) {
+      setUndone(true);
+      // Keep the badge visible for a beat so the user sees the rollback
+      // confirmation, then collapse.
+      if (appliedTimerRef.current) clearTimeout(appliedTimerRef.current);
+      appliedTimerRef.current = setTimeout(() => {
+        setApplied(false);
+        setUndone(false);
+      }, 2000);
+    }
   };
 
   // Tool-call dispatcher affordance — chunk 19. The model emits a
@@ -1317,12 +1445,40 @@ function Message({
     ok: number;
     total: number;
   } | null>(null);
+  const [toolsUndone, setToolsUndone] = useState(false);
+  const toolsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (toolsTimerRef.current) clearTimeout(toolsTimerRef.current);
+    };
+  }, []);
   const handleRunTools = () => {
     if (!toolsParsed || !toolsParsed.ok || !onRunTools) return;
     const results = onRunTools(toolsParsed.items);
     let ok = 0;
     for (const r of results) if (r.ok) ok += 1;
     setToolsRun({ ok, total: results.length });
+    setToolsUndone(false);
+    if (toolsTimerRef.current) clearTimeout(toolsTimerRef.current);
+    // chunk 29 — keep the affordance visible for ~15s so the user has
+    // time to click 되돌리기. The runTools dispatcher already groups all
+    // ops into a single undo entry (chunk 27).
+    toolsTimerRef.current = setTimeout(
+      () => setToolsRun(null),
+      APPLIED_TOAST_MS,
+    );
+  };
+  const handleUndoTools = () => {
+    if (!onUndoApply || toolsUndone) return;
+    const ok = onUndoApply();
+    if (ok) {
+      setToolsUndone(true);
+      if (toolsTimerRef.current) clearTimeout(toolsTimerRef.current);
+      toolsTimerRef.current = setTimeout(() => {
+        setToolsRun(null);
+        setToolsUndone(false);
+      }, 2000);
+    }
   };
 
   return (
@@ -1354,7 +1510,7 @@ function Message({
           <MessageContent content={message.content} />
         )}
         {htmlPayload ? (
-          <div className="mt-2 border-t border-border pt-2">
+          <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2">
             <Button
               type="button"
               size="sm"
@@ -1363,8 +1519,21 @@ function Message({
               data-testid="chat-action-apply-html"
               className="text-xs"
             >
-              {applied ? '✓ 적용됨' : '문서에 적용'}
+              {applied ? (undone ? '✓ 되돌림' : '✓ 적용됨') : '문서에 적용'}
             </Button>
+            {applied && !undone && onUndoApply ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={handleUndoApply}
+                data-testid="chat-action-undo-apply"
+                className="text-xs"
+                title="방금 적용한 변경을 한 번에 되돌립니다 (⌘Z 묶음 undo)"
+              >
+                되돌리기
+              </Button>
+            ) : null}
           </div>
         ) : null}
         {toolsParsed ? (
@@ -1397,21 +1566,38 @@ function Message({
                     </li>
                   ))}
                 </ul>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={toolsRun ? 'secondary' : 'default'}
-                  onClick={handleRunTools}
-                  disabled={
-                    toolsParsed.items.every((it) => !it.ok) // all-failed: nothing to dispatch
-                  }
-                  data-testid="chat-action-run-tools"
-                  className="text-xs"
-                >
-                  {toolsRun
-                    ? `✓ 적용됨 (${toolsRun.ok}/${toolsRun.total})`
-                    : '도구 실행'}
-                </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={toolsRun ? 'secondary' : 'default'}
+                    onClick={handleRunTools}
+                    disabled={
+                      toolsParsed.items.every((it) => !it.ok) // all-failed: nothing to dispatch
+                    }
+                    data-testid="chat-action-run-tools"
+                    className="text-xs"
+                  >
+                    {toolsRun
+                      ? toolsUndone
+                        ? `✓ 되돌림 (${toolsRun.ok}/${toolsRun.total})`
+                        : `✓ 적용됨 (${toolsRun.ok}/${toolsRun.total})`
+                      : '도구 실행'}
+                  </Button>
+                  {toolsRun && !toolsUndone && onUndoApply ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={handleUndoTools}
+                      data-testid="chat-action-undo-tools"
+                      className="text-xs"
+                      title="방금 실행한 모든 도구 호출을 한 번에 되돌립니다"
+                    >
+                      되돌리기
+                    </Button>
+                  ) : null}
+                </div>
               </>
             ) : (
               <div

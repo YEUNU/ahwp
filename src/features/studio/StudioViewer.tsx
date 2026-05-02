@@ -60,6 +60,10 @@ interface StudioViewerProps {
   onOpenCellProps?: () => void;
   /** Cell context-menu — chunk 42. Open cell-style picker. */
   onOpenCellStylePicker?: () => void;
+  /** Cell context-menu — chunk 34. Open table-formula recalc dialog
+   * for the right-clicked cell. AppShell receives the cell coordinates
+   * via `getActiveCellContext` after the click resolved. */
+  onOpenFormula?: () => void;
 }
 
 type Phase = 'mounting' | 'reading' | 'rendering' | 'ready';
@@ -305,6 +309,7 @@ function CellContextMenu({
   onOpenTableProps,
   onOpenCellProps,
   onOpenCellStylePicker,
+  onOpenFormula,
 }: {
   state: { x: number; y: number };
   onClose: () => void;
@@ -324,6 +329,7 @@ function CellContextMenu({
   onOpenTableProps?: () => void;
   onOpenCellProps?: () => void;
   onOpenCellStylePicker?: () => void;
+  onOpenFormula?: () => void;
 }): React.ReactElement {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -412,6 +418,9 @@ function CellContextMenu({
       {onOpenCellStylePicker
         ? item('스타일 적용…', onOpenCellStylePicker, 'studio-cell-style-apply')
         : null}
+      {onOpenFormula
+        ? item('수식 다시 계산…', onOpenFormula, 'studio-cell-formula')
+        : null}
       <hr className="my-1 border-border" />
       {item('표 삭제', onDeleteTable, 'studio-cell-table-delete')}
     </div>
@@ -459,6 +468,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       onOpenTableProps,
       onOpenCellProps,
       onOpenCellStylePicker,
+      onOpenFormula,
     },
     ref,
   ) {
@@ -2283,14 +2293,37 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             return;
           }
           doc.createHeaderFooter(sectionIdx, isHeader, applyTo);
-          doc.insertTextInHeaderFooter(
-            sectionIdx,
-            isHeader,
-            applyTo,
-            0 /* first paragraph */,
-            0 /* offset 0 */,
-            text,
-          );
+          // chunk 35 — multi-line support. Split on \n and insert each
+          // line as its own paragraph via splitParagraphInHeaderFooter.
+          // The lib's `insertTextInHeaderFooter` is per-paragraph; \n in
+          // text is treated as a literal char, not a paragraph break.
+          const lines = text.split('\n');
+          let paraIdx = 0;
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (line.length > 0) {
+              doc.insertTextInHeaderFooter(
+                sectionIdx,
+                isHeader,
+                applyTo,
+                paraIdx,
+                0,
+                line,
+              );
+            }
+            // After the last line, no trailing split — otherwise we leave
+            // an empty paragraph at the end.
+            if (i < lines.length - 1) {
+              doc.splitParagraphInHeaderFooter(
+                sectionIdx,
+                isHeader,
+                applyTo,
+                paraIdx,
+                line.length,
+              );
+              paraIdx += 1;
+            }
+          }
           refreshAfterMutation({ syncCaret: false });
         } catch (err) {
           console.warn('[studio] setHeaderFooterText failed:', err);
@@ -3000,6 +3033,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           toggleCharFormat(key);
         },
         undo: () => undo(),
+        canUndo: () => historyRef.current.index > 0,
         redo: () => redo(),
         copy: () => copySelection(),
         cut: () => cutSelection(),
@@ -3132,6 +3166,41 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           } catch (err) {
             console.warn('[studio] applyCellStyle failed:', err);
             return false;
+          }
+        },
+        evaluateTableFormula: (
+          sec,
+          parentPara,
+          ctrl,
+          targetRow,
+          targetCol,
+          formula,
+          writeResult,
+        ) => {
+          const doc = docRef.current;
+          if (!doc) return null;
+          try {
+            const json = doc.evaluateTableFormula(
+              sec,
+              parentPara,
+              ctrl,
+              targetRow,
+              targetCol,
+              formula,
+              writeResult,
+            );
+            const parsed = JSON.parse(json) as Record<string, unknown>;
+            // Only mark dirty if we actually wrote into the cell — pure
+            // evaluation (preview) leaves the doc untouched.
+            if (writeResult && parsed['ok']) {
+              dirtyRef.current = true;
+              setDirty(true);
+              refreshAfterMutation({ syncCaret: false });
+            }
+            return parsed;
+          } catch (err) {
+            console.warn('[studio] evaluateTableFormula failed:', err);
+            return null;
           }
         },
         getPictureProps: (sec, parentPara, ctrl) => {
@@ -6324,6 +6393,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             onOpenTableProps={onOpenTableProps}
             onOpenCellProps={onOpenCellProps}
             onOpenCellStylePicker={onOpenCellStylePicker}
+            onOpenFormula={onOpenFormula}
           />
         )}
 

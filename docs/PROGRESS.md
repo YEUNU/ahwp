@@ -4,17 +4,17 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 ## 현재 스냅샷
 
-| 항목        | 상태                                                                                                                                                                                                                                                                                                                                                                         |
-| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Phase       | **Phase 2 청크 18~42 완료 + UX 회귀 3건 fix + P0/P1 보강** — 채팅 파이프라인 + UI/UX 1차 리뉴얼 + IR-only 기능 UI 노출(38~42) + 편집 UX fix(caret 상태 / 드래그 / Cmd+A) + P0/P1 보강(ArrowUp/Down 시각 nav · shift+click · 드래그 자동 스크롤 · Esc-cancel · .bak 백업 · HWPX 라우팅 알림 · 외부 변경 감지 · Notice banner). 다음: Phase 3 진입 또는 Phase 2-B(provider 키) |
-| 빌드        | ✅ `npm run dev` · `npx vite build`                                                                                                                                                                                                                                                                                                                                          |
-| 타입        | ✅ `npm run typecheck`                                                                                                                                                                                                                                                                                                                                                       |
-| 린트        | ✅ `npm run lint` (0 warnings, 0 errors)                                                                                                                                                                                                                                                                                                                                     |
-| 포맷        | ✅ `npm run format:check`                                                                                                                                                                                                                                                                                                                                                    |
-| 단위 테스트 | ✅ 3/3 (`App.test.tsx`)                                                                                                                                                                                                                                                                                                                                                      |
-| e2e         | ✅ 288 케이스 / 4 워커 병렬 + retry=1 — chunk 22(3) + 26(6) + rhwp-extras(5) + tabs-reorder(4) + dialogs-ui(4) + studio-ux-fixes(5) + studio-ux-round2(6) 추가. 281 passed / 6 skipped (NIM 5개 키 게이트 + cell-menu 1개 의도). live NIM 5/5 (`qwen/qwen3.5-122b-a10b`)                                                                                                     |
-| Electron    | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                                                                                                                                                                                                  |
-| 의존성      | runtime: `@rhwp/core` · `chokidar` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` (chunk 6에서 `@rhwp/editor` 제거)                                                                                                                                                   |
+| 항목        | 상태                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Phase       | **Phase 2 마무리 (chunks 18~42 + 29 + 30 + 34 + 35) + UX 회귀 fix + P0/P1 보강** — Phase 2의 사용자-facing 작업 종료. 채팅 파이프라인 + UI/UX 리뉴얼 + IR-only UI 노출(38~42) + 편집 UX fix + P0/P1 보강 + Phase 2 잔여(29 AI 변경 되돌리기 / 30 채팅 인라인 rename / 34 표 수식 / 35 머리말 다중 라인 + 페이지 템플릿). 다음: Phase 3 진입(provider tool-use 정식 통합 + Agent 모드) 또는 Phase 2-B(provider 키 잠금 해제) |
+| 빌드        | ✅ `npm run dev` · `npx vite build`                                                                                                                                                                                                                                                                                                                                                                                         |
+| 타입        | ✅ `npm run typecheck`                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 린트        | ✅ `npm run lint` (0 warnings, 0 errors)                                                                                                                                                                                                                                                                                                                                                                                    |
+| 포맷        | ✅ `npm run format:check`                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 단위 테스트 | ✅ 3/3 (`App.test.tsx`)                                                                                                                                                                                                                                                                                                                                                                                                     |
+| e2e         | ✅ 293 케이스 / 4 워커 병렬 + retry=1 — chunk 22(3) + 26(6) + rhwp-extras(5) + tabs-reorder(4) + dialogs-ui(4) + studio-ux-fixes(5) + studio-ux-round2(6) + phase2-finale(5 chunks 29/30/34/35) 추가. 286 passed / 6 skipped (NIM 5개 키 게이트 + cell-menu 1개 의도). live NIM 5/5 (`qwen/qwen3.5-122b-a10b`)                                                                                                              |
+| Electron    | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                                                                                                                                                                                                                                                 |
+| 의존성      | runtime: `@rhwp/core` · `chokidar` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` (chunk 6에서 `@rhwp/editor` 제거)                                                                                                                                                                                                  |
 
 ## 일지
 
@@ -2585,6 +2585,33 @@ interface ExcerptAttachment {
 ✓ 누적 e2e 255 = 249 + 5 (chat-multidoc) + 1 (nvidia-live chunk 21). 249 passed / 6 skipped (NIM 5개 키 게이트 + cell-menu 1개 의도)
 ✓ NVIDIA NIM live 5/5 (qwen/qwen3.5-122b-a10b — chunk 18·19·20·21 round-trip 모두 포함)
 ```
+
+### 2026-05-02 — Phase 2 마무리 (chunks 29 / 30 / 34 / 35) — 0.2.47
+
+사용자 "페이즈2까지 작업 다 진행해줘" 요청. ROADMAP에 박제된 4개 잔여 청크를 일괄 종료.
+
+**청크별 처리**
+
+| #   | 항목                                    | 핵심                                                                                                                                                                                                                                                                  |
+| --- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 29  | AI 변경 되돌리기                        | `applied`/`toolsRun` 상태에 "되돌리기" 버튼 + 15s 노출. `ChatPanelProps.undoLastApply` 신규 prop → AppShell이 `activeViewerRef().undo()`로 wiring. ViewerHandle에 `canUndo()` 추가. chunk 27 묶음 undo가 이미 AI 턴을 1 entry로 collapse하므로 1회 클릭으로 전체 롤백 |
+| 30  | 채팅 히스토리 인라인 rename             | 📚 popover의 conversation 행에 ✎ 버튼 + 더블클릭. input swap → Enter 저장(낙관적 갱신 + chatHistory.rename IPC) / Esc / blur 자동 커밋                                                                                                                                |
+| 34  | 표 수식 evaluate                        | `TableFormulaDialog` 신규 + 셀 우클릭 메뉴 "수식 다시 계산…". `evaluateTableFormula(s, parentPara, ctrl, row, col, formula, writeResult)` IR 위임. 미리 보기(write_result=false) + 셀에 적용(write_result=true) 분리                                                  |
+| 35  | 머리말/꼬리말 다중 라인 + 페이지 템플릿 | `HeaderFooterDialog` Input → textarea(4행). applyTo 토글(양쪽=0/홀수=1/짝수=2) — 각 슬롯 IR에서 독립. `setHeaderFooterText` 내부에서 `\n` 감지 시 `splitParagraphInHeaderFooter`로 라인별 단락 분리                                                                   |
+
+**검증**
+
+- 신규 e2e 5건 (`tests/e2e/phase2-finale.spec.ts`): 머리말 다중 라인 round-trip + 홀/짝 슬롯 독립 + 셀 우클릭 메뉴 "수식 다시 계산" 노출 + 되돌리기 버튼 alignment 롤백 + 인라인 rename input swap — 5/5 pass
+- 회귀: studio-headerfooter / studio-cells / studio-cells-v3 / studio-ux-fixes / studio-ux-round2 / chat / chat-history 44/44 pass
+- 전체 e2e: 286 passed / 6 skipped / 1 flaky(paraformat round-trip parallel race, 본 변경 무관)
+- typecheck / lint / format / 단위 3/3 청정
+
+**Phase 2 종료 시점 잔여**
+
+- **deferred (lib 대기)**: chunk 33 도형 라인/곡선/그룹, chunk 36 스타일 char/para shape 캡처 — 둘 다 rhwp 0.8 대기
+- **deferred (대형 작업)**: chunk 31 자동 title summary(AI call 복잡), chunk 32 셀 selection v4
+- **Phase 2-B**: provider 키 잠금 해제 (Anthropic / Google / Ollama / 커스텀 OpenAI-호환) — 키 사용 결정 대기
+- **Phase 2-G ↔ Phase 3**: provider tool-use API 정식 통합, docId-aware 라우팅, 다중 턴 자동 실행 — Phase 3 진입과 함께 처리
 
 ### 2026-05-02 — P0/P1/P2 보강 (visual nav · shift+click · auto-scroll · 저장 안전망 · 외부 변경)
 
