@@ -344,8 +344,16 @@ function CellContextMenu({
   onOpenFormula?: () => void;
 }): React.ReactElement {
   const ref = useRef<HTMLDivElement>(null);
+  // Open timestamp — used as a debounce so the same right-click gesture
+  // that mounted us doesn't immediately close us via outside-mousedown.
+  // Any mousedown landing within 100ms of mount is the trigger event;
+  // anything later is genuine user input. Initialized inside the
+  // mount effect to keep render pure.
+  const openedAtRef = useRef(0);
   useEffect(() => {
+    openedAtRef.current = performance.now();
     const onDown = (e: MouseEvent): void => {
+      if (performance.now() - openedAtRef.current < 100) return;
       if (
         ref.current &&
         e.target instanceof Node &&
@@ -357,13 +365,10 @@ function CellContextMenu({
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') onClose();
     };
-    const t = window.setTimeout(() => {
-      document.addEventListener('mousedown', onDown);
-    }, 0);
+    document.addEventListener('mousedown', onDown, true);
     document.addEventListener('keydown', onKey);
     return () => {
-      window.clearTimeout(t);
-      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('mousedown', onDown, true);
       document.removeEventListener('keydown', onKey);
     };
   }, [onClose]);
@@ -490,8 +495,11 @@ function AiCommandMenu({
   onPick: (template: string) => void;
 }): React.ReactElement {
   const ref = useRef<HTMLDivElement>(null);
+  const openedAtRef = useRef(0);
   useEffect(() => {
+    openedAtRef.current = performance.now();
     const onDown = (e: MouseEvent): void => {
+      if (performance.now() - openedAtRef.current < 100) return;
       if (
         ref.current &&
         e.target instanceof Node &&
@@ -503,13 +511,10 @@ function AiCommandMenu({
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') onClose();
     };
-    const t = window.setTimeout(() => {
-      document.addEventListener('mousedown', onDown);
-    }, 0);
+    document.addEventListener('mousedown', onDown, true);
     document.addEventListener('keydown', onKey);
     return () => {
-      window.clearTimeout(t);
-      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('mousedown', onDown, true);
       document.removeEventListener('keydown', onKey);
     };
   }, [onClose]);
@@ -1319,21 +1324,47 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       const doc = docRef.current;
       if (!doc) return;
       const c = caretRef.current;
+      // chunk UX-fix #4 — caret in a cell: the IR has no
+      // `getCharPropertiesAtInCell` getter, so we can't read the
+      // cell-paragraph's char shape directly. Reading body coords with
+      // a cell caret returns wrong data (parent-paragraph default).
+      // Keep the last-known activeFormat instead — better than showing
+      // a stale body value as if it were the cell's format.
+      if (c.cell) return;
+      // chunk UX-fix #4 — when a selection is active, read the format
+      // at the START of the selection (in document order). This matches
+      // the Word/Pages convention "what would a Bold toggle apply to":
+      // the user selected those chars, so the toolbar should show
+      // their format, not the format at the focus end (which after a
+      // top-down drag is the format AFTER the selection).
+      // The IR's char-properties at offset N is the *trailing* format
+      // (i.e. format of char at index N-1), so we read at startOffset+1
+      // to land inside the first selected character. Caret-only mode
+      // reads at the caret's offset directly (existing behavior).
+      let readPara = c.paragraphIndex;
+      let readOffset = c.charOffset;
+      const sel = selectionRef.current;
+      if (sel) {
+        const r = sortRange(sel.anchor, sel.focus);
+        if (!r.empty) {
+          readPara = r.startPara;
+          // startOffset is 0-based "before this char". Add 1 to land
+          // inside the first selected char. If startOffset == endOffset
+          // we'd be empty (handled above by `r.empty`).
+          readOffset = r.startOffset + 1;
+        }
+      }
       try {
         const cp = JSON.parse(
-          doc.getCharPropertiesAt(
-            c.sectionIndex,
-            c.paragraphIndex,
-            c.charOffset,
-          ),
+          doc.getCharPropertiesAt(c.sectionIndex, readPara, readOffset),
         ) as CharProps;
-        const at = JSON.parse(
-          doc.getStyleAt(c.sectionIndex, c.paragraphIndex),
-        ) as { id: number };
+        const at = JSON.parse(doc.getStyleAt(c.sectionIndex, readPara)) as {
+          id: number;
+        };
         let alignment: ParaAlignment = 'left';
         try {
           const pp = JSON.parse(
-            doc.getParaPropertiesAt(c.sectionIndex, c.paragraphIndex),
+            doc.getParaPropertiesAt(c.sectionIndex, readPara),
           ) as ParaProps;
           if (pp.alignment && PARA_ALIGNMENTS.includes(pp.alignment)) {
             alignment = pp.alignment;
@@ -1354,7 +1385,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       } catch {
         /* keep previous */
       }
-    }, []);
+    }, [sortRange]);
 
     /**
      * Push a snapshot of the current doc state onto the undo stack. Called
@@ -4764,8 +4795,11 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         };
         const applyPointerToSelection = (cx: number, cy: number): void => {
           const refs = pageRefsRef.current;
+          // 1. Try the page directly under the cursor first.
           let pageIdx = -1;
           let pageEl: HTMLElement | null = null;
+          let hitX = cx;
+          let hitY = cy;
           for (let i = 0; i < refs.length; i++) {
             const el = refs[i];
             if (!el) continue;
@@ -4776,8 +4810,33 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               break;
             }
           }
+          // 2. Fallback: pointer is in a page gap / off-edge. Pick the
+          //    page nearest along the Y axis and clamp the hit-test to
+          //    its bounds. This mirrors PDF/Word drag behavior — the
+          //    selection extends to the page edge that the cursor is
+          //    closest to (start if dragging up past page top, end if
+          //    dragging down past page bottom).
+          if (pageIdx < 0) {
+            let bestDist = Infinity;
+            for (let i = 0; i < refs.length; i++) {
+              const el = refs[i];
+              if (!el) continue;
+              const r = el.getBoundingClientRect();
+              const dy =
+                cy < r.top ? r.top - cy : cy > r.bottom ? cy - r.bottom : 0;
+              if (dy < bestDist) {
+                bestDist = dy;
+                pageIdx = i;
+                pageEl = el;
+                // Clamp 1px inside the page rect so hitTest doesn't get
+                // a boundary value that resolves to the wrong line.
+                hitX = Math.max(r.left + 1, Math.min(r.right - 1, cx));
+                hitY = Math.max(r.top + 1, Math.min(r.bottom - 1, cy));
+              }
+            }
+          }
           if (pageIdx < 0 || !pageEl) return;
-          const moveResult = hitTestAt(pageIdx, cx, cy, pageEl);
+          const moveResult = hitTestAt(pageIdx, hitX, hitY, pageEl);
           if (!moveResult) return;
           const focus = {
             sectionIndex: moveResult.sectionIndex,

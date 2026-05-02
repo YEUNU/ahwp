@@ -85,16 +85,19 @@ export function SlashMenu({
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  // Open timestamp guard — outside-mousedown within 100ms of mount is
+  // the trigger event (the `/` keystroke's residual click cascade) and
+  // is ignored. Anything later is genuine outside click.
+  const openedAtRef = useRef(0);
 
   useEffect(() => {
     inputRef.current?.focus();
+    openedAtRef.current = performance.now();
   }, []);
 
-  // Close on outside click. Listener is attached on a microtask delay
-  // so the same `/` keystroke that opened us doesn't immediately close
-  // us via a synthetic click cascade.
   useEffect(() => {
     const onDown = (e: MouseEvent): void => {
+      if (performance.now() - openedAtRef.current < 100) return;
       if (
         rootRef.current &&
         e.target instanceof Node &&
@@ -103,12 +106,9 @@ export function SlashMenu({
         return;
       onClose();
     };
-    const t = window.setTimeout(() => {
-      document.addEventListener('mousedown', onDown);
-    }, 0);
+    document.addEventListener('mousedown', onDown, true);
     return () => {
-      window.clearTimeout(t);
-      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('mousedown', onDown, true);
     };
   }, [onClose]);
 

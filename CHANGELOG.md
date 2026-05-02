@@ -14,6 +14,13 @@
 - **chunk 58 — 목차 사이드바 (⌘⇧O, 0.2.61)**: `viewer.getOutline()` — 단락 styleId를 styleList에서 "제목 N" / "Heading N"로 매칭, level 추출. `OutlineSidebar` 컴포넌트가 viewer 옆에 토글 + 클릭 시 scrollToParagraph
 - **chunk 57 — AI inline diff (0.2.61)**: `viewer.snapshotParagraphs()` + `markChangedParagraphsSince(before)`. AppShell의 applyHtml/runTools가 before/after로 bracket. 변경된 단락 좌측에 amber 3px 막대 + animate-pulse + 15s 후 페이드
 
+### Fixed — UX 다듬기 4건 (0.2.66)
+
+- **컨텍스트 메뉴 외부 클릭 시 닫힘** — `CellContextMenu` / `AiCommandMenu` / `SlashMenu`의 outside-mousedown 리스너가 `setTimeout(0)` race로 첫 클릭을 놓치는 케이스. 100ms timestamp guard + capture phase 등록으로 교체. trigger 직후의 ghost 이벤트는 무시, 이후 모든 외부 클릭이 메뉴 닫힘
+- **드래그 영역 자연스럽게** — `applyPointerToSelection`이 페이지 사이 갭/페이지 외부에서 stale 위치에 머물던 문제. cursor가 어떤 페이지에도 안 닿으면 가장 가까운 페이지로 Y-거리 nearest fallback + 좌표 clamp(±1px). PDF/Word 표준처럼 페이지 끝까지 자연스럽게 확장
+- **선택 영역 서식 read-back** — `refreshActiveFormat`이 selection focus end(드래그 끝점)를 읽어 toolbar에 "선택 직후 자리"의 format이 표시되던 문제. selection 활성 시 startOffset+1 (선택의 첫 글자 trailing 위치)에서 읽도록 변경 — Word/Pages 컨벤션 ("Bold 누르면 이 글자에 적용됨")
+- **셀 안 caret 안전 폴백** — IR이 `getCharPropertiesAtInCell` getter를 노출하지 않아 셀에서 body 좌표로 읽으면 부정확. 셀이면 read-back 자체를 skip하고 last-known activeFormat 유지
+
 ### Added — 3차 UX 라운드 chunks 61~65 (0.2.65)
 
 - **chunk 61 — 룰러 토글**: `--paper` 위에 cm-tick 가로 룰러. View 메뉴 + ⌘K. localStorage `ahwp:show-ruler` 영속
