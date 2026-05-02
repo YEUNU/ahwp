@@ -156,6 +156,19 @@ export interface ViewerHandle {
     parentParaIdx: number,
     controlIdx: number,
   ) => boolean;
+  /** Copy a control object (table, image, shape) to the IR's internal
+   * clipboard — chunk 25. Distinct from text copy. */
+  copyControl: (
+    sectionIdx: number,
+    paraIdx: number,
+    controlIdx: number,
+  ) => boolean;
+  /** Paste the previously-copied control at a body caret — chunk 25. */
+  pasteControlAt: (
+    sectionIdx: number,
+    paraIdx: number,
+    charOffset: number,
+  ) => boolean;
   /**
    * Capture the current viewer selection as a portable excerpt — chunk
    * 20. Returns null when no selection is active or the selection

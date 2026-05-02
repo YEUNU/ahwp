@@ -3070,6 +3070,38 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             return false;
           }
         },
+        copyControl: (sec, para, ctrl) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            const r = JSON.parse(doc.copyControl(sec, para, ctrl)) as {
+              ok?: boolean;
+            };
+            return Boolean(r.ok);
+          } catch (err) {
+            console.warn('[studio] copyControl failed:', err);
+            return false;
+          }
+        },
+        pasteControlAt: (sec, para, charOffset) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            const r = JSON.parse(doc.pasteControl(sec, para, charOffset)) as {
+              ok?: boolean;
+            };
+            if (r.ok) {
+              dirtyRef.current = true;
+              setDirty(true);
+              refreshAfterMutation({ syncCaret: false });
+              return true;
+            }
+            return false;
+          } catch (err) {
+            console.warn('[studio] pasteControl failed:', err);
+            return false;
+          }
+        },
         // chunk 20 — excerpt capture + stale verification. Selection
         // must be non-empty AND single-paragraph; multi-paragraph
         // excerpts need a span anchor model that the IR's
