@@ -4898,9 +4898,49 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           // which the user perceived as "everything below selected" /
           // "down-drag visual even when dragging up". Body-level drag
           // selection across cells isn't supported (cell selection v2
-          // — see handlePageMouseDown's cell branch which disables
-          // drag), so freeze focus while the cursor is inside a cell.
+          // — see handlePageMouseDown's cell branch which disables drag).
+          //
+          // UX requirement: dragging across a control (table / image /
+          // shape) should pull the entire object into the selection.
+          // We do that by extending focus to the boundary of the body
+          // paragraph that anchors the control (`parentParaIndex`).
+          // Direction-aware: if we're dragging past the object (anchor
+          // is above it), snap focus to the END of its parent
+          // paragraph; if anchor is below, snap to the START. The
+          // resulting [anchor → focus] range fully covers the parent
+          // paragraph and any inline control(s) it carries.
           if (moveResult.controlIndex !== undefined) {
+            const anchor = selectionRef.current?.anchor;
+            const parentPara = moveResult.parentParaIndex;
+            if (anchor !== undefined && parentPara !== undefined) {
+              const goingDown = parentPara >= anchor.paragraphIndex;
+              let charOffset = 0;
+              if (goingDown) {
+                const doc = docRef.current;
+                if (doc) {
+                  try {
+                    charOffset = doc.getParagraphLength(
+                      moveResult.sectionIndex,
+                      parentPara,
+                    );
+                  } catch {
+                    /* fall back to start of paragraph */
+                  }
+                }
+              }
+              const focus = {
+                sectionIndex: moveResult.sectionIndex,
+                paragraphIndex: parentPara,
+                charOffset,
+              };
+              caretRef.current = focus;
+              setSelection((prev) => {
+                if (!prev) return null;
+                const next = { ...prev, focus };
+                refreshSelectionRects(next);
+                return next;
+              });
+            }
             return;
           }
           // Whitespace-jump guard — when the cursor lands in vertical

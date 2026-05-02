@@ -14,6 +14,14 @@
 - **chunk 58 — 목차 사이드바 (⌘⇧O, 0.2.61)**: `viewer.getOutline()` — 단락 styleId를 styleList에서 "제목 N" / "Heading N"로 매칭, level 추출. `OutlineSidebar` 컴포넌트가 viewer 옆에 토글 + 클릭 시 scrollToParagraph
 - **chunk 57 — AI inline diff (0.2.61)**: `viewer.snapshotParagraphs()` + `markChangedParagraphsSince(before)`. AppShell의 applyHtml/runTools가 before/after로 bracket. 변경된 단락 좌측에 amber 3px 막대 + animate-pulse + 15s 후 페이드
 
+### Changed — 드래그 시 표/이미지/도형 영역 통째로 선택 (0.2.72)
+
+- 기존(0.2.69): 본문 드래그 selection이 control(표·이미지·도형) 위를 통과할 때 focus update를 freeze (=control 영역만 selection에서 제외) — 단순 보호 동작이라 사용자가 "object를 포함시키려면 어떻게?"라는 케이스 미해결.
+- 변경: control 위를 통과할 때 focus를 그 control의 `parentParaIndex` (object가 anchor된 본문 단락)의 경계로 점프시켜 selection이 단락 전체를 포함하도록 처리. 방향에 따라:
+  - 드래그가 object 아래로 진행 (anchor가 object 위) → focus = parentPara 끝
+  - 드래그가 object 위로 진행 (anchor가 object 아래) → focus = parentPara 시작
+- 결과: 표/이미지/도형 위를 드래그로 가로지르면 그 object를 품은 단락 전체가 selection에 포함됨. 드래그가 표 안에서 시작하는 케이스는 여전히 비활성 (cell selection v2).
+
 ### Fixed — wrapped paragraph 두 번째 줄 selection rect 누락 (0.2.71)
 
 - 한 단락이 줄바꿈으로 두 줄 이상이 될 때, drag selection이 그 단락을 가로지르면 **중간 줄(wrap된 두 번째 줄)이 selection으로 highlight되지 않는** 현상.
