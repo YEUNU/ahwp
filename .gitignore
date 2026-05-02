@@ -285,5 +285,9 @@ __marimo__/
 # (.DS_Store and other macOS junk filtered out separately.)
 examples/.DS_Store
 
+# Design mockups / brand source assets — local-only reference.
+# Brand icons that ship with the app live in /build/ and /public/.
+style_example/
+
 # Claude Code runtime state
 .claude/
