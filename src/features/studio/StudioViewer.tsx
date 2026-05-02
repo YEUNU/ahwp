@@ -4846,6 +4846,139 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             refreshCursorRect();
             refreshActiveFormat();
           };
+          // Phase B-4 — 표 편집 단축키 (셀 안 caret 또는 셀 block 활성).
+          // 줄/칸 추가·삭제 + 셀 합치기·나누기 라이브러리 API에 매핑.
+          //   Ctrl+Enter → 현재 행 아래에 줄 추가 (insertTableRow below)
+          //   Ctrl+Backspace → 현재 행 삭제 (deleteTableRow)
+          //   Alt+Insert → 줄 추가 (Hancom: 셀 block 종류에 따라 row/col,
+          //     v1은 row만 — Ctrl+Enter와 동일 동작)
+          //   Alt+Delete → 줄 삭제 (Hancom: row/col, v1은 row만)
+          //   M (cell-block 활성) → 셀 합치기 (mergeTableCells)
+          //   S (cell-block 활성) → 셀 나누기 (splitTableCell)
+          const isInsertRow =
+            (e.ctrlKey && !e.metaKey && !e.altKey && e.key === 'Enter') ||
+            (e.altKey && !e.metaKey && !e.ctrlKey && e.key === 'Insert');
+          const isDeleteRow =
+            (e.ctrlKey && !e.metaKey && !e.altKey && e.key === 'Backspace') ||
+            (e.altKey && !e.metaKey && !e.ctrlKey && e.key === 'Delete');
+          if (isInsertRow || isDeleteRow) {
+            try {
+              const cells = JSON.parse(
+                doc.getTableCellBboxes(
+                  c.sectionIndex,
+                  ci.parentParaIndex,
+                  ci.controlIndex,
+                ),
+              ) as { cellIdx: number; row: number; col: number }[];
+              const here = cells.find((x) => x.cellIdx === ci.cellIndex);
+              if (here) {
+                if (isInsertRow) {
+                  doc.insertTableRow(
+                    c.sectionIndex,
+                    ci.parentParaIndex,
+                    ci.controlIndex,
+                    here.row,
+                    true /* below */,
+                  );
+                } else {
+                  doc.deleteTableRow(
+                    c.sectionIndex,
+                    ci.parentParaIndex,
+                    ci.controlIndex,
+                    here.row,
+                  );
+                }
+                refreshAfterMutation({ syncCaret: false });
+              }
+            } catch (err) {
+              console.warn('[studio] table row op failed:', err);
+            }
+            e.preventDefault();
+            return;
+          }
+          // 셀 합치기 / 나누기 — 셀-block 활성 (selection에 다른 셀
+          // 두 개의 anchor·focus가 같은 표) 시에만 동작.
+          if (
+            (e.key === 'm' ||
+              e.key === 'M' ||
+              e.key === 's' ||
+              e.key === 'S') &&
+            !e.metaKey &&
+            !e.ctrlKey &&
+            !e.altKey
+          ) {
+            const cur = selectionRef.current;
+            if (
+              cur &&
+              cur.anchor.cell &&
+              cur.focus.cell &&
+              cur.anchor.cell.parentParaIndex ===
+                cur.focus.cell.parentParaIndex &&
+              cur.anchor.cell.controlIndex === cur.focus.cell.controlIndex
+            ) {
+              try {
+                const ac = cur.anchor.cell;
+                const fc = cur.focus.cell;
+                const cells = JSON.parse(
+                  doc.getTableCellBboxes(
+                    cur.anchor.sectionIndex,
+                    ac.parentParaIndex,
+                    ac.controlIndex,
+                  ),
+                ) as {
+                  cellIdx: number;
+                  row: number;
+                  col: number;
+                  rowSpan: number;
+                  colSpan: number;
+                }[];
+                const acCell = cells.find((x) => x.cellIdx === ac.cellIndex);
+                const fcCell = cells.find((x) => x.cellIdx === fc.cellIndex);
+                if (acCell && fcCell) {
+                  const startRow = Math.min(acCell.row, fcCell.row);
+                  const endRow = Math.max(
+                    acCell.row + acCell.rowSpan - 1,
+                    fcCell.row + fcCell.rowSpan - 1,
+                  );
+                  const startCol = Math.min(acCell.col, fcCell.col);
+                  const endCol = Math.max(
+                    acCell.col + acCell.colSpan - 1,
+                    fcCell.col + fcCell.colSpan - 1,
+                  );
+                  if (e.key === 'm' || e.key === 'M') {
+                    doc.mergeTableCells(
+                      cur.anchor.sectionIndex,
+                      ac.parentParaIndex,
+                      ac.controlIndex,
+                      startRow,
+                      startCol,
+                      endRow,
+                      endCol,
+                    );
+                  } else {
+                    // S: 셀 나누기 — 1×1로 split (단일 셀이면 1×1 no-op
+                    // 안전. block 단위 split는 splitTableCellsInRange로
+                    // 후속 가능).
+                    doc.splitTableCell(
+                      cur.anchor.sectionIndex,
+                      ac.parentParaIndex,
+                      ac.controlIndex,
+                      acCell.row,
+                      acCell.col,
+                    );
+                  }
+                  refreshAfterMutation({ syncCaret: false });
+                  setCellBlockHighlights({});
+                  setSelection(null);
+                  setCellBlockExtendMode(false);
+                }
+              } catch (err) {
+                console.warn('[studio] cell merge/split failed:', err);
+              }
+              e.preventDefault();
+              return;
+            }
+          }
           if (e.key === 'Tab' && !e.ctrlKey && !e.altKey) {
             try {
               const cells = JSON.parse(

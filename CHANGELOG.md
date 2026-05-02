@@ -14,6 +14,28 @@
 - **chunk 58 — 목차 사이드바 (⌘⇧O, 0.2.61)**: `viewer.getOutline()` — 단락 styleId를 styleList에서 "제목 N" / "Heading N"로 매칭, level 추출. `OutlineSidebar` 컴포넌트가 viewer 옆에 토글 + 클릭 시 scrollToParagraph
 - **chunk 57 — AI inline diff (0.2.61)**: `viewer.snapshotParagraphs()` + `markChangedParagraphsSince(before)`. AppShell의 applyHtml/runTools가 before/after로 bracket. 변경된 단락 좌측에 amber 3px 막대 + animate-pulse + 15s 후 페이드
 
+### Added — Phase B-4: 표 편집 단축키 (0.2.82)
+
+한글 reflex 표 편집 단축키 6종:
+
+| 키                         | 동작                               | lib API                               |
+| -------------------------- | ---------------------------------- | ------------------------------------- |
+| **Ctrl+Enter** (셀 안)     | 현재 행 아래 줄 추가               | `insertTableRow(..., row, true)`      |
+| **Ctrl+Backspace** (셀 안) | 현재 행 삭제                       | `deleteTableRow(..., row)`            |
+| **Alt+Insert** (셀 안)     | 줄 추가 (Ctrl+Enter alias, v1)     | 동일                                  |
+| **Alt+Delete** (셀 안)     | 줄 삭제 (Ctrl+Backspace alias, v1) | 동일                                  |
+| **M** (cell-block 활성)    | 셀 합치기                          | `mergeTableCells(start..end row/col)` |
+| **S** (cell-block 활성)    | 셀 나누기                          | `splitTableCell(row, col)`            |
+
+- Ctrl+Enter / Backspace는 셀 안 caret 시 발화. 본문 caret이면 fall-through (본문 동작).
+- M / S는 selection의 anchor/focus가 같은 표의 다른 셀 (= cell-block) 활성 시만 동작. 본문이나 단일 셀에선 일반 키 입력.
+- 행/열 추가·삭제 후 `refreshAfterMutation()` 호출로 layout reflow + 페이지 재렌더.
+- 합치기/나누기 후 cell-block 선택 자동 해제 (변경된 표 구조에서 anchor·focus가 더 이상 유효하지 않을 수 있음).
+- Alt+Insert/Delete가 한글에선 셀-block 종류 (행/열)에 따라 분기되지만 v1은 row만 — 후속에서 selection 모양으로 행/열 판정 추가 가능.
+- splitTableCellsInRange (block 단위 split) 도 lib에 있음 → 후속 v2.
+
+기존 drag/cell/table-shortcut e2e 28개 회귀 없음.
+
 ### Added — Phase B-5 + B-2.6: 본문 도움 단축키 + 셀 블록 모드 indicator (0.2.81)
 
 - **B-5 (한글 호환 본문 단축키)**:
