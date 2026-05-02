@@ -709,6 +709,14 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       controlIndex: number;
       cellIndex: number;
       cellParaIndex: number;
+      // Phase E — nested table 경로. 길이 1이면 top-level (기존),
+      // 2+면 중첩 (셀 안 표 안 셀...). 마지막 segment의 controlIndex /
+      // cellIndex / cellParaIndex가 위 단일-level 필드와 동일.
+      path?: Array<{
+        controlIndex: number;
+        cellIndex: number;
+        cellParaIndex: number;
+      }>;
     }
     const caretRef = useRef<{
       sectionIndex: number;
@@ -813,6 +821,20 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     const [cellBlockHighlights, setCellBlockHighlights] = useState<
       Record<number, { x: number; y: number; width: number; height: number }[]>
     >({});
+    // Phase D 2차 — 마퀴 모드 (도형 탭 영역 선택). 모드 활성 시
+    // mousedown+drag는 텍스트 selection 대신 사각형 마퀴를 그림.
+    // mouseup 시 마퀴와 겹치는 표를 selectedControlBboxes로 highlight.
+    // 토글: ⌘⇧M / Esc로 종료.
+    const [marqueeMode, setMarqueeMode] = useState(false);
+    // 진행 중인 marquee rect — scrollRef-relative 좌표. null이면 안
+    // 그리는 중. JSX에서 overlay 렌더에 사용.
+    const [marqueeRect, setMarqueeRect] = useState<{
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+    } | null>(null);
+    const marqueeStartRef = useRef<{ x: number; y: number } | null>(null);
     // Phase D — 불연속 셀 추적. Ctrl+클릭으로 추가된 cells (rectangle
     // range 외 추가). M/S/format ops iteration 시 사용. Plain mousedown /
     // Esc / drag 시작 시 모두 리셋.
@@ -1253,16 +1275,33 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       if (!doc) return;
       try {
         const c = caretRef.current;
-        const rectJson = c.cell
-          ? doc.getCursorRectInCell(
+        let rectJson: string;
+        if (c.cell) {
+          // Phase E — nested table 지원. path > 1이면 ByPath variant.
+          if (c.cell.path && c.cell.path.length > 1) {
+            rectJson = doc.getCursorRectByPath(
+              c.sectionIndex,
+              c.cell.parentParaIndex,
+              JSON.stringify(c.cell.path),
+              c.charOffset,
+            );
+          } else {
+            rectJson = doc.getCursorRectInCell(
               c.sectionIndex,
               c.cell.parentParaIndex,
               c.cell.controlIndex,
               c.cell.cellIndex,
               c.cell.cellParaIndex,
               c.charOffset,
-            )
-          : doc.getCursorRect(c.sectionIndex, c.paragraphIndex, c.charOffset);
+            );
+          }
+        } else {
+          rectJson = doc.getCursorRect(
+            c.sectionIndex,
+            c.paragraphIndex,
+            c.charOffset,
+          );
+        }
         const rect = JSON.parse(rectJson) as {
           pageIndex: number;
           x: number;
@@ -1926,16 +1965,40 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           // model is a v3).
           const c = caretRef.current;
           if (c.cell) {
-            doc.applyCharFormatInCell(
-              c.sectionIndex,
-              c.cell.parentParaIndex,
-              c.cell.controlIndex,
-              c.cell.cellIndex,
-              c.cell.cellParaIndex,
-              0,
-              PARAGRAPH_END_SENTINEL,
-              propsJson,
-            );
+            // Phase D — caret 셀 + Ctrl+클릭으로 추가된 불연속 셀 모두에
+            // 같은 char format을 일괄 적용 (cell-block selection이 자체
+            // selection state로 표현 안 되는 부분 보완).
+            const targetCells = [
+              {
+                parentParaIndex: c.cell.parentParaIndex,
+                controlIndex: c.cell.controlIndex,
+                cellIndex: c.cell.cellIndex,
+                cellParaIndex: c.cell.cellParaIndex,
+              },
+              ...discontiguousCellsRef.current.map((d) => ({
+                parentParaIndex: d.parentParaIndex,
+                controlIndex: d.controlIndex,
+                cellIndex: d.cellIndex,
+                cellParaIndex: 0,
+              })),
+            ];
+            // Dedupe by cellIndex within same table.
+            const seen = new Set<string>();
+            for (const t of targetCells) {
+              const key = `${t.parentParaIndex}:${t.controlIndex}:${t.cellIndex}:${t.cellParaIndex}`;
+              if (seen.has(key)) continue;
+              seen.add(key);
+              doc.applyCharFormatInCell(
+                c.sectionIndex,
+                t.parentParaIndex,
+                t.controlIndex,
+                t.cellIndex,
+                t.cellParaIndex,
+                0,
+                PARAGRAPH_END_SENTINEL,
+                propsJson,
+              );
+            }
           } else {
             doc.applyCharFormat(
               c.sectionIndex,
@@ -1965,15 +2028,27 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       if (!doc) return;
       const c = caretRef.current;
       if (c.cell) {
-        doc.insertTextInCell(
-          c.sectionIndex,
-          c.cell.parentParaIndex,
-          c.cell.controlIndex,
-          c.cell.cellIndex,
-          c.cell.cellParaIndex,
-          c.charOffset,
-          text,
-        );
+        // Phase E — nested table 지원. path.length > 1이면 ByPath
+        // variant 사용 (insertTextInCellByPath). 1단계 cell이면 기존 API.
+        if (c.cell.path && c.cell.path.length > 1) {
+          doc.insertTextInCellByPath(
+            c.sectionIndex,
+            c.cell.parentParaIndex,
+            JSON.stringify(c.cell.path),
+            c.charOffset,
+            text,
+          );
+        } else {
+          doc.insertTextInCell(
+            c.sectionIndex,
+            c.cell.parentParaIndex,
+            c.cell.controlIndex,
+            c.cell.cellIndex,
+            c.cell.cellParaIndex,
+            c.charOffset,
+            text,
+          );
+        }
         caretRef.current = { ...c, charOffset: c.charOffset + text.length };
       } else {
         doc.insertText(c.sectionIndex, c.paragraphIndex, c.charOffset, text);
@@ -1991,15 +2066,26 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       if (!doc) return;
       const c = caretRef.current;
       if (c.cell) {
-        doc.deleteTextInCell(
-          c.sectionIndex,
-          c.cell.parentParaIndex,
-          c.cell.controlIndex,
-          c.cell.cellIndex,
-          c.cell.cellParaIndex,
-          at,
-          count,
-        );
+        // Phase E — nested cell 지원.
+        if (c.cell.path && c.cell.path.length > 1) {
+          doc.deleteTextInCellByPath(
+            c.sectionIndex,
+            c.cell.parentParaIndex,
+            JSON.stringify(c.cell.path),
+            at,
+            count,
+          );
+        } else {
+          doc.deleteTextInCell(
+            c.sectionIndex,
+            c.cell.parentParaIndex,
+            c.cell.controlIndex,
+            c.cell.cellIndex,
+            c.cell.cellParaIndex,
+            at,
+            count,
+          );
+        }
         if (at < c.charOffset) {
           caretRef.current = { ...c, charOffset: at };
         }
@@ -3578,6 +3664,8 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         applyFontSizePt: (pt: number) => applyFontSizePt(pt),
         applyTextColor: (hex: string) => applyTextColor(hex),
         getActiveFormat: () => ({ ...activeFormat }),
+        applyParaProps: (props: Record<string, unknown>) =>
+          applyParaProps(props as ParaProps),
         getPageDef: (sectionIdx = 0) => {
           const doc = docRef.current;
           if (!doc) return null;
@@ -4237,6 +4325,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         applyFontSizePt,
         applyTextColor,
         activeFormat,
+        applyParaProps,
         applyPageDef,
         setHeaderFooterText,
         addBookmarkAtCaret,
@@ -4586,7 +4675,29 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         //    had no keyboard way to dismiss a stale selection — the
         //    `&& draggingRef.current` guard meant ESC silently no-op'd
         //    after mouseup.
+        // Phase D 2차 — ⌘⇧M (Cmd+Shift+M) 토글 마퀴 모드.
+        if (
+          (e.metaKey || e.ctrlKey) &&
+          e.shiftKey &&
+          !e.altKey &&
+          e.key.toLowerCase() === 'm'
+        ) {
+          setMarqueeMode((v) => !v);
+          setMarqueeRect(null);
+          marqueeStartRef.current = null;
+          e.preventDefault();
+          return;
+        }
         if (e.key === 'Escape') {
+          // 마퀴 모드 활성 시 ESC = 모드 종료.
+          if (marqueeMode) {
+            setMarqueeMode(false);
+            setMarqueeRect(null);
+            marqueeStartRef.current = null;
+            setSelectedControlBboxes({});
+            e.preventDefault();
+            return;
+          }
           if (draggingRef.current) {
             dragCleanupRef.current?.();
             dragCleanupRef.current = null;
@@ -5478,6 +5589,8 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         pageCount,
         commitCaretMove,
         zoom,
+        marqueeMode,
+        setCellBlockExtendMode,
       ],
     );
 
@@ -5581,12 +5694,146 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     const handlePageMouseDown = useCallback(
       (idx: number, e: ReactMouseEvent<HTMLDivElement>): void => {
         if (e.button !== 0) return; // primary only
-        // Move focus to the scroll container so subsequent keystrokes
-        // (Ctrl+A, arrow keys, etc.) hit our `handleKeyDown` instead of
-        // whatever button/input was last focused. Without this, Ctrl+A
-        // falls through to the browser default and selects every visible
-        // text node in the chrome.
         scrollRef.current?.focus({ preventScroll: true });
+        // Phase D 2차 — 마퀴 모드 활성 시 텍스트/셀 selection 대신
+        // 사각형 마퀴를 그림. mousedown은 시작점 저장만 하고 window
+        // 레벨 listener에서 mousemove/up 처리.
+        if (marqueeMode) {
+          const scroller = scrollRef.current;
+          if (!scroller) return;
+          const sr = scroller.getBoundingClientRect();
+          const startX = e.clientX - sr.left + scroller.scrollLeft;
+          const startY = e.clientY - sr.top + scroller.scrollTop;
+          marqueeStartRef.current = { x: startX, y: startY };
+          setMarqueeRect({ x: startX, y: startY, w: 0, h: 0 });
+          setSelectedControlBboxes({});
+          const onMove = (ev: MouseEvent): void => {
+            if (!marqueeStartRef.current || !scrollRef.current) return;
+            const sr2 = scrollRef.current.getBoundingClientRect();
+            const cx = ev.clientX - sr2.left + scrollRef.current.scrollLeft;
+            const cy = ev.clientY - sr2.top + scrollRef.current.scrollTop;
+            const sx = marqueeStartRef.current.x;
+            const sy = marqueeStartRef.current.y;
+            setMarqueeRect({
+              x: Math.min(sx, cx),
+              y: Math.min(sy, cy),
+              w: Math.abs(cx - sx),
+              h: Math.abs(cy - sy),
+            });
+          };
+          const onUp = (): void => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            const m = marqueeStartRef.current;
+            marqueeStartRef.current = null;
+            // 끝났으면 마퀴 영역과 겹치는 표 enumerate.
+            const final = (() => {
+              if (!m || !scrollRef.current) return null;
+              const sr2 = scrollRef.current.getBoundingClientRect();
+              return {
+                left: m.x,
+                top: m.y,
+                right: m.x,
+                bottom: m.y,
+                _sr: sr2,
+              };
+            })();
+            void final;
+            // marqueeRect의 최종값을 다시 읽기 위해 setMarqueeRect의
+            // updater pattern 사용.
+            setMarqueeRect((curr) => {
+              if (!curr) return null;
+              try {
+                const doc = docRef.current;
+                if (!doc) return null;
+                const paraCount = doc.getParagraphCount(0);
+                const grouped: Record<
+                  number,
+                  { x: number; y: number; width: number; height: number }[]
+                > = {};
+                for (let p = 0; p < paraCount; p++) {
+                  let raw: string;
+                  try {
+                    raw = doc.getControlTextPositions(0, p);
+                  } catch {
+                    continue;
+                  }
+                  let entries: {
+                    controlIdx?: number;
+                    controlIndex?: number;
+                  }[];
+                  try {
+                    entries = JSON.parse(raw);
+                    if (!Array.isArray(entries)) continue;
+                  } catch {
+                    continue;
+                  }
+                  for (const ent of entries) {
+                    const ci =
+                      typeof ent.controlIdx === 'number'
+                        ? ent.controlIdx
+                        : typeof ent.controlIndex === 'number'
+                          ? ent.controlIndex
+                          : -1;
+                    if (ci < 0) continue;
+                    let bbox: {
+                      pageIndex: number;
+                      x: number;
+                      y: number;
+                      width: number;
+                      height: number;
+                    };
+                    try {
+                      bbox = JSON.parse(doc.getTableBBox(0, p, ci));
+                    } catch {
+                      continue; // 표 아님 (이미지/도형은 lib L-008 blocker)
+                    }
+                    // bbox는 페이지 page-local 좌표. 마퀴 rect와 비교
+                    // 하려면 페이지 element의 scrollRef-relative 위치를
+                    // 더해야 함. pageRefsRef를 사용.
+                    const pageEl = pageRefsRef.current[bbox.pageIndex];
+                    if (!pageEl || !scrollRef.current) continue;
+                    const pr = pageEl.getBoundingClientRect();
+                    const sr3 = scrollRef.current.getBoundingClientRect();
+                    const tableLeft =
+                      pr.left -
+                      sr3.left +
+                      scrollRef.current.scrollLeft +
+                      bbox.x * zoom;
+                    const tableTop =
+                      pr.top -
+                      sr3.top +
+                      scrollRef.current.scrollTop +
+                      bbox.y * zoom;
+                    const tableRight = tableLeft + bbox.width * zoom;
+                    const tableBottom = tableTop + bbox.height * zoom;
+                    const overlap =
+                      tableLeft < curr.x + curr.w &&
+                      tableRight > curr.x &&
+                      tableTop < curr.y + curr.h &&
+                      tableBottom > curr.y;
+                    if (overlap) {
+                      (grouped[bbox.pageIndex] ??= []).push({
+                        x: bbox.x,
+                        y: bbox.y,
+                        width: bbox.width,
+                        height: bbox.height,
+                      });
+                    }
+                  }
+                }
+                setSelectedControlBboxes(grouped);
+              } catch (err) {
+                console.warn('[studio] marquee enumerate failed:', err);
+              }
+              return null; // 마퀴 rect 제거 (highlight는 selectedControlBboxes로 표시)
+            });
+          };
+          document.addEventListener('mousemove', onMove);
+          document.addEventListener('mouseup', onUp);
+          e.preventDefault();
+          return;
+        }
         // Snapshot caret BEFORE we mutate caretRef below — Shift+click
         // without prior selection anchors at this position.
         const priorCaret = { ...caretRef.current };
@@ -7974,6 +8221,27 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             })();
           }}
         >
+          {/* Phase D 2차 — 마퀴 모드 활성 시 시각 hint + 진행 중인 rect */}
+          {marqueeMode && (
+            <div
+              data-testid="studio-marquee-mode"
+              className="pointer-events-none absolute left-1/2 top-2 z-50 -translate-x-1/2 rounded bg-primary/80 px-3 py-1 text-xs font-medium text-primary-foreground shadow"
+            >
+              개체 선택 모드 (Esc 해제 / 드래그로 표 영역 선택)
+            </div>
+          )}
+          {marqueeRect && (
+            <div
+              data-testid="studio-marquee-rect"
+              className="pointer-events-none absolute z-40 border-2 border-dashed border-primary bg-primary/10"
+              style={{
+                left: marqueeRect.x,
+                top: marqueeRect.y,
+                width: marqueeRect.w,
+                height: marqueeRect.h,
+              }}
+            />
+          )}
           {pageDims && pageCount > 0 && (
             <div
               className="flex flex-col items-center"

@@ -14,6 +14,65 @@
 - **chunk 58 — 목차 사이드바 (⌘⇧O, 0.2.61)**: `viewer.getOutline()` — 단락 styleId를 styleList에서 "제목 N" / "Heading N"로 매칭, level 추출. `OutlineSidebar` 컴포넌트가 viewer 옆에 토글 + 클릭 시 scrollToParagraph
 - **chunk 57 — AI inline diff (0.2.61)**: `viewer.snapshotParagraphs()` + `markChangedParagraphsSince(before)`. AppShell의 applyHtml/runTools가 before/after로 bracket. 변경된 단락 좌측에 amber 3px 막대 + animate-pulse + 15s 후 페이드
 
+### Added — 남은 phase 일괄 + 종합 e2e (0.2.87)
+
+selection UX phase 전체 마감 + e2e 검증.
+
+#### 1. `applyParaProps` ViewerHandle 노출 + ParaFormatDialog 확장
+
+- `ViewerHandle.applyParaProps(props)` 신설 — `applyParaFormat` /
+  `applyParaFormatInCell` 라우팅 (selection-aware).
+- ParaFormatDialog v1.1: 줄 간격 (% of single line) + 첫 줄
+  들여쓰기 (mm → HWPUNIT) 추가. 기존 정렬과 함께 한 화면.
+
+#### 2. 불연속 셀 format apply
+
+- toggleCharFormat이 셀 caret + Ctrl+클릭 추가본을 모두 iterate해
+  applyCharFormatInCell per cell 호출. 셀별 동일 서식 일관 적용.
+- selection 활성 시 (anchor/focus 셀 분리)는 기존 selection range
+  분기 사용 — 불연속 보강은 caret-only 셀 case에 한정.
+
+#### 3. Phase E 2차 — nested ops via `*ByPath`
+
+- `insertAtCaret` / `deleteAtCaret` / `refreshCursorRect`이
+  `c.cell.path.length > 1`일 때 `insertTextInCellByPath` /
+  `deleteTextInCellByPath` / `getCursorRectByPath` 사용.
+- top-level 셀 (path === undefined 또는 length === 1)은 기존 lib
+  variant — 회귀 0.
+- 라이브러리가 `*ByPath` 모두 publish: getCellInfo / Cursor / Text
+  In/Out / Mr Paragraph / Cell Paragraph Length / Table Cell Bboxes
+  / Table Dimensions / Move Vertical 등.
+- 미지원 ops (lib에 \*ByPath 없음): row/col 추가·삭제 / 셀 합치기·
+  나누기 — 중첩 표 안에서는 본 단계까지. 후속 lib publish 후 unblock.
+
+#### 4. Phase D 2차 — 마퀴 모드 (개체 선택)
+
+- ⌘⇧M (Cmd+Shift+M) 토글로 마퀴 모드 진입.
+- 인디케이터: 페이지 위 "개체 선택 모드 (Esc 해제 / 드래그로 표
+  영역 선택)" 라벨.
+- 모드 활성 시 mousedown+drag → scrollRef-relative 사각형 marquee
+  rect 그림 (점선 border + bg-primary/10).
+- mouseup 시 모든 paragraph의 control 열거 (`getControlTextPositions`)
+  - 표만 `getTableBBox` 시도 → marquee rect와 bbox 겹침 검사 →
+    `selectedControlBboxes` populate.
+- ESC / 재토글 (⌘⇧M)로 모드 종료.
+- 한계: lib L-008로 표만 detect 가능. 이미지/도형 선택은 후속.
+
+#### 5. e2e 신규 spec — `studio-phase-final.spec.ts` (10 케이스)
+
+- Phase D 마퀴 모드: 토글 / Esc 종료 / 재토글
+- 자동 저장: save-draft → has → load → clear flow + /tmp/ahwp-drafts
+  디렉토리 실제 작성 검증
+- Phase D 불연속 셀 ops: 셀 typing 후 dirty 검증
+- Phase E: top-level 셀 hit이 기존 동작 유지 (회귀 가드)
+- Alt+L / Alt+T 다이얼로그: 열기 / Esc 닫기 / Alt+T 정렬 적용 후 dirty
+
+#### 회귀 검증
+
+studio 전체 207 e2e — 206 통과 / 1 flaky (`studio-paraformat`
+save→reopen, 기존 timing 이슈 retry로 통과, 본 phase와 무관) /
+1 skipped. 회귀 0.
+
 ### Added — Alt+L 글자 모양 / Alt+T 문단 모양 다이얼로그 (0.2.86)
 
 #### Alt+L — `CharFormatDialog`

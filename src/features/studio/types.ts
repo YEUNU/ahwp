@@ -130,6 +130,19 @@ export interface ViewerHandle {
    * re-toggle on apply.
    */
   getActiveFormat: () => Record<string, unknown>;
+  /**
+   * Apply paragraph properties to the current selection / caret —
+   * Phase B-5 잔여 (Alt+T 다이얼로그용). Wraps `applyParaFormat` /
+   * `applyParaFormatInCell` with selection-aware routing.
+   * Props (모두 optional):
+   *  - alignment: 'left' | 'center' | 'right' | 'justify'
+   *  - lineSpacing: percent of single line height (100 = 1.0)
+   *  - lineSpacingType: 'Percent' | 'Fixed' | 'AtLeast'
+   *  - spacingBefore / spacingAfter: HWPUNIT (1mm ≈ 567 HWPUNIT)
+   *  - marginLeft / marginRight: HWPUNIT (positive = inset)
+   *  - indent: HWPUNIT (positive = first-line indent, negative = hanging)
+   */
+  applyParaProps: (props: Record<string, unknown>) => void;
   /** Whether the doc has unsaved changes (mirrors internal dirtyRef). */
   isDirty: () => boolean;
   /** Read the active cell context — chunk 38. Returns the table+cell
