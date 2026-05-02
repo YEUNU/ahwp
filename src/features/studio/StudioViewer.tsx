@@ -542,6 +542,12 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       // index of the current (latest applied) snapshot in `entries`
       index: number;
     }>({ entries: [], index: -1 });
+    // chunk 27 — undo grouping. When > 0, intermediate `pushHistory`
+    // calls inside `refreshAfterMutation` are no-ops; the bracket
+    // (beginUndoGroup / endUndoGroup) records ONE snapshot at the end.
+    // The counter (vs boolean) lets begin/end nest safely if a tool
+    // pipeline triggers nested groups.
+    const undoGroupDepthRef = useRef(0);
     const [canUndo, setCanUndo] = useState(false);
     const [canRedo, setCanRedo] = useState(false);
     // Find (chunk 9). When `findOpen=true` a small search bar overlays
@@ -1085,6 +1091,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     const pushHistory = useCallback((): void => {
       const doc = docRef.current;
       if (!doc) return;
+      // chunk 27 — when an undo group is active, swallow intermediate
+      // snapshots. endUndoGroup() will push a single one.
+      if (undoGroupDepthRef.current > 0) return;
       try {
         const id = doc.saveSnapshot();
         const h = historyRef.current;
@@ -3070,6 +3079,22 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             return false;
           }
         },
+        beginUndoGroup: () => {
+          undoGroupDepthRef.current += 1;
+        },
+        endUndoGroup: () => {
+          undoGroupDepthRef.current = Math.max(
+            0,
+            undoGroupDepthRef.current - 1,
+          );
+          // Only push a snapshot when we exit the outermost group AND
+          // some mutation actually ran (dirty flag flipped or layout
+          // changed — pushHistory's saveSnapshot is cheap so we always
+          // push at end-of-group).
+          if (undoGroupDepthRef.current === 0) {
+            pushHistory();
+          }
+        },
         copyControl: (sec, para, ctrl) => {
           const doc = docRef.current;
           if (!doc) return false;
@@ -3150,6 +3175,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       }),
       [
         captureExcerpt,
+        pushHistory,
         refreshAfterMutation,
         toggleCharFormat,
         undo,

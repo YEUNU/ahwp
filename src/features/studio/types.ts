@@ -156,6 +156,13 @@ export interface ViewerHandle {
     parentParaIdx: number,
     controlIdx: number,
   ) => boolean;
+  /** Begin grouping subsequent mutations into a single undo entry —
+   * chunk 27. Reentrant: nested begin/end pairs balance via a depth
+   * counter. Pair every begin with end. */
+  beginUndoGroup: () => void;
+  /** End the current undo group and push one snapshot covering all
+   * mutations since the matching begin — chunk 27. */
+  endUndoGroup: () => void;
   /** Copy a control object (table, image, shape) to the IR's internal
    * clipboard — chunk 25. Distinct from text copy. */
   copyControl: (

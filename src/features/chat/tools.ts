@@ -113,18 +113,28 @@ function runOne(viewer: ViewerHandle, call: AhwpToolCall): AhwpToolResult {
 
 /** Sequentially run pre-flighted items. Items that failed validation
  * pre-flight pass through unchanged — they are surfaced to the user as
- * failed ops without an IR call. */
+ * failed ops without an IR call.
+ *
+ * chunk 27 — wraps the whole run in `beginUndoGroup` / `endUndoGroup`
+ * so the user gets ONE undo entry for the whole AI-applied turn
+ * (rather than N entries, one per op). The bracket holds even if some
+ * ops throw — we always end the group in a finally. */
 export function runTools(
   viewer: ViewerHandle,
   items: AhwpPreflightItem[],
 ): AhwpToolResult[] {
   const out: AhwpToolResult[] = [];
-  for (const item of items) {
-    if (!item.ok) {
-      out.push({ ok: false, tool: item.tool, reason: item.reason });
-      continue;
+  viewer.beginUndoGroup();
+  try {
+    for (const item of items) {
+      if (!item.ok) {
+        out.push({ ok: false, tool: item.tool, reason: item.reason });
+        continue;
+      }
+      out.push(runOne(viewer, item.call));
     }
-    out.push(runOne(viewer, item.call));
+  } finally {
+    viewer.endUndoGroup();
   }
   return out;
 }
