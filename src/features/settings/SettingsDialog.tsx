@@ -14,9 +14,11 @@ import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 
 /**
- * Providers wired to actual adapters. Anthropic / Google / Ollama / custom
- * are deferred to later Phase 2 chunks; we hide them from the form so we
- * don't promise functionality we haven't shipped.
+ * Providers wired to actual adapters. Anthropic / Google / custom are
+ * deferred to later Phase 2 chunks; we hide them from the form so we
+ * don't promise functionality we haven't shipped. `custom` (chunk 49)
+ * covers any OpenAI-compatible endpoint — self-hosted Ollama via /v1
+ * shim, vLLM, LM Studio, on-prem LLM gateway — once the adapter ships.
  */
 const SHOWN_IDS = new Set<ProviderId>(['openai', 'nvidia']);
 const SHOWN_PROVIDERS = PROVIDERS.filter((p) => SHOWN_IDS.has(p.id));

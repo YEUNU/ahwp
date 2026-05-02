@@ -140,7 +140,7 @@
 
 - [ ] Anthropic 어댑터 — 키 준비 대기 (`messages` API, `event:` line-prefixed SSE, Phase 3 `tool_use` 대비)
 - [ ] Google (Gemini) 어댑터 — 키 준비 대기
-- [ ] Ollama / 커스텀 어댑터 — 키 준비 대기 (자체 호스팅 base URL 입력)
+- [ ] **Custom (OpenAI-compatible) 어댑터** — 키/baseUrl 입력 후 OpenAI 어댑터 재사용. 자체 호스팅 Ollama (`http://localhost:11434/v1`), vLLM, LM Studio, on-prem LLM 게이트웨이 등을 한 슬롯에 통합 (chunk 49에서 `ollama` provider 슬롯 제거하고 `custom`으로 통합)
 
 ### 2-C. 채팅 UI
 
@@ -200,7 +200,7 @@
 - [ ] OpenAI tool use 스트리밍 처리
 - [ ] Anthropic tool use 처리
 - [ ] Google function calling 처리
-- [ ] Ollama: 모델 능력에 따라 분기 (`tools` 지원 모델만 Agent 활성)
+- [ ] Custom (OpenAI-compatible): 모델 능력에 따라 분기 — `tools` 지원 모델만 Agent 활성. self-hosted Ollama 등 baseUrl 기반 엔드포인트 포함
 - [ ] tool 실행 결과 → 다시 모델에 피드백 → 다음 tool 또는 종료
 - [ ] 변경 그룹 undo (한 turn = 한 묶음)
 - [ ] Agent 진행 상황 UI (단계별 표시)

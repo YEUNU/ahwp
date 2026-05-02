@@ -6,6 +6,16 @@
 
 ## [Unreleased]
 
+### Changed — chunk 49: `ollama` provider 슬롯 제거 → `custom` 통합 (0.2.49)
+
+`Ollama (self-hosted)` provider 슬롯을 별도로 두지 않고 `custom` (OpenAI 호환)으로 통합. 자체 호스팅 Ollama 사용자는 `custom` provider에 base URL `http://localhost:11434/v1`을 입력해 동일하게 사용 가능:
+
+- **이유** — Ollama는 OpenAI 호환 `/v1` shim을 제공하므로 별도 어댑터가 그냥 dead surface area였음. vLLM / LM Studio / on-prem LLM 게이트웨이도 같은 카테고리라 한 슬롯으로 묶는 게 자연스러움
+- **`ProviderId` union** — `'ollama'` 제거. `'openai' | 'anthropic' | 'google' | 'nvidia' | 'custom'`
+- **`PROVIDERS` 메타** — `ollama` row 제거. `custom` row 유지 (requiresBaseUrl=true)
+- **문서 일괄 갱신** — README, CLAUDE.md, ARCHITECTURE / AI_INTEGRATION / TECH_STACK / ROADMAP / PROGRESS 모두 `ollama` 언급을 `custom (OpenAI 호환)` 통합 표기로 교체
+- **불변** — 기존 OpenAI / NIM 어댑터 + chunk 48 listModels / 24h 캐시 / datalist UI 그대로
+
 ### Added — chunk 48: provider 모델 동적 fetch + 24h 캐시 (0.2.48)
 
 각 provider의 사용 가능한 모델을 API에서 직접 불러와 ChatPanel 모델 입력에 datalist autocomplete으로 노출:

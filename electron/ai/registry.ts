@@ -11,7 +11,8 @@ const providers = new Map<ProviderId, Provider>([
 /**
  * Lookup a provider by id. Returns null when the provider is recognized in the
  * shared union but not yet implemented in this build (Anthropic / Google /
- * Ollama / custom — Phase 2 follow-up chunks).
+ * custom — Phase 2 follow-up chunks; `custom` covers any OpenAI-compatible
+ * endpoint including self-hosted Ollama via /v1 shim).
  *
  * When `AHWP_E2E_FAKE_AI=1` is set in the main process env, the openai and
  * nvidia slots are swapped with a deterministic fake (see providers/fake.ts).

@@ -273,7 +273,8 @@ export interface AiPingOptions {
    * provider. The transient key is never persisted.
    */
   apiKey?: string;
-  /** Override the provider's default base URL (e.g. self-hosted Ollama / NIM). */
+  /** Override the provider's default base URL (e.g. on-prem LLM
+   * gateway, self-hosted /v1-compatible endpoint, NIM cluster). */
   baseUrl?: string;
 }
 

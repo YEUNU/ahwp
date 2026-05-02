@@ -30,7 +30,8 @@ ahwp는 Electron 표준 2-프로세스 모델을 따릅니다.
 │       │            │            │              │          │
 │       ▼            ▼            ▼              ▼          │
 │   filesystem    @rhwp/core   OpenAI/Claude   keychain     │
-│                              /Gemini/Ollama  + SQLite     │
+│                              /Gemini/NIM     + SQLite     │
+│                              /custom OpenAI-compat        │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -164,18 +165,12 @@ CREATE INDEX idx_versions_file ON versions(file_id, created_at DESC);
 ### 설정 스키마 (`electron-store`)
 
 ```ts
-type ProviderId =
-  | 'openai'
-  | 'anthropic'
-  | 'google'
-  | 'nvidia'
-  | 'ollama'
-  | 'custom';
+type ProviderId = 'openai' | 'anthropic' | 'google' | 'nvidia' | 'custom'; // OpenAI-compatible: Ollama / vLLM / LM Studio / on-prem
 
 interface ProviderConfig {
   id: ProviderId;
   enabled: boolean;
-  baseUrl?: string; // ollama / custom
+  baseUrl?: string; // custom 전용 — 자체 호스팅 endpoint URL
   defaultModel: string;
   // API 키는 store에 두지 않고 safeStorage로 따로 보관
 }

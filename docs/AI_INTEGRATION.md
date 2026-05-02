@@ -2,14 +2,13 @@
 
 ## 공급자 매트릭스
 
-| Provider   | SDK                            | 스트리밍 | Tool Use              | 단일 API 웹검색             | 비고                                                                                           |
-| ---------- | ------------------------------ | -------- | --------------------- | --------------------------- | ---------------------------------------------------------------------------------------------- |
-| OpenAI     | `openai`                       | ✅       | ✅ (function/tool)    | ✅ Responses `web_search`   | GPT-4o, GPT-5 등. 가장 안정                                                                    |
-| Anthropic  | `@anthropic-ai/sdk`            | ✅       | ✅                    | ✅ `web_search` server tool | Claude. 긴 문서 편집 강점                                                                      |
-| Google     | `@google/genai`                | ✅       | ✅ (function calling) | ✅ `googleSearch` grounding | Gemini 2.x                                                                                     |
-| NVIDIA NIM | `fetch` (OpenAI 호환 endpoint) | ✅       | 모델별로 다름         | ❌                          | 호스티드(`https://integrate.api.nvidia.com/v1`) 또는 셀프호스트 NIM 컨테이너. 검색은 외부 처리 |
-| Ollama     | `fetch` (OpenAI 호환 endpoint) | ✅       | 모델별로 다름         | ❌                          | base URL 사용자 입력 (`http://localhost:11434/v1`)                                             |
-| 커스텀     | `fetch` (OpenAI 호환)          | ✅       | 모델별로 다름         | ❌ (기본)                   | 사용자가 IP/포트/키 직접 입력 — vLLM, LM Studio, 사내 서빙 등                                  |
+| Provider             | SDK                            | 스트리밍 | Tool Use              | 단일 API 웹검색             | 비고                                                                                                                                      |
+| -------------------- | ------------------------------ | -------- | --------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| OpenAI               | `openai`                       | ✅       | ✅ (function/tool)    | ✅ Responses `web_search`   | GPT-4o, GPT-5 등. 가장 안정                                                                                                               |
+| Anthropic            | `@anthropic-ai/sdk`            | ✅       | ✅                    | ✅ `web_search` server tool | Claude. 긴 문서 편집 강점                                                                                                                 |
+| Google               | `@google/genai`                | ✅       | ✅ (function calling) | ✅ `googleSearch` grounding | Gemini 2.x                                                                                                                                |
+| NVIDIA NIM           | `fetch` (OpenAI 호환 endpoint) | ✅       | 모델별로 다름         | ❌                          | 호스티드(`https://integrate.api.nvidia.com/v1`) 또는 셀프호스트 NIM 컨테이너. 검색은 외부 처리                                            |
+| 커스텀 (OpenAI 호환) | `fetch` (OpenAI 호환)          | ✅       | 모델별로 다름         | ❌ (기본)                   | 사용자가 base URL + 키 입력 — 자체 호스팅 Ollama (`http://localhost:11434/v1`), vLLM, LM Studio, 사내 서빙 모두 한 슬롯에 통합 (chunk 49) |
 
 ## 오케스트레이션 — LangChain/LangGraph 미도입
 
@@ -32,8 +31,7 @@ export type ProviderId =
   | 'anthropic'
   | 'google'
   | 'nvidia'
-  | 'ollama'
-  | 'custom';
+  | 'custom'; // OpenAI-compatible: Ollama / vLLM / LM Studio / on-prem 통합
 
 export interface ChatRequest {
   conversationId: string;
@@ -102,7 +100,7 @@ export interface Provider {
 }
 ```
 
-`capabilities.webSearch`는 정적 플래그로 시작: OpenAI/Anthropic/Google = `true`, NIM/Ollama/커스텀 = `false`. 셀프호스트 환경의 커스텀이 검색 도구를 지원하면 사용자 설정에서 override.
+`capabilities.webSearch`는 정적 플래그로 시작: OpenAI/Anthropic/Google = `true`, NIM/`custom` = `false`. 셀프호스트 환경의 `custom` 엔드포인트가 검색 도구를 지원하면 사용자 설정에서 override.
 
 ## 웹검색 (Built-in)
 
@@ -110,14 +108,13 @@ export interface Provider {
 
 ### Provider별 활성화
 
-| Provider   | 활성화 방법                                                                                      |
-| ---------- | ------------------------------------------------------------------------------------------------ |
-| OpenAI     | Responses API의 `tools: [{ type: "web_search" }]` (또는 Chat Completions의 `web_search_preview`) |
-| Anthropic  | Messages API의 `tools: [{ type: "web_search_20250305", name: "web_search" }]` 서버 도구          |
-| Google     | `tools: [{ googleSearch: {} }]` grounding (Gemini 2.x)                                           |
-| NVIDIA NIM | 미지원 — 추론 전용                                                                               |
-| Ollama     | 미지원 — 로컬 추론 전용                                                                          |
-| 커스텀     | 엔드포인트 구현체에 따라 다름. 기본 미지원 가정                                                  |
+| Provider             | 활성화 방법                                                                                            |
+| -------------------- | ------------------------------------------------------------------------------------------------------ |
+| OpenAI               | Responses API의 `tools: [{ type: "web_search" }]` (또는 Chat Completions의 `web_search_preview`)       |
+| Anthropic            | Messages API의 `tools: [{ type: "web_search_20250305", name: "web_search" }]` 서버 도구                |
+| Google               | `tools: [{ googleSearch: {} }]` grounding (Gemini 2.x)                                                 |
+| NVIDIA NIM           | 미지원 — 추론 전용                                                                                     |
+| 커스텀 (OpenAI 호환) | 엔드포인트 구현체에 따라 다름. 기본 미지원 가정 (Ollama / vLLM / LM Studio 등 로컬 추론은 모두 미지원) |
 
 ### 어댑터 라우팅 규칙
 

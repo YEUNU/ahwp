@@ -15,15 +15,16 @@ export type ProviderId =
   | 'anthropic'
   | 'google'
   | 'nvidia'
-  | 'ollama'
   | 'custom';
 
 export interface ProviderMeta {
   id: ProviderId;
   label: string;
-  /** True when a BYOK API key is required. False for self-hosted ollama. */
+  /** True when a BYOK API key is required. */
   requiresApiKey: boolean;
-  /** True when the user must supply a base URL (ollama, custom). */
+  /** True when the user must supply a base URL — `custom` covers any
+   * OpenAI-compatible endpoint (self-hosted Ollama via /v1 shim,
+   * vLLM, LM Studio, on-prem LLM gateway, etc.). */
   requiresBaseUrl: boolean;
 }
 
@@ -53,12 +54,11 @@ export const PROVIDERS: readonly ProviderMeta[] = [
     requiresBaseUrl: false,
   },
   {
-    id: 'ollama',
-    label: 'Ollama (self-hosted)',
-    requiresApiKey: false,
-    requiresBaseUrl: true,
-  },
-  {
+    // `custom` is the catch-all OpenAI-compatible bucket: self-hosted
+    // Ollama (`http://localhost:11434/v1`), vLLM, LM Studio,
+    // on-prem LLM gateways, etc. We removed the dedicated `ollama`
+    // entry in chunk 49 — the OpenAI-compat /v1 shim covers it
+    // identically and an extra adapter was just dead surface area.
     id: 'custom',
     label: 'Custom (OpenAI-compatible)',
     requiresApiKey: true,

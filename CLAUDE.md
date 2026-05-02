@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-ahwp — Electron + React desktop app for viewing/editing Korean HWP/HWPX documents with AI assistance (OpenAI / NVIDIA NIM live; Anthropic / Google / Ollama / custom OpenAI-compatible endpoints scaffolded but blocked on maintainer keys). **Phase 1 complete + Phase 2 in flight (chunk 7)**: full editor (text/IME/selection/format/Undo/Copy/Find/Replace/page-nav), table cell editing v3, image insert, VS Code-style folder tree, browser-style tabs, BYOK Settings dialog, OpenAI/NVIDIA streaming chat with markdown + syntax highlighting, message actions (copy/regenerate/delete), find & replace via `replaceOne`/`replaceAll` IR. See `docs/PROGRESS.md` for the up-to-date phase status — never assume features named in the README are implemented yet.
+ahwp — Electron + React desktop app for viewing/editing Korean HWP/HWPX documents with AI assistance (OpenAI / NVIDIA NIM live; Anthropic / Google / custom OpenAI-compatible endpoints scaffolded but blocked on maintainer keys — `custom` covers any /v1-compatible endpoint including self-hosted Ollama, vLLM, LM Studio). **Phase 1 complete + Phase 2 in flight (chunk 7)**: full editor (text/IME/selection/format/Undo/Copy/Find/Replace/page-nav), table cell editing v3, image insert, VS Code-style folder tree, browser-style tabs, BYOK Settings dialog, OpenAI/NVIDIA streaming chat with markdown + syntax highlighting, message actions (copy/regenerate/delete), find & replace via `replaceOne`/`replaceAll` IR. See `docs/PROGRESS.md` for the up-to-date phase status — never assume features named in the README are implemented yet.
 
 ## Commands
 

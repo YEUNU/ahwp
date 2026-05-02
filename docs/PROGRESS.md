@@ -4,17 +4,17 @@ ahwp 개발의 시간 순 기록. PR이 머지될 때마다 갱신합니다. 단
 
 ## 현재 스냅샷
 
-| 항목        | 상태                                                                                                                                                                                                                                                                                                                      |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Phase       | **Phase 2 마무리 + chunk 48 모델 동적 fetch** — Phase 2 사용자-facing 작업 종료 + provider 모델 카탈로그 24h 캐시 fetch (OpenAI / NIM, datalist autocomplete + ⚠ 폴백). 다음: Phase 3 진입(provider tool-use 정식 통합 + Agent 모드) 또는 Phase 2-B(Anthropic / Ollama 키·어댑터 잠금 해제)                               |
-| 빌드        | ✅ `npm run dev` · `npx vite build`                                                                                                                                                                                                                                                                                       |
-| 타입        | ✅ `npm run typecheck`                                                                                                                                                                                                                                                                                                    |
-| 린트        | ✅ `npm run lint` (0 warnings, 0 errors)                                                                                                                                                                                                                                                                                  |
-| 포맷        | ✅ `npm run format:check`                                                                                                                                                                                                                                                                                                 |
-| 단위 테스트 | ✅ 3/3 (`App.test.tsx`)                                                                                                                                                                                                                                                                                                   |
-| e2e         | ✅ 298 케이스 / 4 워커 병렬 + retry=1 — chunk 22(3) + 26(6) + rhwp-extras(5) + tabs-reorder(4) + dialogs-ui(4) + studio-ux-fixes(5) + studio-ux-round2(6) + phase2-finale(5) + chat-model-list(5 chunk 48) 추가. 291 passed / 6 skipped (NIM 5개 키 게이트 + cell-menu 1개 의도). live NIM 5/5 (`qwen/qwen3.5-122b-a10b`) |
-| Electron    | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                                                                                                                                               |
-| 의존성      | runtime: `@rhwp/core` · `chokidar` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` (chunk 6에서 `@rhwp/editor` 제거)                                                                                                |
+| 항목        | 상태                                                                                                                                                                                                                                                                                                                                                       |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Phase       | **Phase 2 마무리 + chunk 48 모델 동적 fetch + chunk 49 provider 통합** — Phase 2 사용자-facing 작업 종료 + provider 모델 카탈로그 24h 캐시 fetch (OpenAI / NIM) + `ollama` provider 슬롯 제거(`custom` OpenAI 호환에 흡수). 다음: Phase 3 진입(provider tool-use 정식 통합 + Agent 모드) 또는 Phase 2-B(Anthropic / Google / `custom` 키·어댑터 잠금 해제) |
+| 빌드        | ✅ `npm run dev` · `npx vite build`                                                                                                                                                                                                                                                                                                                        |
+| 타입        | ✅ `npm run typecheck`                                                                                                                                                                                                                                                                                                                                     |
+| 린트        | ✅ `npm run lint` (0 warnings, 0 errors)                                                                                                                                                                                                                                                                                                                   |
+| 포맷        | ✅ `npm run format:check`                                                                                                                                                                                                                                                                                                                                  |
+| 단위 테스트 | ✅ 3/3 (`App.test.tsx`)                                                                                                                                                                                                                                                                                                                                    |
+| e2e         | ✅ 298 케이스 / 4 워커 병렬 + retry=1 — chunk 22(3) + 26(6) + rhwp-extras(5) + tabs-reorder(4) + dialogs-ui(4) + studio-ux-fixes(5) + studio-ux-round2(6) + phase2-finale(5) + chat-model-list(5 chunk 48) 추가. 291 passed / 6 skipped (NIM 5개 키 게이트 + cell-menu 1개 의도). live NIM 5/5 (`qwen/qwen3.5-122b-a10b`)                                  |
+| Electron    | 33.2 · sandbox=true · contextIsolation=true                                                                                                                                                                                                                                                                                                                |
+| 의존성      | runtime: `@rhwp/core` · `chokidar` · `react-resizable-panels` · `clsx` · `tailwind-merge` · `class-variance-authority` · `lucide-react` · `tailwindcss-animate` · `@radix-ui/react-slot` (chunk 6에서 `@rhwp/editor` 제거)                                                                                                                                 |
 
 ## 일지
 
@@ -2585,6 +2585,30 @@ interface ExcerptAttachment {
 ✓ 누적 e2e 255 = 249 + 5 (chat-multidoc) + 1 (nvidia-live chunk 21). 249 passed / 6 skipped (NIM 5개 키 게이트 + cell-menu 1개 의도)
 ✓ NVIDIA NIM live 5/5 (qwen/qwen3.5-122b-a10b — chunk 18·19·20·21 round-trip 모두 포함)
 ```
+
+### 2026-05-02 — chunk 49: `ollama` provider 슬롯 제거 → `custom` 통합 — 0.2.49
+
+사용자 "ollama는 배제해줘 (그냥 openai compatiable 기타로 통일)" 요청.
+
+**변경**
+
+- `ProviderId` union에서 `'ollama'` 제거. `'custom'` (OpenAI-compatible) 한 슬롯으로 통합 — 자체 호스팅 Ollama (`http://localhost:11434/v1`) / vLLM / LM Studio / on-prem LLM 게이트웨이 모두 같은 어댑터 경로
+- `PROVIDERS` 메타 배열에서 `ollama` row 제거. `custom`은 그대로 유지 (`requiresApiKey: true`, `requiresBaseUrl: true`)
+- `ProviderMeta.requiresBaseUrl` JSDoc — "self-hosted ollama" 언급 제거하고 일반화
+- `electron/ai/registry.ts` 주석 — Anthropic / Google / Ollama / custom → Anthropic / Google / custom로 정리
+- `SettingsDialog`의 `SHOWN_IDS` 주석 갱신 (영향 없음, 이미 openai/nvidia만 노출)
+- 문서 일괄 갱신 — README, CLAUDE.md, ARCHITECTURE.md, AI_INTEGRATION.md, TECH_STACK.md, ROADMAP.md, PROGRESS.md 현재 스냅샷의 `ollama` 언급을 `custom (OpenAI 호환)` 통합 표기로 교체. 과거 일지(시점에 정확했던 내용)는 그대로 둠
+
+**불변**
+
+- 기존 `openai` / `nvidia` 어댑터 그대로
+- chunk 48의 listModels / 24h 캐시 / datalist UI 그대로
+- secrets store에 저장된 `ollama` 키가 있으면 IPC validation에서 거절됨 — 사용자가 직접 `custom`으로 옮기는 형태(현재는 둘 다 SHOWN_IDS에 없어서 영향 없음)
+
+**검증**
+
+- typecheck / lint / format 청정
+- e2e 회귀: chat / chat-history / chat-tools / chat-html-apply / settings / chat-model-list 39/39 pass
 
 ### 2026-05-02 — chunk 48: provider 모델 동적 fetch + 24h 캐시 — 0.2.48
 
