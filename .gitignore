@@ -17,6 +17,11 @@ out/
 release/
 *.tsbuildinfo
 
+# ahwp save/draft sidecars (chunk 52 auto-save, chunk P1-1 .bak)
+*.ahwp-draft
+*.hwp.bak
+*.hwpx.bak
+
 # logs
 npm-debug.log*
 yarn-debug.log*
