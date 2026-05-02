@@ -123,6 +123,13 @@ export interface ViewerHandle {
   applyFontSizePt: (pt: number) => void;
   /** Apply text color in #RRGGBB hex. */
   applyTextColor: (hex: string) => void;
+  /**
+   * Read active char format at caret — chunk B-5. Mirrors the toolbar
+   * pressed-state. Used by the CharFormatDialog (Alt+L) to seed
+   * initial checkbox state so unchecking doesn't accidentally
+   * re-toggle on apply.
+   */
+  getActiveFormat: () => Record<string, unknown>;
   /** Whether the doc has unsaved changes (mirrors internal dirtyRef). */
   isDirty: () => boolean;
   /** Read the active cell context — chunk 38. Returns the table+cell

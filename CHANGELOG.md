@@ -14,6 +14,27 @@
 - **chunk 58 — 목차 사이드바 (⌘⇧O, 0.2.61)**: `viewer.getOutline()` — 단락 styleId를 styleList에서 "제목 N" / "Heading N"로 매칭, level 추출. `OutlineSidebar` 컴포넌트가 viewer 옆에 토글 + 클릭 시 scrollToParagraph
 - **chunk 57 — AI inline diff (0.2.61)**: `viewer.snapshotParagraphs()` + `markChangedParagraphsSince(before)`. AppShell의 applyHtml/runTools가 before/after로 bracket. 변경된 단락 좌측에 amber 3px 막대 + animate-pulse + 15s 후 페이드
 
+### Added — Alt+L 글자 모양 / Alt+T 문단 모양 다이얼로그 (0.2.86)
+
+#### Alt+L — `CharFormatDialog`
+
+- 한글 reflex 단축키. 현재 caret 또는 선택 단락의 글자 속성 변경
+- 체크박스: 진하게(B) / 기울임(I) / 밑줄(U) — `toggleCharFormat` 라우트
+- Font 크기 (pt) — `applyFontSizePt`
+- Font 색상 (#RRGGBB) — `applyTextColor`
+- ViewerHandle에 `getActiveFormat()` 신설 — caret의 현재 char 속성을 dialog 초기값으로 사용 (toggle 의도 안 맞는 재토글 방지)
+
+#### Alt+T — `ParaFormatDialog`
+
+- 정렬 라디오: 왼쪽 / 가운데 / 오른쪽 / 양쪽 — `applyAlignment` 라우트
+- v1은 정렬만. 줄 간격 / 들여쓰기 / 단락 간격은 ViewerHandle이 직접 publish 안 해서 후속 (lib `applyParaFormat`로 props_json 전달 가능 — handle 메서드 신설 필요)
+
+#### Phase D 2차 마퀴 모드 — 미구현
+
+- 도형 탭 "개체 선택" 마퀴는 새 mode toggle + marquee 마우스 핸들러 + bbox intersection 검사 필요
+- `@rhwp/core` L-008 (이미지/도형 통합 bbox API 부재)으로 표만 detect 가능 — 부분 UX
+- 별도 chunk로 정식 구현 권장
+
 ### Changed — 자동 저장 draft → OS tmp 폴더 + Phase E (1차 nested cellPath) (0.2.85)
 
 #### 자동 저장 경로 이동

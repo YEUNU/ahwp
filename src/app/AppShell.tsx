@@ -31,6 +31,8 @@ import { OutlineSidebar } from '@/features/studio/OutlineSidebar';
 import { StudioViewer } from '@/features/studio/StudioViewer';
 import { VersionHistoryDialog } from '@/features/studio/VersionHistoryDialog';
 import { StyleManagerDialog } from '@/features/studio/StyleManagerDialog';
+import { CharFormatDialog } from '@/features/studio/CharFormatDialog';
+import { ParaFormatDialog } from '@/features/studio/ParaFormatDialog';
 import {
   CellPropsDialog,
   TablePropsDialog,
@@ -94,6 +96,14 @@ export default function AppShell() {
   const [bookmarkOpen, setBookmarkOpen] = useState(false);
   const [footnoteOpen, setFootnoteOpen] = useState(false);
   const [styleManagerOpen, setStyleManagerOpen] = useState(false);
+  const [charFormatOpen, setCharFormatOpen] = useState(false);
+  const [charFormatInitial, setCharFormatInitial] = useState<{
+    bold: boolean;
+    italic: boolean;
+    underline: boolean;
+    instance: number;
+  }>({ bold: false, italic: false, underline: false, instance: 0 });
+  const [paraFormatOpen, setParaFormatOpen] = useState(false);
   const [equationOpen, setEquationOpen] = useState(false);
   const [shapeOpen, setShapeOpen] = useState(false);
   // chunk 38 — table / cell properties dialogs.
@@ -734,6 +744,34 @@ export default function AppShell() {
         !e.metaKey &&
         !e.ctrlKey &&
         !e.shiftKey &&
+        e.key.toLowerCase() === 'l'
+      ) {
+        // Alt+L = 글자 모양 다이얼로그 (Hancom reflex)
+        const v = activeViewerRef();
+        const af = v?.getActiveFormat() ?? {};
+        setCharFormatInitial((prev) => ({
+          bold: !!af.bold,
+          italic: !!af.italic,
+          underline: !!af.underline,
+          instance: prev.instance + 1,
+        }));
+        setCharFormatOpen(true);
+        e.preventDefault();
+      } else if (
+        e.altKey &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.shiftKey &&
+        e.key.toLowerCase() === 't'
+      ) {
+        // Alt+T = 문단 모양 다이얼로그 (Hancom reflex)
+        setParaFormatOpen(true);
+        e.preventDefault();
+      } else if (
+        e.altKey &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.shiftKey &&
         e.key.toLowerCase() === 'p'
       ) {
         // Alt+P = PDF 내보내기 (한글에선 인쇄 — 우리는 PDF로 매핑,
@@ -994,6 +1032,22 @@ export default function AppShell() {
           activeViewerRef()?.renameStyle(id, name, englishName) ?? false
         }
         onDelete={(id) => activeViewerRef()?.deleteStyleById(id) ?? false}
+      />
+      <CharFormatDialog
+        key={charFormatInitial.instance}
+        open={charFormatOpen}
+        onOpenChange={setCharFormatOpen}
+        viewerRef={activeViewerRef}
+        initial={{
+          bold: charFormatInitial.bold,
+          italic: charFormatInitial.italic,
+          underline: charFormatInitial.underline,
+        }}
+      />
+      <ParaFormatDialog
+        open={paraFormatOpen}
+        onOpenChange={setParaFormatOpen}
+        viewerRef={activeViewerRef}
       />
       <EquationDialog
         open={equationOpen}

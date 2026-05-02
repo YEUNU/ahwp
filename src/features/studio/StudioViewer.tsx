@@ -3577,6 +3577,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         applyAlignment: (a: ParaAlignment) => applyAlignment(a),
         applyFontSizePt: (pt: number) => applyFontSizePt(pt),
         applyTextColor: (hex: string) => applyTextColor(hex),
+        getActiveFormat: () => ({ ...activeFormat }),
         getPageDef: (sectionIdx = 0) => {
           const doc = docRef.current;
           if (!doc) return null;
@@ -4235,6 +4236,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         applyAlignment,
         applyFontSizePt,
         applyTextColor,
+        activeFormat,
         applyPageDef,
         setHeaderFooterText,
         addBookmarkAtCaret,
