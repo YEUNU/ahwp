@@ -45,7 +45,7 @@ export function TitleBar({
       }
     >
       <div className="flex items-center gap-2">
-        <Logo dark={isDark} />
+        <Logo />
         <span className="font-semibold tracking-tight text-foreground">
           ahwp
         </span>
@@ -89,23 +89,18 @@ export function TitleBar({
   );
 }
 
-/** "한" mark — gradient teal box that anchors the brand. Matches
- * style_example/components/MainScreen.jsx#Logo. */
-function Logo({ dark }: { dark: boolean }): JSX.Element {
+/** ahwp 로고 마크 — "9 · ㅏ Flag" 컨셉의 squircle SVG. 양쪽 테마에서
+ * 같은 색 (배경 #2b6a6b 브랜드 틸 + 글리프 #f6f4ef 페이퍼) 사용. */
+function Logo(): JSX.Element {
   return (
-    <div
-      className="flex size-[18px] items-center justify-center rounded-[5px] text-[10px] font-bold text-white"
-      style={{
-        background: dark
-          ? 'linear-gradient(135deg, #5fb4b3 0%, #2b6a6b 100%)'
-          : 'linear-gradient(135deg, #2b6a6b 0%, #1d4f50 100%)',
-        letterSpacing: '-0.04em',
-        boxShadow: dark
-          ? 'inset 0 1px 0 rgba(255,255,255,.15)'
-          : '0 1px 0 rgba(0,0,0,.08)',
-      }}
-    >
-      한
-    </div>
+    <img
+      src="/icon.svg"
+      alt=""
+      width={18}
+      height={18}
+      className="rounded-[5px]"
+      draggable={false}
+      data-testid="titlebar-logo"
+    />
   );
 }

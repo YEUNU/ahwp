@@ -14,6 +14,11 @@
 - **chunk 58 — 목차 사이드바 (⌘⇧O, 0.2.61)**: `viewer.getOutline()` — 단락 styleId를 styleList에서 "제목 N" / "Heading N"로 매칭, level 추출. `OutlineSidebar` 컴포넌트가 viewer 옆에 토글 + 클릭 시 scrollToParagraph
 - **chunk 57 — AI inline diff (0.2.61)**: `viewer.snapshotParagraphs()` + `markChangedParagraphsSince(before)`. AppShell의 applyHtml/runTools가 before/after로 bracket. 변경된 단락 좌측에 amber 3px 막대 + animate-pulse + 15s 후 페이드
 
+### Added — 앱 아이콘 적용 + 드래그 빈칸 가드 (0.2.67)
+
+- **앱 아이콘** — `build/icon.png` (1024px)을 electron-builder 패키징 default로 등록 (mac .icns / win .ico / linux .png 자동 변환). `public/icon.svg` + `favicon-{16,32}.png`를 `index.html`에 link → renderer favicon. TitleBar의 "한" 그라디언트 div를 `<img src="/icon.svg">`로 교체. style_example/icons에서 가져옴
+- **드래그 빈칸 가드** — `applyPointerToSelection`에 whitespace-jump 검사 추가. IR의 `hitTest`가 단락 사이/페이지 여백 같은 빈 영역에서 멀리 떨어진 단락 끝(혹은 섹션 끝)으로 snap해 selection이 "그 아래 전체"로 점프하던 문제. hit 결과 `cursorRect.y`가 실제 cursor y에서 80px 이상 떨어지면 update를 거절하고 last-known focus 유지. PDF/Word 동작과 일치
+
 ### Fixed — UX 다듬기 4건 (0.2.66)
 
 - **컨텍스트 메뉴 외부 클릭 시 닫힘** — `CellContextMenu` / `AiCommandMenu` / `SlashMenu`의 outside-mousedown 리스너가 `setTimeout(0)` race로 첫 클릭을 놓치는 케이스. 100ms timestamp guard + capture phase 등록으로 교체. trigger 직후의 ghost 이벤트는 무시, 이후 모든 외부 클릭이 메뉴 닫힘

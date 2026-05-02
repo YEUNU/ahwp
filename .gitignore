@@ -70,6 +70,9 @@ __pycache__/
 # Distribution / packaging (Python — anchored to repo root so src/lib/ is not ignored)
 .Python
 /build/
+# but we DO ship the electron-builder icon resources from /build/
+!/build/icon.png
+!/build/entitlements*.plist
 /develop-eggs/
 /dist/
 /downloads/

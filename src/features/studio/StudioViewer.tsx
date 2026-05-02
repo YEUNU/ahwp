@@ -4838,6 +4838,21 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           if (pageIdx < 0 || !pageEl) return;
           const moveResult = hitTestAt(pageIdx, hitX, hitY, pageEl);
           if (!moveResult) return;
+          // Whitespace-jump guard — when the cursor lands in a vertical
+          // whitespace area (margin / inter-paragraph gap), the IR's
+          // hitTest sometimes snaps to a far-away paragraph end (e.g.
+          // bottom of section), which produces "select everything below
+          // current cursor" instead of staying at the last visible
+          // text. Reject any hit whose returned cursor-rect lives more
+          // than ~80px from the actual cursor — keeping the last good
+          // focus feels more natural and matches PDF/Word.
+          if (moveResult.cursorRect) {
+            const pageRect = pageEl.getBoundingClientRect();
+            const hitClientY = pageRect.top + moveResult.cursorRect.y * zoom;
+            if (Math.abs(hitClientY - cy) > 80) {
+              return;
+            }
+          }
           const focus = {
             sectionIndex: moveResult.sectionIndex,
             paragraphIndex: moveResult.paragraphIndex,
@@ -4901,6 +4916,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         setSelection,
         findWordBoundsAt,
         refreshSelectionRects,
+        zoom,
       ],
     );
 
