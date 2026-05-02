@@ -56,6 +56,10 @@ describe('App', () => {
       ai: {
         chat: vi.fn().mockReturnValue({ abort: vi.fn() }),
         ping: vi.fn().mockResolvedValue(undefined),
+        listModels: vi
+          .fn()
+          .mockResolvedValue({ status: 'ok', models: [], fetchedAt: 0 }),
+        clearModelsCache: vi.fn().mockResolvedValue(undefined),
       },
       chatHistory: {
         list: vi.fn().mockResolvedValue([]),

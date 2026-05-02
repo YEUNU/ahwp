@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+### Added — chunk 48: provider 모델 동적 fetch + 24h 캐시 (0.2.48)
+
+각 provider의 사용 가능한 모델을 API에서 직접 불러와 ChatPanel 모델 입력에 datalist autocomplete으로 노출:
+
+- **Provider 인터페이스 확장** — `Provider.listModels(opts)` optional 메서드 추가. OpenAI는 `GET /v1/models`, NIM은 OpenAI 호환 `/v1/models`(델리게이트), fake은 deterministic 카탈로그 + `BAD-key` 거절 분기
+- **24h 디스크 캐시** — `userData/model-cache.json`에 provider별 `{fetchedAt, models}` 영속. `ai:list-models(force?)` IPC가 fresh(<24h)면 캐시 즉시 반환, 아니면 refetch 후 캐시 갱신, refetch 실패 + 캐시 있음이면 `stale-cache`, 둘 다 없음이면 `error`. 새 IPC `ai:clear-models-cache(providerId)`로 수동 무효화
+- **ChatPanel UI** — 기존 모델 텍스트 입력은 그대로 유지(자유 입력 우선). 옆에 `<datalist>`로 fetch 결과 autocomplete + 새로고침 버튼(상태에 따라 `↻` / `⟳` / `⚠`). 버튼 title에 사유 노출. provider 변경 + 키 false→true 전이 시 자동 fetch
+- **폴백 정책** — listModels 실패는 provider를 비활성화하지 않음. dropdown만 비고 자유 입력은 살아있어 chat은 정상 작동. 사용자에게는 ⚠ 배지 + 툴팁으로 "확인 불가" 상태 노출
+
+회귀 e2e 5건(`tests/e2e/chat-model-list.spec.ts`): listModels ok / error / stale-cache 3가지 IPC 응답 검증 + 새로고침 버튼 상태 + datalist option 노출.
+
+대상 범위: OpenAI / NVIDIA NIM (현재 활성). Anthropic은 Phase 2-B 키 잠금 해제와 함께 추후. Ollama는 별도 어댑터 작성 필요(GET /api/tags) — 후속.
+
 ### Added — Phase 2 마무리: chunks 29 / 30 / 34 / 35 (0.2.47)
 
 Phase 2의 잔여 4개 청크를 일괄 완료:

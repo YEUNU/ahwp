@@ -119,6 +119,10 @@ const api: AhwpApi = {
     },
     ping: (providerId, opts) =>
       ipcRenderer.invoke('ai:ping', { providerId, ...opts }),
+    listModels: (providerId, opts) =>
+      ipcRenderer.invoke('ai:list-models', { providerId, ...opts }),
+    clearModelsCache: (providerId) =>
+      ipcRenderer.invoke('ai:clear-models-cache', { providerId }),
   },
   chatHistory: {
     list: (docPath) => ipcRenderer.invoke('chat-history:list', { docPath }),

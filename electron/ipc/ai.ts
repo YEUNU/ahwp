@@ -1,8 +1,18 @@
 import { ipcMain, type WebContents } from 'electron';
 import { getProvider } from '../ai/registry';
 import { getSecret } from '../store/secrets';
+import {
+  clearCachedModels,
+  isFresh,
+  readCachedModels,
+  writeCachedModels,
+} from '../store/model-cache';
 import { isProviderId } from '../../shared/ai';
-import type { ChatRequest, ChatStreamEvent } from '../../shared/ai';
+import type {
+  ChatRequest,
+  ChatStreamEvent,
+  ModelListResult,
+} from '../../shared/ai';
 
 interface ChatStartParams {
   id: string;
@@ -152,4 +162,104 @@ export function registerAiIpc(): void {
       clearTimeout(timeout);
     }
   });
+
+  // chunk 48 — model list with 24h cache. Renderer params:
+  //   { providerId, baseUrl?, force? }
+  // - force=true bypasses cache and refetches.
+  // - On fetch success we update the cache and return `{ ok }`.
+  // - On fetch failure with a usable cached entry, return `{ stale-cache }`
+  //   so the UI can keep its dropdown populated.
+  // - On failure with no cache at all, return `{ error }` — the UI shows
+  //   "확인 불가" and falls back to free-text input.
+  ipcMain.handle(
+    'ai:list-models',
+    async (_event, raw: unknown): Promise<ModelListResult> => {
+      const params = (raw ?? {}) as {
+        providerId?: unknown;
+        baseUrl?: unknown;
+        force?: unknown;
+      };
+      if (!isProviderId(params.providerId)) {
+        return {
+          status: 'error',
+          reason: `invalid provider id: ${String(params.providerId)}`,
+        };
+      }
+      const providerId = params.providerId;
+      const provider = getProvider(providerId);
+      if (!provider || typeof provider.listModels !== 'function') {
+        return {
+          status: 'error',
+          reason: `provider '${providerId}' does not expose a model list`,
+        };
+      }
+      const force = params.force === true;
+      const cached = await readCachedModels(providerId);
+      if (!force && cached && isFresh(cached)) {
+        return {
+          status: 'ok',
+          models: cached.models,
+          fetchedAt: cached.fetchedAt,
+        };
+      }
+      const apiKey = await getSecret(providerId);
+      if (provider.meta.requiresApiKey && !apiKey) {
+        if (cached) {
+          return {
+            status: 'stale-cache',
+            models: cached.models,
+            fetchedAt: cached.fetchedAt,
+            reason: '키가 저장되어 있지 않아 새로 가져올 수 없습니다.',
+          };
+        }
+        return {
+          status: 'error',
+          reason: '키가 저장되어 있지 않습니다.',
+        };
+      }
+      const baseUrl =
+        typeof params.baseUrl === 'string' && params.baseUrl.length > 0
+          ? params.baseUrl
+          : undefined;
+      const ctrl = new AbortController();
+      const timeout = setTimeout(() => ctrl.abort(), 15_000);
+      try {
+        const models = await provider.listModels({
+          apiKey: apiKey ?? undefined,
+          baseUrl,
+          signal: ctrl.signal,
+        });
+        const entry = await writeCachedModels(providerId, models);
+        return {
+          status: 'ok',
+          models: entry.models,
+          fetchedAt: entry.fetchedAt,
+        };
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        if (cached) {
+          return {
+            status: 'stale-cache',
+            models: cached.models,
+            fetchedAt: cached.fetchedAt,
+            reason,
+          };
+        }
+        return { status: 'error', reason };
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+  );
+
+  // chunk 48 — manual cache invalidation hook for the Settings "새로고침"
+  // button when the user wants a clean slate (e.g. after rotating a key).
+  ipcMain.handle(
+    'ai:clear-models-cache',
+    async (_event, raw: unknown): Promise<void> => {
+      const params = (raw ?? {}) as { providerId?: unknown };
+      if (!isProviderId(params.providerId)) return;
+      await clearCachedModels(params.providerId);
+    },
+  );
 }

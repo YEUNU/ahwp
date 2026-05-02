@@ -128,4 +128,29 @@ export interface Provider {
   ): AsyncIterable<ChatStreamEvent>;
   /** Reachability check. Resolves on success, throws on auth/network errors. */
   ping(opts: ProviderRuntimeOptions): Promise<void>;
+  /**
+   * Fetch the list of model IDs available for this provider — chunk 48.
+   * Optional: providers without a public list endpoint can omit this and
+   * the UI falls back to free-text input. Throws on network / auth
+   * failure; the IPC layer translates that into a "확인 불가" state and
+   * the renderer keeps the free-text input open.
+   */
+  listModels?(opts: ProviderRuntimeOptions): Promise<string[]>;
 }
+
+/**
+ * Result envelope for the `ai:list-models` IPC — chunk 48. The UI uses
+ * `status` to decide whether to show a dropdown (`ok`), a "확인 불가"
+ * label + free-text input (`error`), or a stale-but-usable list
+ * (`stale-cache` — last successful fetch served while a fresh fetch
+ * fails).
+ */
+export type ModelListResult =
+  | { status: 'ok'; models: string[]; fetchedAt: number }
+  | {
+      status: 'stale-cache';
+      models: string[];
+      fetchedAt: number;
+      reason: string;
+    }
+  | { status: 'error'; reason: string };

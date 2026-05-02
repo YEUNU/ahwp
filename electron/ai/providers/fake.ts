@@ -87,4 +87,15 @@ export const fakeProvider: Provider = {
       throw new Error('fake: invalid key');
     }
   },
+
+  // chunk 48 — deterministic catalog for e2e. The renderer treats this
+  // exactly like a real provider response (sorted alphabetically). A key
+  // starting with 'BAD' makes listModels reject the same way ping does,
+  // so tests can drive the "확인 불가" branch.
+  async listModels(opts: ProviderRuntimeOptions): Promise<string[]> {
+    if (opts.apiKey && opts.apiKey.startsWith('BAD')) {
+      throw new Error('fake: listModels failed');
+    }
+    return ['fake/echo-1', 'fake/echo-2', 'fake/slow-1'];
+  },
 };

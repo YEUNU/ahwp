@@ -145,4 +145,30 @@ export const openaiProvider: Provider = {
       throw new Error(`OpenAI ping ${res.status}: ${text || res.statusText}`);
     }
   },
+
+  // chunk 48 — model list. OpenAI's `/v1/models` returns `{ data: [{
+  // id, ... }] }`. We hand back the raw `id` strings; sorting and
+  // filtering (e.g. drop tts-* / embedding-* models) is the renderer's
+  // job — preview filtering server-side would discard models that newer
+  // SDK builds may rely on.
+  async listModels(opts: ProviderRuntimeOptions): Promise<string[]> {
+    const url = `${trimBaseUrl(opts.baseUrl)}/models`;
+    const res = await fetch(url, {
+      headers: { authorization: `Bearer ${opts.apiKey ?? ''}` },
+      signal: opts.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(
+        `OpenAI listModels ${res.status}: ${text || res.statusText}`,
+      );
+    }
+    const json = (await res.json()) as { data?: Array<{ id?: unknown }> };
+    const ids: string[] = [];
+    for (const row of json.data ?? []) {
+      if (typeof row?.id === 'string' && row.id.length > 0) ids.push(row.id);
+    }
+    ids.sort();
+    return ids;
+  },
 };

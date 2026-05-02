@@ -298,6 +298,24 @@ export function ChatPanel({
   const [models, setModels] = useState<Record<ChatProviderId, string>>(() =>
     loadModels(),
   );
+  // chunk 48 — model list per provider. The renderer asks main for the
+  // catalog (cached 24h), then keeps the result in memory so the
+  // dropdown is responsive. `idle` before first fetch; `loading` while
+  // a fetch is in flight; `ok` / `stale` / `error` after. The free-text
+  // input is always available — the dropdown just *suggests* values
+  // (datalist), so a missing list (`error`) doesn't block chat.
+  type ModelListState =
+    | { kind: 'idle' }
+    | { kind: 'loading' }
+    | { kind: 'ok'; models: string[]; fetchedAt: number }
+    | { kind: 'stale'; models: string[]; fetchedAt: number; reason: string }
+    | { kind: 'error'; reason: string };
+  const [modelList, setModelList] = useState<
+    Record<ChatProviderId, ModelListState>
+  >({
+    openai: { kind: 'idle' },
+    nvidia: { kind: 'idle' },
+  });
   const [attachDoc, setAttachDoc] = useState(false);
   // chunk 20 — excerpt chips. When non-empty, the system message
   // injects a structured `[발췌]:` block instead of the whole-doc
@@ -368,6 +386,64 @@ export function ChatPanel({
     setHasKey(null);
     setProvider(next);
   }, []);
+
+  // chunk 48 — model list fetcher. Sets `loading` first, then commits
+  // the IPC result. Re-runs on provider change and key transitions
+  // (false → true). `force=true` bypasses the 24h cache for a manual
+  // 새로고침 click.
+  const fetchModels = useCallback(
+    async (target: ChatProviderId, force = false): Promise<void> => {
+      setModelList((prev) => ({ ...prev, [target]: { kind: 'loading' } }));
+      try {
+        const res = await window.api.ai.listModels(target, { force });
+        if (res.status === 'ok') {
+          setModelList((prev) => ({
+            ...prev,
+            [target]: {
+              kind: 'ok',
+              models: res.models,
+              fetchedAt: res.fetchedAt,
+            },
+          }));
+          return;
+        }
+        if (res.status === 'stale-cache') {
+          setModelList((prev) => ({
+            ...prev,
+            [target]: {
+              kind: 'stale',
+              models: res.models,
+              fetchedAt: res.fetchedAt,
+              reason: res.reason,
+            },
+          }));
+          return;
+        }
+        setModelList((prev) => ({
+          ...prev,
+          [target]: { kind: 'error', reason: res.reason },
+        }));
+      } catch (err) {
+        setModelList((prev) => ({
+          ...prev,
+          [target]: {
+            kind: 'error',
+            reason: err instanceof Error ? err.message : String(err),
+          },
+        }));
+      }
+    },
+    [],
+  );
+
+  // Auto-fetch on provider change + key transition. The cache layer in
+  // main makes the cost trivial — most calls return synchronously from
+  // disk. Refetch only fires when key first becomes available; we don't
+  // want to spam the API on transient flips.
+  useEffect(() => {
+    if (hasKey !== true) return;
+    void fetchModels(provider);
+  }, [provider, hasKey, fetchModels]);
 
   useEffect(() => {
     const el = scrollerRef.current;
@@ -908,7 +984,55 @@ export function ChatPanel({
           aria-label="Model"
           disabled={streaming}
           spellCheck={false}
+          list={`chat-model-list-${provider}`}
         />
+        {/* chunk 48 — datalist autocomplete. Free-text input still wins
+            (user can type any model id), but a list of fetched ids
+            appears as suggestions on focus. Empty list (error / idle)
+            silently degrades to plain free-text. */}
+        {(() => {
+          const state = modelList[provider];
+          const list =
+            state.kind === 'ok' || state.kind === 'stale' ? state.models : [];
+          return (
+            <datalist
+              id={`chat-model-list-${provider}`}
+              data-testid="chat-model-datalist"
+            >
+              {list.map((id) => (
+                <option key={id} value={id} />
+              ))}
+            </datalist>
+          );
+        })()}
+        {/* chunk 48 — refresh button + status badge. Click forces a
+            cache-bypassing refetch. The badge tells the user whether
+            we're using a fresh list, a stale-cache fallback, or a
+            "확인 불가" state where the dropdown is empty and they have
+            to type the model id by hand. */}
+        <button
+          type="button"
+          onClick={() => void fetchModels(provider, true)}
+          disabled={streaming || modelList[provider].kind === 'loading'}
+          className="rounded-md border border-input bg-background px-1.5 py-1 text-[10px] hover:bg-muted disabled:opacity-50"
+          data-testid="chat-model-refresh"
+          title={
+            modelList[provider].kind === 'error'
+              ? `모델 목록 확인 불가: ${(modelList[provider] as { reason: string }).reason}`
+              : modelList[provider].kind === 'stale'
+                ? `오래된 캐시: ${(modelList[provider] as { reason: string }).reason}`
+                : '모델 목록 새로고침'
+          }
+          aria-label="모델 목록 새로고침"
+        >
+          {modelList[provider].kind === 'loading'
+            ? '⟳'
+            : modelList[provider].kind === 'error'
+              ? '⚠'
+              : modelList[provider].kind === 'stale'
+                ? '⚠'
+                : '↻'}
+        </button>
         <span
           className={cn(
             'text-[10px]',

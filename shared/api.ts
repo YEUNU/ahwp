@@ -3,7 +3,12 @@
  * Renderer accesses these as window.api.*
  */
 
-import type { ChatRequest, ChatStreamEvent, ProviderId } from './ai';
+import type {
+  ChatRequest,
+  ChatStreamEvent,
+  ModelListResult,
+  ProviderId,
+} from './ai';
 
 export interface PingRequest {
   message: string;
@@ -281,6 +286,20 @@ export interface AiApi {
   chat: (req: ChatRequest, callbacks: AiChatCallbacks) => AiChatHandle;
   /** Reachability check. Resolves on success, rejects with the error message. */
   ping: (providerId: ProviderId, opts?: AiPingOptions) => Promise<void>;
+  /**
+   * Fetch the list of model IDs available for `providerId` — chunk 48.
+   * Served from a 24h cache when fresh; main refetches and updates the
+   * cache when stale. Pass `force: true` to bypass the cache after a
+   * key rotation. Always resolves (never throws); the union shape lets
+   * the UI distinguish fresh / stale / unknown.
+   */
+  listModels: (
+    providerId: ProviderId,
+    opts?: { baseUrl?: string; force?: boolean },
+  ) => Promise<ModelListResult>;
+  /** Drop the on-disk cache entry for `providerId`. Used by Settings'
+   * 새로고침 button when the user wants a hard refresh. */
+  clearModelsCache: (providerId: ProviderId) => Promise<void>;
 }
 
 /** Chat history persistence — chunk 26. SQLite-backed conversations

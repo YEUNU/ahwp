@@ -36,4 +36,14 @@ export const nvidiaProvider: Provider = {
       baseUrl: opts.baseUrl ?? NVIDIA_DEFAULT_BASE_URL,
     });
   },
+
+  // NIM exposes the OpenAI-compatible /v1/models endpoint, so we just
+  // delegate. The hosted catalog returns ~hundreds of vendor model IDs
+  // (qwen/*, meta/*, microsoft/*, ...).
+  async listModels(opts: ProviderRuntimeOptions): Promise<string[]> {
+    return openaiProvider.listModels!({
+      ...opts,
+      baseUrl: opts.baseUrl ?? NVIDIA_DEFAULT_BASE_URL,
+    });
+  },
 };
