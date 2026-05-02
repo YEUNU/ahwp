@@ -14,6 +14,16 @@
 - **chunk 58 — 목차 사이드바 (⌘⇧O, 0.2.61)**: `viewer.getOutline()` — 단락 styleId를 styleList에서 "제목 N" / "Heading N"로 매칭, level 추출. `OutlineSidebar` 컴포넌트가 viewer 옆에 토글 + 클릭 시 scrollToParagraph
 - **chunk 57 — AI inline diff (0.2.61)**: `viewer.snapshotParagraphs()` + `markChangedParagraphsSince(before)`. AppShell의 applyHtml/runTools가 before/after로 bracket. 변경된 단락 좌측에 amber 3px 막대 + animate-pulse + 15s 후 페이드
 
+### Added — Phase A: 셀 경계 넘는 multi-cell drag block (0.2.75)
+
+- 셀 안에서 드래그를 시작해 다른 셀로 진입하면 한컴 한글 reference대로 char-level 모드에서 cell-block 모드로 자동 전환. 통과한 모든 셀(rectangular row/col 범위)이 하이라이트됨.
+- `getTableCellBboxes`로 표의 모든 셀 좌표 + row/col/span 받아서 anchor 셀 ~ focus 셀의 bounding rectangle 안에 들어오는 셀을 필터. rowSpan/colSpan 고려한 intersection 검사.
+- 새 state `cellBlockHighlights`. cell-block 모드 진입 시 char-level rect는 비우고 cell bbox로만 표시. 같은 셀로 돌아오면 다시 char-level.
+- 다른 표 또는 본문으로 이탈하면 focus freeze (cross-table drag는 v2).
+- ESC / mouseup-empty / 새 mousedown 시 정리.
+- 기준: [한컴 한글 표 셀 블록](https://help.hancom.com/hoffice/multi/ko_kr/hwp/table/table%28cell%29.htm) — "마우스가 지나간 셀이 모두 셀 블록으로 설정됩니다"
+- Follow-up: F5/F7/F8 단축키 (Phase B-2), 표 navigation 단축키 (Phase B-3).
+
 ### Added — control(표) 영역 highlight 시각화 (0.2.74)
 
 - 0.2.72에서 드래그가 control 위 통과 시 그 control이 속한 본문 단락이 selection에 포함되도록 처리했지만 시각적으로 control 자체는 highlight 안 됐음. 이제 표 bounding box를 selection 색상(`bg-primary/25`)으로 오버레이해서 표 자체도 "선택된" 것처럼 보이게 함.

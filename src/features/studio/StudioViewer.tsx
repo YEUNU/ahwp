@@ -790,6 +790,16 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     const [selectedControlBboxes, setSelectedControlBboxes] = useState<
       Record<number, { x: number; y: number; width: number; height: number }[]>
     >({});
+    // Phase A — multi-cell block highlights. Populated when drag
+    // starts in cell A and crosses into cell B of the same table:
+    // we switch from char-level cell selection to Hancom-style
+    // cell-block selection (selection unit = whole cells). Each
+    // entry is a cell bbox rectangle. Computed via getTableCellBboxes
+    // by filtering cells inside the rectangular row/column range
+    // spanned by anchor.cell and focus.cell.
+    const [cellBlockHighlights, setCellBlockHighlights] = useState<
+      Record<number, { x: number; y: number; width: number; height: number }[]>
+    >({});
     // True while the user is mouse-dragging — mousemove updates focus.
     const draggingRef = useRef(false);
     // Cleanup callback for the active drag — set in handlePageMouseDown,
@@ -1413,7 +1423,104 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       setSelection(null);
       setSelectionRectsByPage({});
       setSelectedControlBboxes({});
+      setCellBlockHighlights({});
     }, [setSelection]);
+
+    /**
+     * Phase A — multi-cell block highlight refresh. Computes the cell
+     * bbox rectangles spanned by [anchor.cell, focus.cell] of the same
+     * table and stores them per-page. Caller must guarantee both
+     * anchor.cell and focus.cell exist + share parentParaIndex /
+     * controlIndex (= same table). When focus.cell.cellIndex differs
+     * from anchor.cell.cellIndex this is the active rendering path —
+     * the inner-cell text-rect path (refreshSelectionRects via
+     * getSelectionRectsInCell) is skipped because IR's per-line
+     * rect API only handles same-cell selections.
+     */
+    const refreshCellBlockHighlights = useCallback(
+      (sel: typeof selection): void => {
+        const doc = docRef.current;
+        if (!doc || !sel) {
+          setCellBlockHighlights({});
+          return;
+        }
+        const ac = sel.anchor.cell;
+        const fc = sel.focus.cell;
+        if (
+          !ac ||
+          !fc ||
+          ac.parentParaIndex !== fc.parentParaIndex ||
+          ac.controlIndex !== fc.controlIndex
+        ) {
+          setCellBlockHighlights({});
+          return;
+        }
+        try {
+          const cells = JSON.parse(
+            doc.getTableCellBboxes(
+              sel.anchor.sectionIndex,
+              ac.parentParaIndex,
+              ac.controlIndex,
+            ),
+          ) as {
+            cellIdx: number;
+            row: number;
+            col: number;
+            rowSpan: number;
+            colSpan: number;
+            pageIndex: number;
+            x: number;
+            y: number;
+            w: number;
+            h: number;
+          }[];
+          const anchorCell = cells.find((c) => c.cellIdx === ac.cellIndex);
+          const focusCell = cells.find((c) => c.cellIdx === fc.cellIndex);
+          if (!anchorCell || !focusCell) {
+            setCellBlockHighlights({});
+            return;
+          }
+          const minRow = Math.min(anchorCell.row, focusCell.row);
+          const maxRow = Math.max(
+            anchorCell.row + anchorCell.rowSpan - 1,
+            focusCell.row + focusCell.rowSpan - 1,
+          );
+          const minCol = Math.min(anchorCell.col, focusCell.col);
+          const maxCol = Math.max(
+            anchorCell.col + anchorCell.colSpan - 1,
+            focusCell.col + focusCell.colSpan - 1,
+          );
+          const grouped: Record<
+            number,
+            { x: number; y: number; width: number; height: number }[]
+          > = {};
+          for (const c of cells) {
+            const cRowEnd = c.row + c.rowSpan - 1;
+            const cColEnd = c.col + c.colSpan - 1;
+            // Cell intersects the rectangle iff both row and col
+            // ranges overlap.
+            if (
+              cRowEnd >= minRow &&
+              c.row <= maxRow &&
+              cColEnd >= minCol &&
+              c.col <= maxCol
+            ) {
+              (grouped[c.pageIndex] ??= []).push({
+                x: c.x,
+                y: c.y,
+                width: c.w,
+                height: c.h,
+              });
+            }
+          }
+          setCellBlockHighlights(grouped);
+        } catch (err) {
+          console.warn('[studio] getTableCellBboxes failed:', err);
+          setCellBlockHighlights({});
+        }
+      },
+      [],
+    );
 
     /**
      * Returns true if there was a non-empty selection that we deleted.
@@ -4830,6 +4937,8 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           const initSel = { anchor: baseCaret, focus: baseCaret };
           setSelection(initSel);
           setSelectionRectsByPage({});
+          setCellBlockHighlights({});
+          setSelectedControlBboxes({});
           cellDragRef.current = cell;
           dragOriginSelectionRef.current = null;
           draggingRef.current = true;
@@ -4906,8 +5015,10 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           } else {
             setSelectionRectsByPage({});
           }
-          // New drag begins: drop any control bboxes from a prior drag.
+          // New drag begins: drop any control bboxes / cell-block
+          // highlights from a prior drag.
           setSelectedControlBboxes({});
+          setCellBlockHighlights({});
           draggingRef.current = true;
         }
 
@@ -4995,10 +5106,16 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           if (pageIdx < 0 || !pageEl) return;
           const moveResult = hitTestAt(pageIdx, hitX, hitY, pageEl);
           if (!moveResult) return;
-          // Cell-drag mode (anchor was inside a cell): only update focus
-          // when the cursor stays in the same cell + same cellParaIndex.
-          // Cross-cell drag is out-of-scope for v1 — leaving the cell
-          // simply freezes focus at the last good position in that cell.
+          // Cell-drag mode. Two sub-modes:
+          //   (a) cursor stays in the SAME cell + same cellParaIndex →
+          //       char-level selection (0.2.73 v1)
+          //   (b) cursor crosses into a DIFFERENT cell of the same
+          //       table → switch to Hancom-style cell-block mode
+          //       (Phase A). Selection unit becomes whole cells; the
+          //       in-cell text rect rendering is replaced by per-cell
+          //       bbox highlights computed via getTableCellBboxes.
+          //   (c) cursor leaves the table entirely → freeze focus
+          //       (cross-table drag is not supported)
           const cd = cellDragRef.current;
           if (cd) {
             const moveCell =
@@ -5013,12 +5130,11 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                     cellParaIndex: moveResult.cellParaIndex,
                   }
                 : undefined;
+            // (c) outside table or different table — freeze.
             if (
               !moveCell ||
               moveCell.parentParaIndex !== cd.parentParaIndex ||
-              moveCell.controlIndex !== cd.controlIndex ||
-              moveCell.cellIndex !== cd.cellIndex ||
-              moveCell.cellParaIndex !== cd.cellParaIndex
+              moveCell.controlIndex !== cd.controlIndex
             ) {
               return;
             }
@@ -5030,10 +5146,22 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             };
             caretRef.current = focus;
             if (moveResult.cursorRect) setCursorRect(moveResult.cursorRect);
+            // Crossed into a different cell? Switch to cell-block mode.
+            const isCrossCell =
+              moveCell.cellIndex !== cd.cellIndex ||
+              moveCell.cellParaIndex !== cd.cellParaIndex;
             setSelection((prev) => {
               if (!prev) return null;
               const next = { ...prev, focus };
-              refreshSelectionRects(next);
+              if (isCrossCell) {
+                // Cell-block mode: drop char-level rects, draw cell bboxes.
+                setSelectionRectsByPage({});
+                refreshCellBlockHighlights(next);
+              } else {
+                // Same cell + same cellParaIndex: char-level selection.
+                setCellBlockHighlights({});
+                refreshSelectionRects(next);
+              }
               return next;
             });
             return;
@@ -5227,6 +5355,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             if (empty) {
               setSelectionRectsByPage({});
               setSelectedControlBboxes({});
+              setCellBlockHighlights({});
               return null;
             }
             return prev;
@@ -7205,6 +7334,24 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                       <div
                         key={`ctrl-${ri}`}
                         data-testid="studio-control-selection-rect"
+                        className="pointer-events-none absolute bg-primary/25"
+                        style={{
+                          left: r.x * zoom,
+                          top: r.y * zoom,
+                          width: r.width * zoom,
+                          height: r.height * zoom,
+                        }}
+                      />
+                    ))}
+                    {/* Phase A — multi-cell block highlights. Cells
+                      between anchor.cell and focus.cell of the same
+                      table when drag crossed cell boundaries. Same
+                      tint as selection / control highlight for visual
+                      consistency. */}
+                    {(cellBlockHighlights[i] ?? []).map((r, ri) => (
+                      <div
+                        key={`cb-${ri}`}
+                        data-testid="studio-cell-block-rect"
                         className="pointer-events-none absolute bg-primary/25"
                         style={{
                           left: r.x * zoom,
