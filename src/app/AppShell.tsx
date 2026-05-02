@@ -22,6 +22,21 @@ import { PageSetupDialog } from '@/features/studio/PageSetupDialog';
 import { ShapeDialog } from '@/features/studio/ShapeDialog';
 import { StudioViewer } from '@/features/studio/StudioViewer';
 import { StyleManagerDialog } from '@/features/studio/StyleManagerDialog';
+import {
+  CellPropsDialog,
+  TablePropsDialog,
+  type CellPropsContext,
+  type TablePropsContext,
+} from '@/features/studio/TableCellPropsDialog';
+import {
+  PicturePropsDialog,
+  type PictureRef,
+} from '@/features/studio/PicturePropsDialog';
+import {
+  CellStylePickerDialog,
+  type CellStylePickerCtx,
+  type StyleOption,
+} from '@/features/studio/CellStylePickerDialog';
 import { TabBar, type TabDescriptor } from '@/features/studio/TabBar';
 import type { ViewerHandle } from '@/features/studio/types';
 import { TitleBar } from './TitleBar';
@@ -68,6 +83,13 @@ export default function AppShell() {
   const [styleManagerOpen, setStyleManagerOpen] = useState(false);
   const [equationOpen, setEquationOpen] = useState(false);
   const [shapeOpen, setShapeOpen] = useState(false);
+  // chunk 38 — table / cell properties dialogs.
+  const [tablePropsOpen, setTablePropsOpen] = useState(false);
+  const [cellPropsOpen, setCellPropsOpen] = useState(false);
+  // chunk 39 — picture properties dialog.
+  const [picturePropsOpen, setPicturePropsOpen] = useState(false);
+  // chunk 42 — cell style picker (KNOWN_ISSUES L-006 workaround).
+  const [cellStylePickerOpen, setCellStylePickerOpen] = useState(false);
   // viewerRef per tab (by key). The active tab's viewer is what menu /
   // shortcut actions target.
   const viewerRefsRef = useRef<Map<string, ViewerHandle | null>>(new Map());
@@ -408,6 +430,17 @@ export default function AppShell() {
         void saveCurrent();
       } else if (action === 'file:save-as') {
         void saveAsCurrent();
+      } else if (action === 'file:export-html') {
+        const v = activeViewerRef();
+        const html = v?.exportDocumentHtml(1000) ?? '';
+        if (html.length === 0) {
+          window.alert('내보낼 문서가 없습니다.');
+        } else {
+          void window.api.file.exportHtml({
+            html,
+            defaultPath: activeTab?.path,
+          });
+        }
       } else if (action === 'edit:undo') {
         handle?.undo();
       } else if (action === 'edit:redo') {
@@ -422,6 +455,10 @@ export default function AppShell() {
         handle?.openFind();
       } else if (action === 'edit:replace') {
         handle?.openReplace();
+      } else if (action === 'edit:copy-control') {
+        handle?.copyControlAtCaret();
+      } else if (action === 'edit:paste-control') {
+        handle?.pasteControlAtCurrentCaret();
       } else if (
         action === 'format:bold' ||
         action === 'format:italic' ||
@@ -445,9 +482,12 @@ export default function AppShell() {
         setEquationOpen(true);
       } else if (action === 'insert:shape') {
         setShapeOpen(true);
+      } else if (action === 'view:picture-props') {
+        setPicturePropsOpen(true);
       }
     });
   }, [
+    activeTab?.path,
     activeViewerRef,
     newDocument,
     openFromDialog,
@@ -513,6 +553,152 @@ export default function AppShell() {
         onInsert={(width, height, opts) =>
           activeViewerRef()?.createRectShapeAtCaret(width, height, opts) ?? null
         }
+      />
+      <TablePropsDialog
+        open={tablePropsOpen}
+        onOpenChange={setTablePropsOpen}
+        getCurrent={() => {
+          const v = activeViewerRef();
+          if (!v) return null;
+          const c = v.getActiveCellContext();
+          if (!c) return null;
+          const props = v.getTableProps(
+            c.sectionIndex,
+            c.parentParaIdx,
+            c.controlIdx,
+          );
+          if (!props) return null;
+          const ctx: TablePropsContext = {
+            sectionIdx: c.sectionIndex,
+            parentParaIdx: c.parentParaIdx,
+            controlIdx: c.controlIdx,
+          };
+          return { ctx, props };
+        }}
+        onApply={(ctx, props) => {
+          activeViewerRef()?.setTableProps(
+            ctx.sectionIdx,
+            ctx.parentParaIdx,
+            ctx.controlIdx,
+            props,
+          );
+        }}
+      />
+      <PicturePropsDialog
+        open={picturePropsOpen}
+        onOpenChange={setPicturePropsOpen}
+        enumeratePictures={() => {
+          const v = activeViewerRef();
+          if (!v) return [];
+          return v.enumeratePictures().map((p) => ({
+            sectionIdx: p.sectionIdx,
+            parentParaIdx: p.parentParaIdx,
+            controlIdx: p.controlIdx,
+            label: p.label,
+          }));
+        }}
+        getProps={(ref: PictureRef) =>
+          activeViewerRef()?.getPictureProps(
+            ref.sectionIdx,
+            ref.parentParaIdx,
+            ref.controlIdx,
+          ) ?? null
+        }
+        onApply={(ref, props) => {
+          activeViewerRef()?.setPictureProps(
+            ref.sectionIdx,
+            ref.parentParaIdx,
+            ref.controlIdx,
+            props,
+          );
+        }}
+        onDelete={(ref) => {
+          activeViewerRef()?.deletePictureControl(
+            ref.sectionIdx,
+            ref.parentParaIdx,
+            ref.controlIdx,
+          );
+        }}
+      />
+      <CellStylePickerDialog
+        open={cellStylePickerOpen}
+        onOpenChange={setCellStylePickerOpen}
+        getCurrentCell={() => {
+          const v = activeViewerRef();
+          if (!v) return null;
+          const c = v.getActiveCellContext();
+          if (!c) return null;
+          const ctx: CellStylePickerCtx = {
+            sectionIdx: c.sectionIndex,
+            parentParaIdx: c.parentParaIdx,
+            controlIdx: c.controlIdx,
+            cellIdx: c.cellIdx,
+          };
+          return ctx;
+        }}
+        getStyles={() => {
+          const v = activeViewerRef();
+          if (!v) return [];
+          const list = v.getStyleListJson() ?? [];
+          return list
+            .map((s): StyleOption | null => {
+              const id = (s as { id?: unknown }).id;
+              const name = (s as { name?: unknown }).name;
+              const englishName = (s as { englishName?: unknown }).englishName;
+              if (typeof id !== 'number' || typeof name !== 'string')
+                return null;
+              return {
+                id,
+                name,
+                englishName:
+                  typeof englishName === 'string' ? englishName : undefined,
+              };
+            })
+            .filter((x): x is StyleOption => x !== null);
+        }}
+        onApply={(ctx, styleId) => {
+          activeViewerRef()?.applyCellStyle(
+            ctx.sectionIdx,
+            ctx.parentParaIdx,
+            ctx.controlIdx,
+            ctx.cellIdx,
+            0, // cellPara — apply to the first para of the cell
+            styleId,
+          );
+        }}
+      />
+      <CellPropsDialog
+        open={cellPropsOpen}
+        onOpenChange={setCellPropsOpen}
+        getCurrent={() => {
+          const v = activeViewerRef();
+          if (!v) return null;
+          const c = v.getActiveCellContext();
+          if (!c) return null;
+          const props = v.getCellProps(
+            c.sectionIndex,
+            c.parentParaIdx,
+            c.controlIdx,
+            c.cellIdx,
+          );
+          if (!props) return null;
+          const ctx: CellPropsContext = {
+            sectionIdx: c.sectionIndex,
+            parentParaIdx: c.parentParaIdx,
+            controlIdx: c.controlIdx,
+            cellIdx: c.cellIdx,
+          };
+          return { ctx, props };
+        }}
+        onApply={(ctx, props) => {
+          activeViewerRef()?.setCellProps(
+            ctx.sectionIdx,
+            ctx.parentParaIdx,
+            ctx.controlIdx,
+            ctx.cellIdx,
+            props,
+          );
+        }}
       />
       <div className="flex h-screen flex-col bg-background text-foreground">
         <TitleBar
@@ -631,6 +817,11 @@ export default function AppShell() {
                           isActive={isActive}
                           onDirtyChange={dirtyCallbacks.get(tab.key)}
                           ref={refCallbackFor(tab.key)}
+                          onOpenTableProps={() => setTablePropsOpen(true)}
+                          onOpenCellProps={() => setCellPropsOpen(true)}
+                          onOpenCellStylePicker={() =>
+                            setCellStylePickerOpen(true)
+                          }
                         />
                       </div>
                     );

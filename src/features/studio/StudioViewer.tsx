@@ -54,6 +54,12 @@ interface StudioViewerProps {
   isActive?: boolean;
   /** Notifies the parent whenever the doc's dirty state flips. */
   onDirtyChange?: (dirty: boolean) => void;
+  /** Cell context-menu extension hooks — chunk 38. The cell menu calls
+   * these after closing itself; AppShell holds the dialog open state. */
+  onOpenTableProps?: () => void;
+  onOpenCellProps?: () => void;
+  /** Cell context-menu — chunk 42. Open cell-style picker. */
+  onOpenCellStylePicker?: () => void;
 }
 
 type Phase = 'mounting' | 'reading' | 'rendering' | 'ready';
@@ -296,6 +302,9 @@ function CellContextMenu({
   canMergeRight,
   canMergeBelow,
   onDeleteTable,
+  onOpenTableProps,
+  onOpenCellProps,
+  onOpenCellStylePicker,
 }: {
   state: { x: number; y: number };
   onClose: () => void;
@@ -312,6 +321,9 @@ function CellContextMenu({
   canMergeRight: boolean;
   canMergeBelow: boolean;
   onDeleteTable: () => void;
+  onOpenTableProps?: () => void;
+  onOpenCellProps?: () => void;
+  onOpenCellStylePicker?: () => void;
 }): React.ReactElement {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -391,6 +403,16 @@ function CellContextMenu({
       {item('셀 나누기 (2×2)', onSplit2x2, 'studio-cell-split-2x2')}
       {item('병합 해제', onUnmerge, 'studio-cell-unmerge')}
       <hr className="my-1 border-border" />
+      {onOpenCellProps
+        ? item('셀 속성…', onOpenCellProps, 'studio-cell-props')
+        : null}
+      {onOpenTableProps
+        ? item('표 속성…', onOpenTableProps, 'studio-cell-table-props')
+        : null}
+      {onOpenCellStylePicker
+        ? item('스타일 적용…', onOpenCellStylePicker, 'studio-cell-style-apply')
+        : null}
+      <hr className="my-1 border-border" />
       {item('표 삭제', onDeleteTable, 'studio-cell-table-delete')}
     </div>
   );
@@ -429,7 +451,17 @@ function parsePageDimensions(svg: string): PageDims | null {
  * See docs/STUDIO_MIGRATION.md.
  */
 export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
-  function StudioViewer({ path, isActive = true, onDirtyChange }, ref) {
+  function StudioViewer(
+    {
+      path,
+      isActive = true,
+      onDirtyChange,
+      onOpenTableProps,
+      onOpenCellProps,
+      onOpenCellStylePicker,
+    },
+    ref,
+  ) {
     const scrollRef = useRef<HTMLDivElement>(null);
     const docRef = useRef<RhwpDoc | null>(null);
     const pageRefsRef = useRef<(HTMLDivElement | null)[]>([]);
@@ -3040,6 +3072,24 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           }
         },
         isDirty: () => dirtyRef.current,
+        getActiveCellContext: () => {
+          const c = caretRef.current.cell;
+          if (!c) return null;
+          return {
+            sectionIndex: caretRef.current.sectionIndex,
+            parentParaIdx: c.parentParaIndex,
+            controlIdx: c.controlIndex,
+            cellIdx: c.cellIndex,
+          };
+        },
+        getTableProps: (sec, parentPara, ctrl) =>
+          getTableProps(sec, parentPara, ctrl),
+        setTableProps: (sec, parentPara, ctrl, props) =>
+          setTableProps(sec, parentPara, ctrl, props),
+        getCellProps: (sec, parentPara, ctrl, cellIdx) =>
+          getCellProps(sec, parentPara, ctrl, cellIdx),
+        setCellProps: (sec, parentPara, ctrl, cellIdx, props) =>
+          setCellProps(sec, parentPara, ctrl, cellIdx, props),
         applyCellStyle: (sec, parentPara, ctrl, cell, cellPara, styleId) => {
           const doc = docRef.current;
           if (!doc) return false;
@@ -3102,6 +3152,63 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             return false;
           }
         },
+        enumeratePictures: () => {
+          const doc = docRef.current;
+          if (!doc) return [];
+          const out: {
+            sectionIdx: number;
+            parentParaIdx: number;
+            controlIdx: number;
+            label: string;
+          }[] = [];
+          // Section 0 only — multi-section enumeration left for when
+          // the doc shell supports it (chunk 1 fixture has 1 section).
+          let paraCount: number;
+          try {
+            paraCount = doc.getParagraphCount(0);
+          } catch {
+            return [];
+          }
+          for (let p = 0; p < paraCount; p++) {
+            let raw: string;
+            try {
+              raw = doc.getControlTextPositions(0, p);
+            } catch {
+              continue;
+            }
+            let entries: { controlIdx?: number; controlIndex?: number }[];
+            try {
+              entries = JSON.parse(raw) as typeof entries;
+              if (!Array.isArray(entries)) continue;
+            } catch {
+              continue;
+            }
+            for (const entry of entries) {
+              const cidx =
+                typeof entry.controlIdx === 'number'
+                  ? entry.controlIdx
+                  : typeof entry.controlIndex === 'number'
+                    ? entry.controlIndex
+                    : -1;
+              if (cidx < 0) continue;
+              // Probe by trying getPictureProperties — succeeds only
+              // for picture controls. Cheaper than introducing a
+              // separate kind-discrimination IR call.
+              try {
+                JSON.parse(doc.getPictureProperties(0, p, cidx));
+                out.push({
+                  sectionIdx: 0,
+                  parentParaIdx: p,
+                  controlIdx: cidx,
+                  label: `단락 ${p} · ctrl ${cidx}`,
+                });
+              } catch {
+                /* not a picture, skip */
+              }
+            }
+          }
+          return out;
+        },
         deletePictureControl: (sec, parentPara, ctrl) => {
           const doc = docRef.current;
           if (!doc) return false;
@@ -3147,6 +3254,75 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             return Boolean(r.ok);
           } catch (err) {
             console.warn('[studio] copyControl failed:', err);
+            return false;
+          }
+        },
+        copyControlAtCaret: (): boolean => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          const c = caretRef.current;
+          // Case 1: caret is inside a table cell — copy the table.
+          if (c.cell) {
+            try {
+              const r = JSON.parse(
+                doc.copyControl(
+                  c.sectionIndex,
+                  c.cell.parentParaIndex,
+                  c.cell.controlIndex,
+                ),
+              ) as { ok?: boolean };
+              return Boolean(r.ok);
+            } catch {
+              return false;
+            }
+          }
+          // Case 2: caret is in body — try to find a control at the
+          // current paragraph and copy the first one.
+          try {
+            const raw = doc.getControlTextPositions(
+              c.sectionIndex,
+              c.paragraphIndex,
+            );
+            const entries = JSON.parse(raw) as {
+              controlIdx?: number;
+              controlIndex?: number;
+            }[];
+            const first = entries[0];
+            if (!first) return false;
+            const cidx =
+              typeof first.controlIdx === 'number'
+                ? first.controlIdx
+                : typeof first.controlIndex === 'number'
+                  ? first.controlIndex
+                  : -1;
+            if (cidx < 0) return false;
+            const r = JSON.parse(
+              doc.copyControl(c.sectionIndex, c.paragraphIndex, cidx),
+            ) as { ok?: boolean };
+            return Boolean(r.ok);
+          } catch {
+            return false;
+          }
+        },
+        pasteControlAtCurrentCaret: (): boolean => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          const c = caretRef.current;
+          // pasteControl wants a body caret; if currently in a cell
+          // we still target the caret's section/para/charOffset
+          // (rhwp lets pasteControl work from any caret).
+          try {
+            const r = JSON.parse(
+              doc.pasteControl(c.sectionIndex, c.paragraphIndex, c.charOffset),
+            ) as { ok?: boolean };
+            if (r.ok) {
+              dirtyRef.current = true;
+              setDirty(true);
+              refreshAfterMutation({ syncCaret: false });
+              return true;
+            }
+            return false;
+          } catch {
             return false;
           }
         },
@@ -3272,8 +3448,12 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       }),
       [
         captureExcerpt,
+        getCellProps,
+        getTableProps,
         pushHistory,
         refreshAfterMutation,
+        setCellProps,
+        setTableProps,
         toggleCharFormat,
         undo,
         redo,
@@ -5922,6 +6102,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                 cellMenu.controlIndex,
               )
             }
+            onOpenTableProps={onOpenTableProps}
+            onOpenCellProps={onOpenCellProps}
+            onOpenCellStylePicker={onOpenCellStylePicker}
           />
         )}
 

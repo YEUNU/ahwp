@@ -6,6 +6,16 @@
 
 ## [Unreleased]
 
+### Added — Phase 2 청크 38~42: IR-only 기능 UI 노출
+
+이전 라운드에서 IR + ViewerHandle만 구현되고 사용자 UI가 없었던 기능 5종을 일괄 UI로 노출:
+
+- **청크 38: 표/셀 속성 다이얼로그** — 셀 우클릭 메뉴에 "셀 속성…" / "표 속성…" 추가. padding (mm 단위), 셀 간격, 매 페이지 머리행 반복(표), 세로 정렬 / 머리 셀 지정(셀)
+- **청크 39: 그림 속성 다이얼로그** — 메뉴 "보기 → 그림 속성…" 진입. `enumeratePictures`로 문서 내 그림 목록 픽커 + 너비/높이 (mm) + 글자처럼 취급 + 삭제 버튼
+- **청크 40: 컨트롤 클립보드 단축키** — 메뉴 "편집 → 컨트롤로 복사 / 컨트롤로 붙여넣기" + ⌘⇧C / ⌘⇧V 단축키. 셀 안 캐럿이면 부모 표를 복사, 본문 캐럿이면 같은 단락의 첫 컨트롤(그림/도형/표)을 복사
+- **청크 41: HTML 내보내기 메뉴** — "파일 → HTML로 내보내기…" + 새 IPC `file:export-html`. 활성 문서의 본문(첫 1000문단)을 미니멀 `<!DOCTYPE html>` 셸로 감싸서 사용자가 선택한 .html 경로에 저장
+- **청크 42: 셀 스타일 적용 우클릭 메뉴** — 셀 우클릭 메뉴에 "스타일 적용…" 추가. `getStyleListJson`으로 명명된 스타일 리스트 → 라디오 선택 → `applyCellStyle`. 셀 배경색·테두리는 라이브러리 한계(KNOWN_ISSUES L-006)로 미리 만든 스타일을 통해서만 적용 가능 — 다이얼로그 설명에 명시
+
 ### Changed — UI/UX 1차 리뉴얼 (style_example 기반)
 
 - **워밍 페이퍼 / 잉크 팔레트** — `--background`(off-white #f6f4ef) / `--card`(#fbfaf6) / `--popover`(#ffffff 종이) / `--primary`(deep teal-ink #2b6a6b) / `--muted`(#efece5 chrome) / 다크 모드는 #17171a 베이스 + bright teal #5fb4b3 액센트. 기존 shadcn 토큰 이름은 유지하면서 HSL 값만 교체 — 컴포넌트 레이어 영향 없음

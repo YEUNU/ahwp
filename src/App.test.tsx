@@ -21,6 +21,7 @@ describe('App', () => {
         read: vi.fn().mockResolvedValue(new ArrayBuffer(0)),
         save: vi.fn().mockResolvedValue({ path: '' }),
         saveAs: vi.fn().mockResolvedValue(null),
+        exportHtml: vi.fn().mockResolvedValue(null),
         getPathForFile: vi.fn().mockReturnValue(''),
       },
       session: {

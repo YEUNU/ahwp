@@ -121,6 +121,45 @@ export interface ViewerHandle {
   applyTextColor: (hex: string) => void;
   /** Whether the doc has unsaved changes (mirrors internal dirtyRef). */
   isDirty: () => boolean;
+  /** Read the active cell context — chunk 38. Returns the table+cell
+   * coordinates the caret currently sits in, or `null` when caret is
+   * in body text (not inside any table). The cell context menu sets
+   * caretRef.current.cell on right-click, so right-clicking a cell
+   * then calling this returns that cell's coords. */
+  getActiveCellContext: () => {
+    sectionIndex: number;
+    parentParaIdx: number;
+    controlIdx: number;
+    cellIdx: number;
+  } | null;
+  /** Read table-level properties — chunk 38 (UI for chunk 17 IR). */
+  getTableProps: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+  ) => Record<string, unknown> | null;
+  /** Write table-level properties — chunk 38. */
+  setTableProps: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+    props: Record<string, unknown>,
+  ) => void;
+  /** Read cell-level properties — chunk 38. */
+  getCellProps: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+    cellIdx: number,
+  ) => Record<string, unknown> | null;
+  /** Write cell-level properties — chunk 38. */
+  setCellProps: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+    cellIdx: number,
+    props: Record<string, unknown>,
+  ) => void;
   /**
    * Apply a pre-existing named style to a cell — chunk 23. Routes
    * through `@rhwp/core`'s `applyCellStyle(sec, parentPara, ctrl, cell,
@@ -156,6 +195,16 @@ export interface ViewerHandle {
     parentParaIdx: number,
     controlIdx: number,
   ) => boolean;
+  /** Enumerate all picture controls in the document — chunk 39. Walks
+   * `getControlTextPositions` per paragraph in section 0 and tries
+   * `getPictureProperties` to filter to only picture controls. Returns
+   * empty when the doc has no pictures. */
+  enumeratePictures: () => {
+    sectionIdx: number;
+    parentParaIdx: number;
+    controlIdx: number;
+    label: string;
+  }[];
   /** Begin grouping subsequent mutations into a single undo entry —
    * chunk 27. Reentrant: nested begin/end pairs balance via a depth
    * counter. Pair every begin with end. */
@@ -176,6 +225,15 @@ export interface ViewerHandle {
     paraIdx: number,
     charOffset: number,
   ) => boolean;
+  /** High-level "copy the control at the current caret" — chunk 40
+   * (UI for chunk 25). When the caret is inside a cell, copies the
+   * containing table. When the caret's paragraph contains a single
+   * picture/shape, copies that. Returns false when no copy-able
+   * control is in scope. */
+  copyControlAtCaret: () => boolean;
+  /** High-level "paste the previously-copied control at the current
+   * body caret" — chunk 40. */
+  pasteControlAtCurrentCaret: () => boolean;
   /**
    * Capture the current viewer selection as a portable excerpt — chunk
    * 20. Returns null when no selection is active or the selection

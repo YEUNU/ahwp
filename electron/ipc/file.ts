@@ -130,6 +130,40 @@ export function registerFileIpc(): void {
   );
 
   ipcMain.handle(
+    'file:export-html',
+    async (
+      event,
+      req: { html: string; defaultPath?: string },
+    ): Promise<FileOpenResult | null> => {
+      const window = BrowserWindow.fromWebContents(event.sender);
+      const result = await dialog.showSaveDialog(
+        window ?? new BrowserWindow({ show: false }),
+        {
+          title: 'HTML로 내보내기',
+          defaultPath: req.defaultPath
+            ? req.defaultPath.replace(/\.hwpx?$/i, '.html')
+            : undefined,
+          filters: [{ name: 'HTML', extensions: ['html', 'htm'] }],
+        },
+      );
+      if (result.canceled || !result.filePath) return null;
+      const picked = result.filePath;
+      // Wrap the HTML body in a minimal document shell so the file
+      // opens cleanly in a browser. We don't try to inline CSS — the
+      // exported HTML is intentionally lossy for AI / paste use cases.
+      const wrapped = `<!DOCTYPE html>
+<html lang="ko"><head>
+<meta charset="utf-8">
+<title>${path.basename(picked, path.extname(picked))}</title>
+</head><body>
+${req.html}
+</body></html>`;
+      await writeAtomic(picked, new TextEncoder().encode(wrapped));
+      return { path: picked };
+    },
+  );
+
+  ipcMain.handle(
     'file:save-as',
     async (event, req: FileSaveAsRequest): Promise<FileOpenResult | null> => {
       const window = BrowserWindow.fromWebContents(event.sender);

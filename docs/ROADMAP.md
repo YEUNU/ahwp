@@ -87,7 +87,11 @@
   - [x] 각주 — `insertFootnote` / `insertTextInFootnote` / `getFootnoteInfo` IR 위임. FootnoteDialog (각주 본문 텍스트 input + caret에 삽입). 각주 안 caret 편집 모델은 후속. blank.hwpx에선 라이브러리 panic (footnote 영역 미정의 — 실제 .hwp 문서에선 정상 작동)
   - [x] 스타일 관리 — `createStyle` / `updateStyle` / `deleteStyle` / `getStyleList` IR 위임. StyleManagerDialog (목록 + 추가 + 인라인 이름 변경 + 삭제). char/para shape 모드는 후속 (현재는 이름만 받는 빈 셸 생성)
   - [x] 수식 미리보기 — `renderEquationPreview` IR. EquationDialog (한컴 수식 script input + 라이브 SVG 미리보기). 본문에 수식 컨트롤 *삽입*은 후속 (라이브러리에 명시적 createEquation 메서드 없음)
-  - [x] 표 / 셀 속성 (padding/spacing/repeatHeader/verticalAlign/isHeader) — `getTableProperties` / `setTableProperties` / `getCellProperties` / `setCellProperties` IR 위임. UI 다이얼로그는 후속 (현재는 `__studioDebug` + ViewerHandle 통한 IR 노출만 — e2e가 round-trip 검증). 셀 배경색은 별도 `applyCellStyle` 메커니즘으로 후속
+  - [x] 표 / 셀 속성 (padding/spacing/repeatHeader/verticalAlign/isHeader) — `getTableProperties` / `setTableProperties` / `getCellProperties` / `setCellProperties` IR 위임 (chunk 17). 셀 우클릭 메뉴 "셀 속성…" / "표 속성…" 다이얼로그 UI 추가 (chunk 38)
+  - [x] 그림 속성 — `getPictureProperties` / `setPictureProperties` / `deletePictureControl` IR 위임 (chunk 24). 메뉴 "보기 → 그림 속성…" 다이얼로그 + `enumeratePictures` 픽커 UI 추가 (chunk 39)
+  - [x] 컨트롤 클립보드 — `copyControl` / `pasteControl` IR 위임 (chunk 25). 메뉴 "편집 → 컨트롤로 복사 / 붙여넣기" + ⌘⇧C / ⌘⇧V 단축키 (chunk 40)
+  - [x] HTML 내보내기 — `exportDocumentHtml` IR 위임 (chunk 18). 메뉴 "파일 → HTML로 내보내기…" + IPC `file:export-html` (chunk 41)
+  - [x] 셀에 명명된 스타일 적용 — `applyCellStyle` IR (chunk 23). 셀 우클릭 "스타일 적용…" 다이얼로그 (chunk 42). 직접 셀 배경색·테두리 setter는 라이브러리 한계 (KNOWN_ISSUES L-006)
   - [x] 도형 (사각형 MVP) — `createShapeControl` / `getShapeProperties` / `setShapeProperties` / `deleteShapeControl` / `changeShapeZOrder` IR 위임. ShapeDialog (너비·높이 mm + 글자처럼 취급 토글). 라인/곡선/그룹은 후속 (라이브러리가 createShapeControl JSON에 shape-type 미노출)
   - [x] 이미지 삽입 (툴바 + OS 드래그)
   - [x] 확장형 툴바 (더보기 행) + 보기 토글 (제어문자 / 투명 테두리)

@@ -40,6 +40,10 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
         accelerator: 'CmdOrCtrl+Shift+S',
         click: () => send(getWindow(), 'file:save-as'),
       },
+      {
+        label: 'HTML로 내보내기…',
+        click: () => send(getWindow(), 'file:export-html'),
+      },
       { type: 'separator' },
       isMac
         ? { role: 'close', label: '창 닫기' }
@@ -87,6 +91,17 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
         label: '바꾸기…',
         accelerator: 'CmdOrCtrl+H',
         click: () => send(getWindow(), 'edit:replace'),
+      },
+      { type: 'separator' },
+      {
+        label: '컨트롤로 복사',
+        accelerator: 'CmdOrCtrl+Shift+C',
+        click: () => send(getWindow(), 'edit:copy-control'),
+      },
+      {
+        label: '컨트롤로 붙여넣기',
+        accelerator: 'CmdOrCtrl+Shift+V',
+        click: () => send(getWindow(), 'edit:paste-control'),
       },
     ],
   };
@@ -152,6 +167,10 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
       {
         label: '사각형 도형…',
         click: () => send(getWindow(), 'insert:shape'),
+      },
+      {
+        label: '그림 속성…',
+        click: () => send(getWindow(), 'view:picture-props'),
       },
       {
         label: '설정…',

@@ -26,6 +26,7 @@ export type MenuAction =
   | 'file:open'
   | 'file:save'
   | 'file:save-as'
+  | 'file:export-html'
   | 'edit:undo'
   | 'edit:redo'
   | 'edit:copy'
@@ -33,11 +34,14 @@ export type MenuAction =
   | 'edit:paste'
   | 'edit:find'
   | 'edit:replace'
+  | 'edit:copy-control'
+  | 'edit:paste-control'
   | 'view:page-setup'
   | 'insert:header-footer'
   | 'insert:bookmark'
   | 'insert:footnote'
   | 'view:style-manager'
+  | 'view:picture-props'
   | 'insert:equation'
   | 'insert:shape'
   | 'format:bold'
@@ -83,6 +87,14 @@ export interface FileApi {
   save: (req: FileSaveRequest) => Promise<FileOpenResult>;
   /** Show native save dialog, write bytes, return chosen path. null if user cancels. */
   saveAs: (req: FileSaveAsRequest) => Promise<FileOpenResult | null>;
+  /**
+   * Show native save dialog and write an HTML export of the active doc.
+   * Wraps the body HTML in a minimal `<!DOCTYPE html>` shell. chunk 41.
+   */
+  exportHtml: (req: {
+    html: string;
+    defaultPath?: string;
+  }) => Promise<FileOpenResult | null>;
   /**
    * Resolve a renderer-side File object to its absolute disk path.
    * Wraps Electron's webUtils.getPathForFile (replacement for the removed File.path).

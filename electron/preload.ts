@@ -30,6 +30,7 @@ const api: AhwpApi = {
     read: (filePath) => ipcRenderer.invoke('file:read', filePath),
     save: (req) => ipcRenderer.invoke('file:save', req),
     saveAs: (req) => ipcRenderer.invoke('file:save-as', req),
+    exportHtml: (req) => ipcRenderer.invoke('file:export-html', req),
     getPathForFile: (file) => webUtils.getPathForFile(file),
   },
   session: {
