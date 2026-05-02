@@ -33,6 +33,9 @@ export type MenuAction =
   | 'file:save-as'
   | 'file:export-html'
   | 'file:export-pdf'
+  | 'view:toggle-ruler'
+  | 'view:version-history'
+  | 'app:new-window'
   | 'edit:undo'
   | 'edit:redo'
   | 'edit:copy'
@@ -144,6 +147,24 @@ export interface FileApi {
   hasDraft: (path: string) => Promise<boolean>;
   loadDraft: (path: string) => Promise<ArrayBuffer | null>;
   clearDraft: (path: string) => Promise<void>;
+  /**
+   * chunk 62 — version history. Each successful explicit save writes
+   * a versioned snapshot under `userData/versions/<hash>/<ISO>.hwp`.
+   * `listVersions` returns latest 50; `readVersion` reads bytes; the
+   * renderer pipes a chosen version through `save()` to commit a
+   * restore (so `.bak`, atomic write, watcher suppression all apply).
+   */
+  createVersion: (req: {
+    path: string;
+    bytes: ArrayBuffer | Uint8Array;
+  }) => Promise<void>;
+  listVersions: (
+    path: string,
+  ) => Promise<{ filename: string; size: number; createdAt: number }[]>;
+  readVersion: (req: {
+    path: string;
+    filename: string;
+  }) => Promise<ArrayBuffer | null>;
   /**
    * Subscribe to external (off-app) modifications of the watched files.
    * Returns an unsubscriber. Fires once per change event from chokidar.
@@ -412,6 +433,8 @@ export interface ChatHistoryApi {
 export interface AhwpApi {
   ping: (req: PingRequest) => Promise<PingResponse>;
   onMenuAction: (handler: (action: MenuAction) => void) => () => void;
+  /** chunk 65 — open a fresh BrowserWindow with the same React app. */
+  newWindow: () => Promise<void>;
   file: FileApi;
   session: SessionApi;
   clipboard: ClipboardApi;

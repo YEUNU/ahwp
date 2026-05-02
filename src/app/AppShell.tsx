@@ -29,6 +29,7 @@ import { PageSetupDialog } from '@/features/studio/PageSetupDialog';
 import { ShapeDialog } from '@/features/studio/ShapeDialog';
 import { OutlineSidebar } from '@/features/studio/OutlineSidebar';
 import { StudioViewer } from '@/features/studio/StudioViewer';
+import { VersionHistoryDialog } from '@/features/studio/VersionHistoryDialog';
 import { StyleManagerDialog } from '@/features/studio/StyleManagerDialog';
 import {
   CellPropsDialog,
@@ -133,8 +134,27 @@ export default function AppShell() {
   // refreshes without polling.
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [outlineKey, setOutlineKey] = useState(0);
+  // chunk 61 — ruler toggle. Drives StudioViewer's `showRuler` prop;
+  // persisted across the session via localStorage so users don't have
+  // to re-enable on every launch.
+  const [showRuler, setShowRuler] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('ahwp:show-ruler') === '1';
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('ahwp:show-ruler', showRuler ? '1' : '0');
+    } catch {
+      /* localStorage can throw under hardened CSP */
+    }
+  }, [showRuler]);
   // chunk 53 — shortcut cheatsheet (⌘/).
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  // chunk 62 — version history dialog.
+  const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
   // viewerRef per tab (by key). The active tab's viewer is what menu /
   // shortcut actions target.
   const viewerRefsRef = useRef<Map<string, ViewerHandle | null>>(new Map());
@@ -624,6 +644,9 @@ export default function AppShell() {
     if (result.path !== tab.path) {
       void window.api.file.clearDraft(result.path);
     }
+    // chunk 62 — every explicit save spawns a version snapshot under
+    // userData/versions/<hash>/<ISO>.hwp. FIFO trim at 50.
+    void window.api.file.createVersion({ path: result.path, bytes });
     if (result.routedFrom) {
       // The user requested .hwpx but @rhwp/core's HWPX round-trip drops
       // images (KNOWN_ISSUES L-001), so file:save auto-routes to .hwp.
@@ -646,6 +669,7 @@ export default function AppShell() {
       else openTab(result.path);
       void window.api.file.clearDraft(result.path);
       if (tab) void window.api.file.clearDraft(tab.path);
+      void window.api.file.createVersion({ path: result.path, bytes });
       if (result.routedFrom) {
         showNotice(
           `'.hwpx' 저장은 라이브러리 한계로 일시 비활성화되어 있어 ${result.path.split(/[\\/]/).pop()} 로 저장했습니다.`,
@@ -782,6 +806,12 @@ export default function AppShell() {
         setShapeOpen(true);
       } else if (action === 'view:picture-props') {
         setPicturePropsOpen(true);
+      } else if (action === 'view:toggle-ruler') {
+        setShowRuler((v) => !v);
+      } else if (action === 'view:version-history') {
+        setVersionHistoryOpen(true);
+      } else if (action === 'app:new-window') {
+        void window.api.newWindow();
       }
     },
     [
@@ -838,6 +868,30 @@ export default function AppShell() {
         items={paletteItems}
       />
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+      <VersionHistoryDialog
+        open={versionHistoryOpen}
+        onOpenChange={setVersionHistoryOpen}
+        activePath={activeTab?.path ?? null}
+        onRestore={async (p, filename) => {
+          // chunk 62 — restore flow. Pull bytes from main, then route
+          // through file.save so the regular save pipeline (HWPX route,
+          // .bak, watcher suppression, draft clear, version creation
+          // for the restored point) takes effect. Tab key bumps to
+          // remount the viewer.
+          const buf = await window.api.file.readVersion({ path: p, filename });
+          if (!buf) {
+            window.alert('해당 버전을 읽을 수 없습니다.');
+            return;
+          }
+          await window.api.file.save({ path: p, bytes: buf });
+          setTabsState((prev) =>
+            prev.map((t) =>
+              t.path === p ? { ...t, key: makeTabKey(), dirty: false } : t,
+            ),
+          );
+          showNotice('이전 버전으로 복원되었습니다.', 'info');
+        }}
+      />
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
       <PageSetupDialog
         open={pageSetupOpen}
@@ -1218,6 +1272,7 @@ export default function AppShell() {
                             isActive={isActive}
                             onDirtyChange={dirtyCallbacks.get(tab.key)}
                             ref={refCallbackFor(tab.key)}
+                            showRuler={showRuler}
                             onOpenTableProps={() => setTablePropsOpen(true)}
                             onOpenCellProps={() => setCellPropsOpen(true)}
                             onOpenCellStylePicker={() =>

@@ -41,6 +41,12 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
         click: () => send(getWindow(), 'file:save-as'),
       },
       {
+        label: '새 창',
+        accelerator: 'CmdOrCtrl+Shift+N',
+        click: () => send(getWindow(), 'app:new-window'),
+      },
+      { type: 'separator' },
+      {
         label: 'HTML로 내보내기…',
         click: () => send(getWindow(), 'file:export-html'),
       },
@@ -175,6 +181,14 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
       {
         label: '그림 속성…',
         click: () => send(getWindow(), 'view:picture-props'),
+      },
+      {
+        label: '룰러 토글',
+        click: () => send(getWindow(), 'view:toggle-ruler'),
+      },
+      {
+        label: '버전 히스토리…',
+        click: () => send(getWindow(), 'view:version-history'),
       },
       {
         label: '설정…',

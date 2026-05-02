@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import chokidar, { type FSWatcher } from 'chokidar';
+import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type {
@@ -285,6 +286,120 @@ ${req.html}
     },
   );
 
+  // chunk 62 — version history. Each successful explicit save spawns a
+  // versioned snapshot under `userData/versions/<hash>/<ISO>.hwp`. We
+  // keep the latest 50 per file (FIFO trim). Restore is a separate
+  // user action — the dialog reads the bytes back and AppShell pipes
+  // them through the regular file:save flow so .bak / atomic write /
+  // watcher suppression still apply.
+  ipcMain.handle(
+    'file:create-version',
+    async (
+      _event,
+      req: { path: string; bytes: ArrayBuffer | Uint8Array },
+    ): Promise<void> => {
+      if (!req || typeof req.path !== 'string' || !req.path) return;
+      try {
+        const dir = path.join(
+          app.getPath('userData'),
+          'versions',
+          versionDirHash(req.path),
+        );
+        await fs.mkdir(dir, { recursive: true });
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const filename = `${stamp}.hwp`;
+        await fs.writeFile(path.join(dir, filename), toUint8(req.bytes));
+        // FIFO trim. Sort by name (ISO sorts naturally) and drop oldest
+        // beyond cap.
+        const entries = (await fs.readdir(dir))
+          .filter((n) => n.endsWith('.hwp'))
+          .sort();
+        const KEEP = 50;
+        while (entries.length > KEEP) {
+          const oldest = entries.shift()!;
+          try {
+            await fs.unlink(path.join(dir, oldest));
+          } catch {
+            /* ignore */
+          }
+        }
+      } catch (err) {
+        console.warn('[file] create-version failed (non-fatal):', err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'file:list-versions',
+    async (
+      _event,
+      p: unknown,
+    ): Promise<{ filename: string; size: number; createdAt: number }[]> => {
+      if (typeof p !== 'string' || !p) return [];
+      try {
+        const dir = path.join(
+          app.getPath('userData'),
+          'versions',
+          versionDirHash(p),
+        );
+        const entries = await fs.readdir(dir, { withFileTypes: true });
+        const items: { filename: string; size: number; createdAt: number }[] =
+          [];
+        for (const e of entries) {
+          if (!e.isFile() || !e.name.endsWith('.hwp')) continue;
+          const fp = path.join(dir, e.name);
+          try {
+            const st = await fs.stat(fp);
+            items.push({
+              filename: e.name,
+              size: st.size,
+              createdAt: st.mtimeMs,
+            });
+          } catch {
+            /* ignore */
+          }
+        }
+        items.sort((a, b) => b.createdAt - a.createdAt);
+        return items;
+      } catch {
+        return [];
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'file:read-version',
+    async (
+      _event,
+      req: { path: string; filename: string },
+    ): Promise<ArrayBuffer | null> => {
+      if (
+        !req ||
+        typeof req.path !== 'string' ||
+        typeof req.filename !== 'string'
+      )
+        return null;
+      // Defense in depth: prevent path traversal in `filename`.
+      if (req.filename.includes('/') || req.filename.includes('\\'))
+        return null;
+      try {
+        const fp = path.join(
+          app.getPath('userData'),
+          'versions',
+          versionDirHash(req.path),
+          req.filename,
+        );
+        const buf = await fs.readFile(fp);
+        return buf.buffer.slice(
+          buf.byteOffset,
+          buf.byteOffset + buf.byteLength,
+        ) as ArrayBuffer;
+      } catch {
+        return null;
+      }
+    },
+  );
+
   // chunk 52 — auto-save draft sidecar (`<path>.ahwp-draft`). Each open
   // dirty tab is dumped every 60s by the renderer; on next launch the
   // user gets a recovery toast. Drafts are not read back automatically;
@@ -430,6 +545,15 @@ async function writeAtomic(target: string, data: Uint8Array): Promise<void> {
  * preserved across the entire run. New files (no prior content) return
  * null. Failures are non-fatal: a missing `.bak` shouldn't block a save.
  */
+/** Stable per-path hash → folder name under `userData/versions/`. We
+ *  use the first 16 hex chars of SHA1(absolute path) as the directory
+ *  key. Collisions are theoretically possible but irrelevant at the
+ *  scale of a personal-use editor (a user would need ~2^64 documents
+ *  to hit one). */
+function versionDirHash(absPath: string): string {
+  return createHash('sha1').update(absPath).digest('hex').slice(0, 16);
+}
+
 async function maybeWriteBackup(target: string): Promise<string | undefined> {
   try {
     if (!(await exists(target))) return undefined;

@@ -40,6 +40,7 @@ import {
 } from 'react';
 import { Button } from '@/components/ui/button';
 import { ensureRhwpCore, HwpDocument } from '@/lib/rhwp-core';
+import { SlashMenu } from './SlashMenu';
 import type { CharFormatKey, ViewerHandle } from './types';
 
 interface StudioViewerProps {
@@ -72,6 +73,9 @@ interface StudioViewerProps {
    * `ChatPanelHandle.prefillAndSend` so the request fires immediately.
    */
   onAiCommand?: (prompt: string) => void;
+  /** Show the cm-tick ruler above each page — chunk 61. AppShell
+   *  toggles via the View menu + 명령 팔레트. */
+  showRuler?: boolean;
 }
 
 type Phase = 'mounting' | 'reading' | 'rendering' | 'ready';
@@ -536,6 +540,70 @@ function AiCommandMenu({
   );
 }
 
+/**
+ * Horizontal ruler — chunk 61. Sits above each rendered page and draws
+ * cm-tick marks across its width. SVG units → mm conversion uses 96 DPI
+ * (matching how `@rhwp/core` rasterizes paper sizes). Vertical ruler is
+ * deferred — it would need per-row ticking and isn't load-bearing for
+ * casual reference of margins.
+ */
+const SVG_PER_MM = 96 / 25.4;
+
+function HorizontalRuler({
+  widthSvg,
+  zoom,
+}: {
+  widthSvg: number;
+  zoom: number;
+}): React.ReactElement {
+  const widthPx = widthSvg * zoom;
+  const widthMm = widthSvg / SVG_PER_MM;
+  // One tick per cm + minor 5mm tick. Cap to a reasonable number to
+  // keep React render cheap (an A4 portrait at 210mm = 21 ticks).
+  const tickEls: React.ReactElement[] = [];
+  const cmCount = Math.floor(widthMm / 10);
+  for (let cm = 0; cm <= cmCount; cm++) {
+    const x = cm * 10 * SVG_PER_MM * zoom;
+    tickEls.push(
+      <div
+        key={`cm-${cm}`}
+        className="absolute bottom-0 border-l border-foreground/40"
+        style={{ left: x, height: 8 }}
+      />,
+    );
+    tickEls.push(
+      <span
+        key={`cm-l-${cm}`}
+        className="absolute bottom-2 select-none text-[8px] leading-none text-muted-foreground"
+        style={{ left: x + 2 }}
+      >
+        {cm}
+      </span>,
+    );
+    // 5mm half-tick (skip past the last cm).
+    if (cm < cmCount) {
+      const halfX = (cm * 10 + 5) * SVG_PER_MM * zoom;
+      tickEls.push(
+        <div
+          key={`mm5-${cm}`}
+          className="absolute bottom-0 border-l border-foreground/30"
+          style={{ left: halfX, height: 4 }}
+        />,
+      );
+    }
+  }
+  return (
+    <div
+      className="relative h-4 border-b border-border bg-muted/30"
+      style={{ width: widthPx }}
+      data-testid="studio-ruler-h"
+      aria-hidden="true"
+    >
+      {tickEls}
+    </div>
+  );
+}
+
 function parsePageDimensions(svg: string): PageDims | null {
   const parser = new DOMParser();
   const doc = parser.parseFromString(svg, 'image/svg+xml');
@@ -579,6 +647,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       onOpenCellStylePicker,
       onOpenFormula,
       onAiCommand,
+      showRuler,
     },
     ref,
   ) {
@@ -788,6 +857,15 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
      *  opens this. Coordinates only; the menu reads the current
      *  selection text via the imperative handle. */
     const [aiMenu, setAiMenu] = useState<{ x: number; y: number } | null>(null);
+    /** chunk 64 — Notion-style slash menu. Opens when the user types
+     *  `/` at the start of an empty body paragraph. Coordinates are in
+     *  client space (caret rect + page offset). */
+    const [slashMenu, setSlashMenu] = useState<{
+      x: number;
+      y: number;
+      sectionIndex: number;
+      paragraphIndex: number;
+    } | null>(null);
     /** chunk 57 — paragraph rects marked "changed by AI" per page.
      *  AppShell calls `markChangedParagraphsSince` after an AI apply;
      *  the highlight auto-clears after the TTL. */
@@ -4353,7 +4431,43 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           }
           refreshAfterMutation({ syncCaret: !c.cell });
           e.preventDefault();
-        } else if (e.key.length === 1) {
+        } else if (
+          e.key === '/' &&
+          !c.cell &&
+          c.charOffset === 0 &&
+          (() => {
+            try {
+              return (
+                doc.getParagraphLength(c.sectionIndex, c.paragraphIndex) === 0
+              );
+            } catch {
+              return false;
+            }
+          })()
+        ) {
+          // chunk 64 — slash menu. Opening on an empty body paragraph
+          // means the literal `/` never enters the IR. The menu's
+          // command picker calls back into ViewerHandle methods
+          // (applyStyle / toggleList / insertPageBreak) that already
+          // know how to operate on the current caret.
+          const rect = cursorRect;
+          if (rect) {
+            const pageEl = pageRefsRef.current[rect.pageIndex];
+            const pr = pageEl?.getBoundingClientRect();
+            const x = (pr?.left ?? 0) + rect.x * zoom;
+            const y = (pr?.top ?? 0) + (rect.y + rect.height) * zoom + 4;
+            setSlashMenu({
+              x,
+              y,
+              sectionIndex: c.sectionIndex,
+              paragraphIndex: c.paragraphIndex,
+            });
+            e.preventDefault();
+            return;
+          }
+          // No cursor rect yet (rare) — fall through to literal `/`.
+        }
+        if (e.key.length === 1) {
           // Single printable char, no modifier — ASCII fast path. Korean
           // IME composition is handled by compositionend; we won't reach
           // this branch with isComposing=true.
@@ -4397,6 +4511,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         pageDims,
         pageCount,
         commitCaretMove,
+        zoom,
       ],
     );
 
@@ -6558,136 +6673,144 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               {Array.from({ length: pageCount }, (_, i) => (
                 <div
                   key={i}
-                  // chunk 54 — page paper is always white, even in dark
-                  // mode. The IR's SVG renderer hard-codes black text;
-                  // matching `bg-background` would make text invisible
-                  // on a dark theme. Chrome around the page (toolbar,
-                  // sidebar, status bar) follows the theme normally.
-                  className="relative cursor-text bg-[hsl(var(--paper))] text-[hsl(var(--paper-foreground))] shadow-md"
-                  style={{
-                    width: pageDims.w * zoom,
-                    height: pageDims.h * zoom,
-                  }}
-                  onMouseDown={(e) => handlePageMouseDown(i, e)}
-                  // Mouse move / up / leave are handled at the document
-                  // level by listeners attached in handlePageMouseDown.
-                  // This keeps drag selection consistent across page gaps
-                  // and chrome (PDF-like behavior).
-                  onContextMenu={(e) => handlePageContextMenu(i, e)}
+                  className="flex flex-col items-stretch"
+                  data-testid="studio-page-wrap"
                 >
-                  {/* SVG mount target — kept as a separate child so the
+                  {showRuler && (
+                    <HorizontalRuler widthSvg={pageDims.w} zoom={zoom} />
+                  )}
+                  <div
+                    // chunk 54 — page paper is always white, even in dark
+                    // mode. The IR's SVG renderer hard-codes black text;
+                    // matching `bg-background` would make text invisible
+                    // on a dark theme. Chrome around the page (toolbar,
+                    // sidebar, status bar) follows the theme normally.
+                    className="relative cursor-text bg-[hsl(var(--paper))] text-[hsl(var(--paper-foreground))] shadow-md"
+                    style={{
+                      width: pageDims.w * zoom,
+                      height: pageDims.h * zoom,
+                    }}
+                    onMouseDown={(e) => handlePageMouseDown(i, e)}
+                    // Mouse move / up / leave are handled at the document
+                    // level by listeners attached in handlePageMouseDown.
+                    // This keeps drag selection consistent across page gaps
+                    // and chrome (PDF-like behavior).
+                    onContextMenu={(e) => handlePageContextMenu(i, e)}
+                  >
+                    {/* SVG mount target — kept as a separate child so the
                       cursor overlay survives renderPageInto's
                       el.replaceChildren(adopted) call. */}
-                  <div
-                    ref={(el) => {
-                      pageRefsRef.current[i] = el;
-                    }}
-                    data-testid="studio-viewer-page"
-                    data-page-idx={i}
-                    className="absolute inset-0"
-                  />
-                  {/* chunk 57 — AI-applied paragraph highlight. A
+                    <div
+                      ref={(el) => {
+                        pageRefsRef.current[i] = el;
+                      }}
+                      data-testid="studio-viewer-page"
+                      data-page-idx={i}
+                      className="absolute inset-0"
+                    />
+                    {/* chunk 57 — AI-applied paragraph highlight. A
                       thin amber stripe along the left edge of each
                       changed paragraph, fades after 15s. Pointer
                       events disabled so it doesn't intercept text
                       selection. */}
-                  {(changedParaRects[i] ?? []).map((r, ri) => (
-                    <div
-                      key={`changed-${ri}`}
-                      data-testid="studio-changed-stripe"
-                      className="pointer-events-none absolute animate-pulse rounded-r bg-amber-400/60"
-                      style={{
-                        left: r.x * zoom,
-                        top: r.y * zoom,
-                        width: 3,
-                        height: r.height * zoom,
-                      }}
-                    />
-                  ))}
-                  {/* Selection highlight overlay — one rect per visible
+                    {(changedParaRects[i] ?? []).map((r, ri) => (
+                      <div
+                        key={`changed-${ri}`}
+                        data-testid="studio-changed-stripe"
+                        className="pointer-events-none absolute animate-pulse rounded-r bg-amber-400/60"
+                        style={{
+                          left: r.x * zoom,
+                          top: r.y * zoom,
+                          width: 3,
+                          height: r.height * zoom,
+                        }}
+                      />
+                    ))}
+                    {/* Selection highlight overlay — one rect per visible
                       line in the selection range, computed via
                       getSelectionRects. */}
-                  {(selectionRectsByPage[i] ?? []).map((r, ri) => (
-                    <div
-                      key={ri}
-                      data-testid="studio-selection-rect"
-                      // chunk 22 — selection rects are interactive so the
-                      // user can grab them as a drag source. Mousedown
-                      // here also passes through to text selection /
-                      // caret movement via the page surface's pointer
-                      // event, but HTML5 drag fires on its own threshold
-                      // (no mouseup needed). This matches native browser
-                      // text selection drag UX.
-                      className="absolute cursor-grab bg-primary/25 active:cursor-grabbing"
-                      draggable={isActive}
-                      onDragStart={(e) => {
-                        const cap = captureExcerpt();
-                        if (!cap) {
-                          e.preventDefault();
-                          return;
-                        }
-                        const payload = {
-                          docPath: path,
-                          sectionIndex: cap.sectionIndex,
-                          startParagraphIndex: cap.startParagraphIndex,
-                          startOffset: cap.startOffset,
-                          endParagraphIndex: cap.endParagraphIndex,
-                          endOffset: cap.endOffset,
-                          text: cap.text,
-                        };
-                        try {
-                          e.dataTransfer.setData(
-                            'application/x-ahwp-excerpt',
-                            JSON.stringify(payload),
-                          );
-                          e.dataTransfer.setData('text/plain', cap.text);
-                          e.dataTransfer.effectAllowed = 'copy';
-                        } catch {
-                          /* dataTransfer can throw under hardened CSP */
-                        }
-                      }}
-                      style={{
-                        left: r.x * zoom,
-                        top: r.y * zoom,
-                        width: r.width * zoom,
-                        height: r.height * zoom,
-                      }}
-                    />
-                  ))}
-                  {/* Find match highlights (chunk 9). Active match rendered
+                    {(selectionRectsByPage[i] ?? []).map((r, ri) => (
+                      <div
+                        key={ri}
+                        data-testid="studio-selection-rect"
+                        // chunk 22 — selection rects are interactive so the
+                        // user can grab them as a drag source. Mousedown
+                        // here also passes through to text selection /
+                        // caret movement via the page surface's pointer
+                        // event, but HTML5 drag fires on its own threshold
+                        // (no mouseup needed). This matches native browser
+                        // text selection drag UX.
+                        className="absolute cursor-grab bg-primary/25 active:cursor-grabbing"
+                        draggable={isActive}
+                        onDragStart={(e) => {
+                          const cap = captureExcerpt();
+                          if (!cap) {
+                            e.preventDefault();
+                            return;
+                          }
+                          const payload = {
+                            docPath: path,
+                            sectionIndex: cap.sectionIndex,
+                            startParagraphIndex: cap.startParagraphIndex,
+                            startOffset: cap.startOffset,
+                            endParagraphIndex: cap.endParagraphIndex,
+                            endOffset: cap.endOffset,
+                            text: cap.text,
+                          };
+                          try {
+                            e.dataTransfer.setData(
+                              'application/x-ahwp-excerpt',
+                              JSON.stringify(payload),
+                            );
+                            e.dataTransfer.setData('text/plain', cap.text);
+                            e.dataTransfer.effectAllowed = 'copy';
+                          } catch {
+                            /* dataTransfer can throw under hardened CSP */
+                          }
+                        }}
+                        style={{
+                          left: r.x * zoom,
+                          top: r.y * zoom,
+                          width: r.width * zoom,
+                          height: r.height * zoom,
+                        }}
+                      />
+                    ))}
+                    {/* Find match highlights (chunk 9). Active match rendered
                       with a stronger color so it stands out from the rest. */}
-                  {(findHighlightsByPage[i] ?? []).map((r, ri) => (
-                    <div
-                      key={`fm-${ri}`}
-                      data-testid={
-                        r.isActive
-                          ? 'studio-find-match-active'
-                          : 'studio-find-match'
-                      }
-                      className={
-                        'pointer-events-none absolute ' +
-                        (r.isActive ? 'bg-amber-400/70' : 'bg-amber-300/35')
-                      }
-                      style={{
-                        left: r.x * zoom,
-                        top: r.y * zoom,
-                        width: r.width * zoom,
-                        height: r.height * zoom,
-                      }}
-                    />
-                  ))}
-                  {cursorRect && cursorRect.pageIndex === i && (
-                    <div
-                      data-testid="studio-cursor"
-                      className="pointer-events-none absolute animate-pulse bg-foreground"
-                      style={{
-                        left: cursorRect.x * zoom,
-                        top: cursorRect.y * zoom,
-                        width: Math.max(1, zoom),
-                        height: cursorRect.height * zoom,
-                      }}
-                    />
-                  )}
+                    {(findHighlightsByPage[i] ?? []).map((r, ri) => (
+                      <div
+                        key={`fm-${ri}`}
+                        data-testid={
+                          r.isActive
+                            ? 'studio-find-match-active'
+                            : 'studio-find-match'
+                        }
+                        className={
+                          'pointer-events-none absolute ' +
+                          (r.isActive ? 'bg-amber-400/70' : 'bg-amber-300/35')
+                        }
+                        style={{
+                          left: r.x * zoom,
+                          top: r.y * zoom,
+                          width: r.width * zoom,
+                          height: r.height * zoom,
+                        }}
+                      />
+                    ))}
+                    {cursorRect && cursorRect.pageIndex === i && (
+                      <div
+                        data-testid="studio-cursor"
+                        className="pointer-events-none absolute animate-pulse bg-foreground"
+                        style={{
+                          left: cursorRect.x * zoom,
+                          top: cursorRect.y * zoom,
+                          width: Math.max(1, zoom),
+                          height: cursorRect.height * zoom,
+                        }}
+                      />
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -6851,6 +6974,52 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               const prompt = template.replace('{{TEXT}}', ex.text);
               onAiCommand(prompt);
               setAiMenu(null);
+            }}
+          />
+        )}
+
+        {slashMenu && (
+          <SlashMenu
+            x={slashMenu.x}
+            y={slashMenu.y}
+            onClose={() => {
+              setSlashMenu(null);
+              scrollRef.current?.focus({ preventScroll: true });
+            }}
+            onPick={(id) => {
+              // Re-position caret onto the slash-menu's source
+              // paragraph (in case the user clicked elsewhere first).
+              caretRef.current = {
+                ...caretRef.current,
+                sectionIndex: slashMenu.sectionIndex,
+                paragraphIndex: slashMenu.paragraphIndex,
+                charOffset: 0,
+              };
+              if (id === 'list-bullet') {
+                toggleList('bullet');
+              } else if (id === 'list-number') {
+                toggleList('number');
+              } else if (id === 'page-break') {
+                insertPageBreak();
+              } else {
+                // heading-1 / -2 / -3: resolve the styleId from the
+                // doc's style list. If the doc has no matching style
+                // we silently no-op — adding heading styles is a
+                // separate flow (스타일 관리 다이얼로그).
+                const level =
+                  id === 'heading-1' ? 1 : id === 'heading-2' ? 2 : 3;
+                const target =
+                  styleList.find(
+                    (s) =>
+                      s.name === `제목 ${level}` ||
+                      s.englishName === `Heading ${level}`,
+                  ) ?? null;
+                if (target) {
+                  applyParagraphStyle(target.id);
+                }
+              }
+              setSlashMenu(null);
+              scrollRef.current?.focus({ preventScroll: true });
             }}
           />
         )}

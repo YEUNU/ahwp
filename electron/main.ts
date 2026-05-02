@@ -13,10 +13,15 @@ import { buildAppMenu } from './menu';
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
 
+// chunk 65 — multi-window. We no longer treat any single window as
+// "the" main window. The `mainWindow` ref is kept for activate
+// fallback (clicking the dock icon reopens a window when none is
+// open); menu actions and watcher channels target the focused window
+// at the moment of dispatch instead.
 let mainWindow: BrowserWindow | null = null;
 
-function createWindow(): void {
-  mainWindow = new BrowserWindow({
+function createWindow(): BrowserWindow {
+  const win = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 1024,
@@ -41,15 +46,19 @@ function createWindow(): void {
   });
 
   if (isDev && process.env.VITE_DEV_SERVER_URL) {
-    void mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
-    mainWindow.webContents.openDevTools({ mode: 'right' });
+    void win.loadURL(process.env.VITE_DEV_SERVER_URL);
+    win.webContents.openDevTools({ mode: 'right' });
   } else {
-    void mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    void win.loadFile(path.join(__dirname, '../dist/index.html'));
   }
 
-  mainWindow.on('closed', () => {
-    mainWindow = null;
+  win.on('closed', () => {
+    if (mainWindow === win) mainWindow = null;
   });
+  // First-created window seeds the dock-activate fallback; later
+  // windows don't need to.
+  if (mainWindow === null) mainWindow = win;
+  return win;
 }
 
 function registerIpcHandlers(): void {
@@ -60,6 +69,11 @@ function registerIpcHandlers(): void {
       platform: process.platform,
       electron: process.versions.electron,
     };
+  });
+  // chunk 65 — open a new window. Each window is a fresh React app
+  // instance with its own session restore + chat history connection.
+  ipcMain.handle('app:new-window', (): void => {
+    createWindow();
   });
   registerFileIpc();
   registerSessionIpc();
@@ -72,7 +86,17 @@ function registerIpcHandlers(): void {
 
 void app.whenReady().then(() => {
   registerIpcHandlers();
-  Menu.setApplicationMenu(buildAppMenu(() => mainWindow));
+  // Menu actions target the currently-focused window (chunk 65 —
+  // multi-window). Falls back to the most recent window when nothing
+  // has focus (e.g. after the user clicked outside the app).
+  Menu.setApplicationMenu(
+    buildAppMenu(
+      () =>
+        BrowserWindow.getFocusedWindow() ??
+        BrowserWindow.getAllWindows().at(-1) ??
+        mainWindow,
+    ),
+  );
   createWindow();
 
   app.on('activate', () => {

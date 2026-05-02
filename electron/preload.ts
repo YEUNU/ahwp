@@ -23,6 +23,7 @@ const api: AhwpApi = {
       ipcRenderer.off('menu:action', listener);
     };
   },
+  newWindow: () => ipcRenderer.invoke('app:new-window'),
   file: {
     new: () => ipcRenderer.invoke('file:new'),
     open: () => ipcRenderer.invoke('file:open'),
@@ -39,6 +40,9 @@ const api: AhwpApi = {
     hasDraft: (p) => ipcRenderer.invoke('file:has-draft', p),
     loadDraft: (p) => ipcRenderer.invoke('file:load-draft', p),
     clearDraft: (p) => ipcRenderer.invoke('file:clear-draft', p),
+    createVersion: (req) => ipcRenderer.invoke('file:create-version', req),
+    listVersions: (p) => ipcRenderer.invoke('file:list-versions', p),
+    readVersion: (req) => ipcRenderer.invoke('file:read-version', req),
     onExternalChange: (handler) => {
       const listener = (
         _event: IpcRendererEvent,

@@ -14,6 +14,14 @@
 - **chunk 58 — 목차 사이드바 (⌘⇧O, 0.2.61)**: `viewer.getOutline()` — 단락 styleId를 styleList에서 "제목 N" / "Heading N"로 매칭, level 추출. `OutlineSidebar` 컴포넌트가 viewer 옆에 토글 + 클릭 시 scrollToParagraph
 - **chunk 57 — AI inline diff (0.2.61)**: `viewer.snapshotParagraphs()` + `markChangedParagraphsSince(before)`. AppShell의 applyHtml/runTools가 before/after로 bracket. 변경된 단락 좌측에 amber 3px 막대 + animate-pulse + 15s 후 페이드
 
+### Added — 3차 UX 라운드 chunks 61~65 (0.2.65)
+
+- **chunk 61 — 룰러 토글**: `--paper` 위에 cm-tick 가로 룰러. View 메뉴 + ⌘K. localStorage `ahwp:show-ruler` 영속
+- **chunk 64 — 슬래시 명령**: 빈 body 단락에서 `/` → SlashMenu (제목 1/2/3 + 글머리/번호 + 페이지 나누기). 자체 fuzzy filter + ↑↓ Enter Esc + outside-click. styleList 매칭 후 `applyParagraphStyle` / `toggleList` / `insertPageBreak` 호출
+- **chunk 62 — 버전 히스토리**: 명시적 저장마다 `userData/versions/<sha1(path):16>/<ISO>.hwp` 자동 작성 (FIFO 50). 새 IPC 3종 (`file:create-version` / `list-versions` / `read-version`). `VersionHistoryDialog`로 시간순 목록 + 복원 (정식 path에 file.save로 라우트해 `.bak` 자동 생성)
+- **chunk 63 — 한국어 맞춤법 검사**: **도입 안 함**. 자체 lightweight rule-based (검출률 한계) vs `hanspell` npm (다음/부산대 외부 endpoint, 3년 stale, deprecated `request` 의존) 모두 부적합. 사용자가 정확도 필요시 chunk 56 selection AI 메뉴 / 일반 채팅으로 요청. 박제: ROADMAP의 "의사결정 박제" 섹션
+- **chunk 65 — 다중 창**: `app:new-window` IPC + `AhwpApi.newWindow()` + 메뉴 "파일 → 새 창" (⌘⇧N). main의 `mainWindow` 싱글톤을 active-focused-window 라우팅으로 변경. 메뉴는 `BrowserWindow.getFocusedWindow()` 우선 → 마지막 창 → mainWindow 폴백
+
 ### Added — 1차 UX 라운드 chunks 50~55: 명령 팔레트 / 카운터 / 자동 저장 / 단축키 / 다크 종이 / 탭 고정 (0.2.55)
 
 "최고의 문서 수정 프로그램" 격차 분석 후 사용자 가치 큰 6개를 한 묶음으로:

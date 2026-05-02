@@ -13,6 +13,7 @@ describe('App', () => {
         electron: '33.0.0',
       }),
       onMenuAction: vi.fn().mockReturnValue(() => {}),
+      newWindow: vi.fn().mockResolvedValue(undefined),
       file: {
         new: vi.fn().mockResolvedValue({ path: '/tmp/new.hwp' }),
         open: vi.fn().mockResolvedValue(null),
@@ -30,6 +31,9 @@ describe('App', () => {
         hasDraft: vi.fn().mockResolvedValue(false),
         loadDraft: vi.fn().mockResolvedValue(null),
         clearDraft: vi.fn().mockResolvedValue(undefined),
+        createVersion: vi.fn().mockResolvedValue(undefined),
+        listVersions: vi.fn().mockResolvedValue([]),
+        readVersion: vi.fn().mockResolvedValue(null),
       },
       session: {
         get: vi.fn().mockResolvedValue({ lastActivePath: null }),
