@@ -14,6 +14,12 @@
 - **chunk 58 — 목차 사이드바 (⌘⇧O, 0.2.61)**: `viewer.getOutline()` — 단락 styleId를 styleList에서 "제목 N" / "Heading N"로 매칭, level 추출. `OutlineSidebar` 컴포넌트가 viewer 옆에 토글 + 클릭 시 scrollToParagraph
 - **chunk 57 — AI inline diff (0.2.61)**: `viewer.snapshotParagraphs()` + `markChangedParagraphsSince(before)`. AppShell의 applyHtml/runTools가 before/after로 bracket. 변경된 단락 좌측에 amber 3px 막대 + animate-pulse + 15s 후 페이드
 
+### Fixed — 드래그가 표 위 통과 시 selection 점프 (0.2.69)
+
+- **진짜 근본 원인** — 사용자가 보고한 "빈칸 들어가면 그 아래 전체 선택" 현상의 진짜 트리거는 빈 행간이 아니라 **표(table)** 였음. 본문에서 시작한 drag selection 도중 마우스가 표를 통과할 때, IR의 `hitTest`가 셀 내부 좌표를 반환 (`controlIndex`/`cellIndex`/`cellParaIndex`/`parentParaIndex` 채워서 옴). 그런데 `paragraphIndex`는 이때 **셀 안에서의 단락 인덱스**(cell-local)이고 섹션 단위가 아님. `applyPointerToSelection`이 이걸 그대로 섹션 단위로 써서 focus가 섹션 para 0(문서 맨 처음)으로 점프 → selection이 [para 0 ~ anchor]로 펼쳐짐 → 시각적으로 "위→아래 드래그한 것처럼" 보임 (anchor가 본문 아래쪽인 경우)
+- 80px whitespace-jump 가드(0.2.68)로는 못 잡음 — 셀의 cursorRect는 실제 mouse Y 와 가깝게 위치하므로 (diff 8~45px) 문턱 미달
+- 수정: `moveResult.controlIndex !== undefined`면 셀 내부 hit이므로 drag focus update를 skip. `handlePageMouseDown`이 이미 셀 내부 클릭은 drag 자체를 비활성화하므로, drag 중 셀 통과 케이스만 추가 가드한 셈. 셀 안↔밖 drag selection은 v2 (현재는 셀 진입 시 마지막 본문 focus 유지)
+
 ### Fixed — 드래그 빈칸 가드 진짜 작동시킴 (0.2.68)
 
 - 0.2.67의 whitespace-jump 가드가 실제로는 **빈칸에서 그대로 점프**했음. 근본 원인: `hitTest`의 공식 반환은 `{sectionIndex, paragraphIndex, charOffset}`만 보장하고 `cursorRect`는 선택적 — 빈칸을 클릭하면 IR이 가장 가까운 텍스트 위치로 `paragraphIndex`/`charOffset`만 스냅하고 `cursorRect`는 빠진 채 반환할 때가 있음. 가드의 `if (moveResult.cursorRect)` 조건이 false가 되어 통째로 스킵돼서 focus가 IR 스냅 결과(섹션 끝 등)로 그대로 점프

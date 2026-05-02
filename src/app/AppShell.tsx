@@ -767,12 +767,40 @@ export default function AppShell() {
         handle?.undo();
       } else if (action === 'edit:redo') {
         handle?.redo();
-      } else if (action === 'edit:copy') {
-        void handle?.copy();
-      } else if (action === 'edit:cut') {
-        void handle?.cut();
-      } else if (action === 'edit:paste') {
-        void handle?.paste();
+      } else if (
+        action === 'edit:copy' ||
+        action === 'edit:cut' ||
+        action === 'edit:paste'
+      ) {
+        // Studio 에디터(가운데)가 활성일 때만 IR clipboard 사용,
+        // 그 외(폴더 트리, 채팅, 입력창 등)에서는 표준 DOM clipboard로
+        // 라우팅. activeElement가 [data-studio-pane]의 자손이면 Studio
+        // 활성으로 본다 (Studio mousedown 시 scrollRef가 focus를 받음).
+        const ae = document.activeElement;
+        const inStudio = !!(
+          ae && (ae as HTMLElement).closest?.('[data-studio-pane]')
+        );
+        if (inStudio) {
+          if (action === 'edit:copy') void handle?.copy();
+          else if (action === 'edit:cut') void handle?.cut();
+          else void handle?.paste();
+        } else {
+          // document.execCommand는 deprecated이지만 input/textarea/일반
+          // selection 모두에 대해 활성 element 기준으로 동작 — Electron
+          // 에서 가장 호환성 좋은 fallback. 표준 Clipboard API는 paste 시
+          // 권한 프롬프트가 필요해 적합하지 않다.
+          const op =
+            action === 'edit:copy'
+              ? 'copy'
+              : action === 'edit:cut'
+                ? 'cut'
+                : 'paste';
+          try {
+            document.execCommand(op);
+          } catch {
+            /* swallow — best-effort fallback */
+          }
+        }
       } else if (action === 'edit:find') {
         handle?.openFind();
       } else if (action === 'edit:replace') {

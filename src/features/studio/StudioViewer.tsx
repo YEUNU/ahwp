@@ -4838,6 +4838,21 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           if (pageIdx < 0 || !pageEl) return;
           const moveResult = hitTestAt(pageIdx, hitX, hitY, pageEl);
           if (!moveResult) return;
+          // Cell-hit guard — when drag started at body level but the
+          // cursor passes over a table during the drag, IR returns
+          // cell-internal hit info (`controlIndex`/`cellIndex`/
+          // `cellParaIndex`/`parentParaIndex`) and `paragraphIndex` is
+          // **cell-local** (index of paragraph inside the cell), not
+          // section-level. Using it directly snapped focus to section
+          // para 0 — selection then spanned [section-para-0 ~ anchor],
+          // which the user perceived as "everything below selected" /
+          // "down-drag visual even when dragging up". Body-level drag
+          // selection across cells isn't supported (cell selection v2
+          // — see handlePageMouseDown's cell branch which disables
+          // drag), so freeze focus while the cursor is inside a cell.
+          if (moveResult.controlIndex !== undefined) {
+            return;
+          }
           // Whitespace-jump guard — when the cursor lands in vertical
           // whitespace (margin / inter-paragraph gap), the IR snaps the
           // returned (paraIdx, charOffset) to the nearest text position
@@ -6726,6 +6741,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             (isImageDropTarget ? 'ring-2 ring-inset ring-ring' : '')
           }
           data-testid="studio-scroll"
+          data-studio-pane="true"
           tabIndex={0}
           onKeyDown={handleKeyDown}
           onCompositionStart={handleCompositionStart}

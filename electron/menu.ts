@@ -15,6 +15,31 @@ function send(window: BrowserWindow | null, action: MenuAction): void {
   }
 }
 
+/**
+ * Application menu의 cut/copy/paste accelerator는 같은 BrowserWindow의
+ * DevTools webContents에도 적용돼서, DevTools console에서 텍스트 선택 후
+ * Cmd+C 누르면 메뉴가 가로채 에디터 IPC로 라우팅 → 클립보드 복사 실패.
+ * DevTools에 포커스가 있을 때만 DevTools 자체 cut/copy/paste를 호출하고,
+ * 그 외엔 기존처럼 에디터로 IPC 송신.
+ */
+function devOrEdit(
+  window: BrowserWindow | null,
+  action: MenuAction,
+  devOp: 'cut' | 'copy' | 'paste',
+): void {
+  if (window && !window.isDestroyed()) {
+    const wc = window.webContents;
+    if (wc.isDevToolsFocused()) {
+      const dev = wc.devToolsWebContents;
+      if (dev) {
+        dev[devOp]();
+        return;
+      }
+    }
+  }
+  send(window, action);
+}
+
 export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
   const fileMenu: MenuItemConstructorOptions = {
     label: '파일',
@@ -78,17 +103,17 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
       {
         label: '잘라내기',
         accelerator: 'CmdOrCtrl+X',
-        click: () => send(getWindow(), 'edit:cut'),
+        click: () => devOrEdit(getWindow(), 'edit:cut', 'cut'),
       },
       {
         label: '복사',
         accelerator: 'CmdOrCtrl+C',
-        click: () => send(getWindow(), 'edit:copy'),
+        click: () => devOrEdit(getWindow(), 'edit:copy', 'copy'),
       },
       {
         label: '붙여넣기',
         accelerator: 'CmdOrCtrl+V',
-        click: () => send(getWindow(), 'edit:paste'),
+        click: () => devOrEdit(getWindow(), 'edit:paste', 'paste'),
       },
       { role: 'selectAll', label: '전체 선택' },
       { type: 'separator' },
