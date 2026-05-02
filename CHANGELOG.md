@@ -14,6 +14,16 @@
 - **chunk 58 — 목차 사이드바 (⌘⇧O, 0.2.61)**: `viewer.getOutline()` — 단락 styleId를 styleList에서 "제목 N" / "Heading N"로 매칭, level 추출. `OutlineSidebar` 컴포넌트가 viewer 옆에 토글 + 클릭 시 scrollToParagraph
 - **chunk 57 — AI inline diff (0.2.61)**: `viewer.snapshotParagraphs()` + `markChangedParagraphsSince(before)`. AppShell의 applyHtml/runTools가 before/after로 bracket. 변경된 단락 좌측에 amber 3px 막대 + animate-pulse + 15s 후 페이드
 
+### Added — Phase B-3: 표 navigation 단축키 (0.2.77)
+
+- **Tab** (셀 안) — 다음 셀로 caret 이동. row-major 순회 (행 끝이면 다음 행 첫 셀).
+- **Shift+Tab** (셀 안) — 이전 셀로 caret 이동.
+- **Alt+화살표** (셀 안) — row/col 단위 셀 이동. rowSpan/colSpan 고려해 병합 셀도 정확히 진입. 표 경계 밖이면 no-op.
+- **Shift+ESC** (셀 안) — 표 빠져나가기. caret을 표가 속한 단락 바로 다음 본문 단락 시작으로 (없으면 같은 단락 끝).
+- 셀 안 caret이 아니면 Tab은 fall-through (본문 탭 동작 유지).
+- Ctrl+Tab (셀 안 탭 문자 삽입)는 후속 (라이브러리에 cell-aware tab insert API 확인 필요).
+- 기준: [한글 표 단축키 일람](https://help.hancom.com/hoffice/multi/ko_kr/hwp/view/toolbar/shortcut%28table%29.htm)
+
 ### Added — Phase B-2: 한글 호환 셀/행/열 block 단축키 (0.2.76)
 
 - **F5** (또는 Mac `⌘⌥B`) — 현재 셀 block. 600ms 안에 연속 입력 시 누름 횟수 카운트, 3회 누르면 표 전체 block (`F5×3`).

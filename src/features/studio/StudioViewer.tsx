@@ -4580,6 +4580,139 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         if (e.key !== 'F5') {
           f5PressCountRef.current = 0;
         }
+        // Phase B-3 — 표 안 navigation 단축키:
+        //   Tab / Shift+Tab → 다음/이전 셀로 caret 이동
+        //   Ctrl+Tab → 셀 안에 탭 문자 삽입 (insertTextInCell)
+        //   Alt+화살표 → 같은 표 안 row/col 단위 셀 이동
+        //   Shift+ESC → 표 빠져나가기 (caret을 표 다음 본문 단락으로)
+        // 셀 안 caret이 아니면 Tab 같은 키는 본문 동작 (탭 문자
+        // 삽입 등)으로 fall through.
+        if (c.cell) {
+          const ci = c.cell;
+          const moveCaretToCellByCellIdx = (newCellIdx: number): void => {
+            const newCaret = {
+              sectionIndex: c.sectionIndex,
+              paragraphIndex: 0,
+              charOffset: 0,
+              cell: { ...ci, cellIndex: newCellIdx, cellParaIndex: 0 },
+            };
+            caretRef.current = newCaret;
+            setSelection({ anchor: newCaret, focus: newCaret });
+            setSelectionRectsByPage({});
+            setCellBlockHighlights({});
+            refreshCursorRect();
+            refreshActiveFormat();
+          };
+          if (e.key === 'Tab' && !e.ctrlKey && !e.altKey) {
+            try {
+              const cells = JSON.parse(
+                doc.getTableCellBboxes(
+                  c.sectionIndex,
+                  ci.parentParaIndex,
+                  ci.controlIndex,
+                ),
+              ) as { cellIdx: number; row: number; col: number }[];
+              // Row-major sort: row asc, col asc.
+              cells.sort((a, b) =>
+                a.row !== b.row ? a.row - b.row : a.col - b.col,
+              );
+              const idx = cells.findIndex((x) => x.cellIdx === ci.cellIndex);
+              if (idx >= 0) {
+                const dir = e.shiftKey ? -1 : 1;
+                const nextIdx = idx + dir;
+                if (nextIdx >= 0 && nextIdx < cells.length) {
+                  moveCaretToCellByCellIdx(cells[nextIdx].cellIdx);
+                }
+                // Edge of table: stay (Hancom creates a new row in
+                // some cases; v1 doesn't auto-grow).
+              }
+            } catch (err) {
+              console.warn('[studio] cell Tab nav failed:', err);
+            }
+            e.preventDefault();
+            return;
+          }
+          if (e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
+            const arrowDir =
+              e.key === 'ArrowLeft'
+                ? { dr: 0, dc: -1 }
+                : e.key === 'ArrowRight'
+                  ? { dr: 0, dc: 1 }
+                  : e.key === 'ArrowUp'
+                    ? { dr: -1, dc: 0 }
+                    : e.key === 'ArrowDown'
+                      ? { dr: 1, dc: 0 }
+                      : null;
+            if (arrowDir) {
+              try {
+                const cells = JSON.parse(
+                  doc.getTableCellBboxes(
+                    c.sectionIndex,
+                    ci.parentParaIndex,
+                    ci.controlIndex,
+                  ),
+                ) as {
+                  cellIdx: number;
+                  row: number;
+                  col: number;
+                  rowSpan: number;
+                  colSpan: number;
+                }[];
+                const here = cells.find((x) => x.cellIdx === ci.cellIndex);
+                if (here) {
+                  const targetR = here.row + arrowDir.dr * here.rowSpan;
+                  const targetC = here.col + arrowDir.dc * here.colSpan;
+                  // 가장 가까운 셀 (병합 셀이면 그 셀의 row/col 시작점이
+                  // targetR/targetC를 포함하는지 확인).
+                  const next = cells.find(
+                    (x) =>
+                      targetR >= x.row &&
+                      targetR <= x.row + x.rowSpan - 1 &&
+                      targetC >= x.col &&
+                      targetC <= x.col + x.colSpan - 1,
+                  );
+                  if (next) moveCaretToCellByCellIdx(next.cellIdx);
+                }
+              } catch (err) {
+                console.warn('[studio] Alt+arrow cell nav failed:', err);
+              }
+              e.preventDefault();
+              return;
+            }
+          }
+          if (e.key === 'Escape' && e.shiftKey) {
+            // 표 빠져나가기 — caret을 표가 속한 단락 바로 다음 단락의
+            // 시작으로 (없으면 같은 단락 끝). cell-block highlight 정리.
+            const sec = c.sectionIndex;
+            const parentPara = ci.parentParaIndex;
+            try {
+              const paraCount = doc.getParagraphCount(sec);
+              const nextPara =
+                parentPara + 1 < paraCount
+                  ? { paragraphIndex: parentPara + 1, charOffset: 0 }
+                  : {
+                      paragraphIndex: parentPara,
+                      charOffset: doc.getParagraphLength(sec, parentPara),
+                    };
+              const newCaret = {
+                sectionIndex: sec,
+                paragraphIndex: nextPara.paragraphIndex,
+                charOffset: nextPara.charOffset,
+              };
+              caretRef.current = newCaret;
+              setSelection({ anchor: newCaret, focus: newCaret });
+              setSelectionRectsByPage({});
+              setCellBlockHighlights({});
+              setSelectedControlBboxes({});
+              refreshCursorRect();
+              refreshActiveFormat();
+            } catch (err) {
+              console.warn('[studio] Shift+Esc exit table failed:', err);
+            }
+            e.preventDefault();
+            return;
+          }
+        }
         if (e.key === 'Home') {
           // Cmd/Ctrl + Home → jump to start of document (chunk 12).
           if (e.metaKey || e.ctrlKey) {
