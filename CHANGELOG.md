@@ -14,6 +14,16 @@
 - **chunk 58 — 목차 사이드바 (⌘⇧O, 0.2.61)**: `viewer.getOutline()` — 단락 styleId를 styleList에서 "제목 N" / "Heading N"로 매칭, level 추출. `OutlineSidebar` 컴포넌트가 viewer 옆에 토글 + 클릭 시 scrollToParagraph
 - **chunk 57 — AI inline diff (0.2.61)**: `viewer.snapshotParagraphs()` + `markChangedParagraphsSince(before)`. AppShell의 applyHtml/runTools가 before/after로 bracket. 변경된 단락 좌측에 amber 3px 막대 + animate-pulse + 15s 후 페이드
 
+### Added — Phase B-2.5: F5 확장 모드 (0.2.79)
+
+- F5 두 번 누르면 확장 모드 진입. 그 다음 화살표 키로 cell-block의 focus 셀이 row/col 단위로 이동해 block 범위 확장. anchor 셀은 고정.
+  - `→` / `←` — 다음 / 이전 열로 확장 (focus 셀 colSpan 단위)
+  - `↓` / `↑` — 다음 / 이전 행으로 확장 (focus 셀 rowSpan 단위)
+- F5/F7/F8/F5×3/⌘⌥T 등 다른 cell block 키는 anchor·focus를 새로 세팅하면서 확장 모드 reset.
+- mousedown / Esc / 셀 밖 caret 이동 시 자동 해제.
+- F5/F7/F8 핸들러를 selection state(anchor.cell + focus.cell)도 같이 업데이트하도록 리팩터 — 확장 모드가 anchor에서 시작 가능.
+- 기준: [한글 표 단축키](https://help.hancom.com/hoffice/multi/ko_kr/hwp/view/toolbar/shortcut%28table%29.htm) — "F5 또는 F3 누름 → 셀 확장 모드"
+
 ### Added — Phase B-1: 한글 호환 F3 본문 block 단축키 (0.2.78)
 
 - 본문 caret 시 F3 연속 입력 (600ms 윈도우):

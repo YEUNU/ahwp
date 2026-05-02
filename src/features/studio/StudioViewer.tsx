@@ -831,10 +831,14 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       cellParaIndex: number;
     } | null>(null);
     // F5 press counter — Hancom convention: F5 1×=current cell block,
-    // F5 3×=whole table block (the 2× extension mode is Phase B-2.5).
+    // F5 2×=확장 모드(arrow로 cell block 확장), F5 3×=표 전체 block.
     // Reset whenever caret moves or any non-F5 key fires.
     const f5PressCountRef = useRef(0);
     const f5LastPressRef = useRef(0);
+    // Phase B-2.5 — F5 확장 모드 활성 여부. true면 화살표가 셀 단위로
+    // cell-block의 focus 셀을 이동해 block 범위 확장. mousedown / Esc /
+    // F5 외 다른 키 / 셀 밖으로 caret 이동 시 자동 해제.
+    const cellBlockExtendModeRef = useRef(false);
     // F3 press counter (본문 block) — 1×=block extend mode (현재
     // Shift+arrow와 동등 동작이라 noop), 2×=단어 선택 (=더블클릭),
     // 3×=단락 선택 (=트리플클릭), 4×=문서 전체 선택 (=⌘A).
@@ -4458,6 +4462,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             dragCleanupRef.current = null;
             draggingRef.current = false;
             cellDragRef.current = null;
+            cellBlockExtendModeRef.current = false;
             const origin = dragOriginSelectionRef.current;
             if (origin) {
               setSelection(origin);
@@ -4470,6 +4475,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             return;
           }
           if (selectionRef.current) {
+            cellBlockExtendModeRef.current = false;
             clearSelection();
             e.preventDefault();
             return;
@@ -4539,41 +4545,96 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               e.preventDefault();
               return;
             }
-            // Predicate: which cells get included in the block.
-            let predicate: (cell: (typeof cells)[number]) => boolean = () =>
-              false;
-            if (isWholeTableKey || f5PressCountRef.current >= 3) {
-              predicate = () => true;
-            } else if (isCellBlockKey) {
-              predicate = (cell) => cell.cellIdx === here.cellIdx;
+            // (anchor, focus) cell pair → refreshCellBlockHighlights
+            // computes the rectangle. Selection state도 업데이트해서
+            // 확장 모드(B-2.5)가 anchor에서 시작하도록 함.
+            let anchorCell = here;
+            let focusCell = here;
+            const f5x3 = isCellBlockKey && f5PressCountRef.current >= 3;
+            if (isWholeTableKey || f5x3) {
+              const minRow = Math.min(...cells.map((x) => x.row));
+              const maxRow = Math.max(
+                ...cells.map((x) => x.row + x.rowSpan - 1),
+              );
+              const minCol = Math.min(...cells.map((x) => x.col));
+              const maxCol = Math.max(
+                ...cells.map((x) => x.col + x.colSpan - 1),
+              );
+              anchorCell =
+                cells.find((x) => x.row === minRow && x.col === minCol) ?? here;
+              focusCell =
+                cells.find(
+                  (x) =>
+                    x.row + x.rowSpan - 1 === maxRow &&
+                    x.col + x.colSpan - 1 === maxCol,
+                ) ?? here;
+              cellBlockExtendModeRef.current = false;
+              f5PressCountRef.current = 0;
             } else if (isColumnBlockKey) {
               const cStart = here.col;
               const cEnd = here.col + here.colSpan - 1;
-              predicate = (cell) =>
-                cell.col + cell.colSpan - 1 >= cStart && cell.col <= cEnd;
+              const inCol = cells.filter(
+                (x) => x.col + x.colSpan - 1 >= cStart && x.col <= cEnd,
+              );
+              const minRow = Math.min(...inCol.map((x) => x.row));
+              const maxRow = Math.max(
+                ...inCol.map((x) => x.row + x.rowSpan - 1),
+              );
+              anchorCell = inCol.find((x) => x.row === minRow) ?? here;
+              focusCell =
+                inCol.find((x) => x.row + x.rowSpan - 1 === maxRow) ?? here;
+              cellBlockExtendModeRef.current = false;
             } else if (isRowBlockKey) {
               const rStart = here.row;
               const rEnd = here.row + here.rowSpan - 1;
-              predicate = (cell) =>
-                cell.row + cell.rowSpan - 1 >= rStart && cell.row <= rEnd;
-            }
-            const grouped: Record<
-              number,
-              { x: number; y: number; width: number; height: number }[]
-            > = {};
-            for (const cell of cells) {
-              if (predicate(cell)) {
-                (grouped[cell.pageIndex] ??= []).push({
-                  x: cell.x,
-                  y: cell.y,
-                  width: cell.w,
-                  height: cell.h,
-                });
+              const inRow = cells.filter(
+                (x) => x.row + x.rowSpan - 1 >= rStart && x.row <= rEnd,
+              );
+              const minCol = Math.min(...inRow.map((x) => x.col));
+              const maxCol = Math.max(
+                ...inRow.map((x) => x.col + x.colSpan - 1),
+              );
+              anchorCell = inRow.find((x) => x.col === minCol) ?? here;
+              focusCell =
+                inRow.find((x) => x.col + x.colSpan - 1 === maxCol) ?? here;
+              cellBlockExtendModeRef.current = false;
+            } else if (isCellBlockKey) {
+              // F5×1 = 현재 셀, F5×2 = 확장 모드 진입 (block 그대로).
+              if (f5PressCountRef.current === 2) {
+                cellBlockExtendModeRef.current = true;
+                // Block 자체는 그대로 두고 mode flag만 set.
+              } else {
+                cellBlockExtendModeRef.current = false;
               }
             }
-            setCellBlockHighlights(grouped);
+            const anchorCaret = {
+              sectionIndex: c.sectionIndex,
+              paragraphIndex: 0,
+              charOffset: 0,
+              cell: {
+                parentParaIndex: ci.parentParaIndex,
+                controlIndex: ci.controlIndex,
+                cellIndex: anchorCell.cellIdx,
+                cellParaIndex: 0,
+              },
+            };
+            const focusCaret = {
+              sectionIndex: c.sectionIndex,
+              paragraphIndex: 0,
+              charOffset: 0,
+              cell: {
+                parentParaIndex: ci.parentParaIndex,
+                controlIndex: ci.controlIndex,
+                cellIndex: focusCell.cellIdx,
+                cellParaIndex: 0,
+              },
+            };
+            const newSel = { anchor: anchorCaret, focus: focusCaret };
+            caretRef.current = focusCaret;
+            setSelection(newSel);
             setSelectionRectsByPage({});
             setSelectedControlBboxes({});
+            refreshCellBlockHighlights(newSel);
           } catch (err) {
             console.warn('[studio] F-key cell block failed:', err);
           }
@@ -4581,9 +4642,105 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           return;
         }
         // Reset F5 counter on any other key (so non-F5 press breaks
-        // the F5×3 chain).
-        if (e.key !== 'F5') {
+        // the F5×3 chain). 단, 확장 모드 진행 중인 화살표 키는 카운터
+        // 리셋하지 않음 (몇 번 확장해도 다시 F5 누르면 표 전체로
+        // 즉시 도달 가능하게).
+        if (
+          e.key !== 'F5' &&
+          !(
+            cellBlockExtendModeRef.current &&
+            (e.key === 'ArrowLeft' ||
+              e.key === 'ArrowRight' ||
+              e.key === 'ArrowUp' ||
+              e.key === 'ArrowDown')
+          )
+        ) {
           f5PressCountRef.current = 0;
+        }
+        // Phase B-2.5 — F5 확장 모드: arrow가 cell block의 focus 셀을
+        // row/col 단위로 이동시켜 block 범위 확장. anchor.cell은
+        // 고정. mousedown / Esc / 다른 키 / 셀 밖 caret 시 자동 해제.
+        if (
+          cellBlockExtendModeRef.current &&
+          (e.key === 'ArrowLeft' ||
+            e.key === 'ArrowRight' ||
+            e.key === 'ArrowUp' ||
+            e.key === 'ArrowDown')
+        ) {
+          const cur = selectionRef.current;
+          if (
+            !cur ||
+            !cur.anchor.cell ||
+            !cur.focus.cell ||
+            cur.anchor.cell.parentParaIndex !==
+              cur.focus.cell.parentParaIndex ||
+            cur.anchor.cell.controlIndex !== cur.focus.cell.controlIndex
+          ) {
+            cellBlockExtendModeRef.current = false;
+          } else {
+            try {
+              const ac = cur.anchor.cell;
+              const fc = cur.focus.cell;
+              const cells = JSON.parse(
+                doc.getTableCellBboxes(
+                  cur.anchor.sectionIndex,
+                  ac.parentParaIndex,
+                  ac.controlIndex,
+                ),
+              ) as {
+                cellIdx: number;
+                row: number;
+                col: number;
+                rowSpan: number;
+                colSpan: number;
+              }[];
+              const fCell = cells.find((x) => x.cellIdx === fc.cellIndex);
+              if (fCell) {
+                const dr =
+                  e.key === 'ArrowDown'
+                    ? fCell.rowSpan
+                    : e.key === 'ArrowUp'
+                      ? -1
+                      : 0;
+                const dc =
+                  e.key === 'ArrowRight'
+                    ? fCell.colSpan
+                    : e.key === 'ArrowLeft'
+                      ? -1
+                      : 0;
+                const targetR = fCell.row + dr;
+                const targetC = fCell.col + dc;
+                const next = cells.find(
+                  (x) =>
+                    targetR >= x.row &&
+                    targetR <= x.row + x.rowSpan - 1 &&
+                    targetC >= x.col &&
+                    targetC <= x.col + x.colSpan - 1,
+                );
+                if (next) {
+                  const newFocus = {
+                    sectionIndex: cur.focus.sectionIndex,
+                    paragraphIndex: 0,
+                    charOffset: 0,
+                    cell: {
+                      parentParaIndex: fc.parentParaIndex,
+                      controlIndex: fc.controlIndex,
+                      cellIndex: next.cellIdx,
+                      cellParaIndex: 0,
+                    },
+                  };
+                  const newSel = { anchor: cur.anchor, focus: newFocus };
+                  caretRef.current = newFocus;
+                  setSelection(newSel);
+                  refreshCellBlockHighlights(newSel);
+                }
+              }
+            } catch (err) {
+              console.warn('[studio] cell-block extension failed:', err);
+            }
+            e.preventDefault();
+            return;
+          }
         }
         // Phase B-1 — 한글 호환 본문 block 단축키 (F3 시리즈).
         // F3 1× = block mode entry (Shift+arrow와 동등이라 v1 no-op),
@@ -5343,9 +5500,10 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             setSelectionRectsByPage({});
           }
           // New drag begins: drop any control bboxes / cell-block
-          // highlights from a prior drag.
+          // highlights from a prior drag, exit cell-block extension mode.
           setSelectedControlBboxes({});
           setCellBlockHighlights({});
+          cellBlockExtendModeRef.current = false;
           draggingRef.current = true;
         }
 
