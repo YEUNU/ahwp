@@ -2843,6 +2843,48 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       }
     }, [deleteSelectionIfAny, refreshAfterMutation]);
 
+    /**
+     * Capture the active selection as an excerpt — chunk 22 hoist.
+     * Single-paragraph only (multi-paragraph excerpts need span anchors,
+     * deferred to chunk 28). Lifted out of useImperativeHandle so the
+     * HTML5 drag handler on selection rects can share it.
+     */
+    const captureExcerpt = useCallback((): {
+      sectionIndex: number;
+      paragraphIndex: number;
+      startOffset: number;
+      endOffset: number;
+      text: string;
+    } | null => {
+      const doc = docRef.current;
+      if (!doc) return null;
+      const sel = selectionRef.current;
+      if (!sel) return null;
+      if (sel.anchor.sectionIndex !== sel.focus.sectionIndex) return null;
+      const range = sortRange(sel.anchor, sel.focus);
+      if (range.empty) return null;
+      if (range.startPara !== range.endPara) return null;
+      try {
+        const text = doc.getTextRange(
+          sel.anchor.sectionIndex,
+          range.startPara,
+          range.startOffset,
+          range.endOffset - range.startOffset,
+        );
+        if (typeof text !== 'string' || text.length === 0) return null;
+        return {
+          sectionIndex: sel.anchor.sectionIndex,
+          paragraphIndex: range.startPara,
+          startOffset: range.startOffset,
+          endOffset: range.endOffset,
+          text,
+        };
+      } catch (err) {
+        console.warn('[studio] captureExcerpt failed:', err);
+        return null;
+      }
+    }, [sortRange]);
+
     useImperativeHandle(
       ref,
       () => ({
@@ -2951,37 +2993,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         // must be non-empty AND single-paragraph; multi-paragraph
         // excerpts need a span anchor model that the IR's
         // getTextRange (single-para) doesn't support yet.
-        captureExcerpt: () => {
-          const doc = docRef.current;
-          if (!doc) return null;
-          const sel = selectionRef.current;
-          if (!sel) return null;
-          if (sel.anchor.sectionIndex !== sel.focus.sectionIndex) return null;
-          const range = sortRange(sel.anchor, sel.focus);
-          if (range.empty) return null;
-          // Single-paragraph constraint — multi-paragraph excerpts need
-          // a span anchor model and getTextRange's single-para output.
-          if (range.startPara !== range.endPara) return null;
-          try {
-            const text = doc.getTextRange(
-              sel.anchor.sectionIndex,
-              range.startPara,
-              range.startOffset,
-              range.endOffset - range.startOffset,
-            );
-            if (typeof text !== 'string' || text.length === 0) return null;
-            return {
-              sectionIndex: sel.anchor.sectionIndex,
-              paragraphIndex: range.startPara,
-              startOffset: range.startOffset,
-              endOffset: range.endOffset,
-              text,
-            };
-          } catch (err) {
-            console.warn('[studio] captureExcerpt failed:', err);
-            return null;
-          }
-        },
+        captureExcerpt,
         verifyExcerpt: (anchor, expected) => {
           const doc = docRef.current;
           if (!doc) return null;
@@ -3024,7 +3036,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         },
       }),
       [
-        sortRange,
+        captureExcerpt,
         toggleCharFormat,
         undo,
         redo,
@@ -5374,7 +5386,40 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                     <div
                       key={ri}
                       data-testid="studio-selection-rect"
-                      className="pointer-events-none absolute bg-primary/25"
+                      // chunk 22 — selection rects are interactive so the
+                      // user can grab them as a drag source. Mousedown
+                      // here also passes through to text selection /
+                      // caret movement via the page surface's pointer
+                      // event, but HTML5 drag fires on its own threshold
+                      // (no mouseup needed). This matches native browser
+                      // text selection drag UX.
+                      className="absolute cursor-grab bg-primary/25 active:cursor-grabbing"
+                      draggable={isActive}
+                      onDragStart={(e) => {
+                        const cap = captureExcerpt();
+                        if (!cap) {
+                          e.preventDefault();
+                          return;
+                        }
+                        const payload = {
+                          docPath: path,
+                          sectionIndex: cap.sectionIndex,
+                          paragraphIndex: cap.paragraphIndex,
+                          startOffset: cap.startOffset,
+                          endOffset: cap.endOffset,
+                          text: cap.text,
+                        };
+                        try {
+                          e.dataTransfer.setData(
+                            'application/x-ahwp-excerpt',
+                            JSON.stringify(payload),
+                          );
+                          e.dataTransfer.setData('text/plain', cap.text);
+                          e.dataTransfer.effectAllowed = 'copy';
+                        } catch {
+                          /* dataTransfer can throw under hardened CSP */
+                        }
+                      }}
                       style={{
                         left: r.x * zoom,
                         top: r.y * zoom,

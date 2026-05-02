@@ -459,6 +459,50 @@ export function ChatPanel({
   // path is only hit during a race (selection cleared between hover
   // and click). Drag-and-drop wiring is a follow-up; this gives us
   // the data model NOW.
+  /** Push a captured excerpt onto the chip list. Shared between the
+   * `📌 발췌 첨부` button click and the HTML5 drag-and-drop path
+   * (chunk 22). The payload differs only in the source: the button
+   * reads via captureExcerpt(); drop reads via dataTransfer's
+   * `application/x-ahwp-excerpt` MIME. */
+  const addExcerptFromPayload = useCallback(
+    (cap: {
+      sectionIndex: number;
+      paragraphIndex: number;
+      startOffset: number;
+      endOffset: number;
+      text: string;
+      docPath?: string | null;
+    }) => {
+      if (cap.text.length > EXCERPT_HARD_CHAR_LIMIT) {
+        setExcerptError(
+          `발췌가 너무 깁니다 (${cap.text.length} / ${EXCERPT_HARD_CHAR_LIMIT}자 상한).`,
+        );
+        return;
+      }
+      setExcerptError(null);
+      const path =
+        cap.docPath !== undefined ? cap.docPath : (activeDocPath?.() ?? null);
+      const label = path ? (path.split(/[/\\]/).pop() ?? path) : '(이름 없음)';
+      const chip: ExcerptAttachment = {
+        id: newId(),
+        docPath: path,
+        docLabel: label,
+        role: 'target',
+        anchor: {
+          sectionIndex: cap.sectionIndex,
+          paragraphIndex: cap.paragraphIndex,
+          startOffset: cap.startOffset,
+          endOffset: cap.endOffset,
+        },
+        text: cap.text,
+        hash: hashText(cap.text),
+        status: 'fresh',
+      };
+      setExcerpts((prev) => [...prev, chip]);
+    },
+    [activeDocPath],
+  );
+
   const onCaptureExcerpt = useCallback(() => {
     if (!captureExcerpt) return;
     const cap = captureExcerpt();
@@ -468,32 +512,50 @@ export function ChatPanel({
       );
       return;
     }
-    if (cap.text.length > EXCERPT_HARD_CHAR_LIMIT) {
-      setExcerptError(
-        `발췌가 너무 깁니다 (${cap.text.length} / ${EXCERPT_HARD_CHAR_LIMIT}자 상한).`,
-      );
-      return;
-    }
-    setExcerptError(null);
-    const path = activeDocPath?.() ?? null;
-    const label = path ? (path.split(/[/\\]/).pop() ?? path) : '(이름 없음)';
-    const chip: ExcerptAttachment = {
-      id: newId(),
-      docPath: path,
-      docLabel: label,
-      role: 'target',
-      anchor: {
-        sectionIndex: cap.sectionIndex,
-        paragraphIndex: cap.paragraphIndex,
-        startOffset: cap.startOffset,
-        endOffset: cap.endOffset,
-      },
-      text: cap.text,
-      hash: hashText(cap.text),
-      status: 'fresh',
-    };
-    setExcerpts((prev) => [...prev, chip]);
-  }, [activeDocPath, captureExcerpt]);
+    addExcerptFromPayload(cap);
+  }, [addExcerptFromPayload, captureExcerpt]);
+
+  /** Drop handler for the input form — chunk 22. Accepts the custom
+   * `application/x-ahwp-excerpt` MIME emitted by `studio-selection-rect`
+   * dragstart. Falls back to creating a chip from `text/plain` if the
+   * structured payload is missing — that case has no anchor and so is
+   * marked stale-relocated immediately on send (verifyExcerpt will
+   * either find the text or reject). */
+  const onDropExcerpt = useCallback(
+    (e: React.DragEvent<HTMLFormElement>) => {
+      const types = Array.from(e.dataTransfer.types);
+      if (!types.includes('application/x-ahwp-excerpt')) return;
+      e.preventDefault();
+      const raw = e.dataTransfer.getData('application/x-ahwp-excerpt');
+      if (!raw) return;
+      try {
+        const parsed = JSON.parse(raw) as {
+          docPath?: string | null;
+          sectionIndex: number;
+          paragraphIndex: number;
+          startOffset: number;
+          endOffset: number;
+          text: string;
+        };
+        addExcerptFromPayload(parsed);
+      } catch {
+        setExcerptError('발췌 페이로드를 읽지 못했습니다.');
+      }
+    },
+    [addExcerptFromPayload],
+  );
+
+  /** preventDefault on dragover lets the drop fire. Without it the
+   * browser rejects the drop ahead of our handler. */
+  const onDragOverExcerpt = useCallback(
+    (e: React.DragEvent<HTMLFormElement>) => {
+      const types = Array.from(e.dataTransfer.types);
+      if (!types.includes('application/x-ahwp-excerpt')) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+    },
+    [],
+  );
 
   const removeExcerpt = useCallback((id: string) => {
     setExcerpts((prev) => prev.filter((e) => e.id !== id));
@@ -717,6 +779,8 @@ export function ChatPanel({
 
       <form
         onSubmit={onSubmit}
+        onDragOver={onDragOverExcerpt}
+        onDrop={onDropExcerpt}
         className="border-t border-border bg-card p-3"
         data-testid="chat-input-form"
       >
