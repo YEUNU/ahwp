@@ -39,6 +39,12 @@ export function buildActionItems(
       'html',
       '내보내기',
     ]),
+    e('file:export-pdf', '파일 → PDF로 내보내기', [
+      'file',
+      'export',
+      'pdf',
+      '내보내기',
+    ]),
     e('edit:undo', '편집 → 실행 취소', ['edit', 'undo', '취소'], '⌘Z'),
     e('edit:redo', '편집 → 다시 실행', ['edit', 'redo', '다시'], '⌘⇧Z'),
     e('edit:copy', '편집 → 복사', ['edit', 'copy', '복사'], '⌘C'),

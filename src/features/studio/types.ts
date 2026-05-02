@@ -262,6 +262,34 @@ export interface ViewerHandle {
    */
   scrollToParagraph: (sectionIdx: number, paraIdx: number) => void;
   /**
+   * Snapshot section 0 paragraph contents — chunk 57. Used as the
+   * "before" half of the inline-diff bracket: the AppShell calls this
+   * before an AI-driven apply, then `markChangedParagraphsSince` after
+   * the apply settles. The map key is paragraph index, value is a
+   * cheap fingerprint of the paragraph text.
+   */
+  snapshotParagraphs: () => Map<number, string>;
+  /**
+   * Compare the current paragraph state against a prior snapshot and
+   * highlight paragraphs whose text changed (or that didn't exist
+   * before) — chunk 57. The highlight auto-fades after ~15s. Call
+   * this immediately after an AI-applied mutation settles.
+   */
+  markChangedParagraphsSince: (before: Map<number, string>) => void;
+  /**
+   * Read the document outline (headings) — chunk 58. Walks section 0's
+   * paragraphs, resolves each `styleId` against the style list, and
+   * keeps the ones whose name looks like "제목 N" (or "Heading N"). The
+   * `level` is parsed from the trailing digit when present, else 1.
+   * The TOC sidebar uses (paragraphIndex) to jump via
+   * `scrollToParagraph`.
+   */
+  getOutline: () => {
+    paragraphIndex: number;
+    level: number;
+    text: string;
+  }[];
+  /**
    * Capture the current viewer selection as a portable excerpt — chunk
    * 20. Returns null when no selection is active or the selection
    * spans multiple paragraphs (multi-paragraph excerpts are deferred:

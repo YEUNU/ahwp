@@ -22,6 +22,7 @@ describe('App', () => {
         save: vi.fn().mockResolvedValue({ path: '' }),
         saveAs: vi.fn().mockResolvedValue(null),
         exportHtml: vi.fn().mockResolvedValue(null),
+        exportPdf: vi.fn().mockResolvedValue(null),
         getPathForFile: vi.fn().mockReturnValue(''),
         watchPaths: vi.fn().mockResolvedValue(undefined),
         onExternalChange: vi.fn().mockReturnValue(() => {}),

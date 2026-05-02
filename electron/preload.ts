@@ -32,6 +32,7 @@ const api: AhwpApi = {
     save: (req) => ipcRenderer.invoke('file:save', req),
     saveAs: (req) => ipcRenderer.invoke('file:save-as', req),
     exportHtml: (req) => ipcRenderer.invoke('file:export-html', req),
+    exportPdf: (req) => ipcRenderer.invoke('file:export-pdf', req),
     getPathForFile: (file) => webUtils.getPathForFile(file),
     watchPaths: (paths) => ipcRenderer.invoke('file:watch-paths', paths),
     saveDraft: (req) => ipcRenderer.invoke('file:save-draft', req),

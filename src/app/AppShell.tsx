@@ -27,6 +27,7 @@ import { FootnoteDialog } from '@/features/studio/FootnoteDialog';
 import { HeaderFooterDialog } from '@/features/studio/HeaderFooterDialog';
 import { PageSetupDialog } from '@/features/studio/PageSetupDialog';
 import { ShapeDialog } from '@/features/studio/ShapeDialog';
+import { OutlineSidebar } from '@/features/studio/OutlineSidebar';
 import { StudioViewer } from '@/features/studio/StudioViewer';
 import { StyleManagerDialog } from '@/features/studio/StyleManagerDialog';
 import {
@@ -126,6 +127,12 @@ export default function AppShell() {
   // replaces the folder tree view; clicking a snippet opens the file
   // (existing tab if open) and scrolls to the matched paragraph.
   const [searchMode, setSearchMode] = useState(false);
+  // chunk 58 — outline sidebar (TOC). ⌘⇧O toggles the right-edge
+  // sidebar that lists "제목 1/2/3" headings extracted from the active
+  // doc. `outlineKey` bumps when any tab's dirty flips so the sidebar
+  // refreshes without polling.
+  const [outlineOpen, setOutlineOpen] = useState(false);
+  const [outlineKey, setOutlineKey] = useState(0);
   // chunk 53 — shortcut cheatsheet (⌘/).
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   // viewerRef per tab (by key). The active tab's viewer is what menu /
@@ -374,6 +381,10 @@ export default function AppShell() {
       next[idx] = { ...next[idx], dirty };
       return next;
     });
+    // chunk 58 — bump the outline refresh signal so the TOC sidebar
+    // re-fetches without polling. The sidebar is cheap (single IR walk
+    // bounded to 1k paragraphs).
+    setOutlineKey((v) => v + 1);
   }, []);
 
   // Stable ref-callback factory per tab key. Each StudioViewer's ref
@@ -674,6 +685,15 @@ export default function AppShell() {
         // chunk 60 — ⌘⇧F opens cross-folder search.
         setSearchMode(true);
         e.preventDefault();
+      } else if (
+        (e.metaKey || e.ctrlKey) &&
+        e.shiftKey &&
+        !e.altKey &&
+        e.key.toLowerCase() === 'o'
+      ) {
+        // chunk 58 — ⌘⇧O toggles the outline (TOC) sidebar.
+        setOutlineOpen((v) => !v);
+        e.preventDefault();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -702,6 +722,19 @@ export default function AppShell() {
           window.alert('내보낼 문서가 없습니다.');
         } else {
           void window.api.file.exportHtml({
+            html,
+            defaultPath: activeTab?.path,
+          });
+        }
+      } else if (action === 'file:export-pdf') {
+        // chunk 59 — same HTML pipeline as export-html, but main runs it
+        // through Chrome's printToPDF instead of writing the source.
+        const v = activeViewerRef();
+        const html = v?.exportDocumentHtml(1000) ?? '';
+        if (html.length === 0) {
+          window.alert('내보낼 문서가 없습니다.');
+        } else {
+          void window.api.file.exportPdf({
             html,
             defaultPath: activeTab?.path,
           });
@@ -1151,90 +1184,99 @@ export default function AppShell() {
                   onTogglePin={togglePinTab}
                 />
               )}
-              <div className="relative flex-1 overflow-hidden">
-                {tabsState.length === 0 ? (
-                  <WelcomePane
-                    onNewDoc={() => void newDocument()}
-                    onOpen={() => void openFromDialog()}
-                    onOpenPath={(p) => void openByPath(p)}
-                    pingError={pingError}
-                    pingResult={pingResult}
+              <div className="relative flex flex-1 overflow-hidden">
+                <div className="relative flex-1 overflow-hidden">
+                  {tabsState.length === 0 ? (
+                    <WelcomePane
+                      onNewDoc={() => void newDocument()}
+                      onOpen={() => void openFromDialog()}
+                      onOpenPath={(p) => void openByPath(p)}
+                      pingError={pingError}
+                      pingResult={pingResult}
+                    />
+                  ) : (
+                    tabsState.map((tab, idx) => {
+                      const isActive = idx === activeIndex;
+                      return (
+                        <div
+                          key={tab.key}
+                          // Mount every tab; hide inactive ones with display:none
+                          // so they keep their HwpDocument + edit state. We use
+                          // `style.display` rather than `hidden` because some
+                          // children rely on layout (refs/sizes) computed at mount.
+                          style={{
+                            position: 'absolute',
+                            inset: 0,
+                            display: isActive ? 'block' : 'none',
+                          }}
+                          data-testid="studio-tab-pane"
+                          data-tab-key={tab.key}
+                          data-tab-active={isActive ? 'true' : 'false'}
+                        >
+                          <StudioViewer
+                            path={tab.path}
+                            isActive={isActive}
+                            onDirtyChange={dirtyCallbacks.get(tab.key)}
+                            ref={refCallbackFor(tab.key)}
+                            onOpenTableProps={() => setTablePropsOpen(true)}
+                            onOpenCellProps={() => setCellPropsOpen(true)}
+                            onOpenCellStylePicker={() =>
+                              setCellStylePickerOpen(true)
+                            }
+                            onAiCommand={(prompt) => {
+                              // chunk 56 — viewer's selection menu fires a
+                              // composed AI prompt; we forward to the
+                              // ChatPanel imperative handle so the request
+                              // streams immediately. Skip if no handle yet
+                              // (panel not mounted) — that should never
+                              // happen at this point of the flow.
+                              chatRef.current?.prefillAndSend(prompt);
+                            }}
+                            onOpenFormula={() => {
+                              // Resolve the right-clicked cell coords into
+                              // a row/col pair via the table dimensions
+                              // exposed on the active viewer. The cell
+                              // context menu has already moved caret into
+                              // the cell, so getActiveCellContext returns
+                              // the click's coordinates.
+                              const v = activeViewerRef();
+                              if (!v) return;
+                              const cell = v.getActiveCellContext();
+                              if (!cell) return;
+                              const tableProps = v.getTableProps(
+                                cell.sectionIndex,
+                                cell.parentParaIdx,
+                                cell.controlIdx,
+                              );
+                              const colCount =
+                                typeof tableProps?.['colCount'] === 'number'
+                                  ? (tableProps['colCount'] as number)
+                                  : 1;
+                              const targetRow = Math.floor(
+                                cell.cellIdx / colCount,
+                              );
+                              const targetCol = cell.cellIdx % colCount;
+                              setFormulaCtx({
+                                sectionIndex: cell.sectionIndex,
+                                parentParaIdx: cell.parentParaIdx,
+                                controlIdx: cell.controlIdx,
+                                targetRow,
+                                targetCol,
+                              });
+                              setFormulaOpen(true);
+                            }}
+                          />
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+                {outlineOpen && tabsState.length > 0 && (
+                  <OutlineSidebar
+                    getViewer={activeViewerRef}
+                    refreshKey={outlineKey + (activeIndex << 8)}
+                    onClose={() => setOutlineOpen(false)}
                   />
-                ) : (
-                  tabsState.map((tab, idx) => {
-                    const isActive = idx === activeIndex;
-                    return (
-                      <div
-                        key={tab.key}
-                        // Mount every tab; hide inactive ones with display:none
-                        // so they keep their HwpDocument + edit state. We use
-                        // `style.display` rather than `hidden` because some
-                        // children rely on layout (refs/sizes) computed at mount.
-                        style={{
-                          position: 'absolute',
-                          inset: 0,
-                          display: isActive ? 'block' : 'none',
-                        }}
-                        data-testid="studio-tab-pane"
-                        data-tab-key={tab.key}
-                        data-tab-active={isActive ? 'true' : 'false'}
-                      >
-                        <StudioViewer
-                          path={tab.path}
-                          isActive={isActive}
-                          onDirtyChange={dirtyCallbacks.get(tab.key)}
-                          ref={refCallbackFor(tab.key)}
-                          onOpenTableProps={() => setTablePropsOpen(true)}
-                          onOpenCellProps={() => setCellPropsOpen(true)}
-                          onOpenCellStylePicker={() =>
-                            setCellStylePickerOpen(true)
-                          }
-                          onAiCommand={(prompt) => {
-                            // chunk 56 — viewer's selection menu fires a
-                            // composed AI prompt; we forward to the
-                            // ChatPanel imperative handle so the request
-                            // streams immediately. Skip if no handle yet
-                            // (panel not mounted) — that should never
-                            // happen at this point of the flow.
-                            chatRef.current?.prefillAndSend(prompt);
-                          }}
-                          onOpenFormula={() => {
-                            // Resolve the right-clicked cell coords into
-                            // a row/col pair via the table dimensions
-                            // exposed on the active viewer. The cell
-                            // context menu has already moved caret into
-                            // the cell, so getActiveCellContext returns
-                            // the click's coordinates.
-                            const v = activeViewerRef();
-                            if (!v) return;
-                            const cell = v.getActiveCellContext();
-                            if (!cell) return;
-                            const tableProps = v.getTableProps(
-                              cell.sectionIndex,
-                              cell.parentParaIdx,
-                              cell.controlIdx,
-                            );
-                            const colCount =
-                              typeof tableProps?.['colCount'] === 'number'
-                                ? (tableProps['colCount'] as number)
-                                : 1;
-                            const targetRow = Math.floor(
-                              cell.cellIdx / colCount,
-                            );
-                            const targetCol = cell.cellIdx % colCount;
-                            setFormulaCtx({
-                              sectionIndex: cell.sectionIndex,
-                              parentParaIdx: cell.parentParaIdx,
-                              controlIdx: cell.controlIdx,
-                              targetRow,
-                              targetCol,
-                            });
-                            setFormulaOpen(true);
-                          }}
-                        />
-                      </div>
-                    );
-                  })
                 )}
               </div>
             </main>
@@ -1263,13 +1305,23 @@ export default function AppShell() {
                   getDocHtml={() =>
                     activeViewerRef()?.exportDocumentHtml() ?? ''
                   }
-                  applyHtml={(html) =>
-                    activeViewerRef()?.applyHtmlAtCaret(html)
-                  }
+                  applyHtml={(html) => {
+                    // chunk 57 — bracket the AI apply with a
+                    // paragraph snapshot so we can highlight changed
+                    // paragraphs with an amber stripe for ~15s.
+                    const v = activeViewerRef();
+                    if (!v) return;
+                    const before = v.snapshotParagraphs();
+                    v.applyHtmlAtCaret(html);
+                    v.markChangedParagraphsSince(before);
+                  }}
                   runTools={(items) => {
                     const v = activeViewerRef();
                     if (!v) return [];
-                    return runTools(v, items);
+                    const before = v.snapshotParagraphs();
+                    const results = runTools(v, items);
+                    v.markChangedParagraphsSince(before);
+                    return results;
                   }}
                   captureExcerpt={() =>
                     activeViewerRef()?.captureExcerpt() ?? null

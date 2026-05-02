@@ -788,6 +788,13 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
      *  opens this. Coordinates only; the menu reads the current
      *  selection text via the imperative handle. */
     const [aiMenu, setAiMenu] = useState<{ x: number; y: number } | null>(null);
+    /** chunk 57 — paragraph rects marked "changed by AI" per page.
+     *  AppShell calls `markChangedParagraphsSince` after an AI apply;
+     *  the highlight auto-clears after the TTL. */
+    const [changedParaRects, setChangedParaRects] = useState<
+      Record<number, { x: number; y: number; width: number; height: number }[]>
+    >({});
+    const changedParaTimerRef = useRef<number | null>(null);
     /** Toolbar second-row visibility — collapsed by default. */
     const [toolbarExpanded, setToolbarExpanded] = useState(false);
     /** Doc-level view toggles. Mirror what setShow* set. */
@@ -3574,6 +3581,136 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             console.warn('[studio] scrollToParagraph failed:', err);
           }
         },
+        getOutline: () => {
+          const doc = docRef.current;
+          if (!doc) return [];
+          const headingByStyleId = new Map<number, number>();
+          for (const s of styleList) {
+            const koMatch = s.name.match(/^제목\s*(\d+)?/);
+            const enMatch = s.englishName?.match(/^Heading\s*(\d+)?/i);
+            const m = koMatch ?? enMatch;
+            if (m) {
+              const level = m[1] ? Math.min(6, parseInt(m[1], 10)) : 1;
+              headingByStyleId.set(s.id, level);
+            }
+          }
+          if (headingByStyleId.size === 0) return [];
+          const items: {
+            paragraphIndex: number;
+            level: number;
+            text: string;
+          }[] = [];
+          try {
+            const SECTION = 0;
+            const paraCount = doc.getParagraphCount(SECTION);
+            const cap = Math.min(paraCount, 1000);
+            for (let p = 0; p < cap; p++) {
+              const at = JSON.parse(doc.getStyleAt(SECTION, p)) as {
+                id?: number;
+              };
+              if (typeof at.id !== 'number') continue;
+              const level = headingByStyleId.get(at.id);
+              if (!level) continue;
+              const len = doc.getParagraphLength(SECTION, p);
+              const text =
+                len > 0
+                  ? doc.getTextRange(SECTION, p, 0, Math.min(len, 200))
+                  : '';
+              items.push({
+                paragraphIndex: p,
+                level,
+                text: text.trim() || '(제목 없음)',
+              });
+              if (items.length >= 200) break;
+            }
+          } catch (err) {
+            console.warn('[studio] getOutline failed:', err);
+          }
+          return items;
+        },
+        snapshotParagraphs: () => {
+          const doc = docRef.current;
+          const map = new Map<number, string>();
+          if (!doc) return map;
+          try {
+            const SECTION = 0;
+            const paraCount = doc.getParagraphCount(SECTION);
+            const cap = Math.min(paraCount, 1000);
+            for (let p = 0; p < cap; p++) {
+              const len = doc.getParagraphLength(SECTION, p);
+              const text = len > 0 ? doc.getTextRange(SECTION, p, 0, len) : '';
+              // Cheap fingerprint — length + first 40 + last 40 chars.
+              // Collisions are rare enough at the para level for diff
+              // visibility purposes.
+              const fp = `${len}|${text.slice(0, 40)}|${text.slice(-40)}`;
+              map.set(p, fp);
+            }
+          } catch (err) {
+            console.warn('[studio] snapshotParagraphs failed:', err);
+          }
+          return map;
+        },
+        markChangedParagraphsSince: (before: Map<number, string>) => {
+          const doc = docRef.current;
+          if (!doc) return;
+          const changed: number[] = [];
+          try {
+            const SECTION = 0;
+            const paraCount = doc.getParagraphCount(SECTION);
+            const cap = Math.min(paraCount, 1000);
+            for (let p = 0; p < cap; p++) {
+              const len = doc.getParagraphLength(SECTION, p);
+              const text = len > 0 ? doc.getTextRange(SECTION, p, 0, len) : '';
+              const fp = `${len}|${text.slice(0, 40)}|${text.slice(-40)}`;
+              const prior = before.get(p);
+              if (prior === undefined || prior !== fp) changed.push(p);
+            }
+          } catch (err) {
+            console.warn('[studio] markChangedParagraphs failed:', err);
+            return;
+          }
+          if (changed.length === 0) return;
+          // Resolve each paragraph to per-page rects via
+          // getSelectionRects(p, 0, p, len) — same path as the
+          // selection highlight uses.
+          const grouped: Record<
+            number,
+            { x: number; y: number; width: number; height: number }[]
+          > = {};
+          for (const p of changed) {
+            try {
+              const len = doc.getParagraphLength(0, p);
+              if (len === 0) continue;
+              const rects = JSON.parse(
+                doc.getSelectionRects(0, p, 0, p, len),
+              ) as {
+                pageIndex: number;
+                x: number;
+                y: number;
+                width: number;
+                height: number;
+              }[];
+              for (const r of rects) {
+                (grouped[r.pageIndex] ??= []).push({
+                  x: r.x,
+                  y: r.y,
+                  width: r.width,
+                  height: r.height,
+                });
+              }
+            } catch {
+              /* skip — IR may have shifted */
+            }
+          }
+          setChangedParaRects(grouped);
+          if (changedParaTimerRef.current !== null) {
+            window.clearTimeout(changedParaTimerRef.current);
+          }
+          changedParaTimerRef.current = window.setTimeout(() => {
+            setChangedParaRects({});
+            changedParaTimerRef.current = null;
+          }, 15_000);
+        },
         // chunk 20 — excerpt capture + stale verification. Selection
         // must be non-empty AND single-paragraph; multi-paragraph
         // excerpts need a span anchor model that the IR's
@@ -3706,6 +3843,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         renderEquationSvg,
         createRectShapeAtCaret,
         applyHtmlAtCaret,
+        styleList,
       ],
     );
 
@@ -5305,6 +5443,57 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             console.warn('[studio] scrollToParagraph failed:', err);
           }
         },
+        getOutline: () => {
+          const doc = docRef.current;
+          if (!doc) return [];
+          // Resolve heading styles by name. HWP convention is "제목 1",
+          // "제목 2", "제목 3" — we also accept "Heading N" for HWPX
+          // imports of foreign docs. Body styles ("바탕글" / "본문")
+          // are skipped.
+          const headingByStyleId = new Map<number, number>();
+          for (const s of styleList) {
+            const koMatch = s.name.match(/^제목\s*(\d+)?/);
+            const enMatch = s.englishName?.match(/^Heading\s*(\d+)?/i);
+            const m = koMatch ?? enMatch;
+            if (m) {
+              const level = m[1] ? Math.min(6, parseInt(m[1], 10)) : 1;
+              headingByStyleId.set(s.id, level);
+            }
+          }
+          if (headingByStyleId.size === 0) return [];
+          const items: {
+            paragraphIndex: number;
+            level: number;
+            text: string;
+          }[] = [];
+          try {
+            const SECTION = 0;
+            const paraCount = doc.getParagraphCount(SECTION);
+            const cap = Math.min(paraCount, 1000);
+            for (let p = 0; p < cap; p++) {
+              const at = JSON.parse(doc.getStyleAt(SECTION, p)) as {
+                id?: number;
+              };
+              if (typeof at.id !== 'number') continue;
+              const level = headingByStyleId.get(at.id);
+              if (!level) continue;
+              const len = doc.getParagraphLength(SECTION, p);
+              const text =
+                len > 0
+                  ? doc.getTextRange(SECTION, p, 0, Math.min(len, 200))
+                  : '';
+              items.push({
+                paragraphIndex: p,
+                level,
+                text: text.trim() || '(제목 없음)',
+              });
+              if (items.length >= 200) break;
+            }
+          } catch (err) {
+            console.warn('[studio] getOutline failed:', err);
+          }
+          return items;
+        },
         captureExcerpt: () => captureExcerpt(),
         exportSelectionHtmlAt: (
           sec: number,
@@ -6397,6 +6586,24 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                     data-page-idx={i}
                     className="absolute inset-0"
                   />
+                  {/* chunk 57 — AI-applied paragraph highlight. A
+                      thin amber stripe along the left edge of each
+                      changed paragraph, fades after 15s. Pointer
+                      events disabled so it doesn't intercept text
+                      selection. */}
+                  {(changedParaRects[i] ?? []).map((r, ri) => (
+                    <div
+                      key={`changed-${ri}`}
+                      data-testid="studio-changed-stripe"
+                      className="pointer-events-none absolute animate-pulse rounded-r bg-amber-400/60"
+                      style={{
+                        left: r.x * zoom,
+                        top: r.y * zoom,
+                        width: 3,
+                        height: r.height * zoom,
+                      }}
+                    />
+                  ))}
                   {/* Selection highlight overlay — one rect per visible
                       line in the selection range, computed via
                       getSelectionRects. */}

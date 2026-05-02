@@ -32,6 +32,7 @@ export type MenuAction =
   | 'file:save'
   | 'file:save-as'
   | 'file:export-html'
+  | 'file:export-pdf'
   | 'edit:undo'
   | 'edit:redo'
   | 'edit:copy'
@@ -110,6 +111,16 @@ export interface FileApi {
    * Wraps the body HTML in a minimal `<!DOCTYPE html>` shell. chunk 41.
    */
   exportHtml: (req: {
+    html: string;
+    defaultPath?: string;
+  }) => Promise<FileOpenResult | null>;
+  /**
+   * Export the active document as PDF — chunk 59. The renderer hands
+   * the body HTML over and main runs it through Chrome's `printToPDF`
+   * in a hidden BrowserWindow. Quality matches "Save as PDF" from a
+   * standard browser print — fine for review/share flows.
+   */
+  exportPdf: (req: {
     html: string;
     defaultPath?: string;
   }) => Promise<FileOpenResult | null>;

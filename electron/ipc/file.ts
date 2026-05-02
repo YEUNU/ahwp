@@ -176,6 +176,76 @@ ${req.html}
     },
   );
 
+  // chunk 59 — PDF export. We piggyback on Electron's Chrome PDF
+  // backend (`webContents.printToPDF`) by mounting the document HTML in
+  // a hidden BrowserWindow, asking Chrome to render it to PDF, and
+  // writing the bytes to a user-picked path. Quality is "Chrome's HTML
+  // → PDF" which matches the system "Save as PDF" output. Lossy on
+  // header/footer/footnote/표 layout vs the native HWP→PDF tools, but
+  // sufficient for review / sharing flows.
+  ipcMain.handle(
+    'file:export-pdf',
+    async (
+      event,
+      req: { html: string; defaultPath?: string },
+    ): Promise<FileOpenResult | null> => {
+      const callerWindow = BrowserWindow.fromWebContents(event.sender);
+      const dialogResult = await dialog.showSaveDialog(
+        callerWindow ?? new BrowserWindow({ show: false }),
+        {
+          title: 'PDF로 내보내기',
+          defaultPath: req.defaultPath
+            ? req.defaultPath.replace(/\.hwpx?$/i, '.pdf')
+            : undefined,
+          filters: [{ name: 'PDF', extensions: ['pdf'] }],
+        },
+      );
+      if (dialogResult.canceled || !dialogResult.filePath) return null;
+      const picked = dialogResult.filePath;
+
+      // Hidden offscreen window — sandboxed, no node integration. The
+      // shell wraps the body HTML with a print-friendly stylesheet so
+      // Chrome's pagination respects sane margins / line spacing.
+      const printWin = new BrowserWindow({
+        show: false,
+        webPreferences: {
+          sandbox: true,
+          contextIsolation: true,
+          nodeIntegration: false,
+        },
+      });
+      try {
+        const shell = `<!DOCTYPE html>
+<html lang="ko"><head>
+<meta charset="utf-8">
+<title>${path.basename(picked, path.extname(picked))}</title>
+<style>
+  @page { margin: 25mm; }
+  body { font-family: 'Pretendard', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; font-size: 11pt; line-height: 1.5; color: #1c1a16; }
+  p { margin: 0 0 0.4em 0; }
+  table { border-collapse: collapse; }
+  td, th { border: 1px solid #aaa; padding: 4px 6px; }
+  img { max-width: 100%; }
+</style>
+</head><body>
+${req.html}
+</body></html>`;
+        // loadURL with a data: URL — no temp file, no FS leak.
+        const dataUrl = `data:text/html;charset=utf-8,${encodeURIComponent(shell)}`;
+        await printWin.loadURL(dataUrl);
+        const pdfBytes = await printWin.webContents.printToPDF({
+          printBackground: true,
+          pageSize: 'A4',
+          margins: { marginType: 'default' },
+        });
+        await writeAtomic(picked, new Uint8Array(pdfBytes));
+        return { path: picked };
+      } finally {
+        if (!printWin.isDestroyed()) printWin.destroy();
+      }
+    },
+  );
+
   ipcMain.handle(
     'file:save-as',
     async (event, req: FileSaveAsRequest): Promise<FileOpenResult | null> => {

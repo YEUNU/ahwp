@@ -44,6 +44,10 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
         label: 'HTML로 내보내기…',
         click: () => send(getWindow(), 'file:export-html'),
       },
+      {
+        label: 'PDF로 내보내기…',
+        click: () => send(getWindow(), 'file:export-pdf'),
+      },
       { type: 'separator' },
       isMac
         ? { role: 'close', label: '창 닫기' }
