@@ -830,6 +830,11 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       cellIndex: number;
       cellParaIndex: number;
     } | null>(null);
+    // F5 press counter — Hancom convention: F5 1×=current cell block,
+    // F5 3×=whole table block (the 2× extension mode is Phase B-2.5).
+    // Reset whenever caret moves or any non-F5 key fires.
+    const f5PressCountRef = useRef(0);
+    const f5LastPressRef = useRef(0);
     // Undo/Redo (chunk 7). The doc IR exposes snapshot save/restore as a
     // bidirectional stack: each saveSnapshot returns an integer id; we
     // record IDs in chronological order along with an index pointer to
@@ -4464,6 +4469,116 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             e.preventDefault();
             return;
           }
+        }
+        // Phase B-2 — Hancom 호환 cell/row/column block 단축키.
+        // F5 = 현재 셀 (3번 연속 = 표 전체), F7 = 칸(열), F8 = 줄(행).
+        // Mac 변환 매핑: ⌘⌥B (cell) / ⌘⌥C (column) / ⌘⌥R (row) /
+        // ⌘⌥T (whole table). 키보드 핸들러에서 둘 다 받음.
+        const isCellBlockKey =
+          e.key === 'F5' ||
+          (e.metaKey && e.altKey && !e.shiftKey && e.key.toLowerCase() === 'b');
+        const isWholeTableKey =
+          e.metaKey && e.altKey && !e.shiftKey && e.key.toLowerCase() === 't';
+        const isColumnBlockKey =
+          e.key === 'F7' ||
+          (e.metaKey && e.altKey && !e.shiftKey && e.key.toLowerCase() === 'c');
+        const isRowBlockKey =
+          e.key === 'F8' ||
+          (e.metaKey && e.altKey && !e.shiftKey && e.key.toLowerCase() === 'r');
+        if (
+          isCellBlockKey ||
+          isWholeTableKey ||
+          isColumnBlockKey ||
+          isRowBlockKey
+        ) {
+          // F5 press counter — reset on any non-F5 key (here we
+          // increment only for F5; ⌘⌥B/C/R/T short-circuit count).
+          if (e.key === 'F5') {
+            const now = performance.now();
+            if (now - f5LastPressRef.current < 600) {
+              f5PressCountRef.current += 1;
+            } else {
+              f5PressCountRef.current = 1;
+            }
+            f5LastPressRef.current = now;
+          } else {
+            f5PressCountRef.current = 0;
+          }
+          if (!c.cell) {
+            // Outside a cell — F5/F7/F8 no-op (Hancom는 본문에선 동작 안 함).
+            e.preventDefault();
+            return;
+          }
+          const ci = c.cell;
+          try {
+            const cells = JSON.parse(
+              doc.getTableCellBboxes(
+                c.sectionIndex,
+                ci.parentParaIndex,
+                ci.controlIndex,
+              ),
+            ) as {
+              cellIdx: number;
+              row: number;
+              col: number;
+              rowSpan: number;
+              colSpan: number;
+              pageIndex: number;
+              x: number;
+              y: number;
+              w: number;
+              h: number;
+            }[];
+            const here = cells.find((x) => x.cellIdx === ci.cellIndex);
+            if (!here) {
+              e.preventDefault();
+              return;
+            }
+            // Predicate: which cells get included in the block.
+            let predicate: (cell: (typeof cells)[number]) => boolean = () =>
+              false;
+            if (isWholeTableKey || f5PressCountRef.current >= 3) {
+              predicate = () => true;
+            } else if (isCellBlockKey) {
+              predicate = (cell) => cell.cellIdx === here.cellIdx;
+            } else if (isColumnBlockKey) {
+              const cStart = here.col;
+              const cEnd = here.col + here.colSpan - 1;
+              predicate = (cell) =>
+                cell.col + cell.colSpan - 1 >= cStart && cell.col <= cEnd;
+            } else if (isRowBlockKey) {
+              const rStart = here.row;
+              const rEnd = here.row + here.rowSpan - 1;
+              predicate = (cell) =>
+                cell.row + cell.rowSpan - 1 >= rStart && cell.row <= rEnd;
+            }
+            const grouped: Record<
+              number,
+              { x: number; y: number; width: number; height: number }[]
+            > = {};
+            for (const cell of cells) {
+              if (predicate(cell)) {
+                (grouped[cell.pageIndex] ??= []).push({
+                  x: cell.x,
+                  y: cell.y,
+                  width: cell.w,
+                  height: cell.h,
+                });
+              }
+            }
+            setCellBlockHighlights(grouped);
+            setSelectionRectsByPage({});
+            setSelectedControlBboxes({});
+          } catch (err) {
+            console.warn('[studio] F-key cell block failed:', err);
+          }
+          e.preventDefault();
+          return;
+        }
+        // Reset F5 counter on any other key (so non-F5 press breaks
+        // the F5×3 chain).
+        if (e.key !== 'F5') {
+          f5PressCountRef.current = 0;
         }
         if (e.key === 'Home') {
           // Cmd/Ctrl + Home → jump to start of document (chunk 12).

@@ -14,6 +14,18 @@
 - **chunk 58 — 목차 사이드바 (⌘⇧O, 0.2.61)**: `viewer.getOutline()` — 단락 styleId를 styleList에서 "제목 N" / "Heading N"로 매칭, level 추출. `OutlineSidebar` 컴포넌트가 viewer 옆에 토글 + 클릭 시 scrollToParagraph
 - **chunk 57 — AI inline diff (0.2.61)**: `viewer.snapshotParagraphs()` + `markChangedParagraphsSince(before)`. AppShell의 applyHtml/runTools가 before/after로 bracket. 변경된 단락 좌측에 amber 3px 막대 + animate-pulse + 15s 후 페이드
 
+### Added — Phase B-2: 한글 호환 셀/행/열 block 단축키 (0.2.76)
+
+- **F5** (또는 Mac `⌘⌥B`) — 현재 셀 block. 600ms 안에 연속 입력 시 누름 횟수 카운트, 3회 누르면 표 전체 block (`F5×3`).
+- **F7** (또는 Mac `⌘⌥C`) — 칸(열) 전체 block. 현재 셀이 속한 열 전체.
+- **F8** (또는 Mac `⌘⌥R`) — 줄(행) 전체 block. 현재 셀이 속한 행 전체.
+- **`⌘⌥T`** — 표 전체 block (Mac에서 F5×3 직접 진입용 단축키).
+- 셀 안 caret이 아니면 모두 no-op (한글과 동일).
+- rowSpan/colSpan 고려한 cell intersection 검사로 병합 셀 정확히 처리.
+- 단축키 입력 즉시 `cellBlockHighlights`에 cell bbox 채워서 시각화. selectionRectsByPage / selectedControlBboxes는 비움.
+- F5×2 확장 모드(arrow로 셀 단위 확장)는 별도 commit (Phase B-2.5)로 미룸.
+- 기준: [한글 표 단축키 일람](https://help.hancom.com/hoffice/multi/ko_kr/hwp/view/toolbar/shortcut%28table%29.htm)
+
 ### Added — Phase A: 셀 경계 넘는 multi-cell drag block (0.2.75)
 
 - 셀 안에서 드래그를 시작해 다른 셀로 진입하면 한컴 한글 reference대로 char-level 모드에서 cell-block 모드로 자동 전환. 통과한 모든 셀(rectangular row/col 범위)이 하이라이트됨.
