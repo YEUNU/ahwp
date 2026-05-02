@@ -164,13 +164,18 @@ function relocateExcerpt(
   expected: string,
 ): {
   sectionIndex: number;
-  paragraphIndex: number;
+  startParagraphIndex: number;
   startOffset: number;
+  endParagraphIndex: number;
   endOffset: number;
 } | null {
   if (expected.length === 0) return null;
   // Single-section docs only (matches captureExcerpt). When we move to
   // multi-section, walk every section the same way.
+  // Multi-paragraph excerpts that span paragraph breaks WILL have a
+  // '\n' in `expected`; we don't try to rejoin paragraphs to relocate
+  // those — they fall through to stale-missing. Single-line search
+  // covers the common case (single-para excerpt edited in place).
   const SECTION_INDEX = 0;
   let paraCount: number;
   try {
@@ -192,8 +197,9 @@ function relocateExcerpt(
     if (idx >= 0) {
       return {
         sectionIndex: SECTION_INDEX,
-        paragraphIndex: p,
+        startParagraphIndex: p,
         startOffset: idx,
+        endParagraphIndex: p,
         endOffset: idx + expected.length,
       };
     }
@@ -2860,8 +2866,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
      */
     const captureExcerpt = useCallback((): {
       sectionIndex: number;
-      paragraphIndex: number;
+      startParagraphIndex: number;
       startOffset: number;
+      endParagraphIndex: number;
       endOffset: number;
       text: string;
     } | null => {
@@ -2872,19 +2879,54 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       if (sel.anchor.sectionIndex !== sel.focus.sectionIndex) return null;
       const range = sortRange(sel.anchor, sel.focus);
       if (range.empty) return null;
-      if (range.startPara !== range.endPara) return null;
+      const sec = sel.anchor.sectionIndex;
       try {
-        const text = doc.getTextRange(
-          sel.anchor.sectionIndex,
-          range.startPara,
-          range.startOffset,
-          range.endOffset - range.startOffset,
-        );
-        if (typeof text !== 'string' || text.length === 0) return null;
+        // chunk 28 — multi-paragraph spans. For the start paragraph
+        // read [startOffset, paragraphEnd]; for the end paragraph read
+        // [0, endOffset]; for paragraphs in between read the whole
+        // text. Join with '\n' so the captured `text` round-trips
+        // through prompt serialization with paragraph boundaries
+        // visible to the model.
+        const parts: string[] = [];
+        if (range.startPara === range.endPara) {
+          parts.push(
+            doc.getTextRange(
+              sec,
+              range.startPara,
+              range.startOffset,
+              range.endOffset - range.startOffset,
+            ),
+          );
+        } else {
+          // First paragraph (offset → end of paragraph)
+          const firstLen = doc.getParagraphLength(sec, range.startPara);
+          parts.push(
+            doc.getTextRange(
+              sec,
+              range.startPara,
+              range.startOffset,
+              Math.max(0, firstLen - range.startOffset),
+            ),
+          );
+          // Middle paragraphs (whole text)
+          for (let p = range.startPara + 1; p < range.endPara; p++) {
+            const len = doc.getParagraphLength(sec, p);
+            parts.push(doc.getTextRange(sec, p, 0, len));
+          }
+          // Last paragraph (0 → endOffset)
+          if (range.endOffset > 0) {
+            parts.push(
+              doc.getTextRange(sec, range.endPara, 0, range.endOffset),
+            );
+          }
+        }
+        const text = parts.join('\n');
+        if (text.length === 0) return null;
         return {
-          sectionIndex: sel.anchor.sectionIndex,
-          paragraphIndex: range.startPara,
+          sectionIndex: sec,
+          startParagraphIndex: range.startPara,
           startOffset: range.startOffset,
+          endParagraphIndex: range.endPara,
           endOffset: range.endOffset,
           text,
         };
@@ -3136,32 +3178,87 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           const doc = docRef.current;
           if (!doc) return null;
           try {
-            // Bounds check first — paragraph may have been deleted entirely.
-            const paraCount = doc.getParagraphCount(anchor.sectionIndex);
-            if (anchor.paragraphIndex >= paraCount) {
+            const sec = anchor.sectionIndex;
+            const paraCount = doc.getParagraphCount(sec);
+            // Bounds check on both ends — paragraphs may have been deleted.
+            if (
+              anchor.startParagraphIndex >= paraCount ||
+              anchor.endParagraphIndex >= paraCount ||
+              anchor.startParagraphIndex > anchor.endParagraphIndex
+            ) {
               const relocated = relocateExcerpt(doc, expected);
               return relocated
                 ? { status: 'stale-relocated', newAnchor: relocated }
                 : { status: 'stale-missing' };
             }
-            const paraLen = doc.getParagraphLength(
-              anchor.sectionIndex,
-              anchor.paragraphIndex,
-            );
-            const len = anchor.endOffset - anchor.startOffset;
-            if (anchor.endOffset > paraLen) {
-              // Paragraph shrank past the anchor end — anchor is stale.
-              const relocated = relocateExcerpt(doc, expected);
-              return relocated
-                ? { status: 'stale-relocated', newAnchor: relocated }
-                : { status: 'stale-missing' };
+            // Re-read the slice the same way captureExcerpt did, then
+            // compare to expected. Mismatch falls into relocation. The
+            // relocator only handles single-paragraph hits (rare for
+            // multi-para excerpts), so spans that move tend to surface
+            // as stale-missing — acceptable: user re-selects.
+            const parts: string[] = [];
+            if (anchor.startParagraphIndex === anchor.endParagraphIndex) {
+              const paraLen = doc.getParagraphLength(
+                sec,
+                anchor.startParagraphIndex,
+              );
+              if (anchor.endOffset > paraLen) {
+                const relocated = relocateExcerpt(doc, expected);
+                return relocated
+                  ? { status: 'stale-relocated', newAnchor: relocated }
+                  : { status: 'stale-missing' };
+              }
+              parts.push(
+                doc.getTextRange(
+                  sec,
+                  anchor.startParagraphIndex,
+                  anchor.startOffset,
+                  anchor.endOffset - anchor.startOffset,
+                ),
+              );
+            } else {
+              const firstLen = doc.getParagraphLength(
+                sec,
+                anchor.startParagraphIndex,
+              );
+              if (anchor.startOffset > firstLen) {
+                return { status: 'stale-missing' };
+              }
+              parts.push(
+                doc.getTextRange(
+                  sec,
+                  anchor.startParagraphIndex,
+                  anchor.startOffset,
+                  Math.max(0, firstLen - anchor.startOffset),
+                ),
+              );
+              for (
+                let p = anchor.startParagraphIndex + 1;
+                p < anchor.endParagraphIndex;
+                p++
+              ) {
+                const len = doc.getParagraphLength(sec, p);
+                parts.push(doc.getTextRange(sec, p, 0, len));
+              }
+              const endLen = doc.getParagraphLength(
+                sec,
+                anchor.endParagraphIndex,
+              );
+              if (anchor.endOffset > endLen) {
+                return { status: 'stale-missing' };
+              }
+              if (anchor.endOffset > 0) {
+                parts.push(
+                  doc.getTextRange(
+                    sec,
+                    anchor.endParagraphIndex,
+                    0,
+                    anchor.endOffset,
+                  ),
+                );
+              }
             }
-            const current = doc.getTextRange(
-              anchor.sectionIndex,
-              anchor.paragraphIndex,
-              anchor.startOffset,
-              len,
-            );
+            const current = parts.join('\n');
             if (current === expected) return { status: 'fresh' };
             const relocated = relocateExcerpt(doc, expected);
             return relocated
@@ -4549,82 +4646,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         // chunk 20 — excerpt capture + stale verify mirror the
         // ViewerHandle entries so e2e specs can drive the chip flow
         // without needing to script real selection drags.
-        captureExcerpt: () => {
-          const doc = docRef.current;
-          if (!doc) return null;
-          const sel = selectionRef.current;
-          if (!sel) return null;
-          if (sel.anchor.sectionIndex !== sel.focus.sectionIndex) return null;
-          const range = sortRange(sel.anchor, sel.focus);
-          if (range.empty) return null;
-          if (range.startPara !== range.endPara) return null;
-          try {
-            const text = doc.getTextRange(
-              sel.anchor.sectionIndex,
-              range.startPara,
-              range.startOffset,
-              range.endOffset - range.startOffset,
-            );
-            if (typeof text !== 'string' || text.length === 0) return null;
-            return {
-              sectionIndex: sel.anchor.sectionIndex,
-              paragraphIndex: range.startPara,
-              startOffset: range.startOffset,
-              endOffset: range.endOffset,
-              text,
-            };
-          } catch {
-            return null;
-          }
-        },
-        verifyExcerpt: (
-          anchor: {
-            sectionIndex: number;
-            paragraphIndex: number;
-            startOffset: number;
-            endOffset: number;
-          },
-          expected: string,
-        ): {
-          status: 'fresh' | 'stale-relocated' | 'stale-missing';
-          newAnchor?: typeof anchor;
-        } | null => {
-          const doc = docRef.current;
-          if (!doc) return null;
-          try {
-            const paraCount = doc.getParagraphCount(anchor.sectionIndex);
-            if (anchor.paragraphIndex >= paraCount) {
-              const r = relocateExcerpt(doc, expected);
-              return r
-                ? { status: 'stale-relocated', newAnchor: r }
-                : { status: 'stale-missing' };
-            }
-            const paraLen = doc.getParagraphLength(
-              anchor.sectionIndex,
-              anchor.paragraphIndex,
-            );
-            const len = anchor.endOffset - anchor.startOffset;
-            if (anchor.endOffset > paraLen) {
-              const r = relocateExcerpt(doc, expected);
-              return r
-                ? { status: 'stale-relocated', newAnchor: r }
-                : { status: 'stale-missing' };
-            }
-            const cur = doc.getTextRange(
-              anchor.sectionIndex,
-              anchor.paragraphIndex,
-              anchor.startOffset,
-              len,
-            );
-            if (cur === expected) return { status: 'fresh' };
-            const r = relocateExcerpt(doc, expected);
-            return r
-              ? { status: 'stale-relocated', newAnchor: r }
-              : { status: 'stale-missing' };
-          } catch {
-            return null;
-          }
-        },
+        captureExcerpt: () => captureExcerpt(),
         exportSelectionHtmlAt: (
           sec: number,
           startPara: number,
@@ -4861,6 +4883,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           .__studioDebug;
       };
     }, [
+      captureExcerpt,
       phase,
       isActive,
       pageCount,
@@ -5544,8 +5567,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                         const payload = {
                           docPath: path,
                           sectionIndex: cap.sectionIndex,
-                          paragraphIndex: cap.paragraphIndex,
+                          startParagraphIndex: cap.startParagraphIndex,
                           startOffset: cap.startOffset,
+                          endParagraphIndex: cap.endParagraphIndex,
                           endOffset: cap.endOffset,
                           text: cap.text,
                         };

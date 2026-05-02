@@ -20,11 +20,14 @@
 export interface TextRange {
   /** IR section index. Always 0 for current chunks (single-section). */
   sectionIndex: number;
-  /** Paragraph index within the section. */
-  paragraphIndex: number;
-  /** UTF-16 char offset where the excerpt starts. */
+  /** Paragraph index where the excerpt starts. */
+  startParagraphIndex: number;
+  /** UTF-16 char offset within the start paragraph. */
   startOffset: number;
-  /** UTF-16 char offset where the excerpt ends (exclusive). */
+  /** Paragraph index where the excerpt ends. Equal to start for
+   * single-paragraph excerpts; greater for spans (chunk 28). */
+  endParagraphIndex: number;
+  /** UTF-16 char offset within the end paragraph (exclusive). */
   endOffset: number;
 }
 

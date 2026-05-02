@@ -186,8 +186,9 @@ export interface ViewerHandle {
    */
   captureExcerpt: () => {
     sectionIndex: number;
-    paragraphIndex: number;
+    startParagraphIndex: number;
     startOffset: number;
+    endParagraphIndex: number;
     endOffset: number;
     text: string;
   } | null;
@@ -201,8 +202,9 @@ export interface ViewerHandle {
   verifyExcerpt: (
     anchor: {
       sectionIndex: number;
-      paragraphIndex: number;
+      startParagraphIndex: number;
       startOffset: number;
+      endParagraphIndex: number;
       endOffset: number;
     },
     expected: string,
@@ -210,8 +212,9 @@ export interface ViewerHandle {
     status: 'fresh' | 'stale-relocated' | 'stale-missing';
     newAnchor?: {
       sectionIndex: number;
-      paragraphIndex: number;
+      startParagraphIndex: number;
       startOffset: number;
+      endParagraphIndex: number;
       endOffset: number;
     };
   } | null;

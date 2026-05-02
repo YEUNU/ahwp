@@ -129,8 +129,9 @@ export interface ChatPanelProps {
    */
   captureExcerpt?: () => {
     sectionIndex: number;
-    paragraphIndex: number;
+    startParagraphIndex: number;
     startOffset: number;
+    endParagraphIndex: number;
     endOffset: number;
     text: string;
   } | null;
@@ -255,7 +256,7 @@ function buildExcerptSystemPrompt(excerpts: ExcerptAttachment[]): string {
   const lines: string[] = [SYSTEM_PROMPT_DOC_CONTEXT, '', '[발췌]:'];
   excerpts.forEach((ex, i) => {
     lines.push(
-      `[${i + 1}] role=${ex.role}  doc="${ex.docLabel}"  anchor={para:${ex.anchor.paragraphIndex}, [${ex.anchor.startOffset},${ex.anchor.endOffset}]}`,
+      `[${i + 1}] role=${ex.role}  doc="${ex.docLabel}"  anchor={para:${ex.anchor.startParagraphIndex}${ex.anchor.endParagraphIndex !== ex.anchor.startParagraphIndex ? `..${ex.anchor.endParagraphIndex}` : ''}, [${ex.anchor.startOffset},${ex.anchor.endOffset}]}`,
     );
     lines.push(`    "${ex.text.replace(/\s+/g, ' ').trim()}"`);
   });
@@ -467,8 +468,9 @@ export function ChatPanel({
   const addExcerptFromPayload = useCallback(
     (cap: {
       sectionIndex: number;
-      paragraphIndex: number;
+      startParagraphIndex: number;
       startOffset: number;
+      endParagraphIndex: number;
       endOffset: number;
       text: string;
       docPath?: string | null;
@@ -490,8 +492,9 @@ export function ChatPanel({
         role: 'target',
         anchor: {
           sectionIndex: cap.sectionIndex,
-          paragraphIndex: cap.paragraphIndex,
+          startParagraphIndex: cap.startParagraphIndex,
           startOffset: cap.startOffset,
+          endParagraphIndex: cap.endParagraphIndex,
           endOffset: cap.endOffset,
         },
         text: cap.text,
@@ -508,7 +511,7 @@ export function ChatPanel({
     const cap = captureExcerpt();
     if (!cap) {
       setExcerptError(
-        '선택된 텍스트가 없거나 두 문단에 걸쳐 있어 첨부할 수 없습니다.',
+        '선택된 텍스트가 없습니다. 먼저 문서에서 텍스트를 선택해 주세요.',
       );
       return;
     }
@@ -532,8 +535,9 @@ export function ChatPanel({
         const parsed = JSON.parse(raw) as {
           docPath?: string | null;
           sectionIndex: number;
-          paragraphIndex: number;
+          startParagraphIndex: number;
           startOffset: number;
+          endParagraphIndex: number;
           endOffset: number;
           text: string;
         };
@@ -859,7 +863,11 @@ export function ChatPanel({
                   title={ex.text}
                 >
                   <span className="text-muted-foreground">
-                    {ex.docLabel}:¶{ex.anchor.paragraphIndex}
+                    {ex.docLabel}:¶{ex.anchor.startParagraphIndex}
+                    {ex.anchor.endParagraphIndex !==
+                    ex.anchor.startParagraphIndex
+                      ? `..${ex.anchor.endParagraphIndex}`
+                      : ''}
                   </span>
                   <span className="max-w-[14rem] truncate">
                     {ex.text.replace(/\s+/g, ' ').trim()}
