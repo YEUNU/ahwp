@@ -740,6 +740,14 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           controlIndex: number;
           cellIndex: number;
           cellParaIndex: number;
+          // Phase E — nested 표 경로. 길이 1이면 top-level 표 (기존 동작),
+          // 길이 > 1이면 중첩 (셀 안 표 안 셀...). 첫 요소는 가장 바깥
+          // 표의 cell info, 마지막 요소는 현재 caret의 cell info.
+          path?: Array<{
+            controlIndex: number;
+            cellIndex: number;
+            cellParaIndex: number;
+          }>;
         };
       };
       focus: {
@@ -751,6 +759,11 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           controlIndex: number;
           cellIndex: number;
           cellParaIndex: number;
+          path?: Array<{
+            controlIndex: number;
+            cellIndex: number;
+            cellParaIndex: number;
+          }>;
         };
       };
     } | null>(null);
@@ -1488,13 +1501,25 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           return;
         }
         try {
-          const cells = JSON.parse(
-            doc.getTableCellBboxes(
-              sel.anchor.sectionIndex,
-              ac.parentParaIndex,
-              ac.controlIndex,
-            ),
-          ) as {
+          // Phase E — nested table 지원. anchor.cell.path 길이가 2+이면
+          // 중첩 표 내부 cell이므로 ByPath API 사용. path는 hitTest가
+          // 채워준 (controlIndex/cellIndex/cellParaIndex) 체인. 우리는
+          // 가장 안쪽 표의 cells가 필요하므로 path 전체를 path_json으로
+          // 전달 (마지막 segment에서 안쪽 표 식별).
+          const isNested =
+            !!ac.path && ac.path.length > 1 && !!fc.path && fc.path.length > 1;
+          const cellsJson = isNested
+            ? doc.getTableCellBboxesByPath(
+                sel.anchor.sectionIndex,
+                ac.parentParaIndex,
+                JSON.stringify(ac.path!.slice(0, -1)),
+              )
+            : doc.getTableCellBboxes(
+                sel.anchor.sectionIndex,
+                ac.parentParaIndex,
+                ac.controlIndex,
+              );
+          const cells = JSON.parse(cellsJson) as {
             cellIdx: number;
             row: number;
             col: number;
@@ -5504,6 +5529,14 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       controlIndex?: number;
       cellIndex?: number;
       cellParaIndex?: number;
+      // Phase E — IR이 hit이 nested table 안일 때 외부 → 내부 cell 체인을
+      // 채워서 반환. 길이 1 = top-level, 2+ = 중첩. ByPath API 사용 시
+      // JSON.stringify해서 path_json 인자로 전달.
+      cellPath?: Array<{
+        controlIndex: number;
+        cellIndex: number;
+        cellParaIndex: number;
+      }>;
       cursorRect?: {
         pageIndex: number;
         x: number;
@@ -5558,6 +5591,8 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         const result = hitTestAt(idx, e.clientX, e.clientY, e.currentTarget);
         if (!result) return;
         // Cell info present when the click lands inside a table cell.
+        // Phase E: cellPath이 hit 결과에 있으면 셀 (top-level + nested 모두)
+        // 그게 1단계면 기존 동작, 2단계 이상이면 ByPath API 사용 분기.
         const cell =
           result.controlIndex !== undefined &&
           result.cellIndex !== undefined &&
@@ -5568,6 +5603,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                 controlIndex: result.controlIndex,
                 cellIndex: result.cellIndex,
                 cellParaIndex: result.cellParaIndex,
+                path: result.cellPath,
               }
             : undefined;
         const baseCaret = {
@@ -5867,6 +5903,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                     controlIndex: moveResult.controlIndex,
                     cellIndex: moveResult.cellIndex,
                     cellParaIndex: moveResult.cellParaIndex,
+                    path: moveResult.cellPath,
                   }
                 : undefined;
             // (c) outside table or different table — freeze.

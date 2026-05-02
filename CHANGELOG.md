@@ -14,6 +14,26 @@
 - **chunk 58 — 목차 사이드바 (⌘⇧O, 0.2.61)**: `viewer.getOutline()` — 단락 styleId를 styleList에서 "제목 N" / "Heading N"로 매칭, level 추출. `OutlineSidebar` 컴포넌트가 viewer 옆에 토글 + 클릭 시 scrollToParagraph
 - **chunk 57 — AI inline diff (0.2.61)**: `viewer.snapshotParagraphs()` + `markChangedParagraphsSince(before)`. AppShell의 applyHtml/runTools가 before/after로 bracket. 변경된 단락 좌측에 amber 3px 막대 + animate-pulse + 15s 후 페이드
 
+### Changed — 자동 저장 draft → OS tmp 폴더 + Phase E (1차 nested cellPath) (0.2.85)
+
+#### 자동 저장 경로 이동
+
+- 기존: 원본 파일 옆에 `<path>.ahwp-draft` 사이드카 작성
+- 변경: `os.tmpdir()/ahwp-drafts/<sha1(path):16>.ahwp-draft`
+- 이유:
+  - 원본 폴더가 read-only / 권한 없는 경우에도 동작
+  - 사용자 폴더에 .ahwp-draft 잔여물이 흩어지지 않음
+  - 시스템이 주기적으로 `/tmp` 정리해도 원본 파일은 무사
+  - sha1 prefix로 충돌 회피 + 안전한 파일명
+- electron 4 IPC 핸들러 (`save-draft` / `has-draft` / `load-draft` / `clear-draft`) 모두 일괄 변경
+
+#### Phase E 1차: nested table cellPath in selection state
+
+- IR `hitTest` 결과의 `cellPath` 필드 (셀 체인) 를 selection state의 `cell.path?: Array<{controlIndex, cellIndex, cellParaIndex}>`에 저장
+- `refreshCellBlockHighlights`가 `path.length > 1`이면 `getTableCellBboxesByPath` 라이브러리 ByPath variant 사용 — 중첩 표 안 셀 block highlight 정상 동작
+- 기존 top-level 표 동작은 그대로 (path === undefined 또는 length === 1 시 기존 `getTableCellBboxes` 경로)
+- 2차 작업 (다음 phase): F-key / navigation / cell edit / merge·split 핸들러도 path 인식하도록 일괄 변환 — 라이브러리는 이미 모든 `*ByPath` variant 지원 (`mergeParagraphInCellByPath` / `splitParagraphInCellByPath` / `getCursorRectByPath` / `deleteTextInCellByPath` 등)
+
 ### Added — Phase D (2차 부분): 불연속 셀 ops (0.2.84)
 
 - 0.2.83에서 visual-only였던 Ctrl+클릭 셀을 ops에서도 사용. 별도 `discontiguousCellsRef` (ops iteration용 list)에 추가.

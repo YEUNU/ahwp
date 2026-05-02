@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import chokidar, { type FSWatcher } from 'chokidar';
 import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type {
   ExternalFileChangeEvent,
@@ -400,10 +401,22 @@ ${req.html}
     },
   );
 
-  // chunk 52 — auto-save draft sidecar (`<path>.ahwp-draft`). Each open
-  // dirty tab is dumped every 60s by the renderer; on next launch the
-  // user gets a recovery toast. Drafts are not read back automatically;
-  // restoration is an explicit user choice.
+  // chunk 52 (auto-save draft) — 0.2.85: 저장 위치를 원본 파일 옆
+  // sidecar에서 OS temp 디렉토리(`os.tmpdir()/ahwp-drafts/`)로 이동.
+  //   - 원본 파일이 있는 폴더가 read-only / 권한 없는 경우에도 동작
+  //   - 사용자 폴더에 .ahwp-draft 잔여물이 흩어지지 않음
+  //   - 시스템이 주기적으로 /tmp 정리해도 원본 파일은 무사
+  // draft 파일명: `<sha1(path):16>.ahwp-draft` (충돌 회피 + 안전한 파일명).
+  // 외부 변화 watcher와 무관 (원본 옆이 아니므로 noteOwnWrite 불필요).
+  const DRAFT_DIR = path.join(os.tmpdir(), 'ahwp-drafts');
+  const draftPathFor = (origPath: string): string => {
+    const key = createHash('sha1').update(origPath).digest('hex').slice(0, 16);
+    return path.join(DRAFT_DIR, `${key}.ahwp-draft`);
+  };
+  const ensureDraftDir = async (): Promise<void> => {
+    await fs.mkdir(DRAFT_DIR, { recursive: true });
+  };
+
   ipcMain.handle(
     'file:save-draft',
     async (
@@ -412,8 +425,8 @@ ${req.html}
     ): Promise<void> => {
       if (!req || typeof req.path !== 'string' || !req.path) return;
       try {
-        await writeAtomic(`${req.path}.ahwp-draft`, toUint8(req.bytes));
-        noteOwnWrite(`${req.path}.ahwp-draft`);
+        await ensureDraftDir();
+        await writeAtomic(draftPathFor(req.path), toUint8(req.bytes));
       } catch (err) {
         console.warn('[file] save-draft failed (non-fatal):', err);
       }
@@ -424,7 +437,7 @@ ${req.html}
     'file:has-draft',
     async (_event, p: unknown): Promise<boolean> => {
       if (typeof p !== 'string' || !p) return false;
-      return await exists(`${p}.ahwp-draft`);
+      return await exists(draftPathFor(p));
     },
   );
 
@@ -433,7 +446,7 @@ ${req.html}
     async (_event, p: unknown): Promise<ArrayBuffer | null> => {
       if (typeof p !== 'string' || !p) return null;
       try {
-        const buf = await fs.readFile(`${p}.ahwp-draft`);
+        const buf = await fs.readFile(draftPathFor(p));
         return buf.buffer.slice(
           buf.byteOffset,
           buf.byteOffset + buf.byteLength,
@@ -449,7 +462,7 @@ ${req.html}
     async (_event, p: unknown): Promise<void> => {
       if (typeof p !== 'string' || !p) return;
       try {
-        await fs.unlink(`${p}.ahwp-draft`);
+        await fs.unlink(draftPathFor(p));
       } catch {
         /* nothing to clear */
       }
