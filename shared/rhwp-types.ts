@@ -127,8 +127,10 @@ export interface RhwpCellInfo {
 // ─── Page def / Header-Footer ────────────────────────────
 
 export interface RhwpPageDef {
-  paperWidth?: number;
-  paperHeight?: number;
+  /** HWPUNIT 너비 (portrait orientation 기준). */
+  width?: number;
+  /** HWPUNIT 높이. */
+  height?: number;
   marginTop?: number;
   marginBottom?: number;
   marginLeft?: number;

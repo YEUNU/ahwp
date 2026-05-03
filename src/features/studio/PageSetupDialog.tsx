@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import type { RhwpPageDef } from '@shared/rhwp-types';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -88,9 +89,9 @@ export interface PageSetupDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** Read the active viewer's PageDef. Returns null if no doc is loaded. */
-  getCurrentPageDef: () => Record<string, unknown> | null;
+  getCurrentPageDef: () => RhwpPageDef | null;
   /** Apply a HWPUNIT-keyed PageDef to the active viewer's section 0. */
-  onApply: (props: Record<string, unknown>) => void;
+  onApply: (props: RhwpPageDef) => void;
 }
 
 export function PageSetupDialog({
@@ -109,10 +110,9 @@ export function PageSetupDialog({
     if (!open) return;
     const def = getCurrentPageDef();
     if (!def) return;
-    const widthHu = typeof def.width === 'number' ? def.width : 0;
-    const heightHu = typeof def.height === 'number' ? def.height : 0;
-    const landscape =
-      typeof def.landscape === 'boolean' ? def.landscape : false;
+    const widthHu = def.width ?? 0;
+    const heightHu = def.height ?? 0;
+    const landscape = def.landscape ?? false;
     const widthMm = huToMm(widthHu);
     const heightMm = huToMm(heightHu);
     const presetId = detectPreset(widthMm, heightMm);
@@ -122,18 +122,10 @@ export function PageSetupDialog({
       widthMm,
       heightMm,
       landscape,
-      marginLeftMm: huToMm(
-        typeof def.marginLeft === 'number' ? def.marginLeft : 0,
-      ),
-      marginRightMm: huToMm(
-        typeof def.marginRight === 'number' ? def.marginRight : 0,
-      ),
-      marginTopMm: huToMm(
-        typeof def.marginTop === 'number' ? def.marginTop : 0,
-      ),
-      marginBottomMm: huToMm(
-        typeof def.marginBottom === 'number' ? def.marginBottom : 0,
-      ),
+      marginLeftMm: huToMm(def.marginLeft ?? 0),
+      marginRightMm: huToMm(def.marginRight ?? 0),
+      marginTopMm: huToMm(def.marginTop ?? 0),
+      marginBottomMm: huToMm(def.marginBottom ?? 0),
     });
   }, [open, getCurrentPageDef]);
 
@@ -157,7 +149,7 @@ export function PageSetupDialog({
     // PageDef expects width/height at the *physical* orientation; we
     // store mm values at portrait and let the IR's `landscape` flag
     // handle the swap.
-    const props: Record<string, unknown> = {
+    const props: RhwpPageDef = {
       width: mmToHu(form.widthMm),
       height: mmToHu(form.heightMm),
       landscape: form.landscape,

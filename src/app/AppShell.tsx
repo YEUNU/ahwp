@@ -555,8 +555,14 @@ export default function AppShell() {
       <PageSetupDialog
         open={pageSetupOpen}
         onOpenChange={setPageSetupOpen}
-        getCurrentPageDef={() => activeViewerRef()?.getPageDef() ?? null}
-        onApply={(props) => activeViewerRef()?.applyPageDef(props)}
+        getCurrentPageDef={() =>
+          activeViewerRef()?.getPageDef() as
+            | import('@shared/rhwp-types').RhwpPageDef
+            | null
+        }
+        onApply={(props) =>
+          activeViewerRef()?.applyPageDef(props as Record<string, unknown>)
+        }
       />
       <HeaderFooterDialog
         open={hfOpen}

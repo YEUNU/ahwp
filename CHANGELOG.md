@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+### Refactored — Phase 4 chunk 56: R5.A consumer narrowing (0.3.8)
+
+- **`shared/rhwp-types.ts` 필드 보정** — `RhwpPageDef` 의 잘못된 `paperWidth/paperHeight` → `width/height` 로 정정 (실제 lib 응답과 일치). HWPUNIT 단위 주석 추가.
+- **`PageSetupDialog` consumer-level narrowing** — props 의 `Record<string, unknown> | null` → `RhwpPageDef | null`. `typeof def.X === 'number' ? def.X : 0` 보일러플레이트 제거 → `def.X ?? 0` 으로 단순화 (-12 라인). public `ViewerHandle` 인터페이스는 그대로 (`Record<string, unknown>`) — narrow type 은 index signature 가 없어서 ripple 이 크기 때문에 dialog 입구에서만 명시 캐스트로 좁힌다.
+- **AppShell bridge** — `getCurrentPageDef` / `onApply` 두 prop 위치에서 `as RhwpPageDef` / `as Record<string, unknown>` 명시 캐스트로 viewer ↔ dialog 연결. 다른 dialog (HeaderFooter / Bookmark / TableProps / FormulaEditor) 도 같은 패턴으로 incremental 적용 가능 — 패턴만 확립, 일괄 적용은 보류 (rhwp-types 의 narrow 타입 21개 중 1개만 consume — 후속 chunk).
+
 ### Added — Phase 4 chunk 55: Diff Viewer (0.3.7)
 
 - **`ahwp-patches` 응답 블록** — Manual 모드의 세 번째 응답 형식 (HTML / ahwp-tools 와 공존). 모델이 위치 한정 미세 수정 (오타 / 톤 / 표현) 을 제안할 때 사용. `shared/ai-patches.ts` (parser + AHWP_PATCH_LIMITS — maxOps 20, maxText 8KB)

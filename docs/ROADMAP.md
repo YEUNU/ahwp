@@ -236,6 +236,7 @@
       • Settings 4탭 재설계 (일반/AI 공급자/단축키/정보) — AboutDialog + ShortcutsDialog 통합 → 두 파일 삭제.
       • Manual/Agent pill 토글 (sub-label "제안 → 승인" / "자동 실행").
       • R1: StudioViewer 9610→4843 (8 hooks + PaperPage). R2: ChatPanel 2396→1501 (3 hooks + prompts). R3: AppShell 1545→1080 (4 hooks). R4: ai-tools 1965→429 (4-way split). R5: safeIrCall helper + 33개 ir\* tool wrapper 일원화. R6: callCellOp helper + 3개 사이트 적용. 외부 contract / e2e 동작 1:1 보존. 자세한 진행은 [REFACTORING_PLAN.md](REFACTORING_PLAN.md)
+- [x] **chunk 56** — R5.A consumer narrowing 패턴 확립 ✅ (0.3.8): `shared/rhwp-types.ts` `RhwpPageDef` 필드명 정정 (`paperWidth/paperHeight` → `width/height`). `PageSetupDialog` props 를 `RhwpPageDef` 로 좁히고 AppShell 입구에서 명시 캐스트로 viewer (`Record<string, unknown>`) ↔ dialog (narrow) 연결. typeof guard 보일러플레이트 -12 라인. public `ViewerHandle` 은 그대로 (narrow type 의 index signature 부재로 ripple 크기 때문) — 패턴만 확립, 21개 narrow type 중 PageSetupDialog 1개 consume
 - [ ] 메이저 버전 일괄 업그레이드 (React 19, Tailwind 4, Electron 41, vite 8, TS 6 등 별도 마이그레이션)
 
 검증: 새 OS에서 설치 → 자동 업데이트 시뮬레이션.
