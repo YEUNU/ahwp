@@ -5680,13 +5680,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         const doc = docRef.current;
         if (!doc) return null;
         const rect = target.getBoundingClientRect();
-        // 셀 경계 off-by-one 회피 — lib의 hitTest는 x=cellLeftEdge일 때
-        // 이전 cell을 돌려줌 (right-inclusive). 텍스트가 셀 좌측에 close
-        // 하게 시작하면 click이 정확히 boundary에 떨어져 anchor cell이
-        // 한 칸 왼쪽으로 잡히는 버그 (사용자 보고 0.2.91). Sub-pixel
-        // 우측 nudge로 boundary 모호성 해소. body text caret 위치
-        // 영향 미미 (subpixel 단위라 char 경계 안 넘음).
-        const x = (clientX - rect.left) / zoom + 1;
+        const x = (clientX - rect.left) / zoom;
         const y = (clientY - rect.top) / zoom;
         try {
           return JSON.parse(doc.hitTest(idx, x, y)) as HitTestResult;
@@ -6164,6 +6158,58 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           //       (cross-table drag is not supported)
           const cd = cellDragRef.current;
           if (cd) {
+            // 셀 boundary off-by-one 회피 — drag mousemove 시점에 한정.
+            // lib hitTest는 x=cellLeftEdge에서 이전 cell을 right-inclusive로
+            // 돌려줌. drag 중 cursor가 boundary에 짧게 떨어지면 focus가
+            // 한 칸 뒤로 잡혔다 풀렸다 깜빡 — bbox로 click point가 어떤
+            // 셀에 있는지 직접 확인해서 정정. 단발 click(mousedown)에는
+            // 적용 안 함 — 사용자의 명시적 click 의도 존중 + 셀 진입
+            // 보장.
+            if (
+              moveResult.controlIndex !== undefined &&
+              moveResult.cellIndex !== undefined &&
+              moveResult.parentParaIndex !== undefined &&
+              (moveResult.cellPath?.length ?? 1) === 1 &&
+              docRef.current
+            ) {
+              try {
+                const cellsJson = docRef.current.getTableCellBboxes(
+                  moveResult.sectionIndex,
+                  moveResult.parentParaIndex,
+                  moveResult.controlIndex,
+                );
+                const cells = JSON.parse(cellsJson) as {
+                  cellIdx: number;
+                  x: number;
+                  y: number;
+                  w: number;
+                  h: number;
+                }[];
+                // page-local x,y 계산 — applyPointerToSelection scope에 hitX/hitY 있음.
+                const localX =
+                  (hitX - pageEl.getBoundingClientRect().left) / zoom;
+                const localY =
+                  (hitY - pageEl.getBoundingClientRect().top) / zoom;
+                const correctCell = cells.find(
+                  (c) =>
+                    localX >= c.x &&
+                    localX < c.x + c.w &&
+                    localY >= c.y &&
+                    localY < c.y + c.h,
+                );
+                if (
+                  correctCell &&
+                  correctCell.cellIdx !== moveResult.cellIndex
+                ) {
+                  moveResult.cellIndex = correctCell.cellIdx;
+                  if (moveResult.cellPath && moveResult.cellPath.length === 1) {
+                    moveResult.cellPath[0].cellIndex = correctCell.cellIdx;
+                  }
+                }
+              } catch {
+                /* bbox 조회 실패 — 원본 그대로 */
+              }
+            }
             const moveCell =
               moveResult.controlIndex !== undefined &&
               moveResult.cellIndex !== undefined &&

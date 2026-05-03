@@ -6,6 +6,25 @@
 
 ## [Unreleased]
 
+### Fixed — 0.2.91 글로벌 nudge revert + drag-only bbox validation (0.2.92)
+
+0.2.91 의 `hitTestAt` 글로벌 +1 px nudge 가 "셀 안에 커서 잘 안 들어가
+(글자가 있으면)" 회귀 유발. 모든 hit (단발 click 포함)에 적용된 nudge
+가 text-rich cell 에서 caret entry / cursor visualization 에 영향.
+
+- **revert**: `hitTestAt` 의 +1 nudge 제거. 단발 click 은 lib 원래
+  동작 (사용자 명시 의도 존중 + caret 진입 보장).
+- **추가**: drag mousemove (cell-drag 모드) 한정 bbox validation —
+  `applyPointerToSelection` 의 cell-drag 분기에서 `hitTest` 결과의
+  cellIndex 를 `getTableCellBboxes` 결과로 검증, x/y 가 다른 cell 의
+  bbox 안에 있으면 정정. drag 중 boundary off-by-one 만 노린 좁은
+  scope 의 fix.
+- click 경로에서는 적용 안 함 — 사용자 보고 "셀 안 커서 안 들어가"
+  회귀 회피.
+- `studio-cell-edge.spec.ts` 의 +0px (정확 boundary) 케이스 제외 —
+  click 경로는 의도적으로 lib 원래 right-inclusive 동작 유지.
+- studio e2e 211/212 통과.
+
 ### Fixed — 셀 좌측 경계 hit test off-by-one (0.2.91, 진짜 근본 원인)
 
 **근본 원인 확인**: lib `doc.hitTest`가 `x = cellLeftEdge` 정확히 그

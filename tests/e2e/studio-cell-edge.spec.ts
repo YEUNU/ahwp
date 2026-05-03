@@ -149,8 +149,11 @@ test.describe('Cell edge hit test diagnostic', () => {
     await page.waitForTimeout(80);
 
     // 각 visual cell의 left-edge에서 offset 별 cellIndex 검증.
-    // hitTestAt 의 +1 nudge로 boundary 0px 도 정상 매핑되어야 함.
-    const offsetsPx = [0, 1, 2, 5];
+    // +0px (정확한 boundary) 는 lib의 right-inclusive 동작이라 click 경로
+    // 에서 직접 정정 안 함 (caret entry 보장이 우선). Drag 중에는
+    // applyPointerToSelection 의 bbox-validation 이 정정 — drag 회귀
+    // 가드는 studio-cell-drag.spec.ts 에 별도 케이스.
+    const offsetsPx = [1, 2, 5, 10];
     for (let visualPos = 1; visualPos < 4; visualPos++) {
       const r = cellRects[visualPos];
       const cy = r.y + r.h / 2;
