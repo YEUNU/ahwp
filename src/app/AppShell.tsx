@@ -1131,7 +1131,20 @@ export default function AppShell() {
                           start,
                           p.addition,
                         );
-                        return okIns;
+                        if (!okIns) return false;
+                        // Q5 확장 — additionFormat 이 있으면 삽입한
+                        // 영역에 char format 적용. 같은 undo group 안.
+                        if (p.additionFormat) {
+                          const insEnd = start + p.addition.length;
+                          v.irApplyCharFormat(
+                            sec,
+                            para,
+                            start,
+                            insEnd,
+                            p.additionFormat as Record<string, unknown>,
+                          );
+                        }
+                        return true;
                       } catch (err) {
                         console.warn('[diff] applyPatch failed:', err);
                         return false;
@@ -1139,6 +1152,15 @@ export default function AppShell() {
                     });
                     v.endUndoGroup();
                     return results;
+                  }}
+                  previewPatch={(patch) => {
+                    // Q5 확장 — "에디터에서 보기". 스크롤 + caret 이동.
+                    const v = activeViewerRef();
+                    if (!v) return;
+                    v.scrollToParagraph(
+                      patch.location.sectionIndex,
+                      patch.location.paragraphIndex,
+                    );
                   }}
                 />
               </div>

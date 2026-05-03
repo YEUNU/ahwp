@@ -18,6 +18,18 @@ export interface PatchLocation {
   label?: string;
 }
 
+/** Char format hints applied to the addition after insertion. Mirrors
+ * `applyCharFormat` props_json subset. */
+export interface PatchCharFormat {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  /** Lowercase hex like "#ff0000". */
+  textColor?: string;
+  /** HWPUNIT (1pt = 100). e.g. 1000 = 10pt. */
+  fontSize?: number;
+}
+
 export interface AhwpPatch {
   /** Short title shown in card header. */
   title: string;
@@ -27,6 +39,10 @@ export interface AhwpPatch {
   deletion: string;
   /** Replacement text. */
   addition: string;
+  /** Optional char format applied to the addition after insertion (e.g.
+   * bold/italic/color). Applied via `applyCharFormat` in the same
+   * undo group as the text change. */
+  additionFormat?: PatchCharFormat;
   /** Optional explanation shown via expander. */
   reason?: string;
 }
@@ -94,6 +110,23 @@ function validatePatch(
     byteLen(reason) > AHWP_PATCH_LIMITS.maxReasonBytes
   )
     return { ok: false, reason: 'reason-too-large' };
+  // Optional addition format. We accept narrow shape only — extra keys
+  // are tolerated but not narrowed (caller passes the typed slice to
+  // applyCharFormat).
+  let additionFormat: PatchCharFormat | undefined;
+  const fmt = raw.additionFormat;
+  if (fmt !== undefined) {
+    if (!isObj(fmt)) return { ok: false, reason: 'additionFormat-not-object' };
+    additionFormat = {};
+    if (typeof fmt.bold === 'boolean') additionFormat.bold = fmt.bold;
+    if (typeof fmt.italic === 'boolean') additionFormat.italic = fmt.italic;
+    if (typeof fmt.underline === 'boolean')
+      additionFormat.underline = fmt.underline;
+    if (typeof fmt.textColor === 'string')
+      additionFormat.textColor = fmt.textColor;
+    if (typeof fmt.fontSize === 'number')
+      additionFormat.fontSize = fmt.fontSize;
+  }
   const value: AhwpPatch = {
     title,
     location: {
@@ -105,6 +138,7 @@ function validatePatch(
     },
     deletion: del,
     addition: add,
+    additionFormat,
     reason,
   };
   return { ok: true, value };

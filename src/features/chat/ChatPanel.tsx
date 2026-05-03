@@ -227,6 +227,12 @@ export interface ChatPanelProps {
    * whole batch.
    */
   applyPatches?: (patches: AhwpPatch[]) => boolean[];
+  /**
+   * Diff Viewer "에디터에서 보기" (Q5 확장). Scroll the active viewer
+   * to the patch's paragraph + place caret at the start offset.
+   * No-op when no viewer is active.
+   */
+  previewPatch?: (patch: AhwpPatch) => void;
 }
 
 /**
@@ -262,6 +268,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       getDocOutline,
       undoLastApply,
       applyPatches,
+      previewPatch,
     },
     ref,
   ) {
@@ -895,6 +902,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   onRunTools={runTools}
                   onUndoApply={undoLastApply}
                   onApplyPatches={applyPatches}
+                  onPreviewPatch={previewPatch}
                 />
               ))
           )}
@@ -1094,6 +1102,8 @@ interface MessageProps {
   onUndoApply?: () => boolean;
   /** Apply a batch of patches as a grouped-undo turn (Q5 diff viewer). */
   onApplyPatches?: (patches: AhwpPatch[]) => boolean[];
+  /** Scroll the editor to a patch's location (Q5 확장). */
+  onPreviewPatch?: (patch: AhwpPatch) => void;
 }
 
 /** Manual / Agent mode pill (style_example). Two-state segmented toggle
@@ -1233,6 +1243,7 @@ function Message({
   onRunTools,
   onUndoApply,
   onApplyPatches,
+  onPreviewPatch,
 }: MessageProps): JSX.Element {
   const isUser = message.role === 'user';
   const isAssistantStreaming =
@@ -1341,12 +1352,44 @@ function Message({
     setPatchStatusOverrides((prev) => ({ ...prev, [idx]: status }));
   };
 
+  // Q5 확장 — Accept 후 ~12s 토스트 ("N개 적용됨 · 되돌리기").
+  const [patchToast, setPatchToast] = useState<{
+    appliedCount: number;
+  } | null>(null);
+  const patchToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (patchToastTimerRef.current) clearTimeout(patchToastTimerRef.current);
+    };
+  }, []);
+  const showPatchToast = (count: number): void => {
+    if (count <= 0) return;
+    setPatchToast({ appliedCount: count });
+    if (patchToastTimerRef.current) clearTimeout(patchToastTimerRef.current);
+    patchToastTimerRef.current = setTimeout(() => setPatchToast(null), 12000);
+  };
+  const handlePatchUndo = (): void => {
+    if (!onUndoApply) return;
+    if (onUndoApply()) {
+      // After undo, all accepted statuses revert visually to pending —
+      // we don't track which ones were just accepted vs. earlier, so
+      // wipe overrides entirely. (For multi-step accept flows the user
+      // can re-apply.)
+      setPatchStatusOverrides({});
+      if (patchToastTimerRef.current) clearTimeout(patchToastTimerRef.current);
+      setPatchToast(null);
+    }
+  };
+
   const handlePatchAcceptIdx = (idx: number): void => {
     if (!patchesParsed?.ok || !onApplyPatches) return;
     const item = patchesParsed.items[idx];
     if (!item.ok) return;
     const results = onApplyPatches([item.patch]);
-    if (results[0]) setPatchStatusAt(idx, 'accepted');
+    if (results[0]) {
+      setPatchStatusAt(idx, 'accepted');
+      showPatchToast(1);
+    }
   };
   const handlePatchRejectIdx = (idx: number): void => {
     setPatchStatusAt(idx, 'rejected');
@@ -1361,13 +1404,16 @@ function Message({
     });
     if (pendingItems.length === 0) return;
     const results = onApplyPatches(pendingItems.map((x) => x.patch));
+    let okCount = 0;
     setPatchStatusOverrides((prev) => {
       const next = { ...prev };
       pendingItems.forEach((it, k) => {
+        if (results[k]) okCount += 1;
         next[it.idx] = results[k] ? 'accepted' : 'rejected';
       });
       return next;
     });
+    showPatchToast(okCount);
   };
 
   // Tool-call dispatcher affordance — chunk 19. The model emits a
@@ -1524,7 +1570,29 @@ function Message({
               onAccept={handlePatchAcceptIdx}
               onReject={handlePatchRejectIdx}
               onAcceptAll={handlePatchAcceptAll}
+              onPreview={onPreviewPatch}
             />
+            {patchToast ? (
+              <div
+                className="mt-2 flex items-center gap-3 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs"
+                data-testid="diff-applied-toast"
+              >
+                <Check className="size-3.5 text-emerald-600" />
+                <span className="flex-1 font-medium text-foreground">
+                  {patchToast.appliedCount}개 적용됨
+                </span>
+                {onUndoApply ? (
+                  <button
+                    type="button"
+                    onClick={handlePatchUndo}
+                    className="text-[11px] font-medium text-emerald-700 hover:underline dark:text-emerald-300"
+                    data-testid="diff-applied-undo"
+                  >
+                    되돌리기
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         ) : null}
         {patchesParsed && !patchesParsed.ok ? (

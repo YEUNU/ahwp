@@ -91,6 +91,10 @@ export function DialogFooter({
   );
 }
 
+// Q8 — Settings header 와 동일한 typography 톤. 전체 dialog 가 이 토큰
+// 을 통해 일관된 헤더를 갖는다 (PageSetup / HeaderFooter / Bookmark /
+// Footnote / Equation / TableProps / CellProps / PictureProps / Shape /
+// StyleManager / VersionHistory / FormulaEditor 모두 영향).
 export const DialogTitle = forwardRef<
   ElementRef<typeof DialogPrimitive.Title>,
   ComponentPropsWithoutRef<typeof DialogPrimitive.Title>
@@ -98,7 +102,7 @@ export const DialogTitle = forwardRef<
   <DialogPrimitive.Title
     ref={ref}
     className={cn(
-      'text-lg font-semibold leading-none tracking-tight',
+      'text-[17px] font-bold leading-tight tracking-tight',
       className,
     )}
     {...props}
@@ -112,7 +116,7 @@ export const DialogDescription = forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Description
     ref={ref}
-    className={cn('text-sm text-muted-foreground', className)}
+    className={cn('text-xs leading-relaxed text-muted-foreground', className)}
     {...props}
   />
 ));

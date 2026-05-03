@@ -12,12 +12,15 @@
 - **DiffCard UI** — `src/features/chat/DiffCard.tsx`. 1개 패치는 큰 카드 (제목 + 위치 + +/− diff line + reason expander + Accept/Reject), 2개 이상은 외부 컨테이너 + 컴팩트 StackedPatch + "모두 Accept" 버튼. accepted 상태는 emerald 글로우, rejected 는 dim
 - **묶음 undo** — Accept All 한 번 누르면 모든 pending 패치를 single ⌘Z 로 롤백 가능 (chunk 27 grouped-undo 활용). AppShell.applyPatches 가 `beginUndoGroup` → 각 패치 `irDeleteRange` + `irInsertText` → `endUndoGroup`
 - **System prompt 가이드** — `prompts.ts` SYSTEM_PROMPT_DOC_CONTEXT 에 [C] ahwp-patches 섹션 추가. location.startOffset/endOffset 으로 단락 내 일부만 교체 (없으면 전체 단락)
+- **Diff Viewer 확장** — 패치별 `additionFormat` 필드 (bold/italic/underline/textColor/fontSize) — Accept 시 `irApplyCharFormat` 호출로 같은 undo group 안에서 형식 적용. `previewPatch` ("에디터에서 보기") → `scrollToParagraph` 연결. Accept 후 12초 emerald 토스트 ("N개 적용됨 · 되돌리기")
+- **Diff Viewer e2e** — `tests/e2e/chat-diff.spec.ts` (3 케이스 — single Accept + ⌘Z, multi Accept All, invalid block 에러)
 
 ### Changed — Phase 4 chunk 55: UI/UX align (0.3.7)
 
 - **Settings 다이얼로그 4탭 재설계** — 좌측 사이드바 (일반 / AI 공급자 / 단축키 / 정보) + 우측 디테일. 720×620 모달. 기존 AboutDialog + ShortcutsDialog 두 다이얼로그 통합 → 두 파일 삭제. `view:about` / `view:shortcuts` 메뉴 액션은 Settings 의 해당 탭으로 라우팅 (`openSettingsTab(tab)`)
 - **Manual / Agent pill 토글** — 라디오-스타일 토글을 inset pill segmented control 로 교체. icon + label + sub-label ("제안 → 승인" / "자동 실행"). 활성 버튼은 bg-card + shadow-sm + aria-selected=true
 - **AI 공급자 카드형 ProviderCard** — icon avatar + connected pill ("연결됨" / "미연결") + API 키 / Base URL / supportsTools / 저장·연결테스트·삭제 버튼. 기존 `●` / `○` indicator → 텍스트 pill 로 교체
+- **DialogTitle / DialogDescription primitive 업그레이드 (Q8)** — Settings header 와 동일한 17px 볼드 타이틀 + 12px leading-relaxed description. 단일 변경으로 PageSetup / HeaderFooter / Bookmark / Footnote / Equation / TableProps / CellProps / PictureProps / Shape / StyleManager / VersionHistory / FormulaEditor 12개 다이얼로그 모두 톤 정렬 (사이드바-디테일 구조는 단일-목적 다이얼로그라 과한 변환이라 보류)
 
 ### Refactored — Phase 4 chunk 55: 코어 리팩토링 R1~R6 (0.3.7)
 
