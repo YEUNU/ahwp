@@ -6,6 +6,33 @@
 
 ## [Unreleased]
 
+### Fixed — Gemini schema sanitize + live smoke 검증 (0.3.2)
+
+라이브 검증 시 발견한 Gemini API 제약 3건 + 회귀 가드 + 기본 모델
+교체. AHWP_TEST_GOOGLE_KEY 와 함께 e2e 통과 (sentinel + Agent 도구
+호출 round-trip 모두).
+
+- **schema sanitize** — `properties` 안 property 이름까지 dropping 되던
+  버그 fix (필터가 모든 키를 schema keyword 로 취급). `properties`
+  분기 추가해 키 보존 + 값만 재귀 sanitize.
+- **enum + type** — Gemini 는 `{enum: [...]}` 만으로는 안 받음.
+  `{type: 'string', enum: [...]}` 명시. `applyAlignment` /
+  `toggleCharFormat` 카탈로그 갱신.
+- **exclusiveMinimum / pattern drop** — Gemini 가 받는 JSON Schema
+  subset 이 OpenAI 보다 좁음 (`exclusiveMinimum`, `exclusiveMaximum`,
+  `pattern`, `additionalProperties`, `anyOf` 등 거부). sanitize 가
+  드롭. 우리 validator (`shared/ai-tools.ts`) 가 dispatch 전에 강제
+  하므로 보안성 영향 0.
+- **기본 모델** — `gemini-2.0-flash` → `gemini-2.5-flash`. 2.0 은 free
+  tier quota 0 인 프로젝트가 많아 2.5 가 안전.
+- **신규 spec** — `gemini-live.spec.ts` (2 케이스): sentinel round-trip,
+  Agent applyAlignment 호출 + tool-entry 렌더.
+- **인프라** — `playwright.config.ts` 에 dependency-free dotenv 로더.
+  `.env` 의 KEY=VALUE 자동 로드 → process.env 주입. nvidia-live 도
+  동일 메커니즘으로 NVAPI_KEY 자동 사용.
+
+라이브 e2e 결과: gemini-live 2/2 + nvidia-live 5/5 = **7/7 통과** (27.5s).
+
 ### Added — Google Gemini 어댑터 (chunk 43, 0.3.1)
 
 Phase 3 chunk 43 — Google Gemini provider 잠금 해제. 기존 OpenAI/NIM과
