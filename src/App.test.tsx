@@ -14,6 +14,14 @@ describe('App', () => {
       }),
       onMenuAction: vi.fn().mockReturnValue(() => {}),
       newWindow: vi.fn().mockResolvedValue(undefined),
+      getVersions: vi.fn().mockResolvedValue({
+        app: '0.0.0-test',
+        electron: '33.0.0',
+        chrome: '120.0.0',
+        node: '20.0.0',
+        platform: 'darwin',
+        arch: 'arm64',
+      }),
       file: {
         new: vi.fn().mockResolvedValue({ path: '/tmp/new.hwp' }),
         open: vi.fn().mockResolvedValue(null),

@@ -56,7 +56,8 @@ export type MenuAction =
   | 'format:bold'
   | 'format:italic'
   | 'format:underline'
-  | 'view:settings';
+  | 'view:settings'
+  | 'view:about';
 
 export interface RecentFile {
   path: string;
@@ -441,11 +442,23 @@ export interface ChatHistoryApi {
   delete: (id: number) => Promise<{ ok: true }>;
 }
 
+export interface AppVersions {
+  app: string;
+  electron: string;
+  chrome: string;
+  node: string;
+  platform: string;
+  arch: string;
+}
+
 export interface AhwpApi {
   ping: (req: PingRequest) => Promise<PingResponse>;
   onMenuAction: (handler: (action: MenuAction) => void) => () => void;
   /** chunk 65 — open a fresh BrowserWindow with the same React app. */
   newWindow: () => Promise<void>;
+  /** chunk 52 — About 창에서 사용. app/electron/chrome/node 버전 +
+   * platform/arch 일괄 조회. package.json version 은 app.getVersion(). */
+  getVersions: () => Promise<AppVersions>;
   file: FileApi;
   session: SessionApi;
   clipboard: ClipboardApi;

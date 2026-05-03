@@ -251,7 +251,10 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
           void shell.openExternal('https://github.com/YEUNU/ahwp/issues'),
       },
       { type: 'separator' },
-      { role: 'about', label: 'ahwp 정보' },
+      {
+        label: 'ahwp 정보',
+        click: () => send(getWindow(), 'view:about'),
+      },
     ],
   };
 
@@ -260,7 +263,10 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
         {
           label: app.name,
           submenu: [
-            { role: 'about', label: 'ahwp 정보' },
+            {
+              label: 'ahwp 정보',
+              click: () => send(getWindow(), 'view:about'),
+            },
             { type: 'separator' },
             {
               label: '설정…',

@@ -15,6 +15,7 @@ import type {
 
 const api: AhwpApi = {
   ping: (req: PingRequest) => ipcRenderer.invoke('ipc:ping', req),
+  getVersions: () => ipcRenderer.invoke('app:get-versions'),
   onMenuAction: (handler) => {
     const listener = (_event: IpcRendererEvent, action: MenuAction) =>
       handler(action);

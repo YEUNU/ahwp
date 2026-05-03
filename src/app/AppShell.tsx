@@ -22,6 +22,7 @@ import { ShortcutsDialog } from '@/features/cmdk/ShortcutsDialog';
 import { FolderTree } from '@/features/files/FolderTree';
 import { SearchPanel } from '@/features/files/SearchPanel';
 import { SettingsDialog } from '@/features/settings/SettingsDialog';
+import { AboutDialog } from '@/app/AboutDialog';
 import { BookmarkDialog } from '@/features/studio/BookmarkDialog';
 import { EquationDialog } from '@/features/studio/EquationDialog';
 import { FootnoteDialog } from '@/features/studio/FootnoteDialog';
@@ -92,6 +93,7 @@ export default function AppShell() {
   const [activeIndex, setActiveIndex] = useState(-1);
   const [folderRoot, setFolderRoot] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
   const [pageSetupOpen, setPageSetupOpen] = useState(false);
   const [hfOpen, setHfOpen] = useState(false);
   const [bookmarkOpen, setBookmarkOpen] = useState(false);
@@ -889,6 +891,8 @@ export default function AppShell() {
         handle?.toggleCharFormat(key);
       } else if (action === 'view:settings') {
         setSettingsOpen(true);
+      } else if (action === 'view:about') {
+        setAboutOpen(true);
       } else if (action === 'view:page-setup') {
         setPageSetupOpen(true);
       } else if (action === 'insert:header-footer') {
@@ -992,6 +996,7 @@ export default function AppShell() {
         }}
       />
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} />
       <PageSetupDialog
         open={pageSetupOpen}
         onOpenChange={setPageSetupOpen}

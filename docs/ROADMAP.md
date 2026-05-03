@@ -228,9 +228,9 @@
 - [ ] **rhwp studio 자산 로컬 번들링** — `https://edwardkim.github.io/rhwp/` iframe 의존 제거 → `app://` 자체 호스팅. CSP의 `frame-src` 외부 origin 항목도 제거
 - [ ] macOS notarization 결정 (개인 개발자 계정 → entitlements / 미서명 배포 옵션)
 - [ ] Windows 코드 사이닝 (옵션)
-- [ ] `electron-updater` + GitHub Releases 연동
-- [ ] 릴리스 흐름 문서화: `dev` → (필요시 `release/*`) → `main` 머지 → 태그 → 배포
-- [ ] About 창에 버전·라이선스 표시
+- [x] **chunk 53** — `electron-updater` + GitHub Releases 연동 ✅ (0.3.6): main 의 `initAutoUpdater()` (packaged + AHWP_DISABLE_UPDATER 미설정 시), `autoDownload=false` + `autoInstallOnAppQuit=true`. `package.json` `build.publish` github provider. release CI 가 `latest*.yml` 자동 업로드
+- [x] **chunk 54** — 릴리스 흐름 문서화 ✅ (0.3.6): [RELEASE.md](RELEASE.md) — dev → main → tag → CI matrix → GitHub Release 8단계 + 검증 체크리스트 + electron-updater 사용자 흐름 + 비상 회수
+- [x] **chunk 52** — About 창에 버전·라이선스 표시 ✅ (0.3.6): `src/app/AboutDialog.tsx`, 메뉴 "ahwp 정보" + ⌘K "도움말 → ahwp 정보". 버전 + Apache 2.0 + GitHub 링크 + Electron/Chromium/Node/OS 표시. Apple menu native About 도 dialog 로 라우팅
 - [ ] 메이저 버전 일괄 업그레이드 (React 19, Tailwind 4, Electron 41, vite 8, TS 6 등 별도 마이그레이션)
 
 검증: 새 OS에서 설치 → 자동 업데이트 시뮬레이션.

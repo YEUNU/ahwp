@@ -6,6 +6,51 @@
 
 ## [Unreleased]
 
+### Added — Phase 4 진입: chunks 52~54 — About / electron-updater / RELEASE.md (0.3.6)
+
+베타 배포 준비. 사용자 측 자동 업데이트 인프라 + 버전/라이선스 표시 +
+release flow 문서화.
+
+#### chunk 52 — About 창 + 버전 표시
+
+- `src/app/AboutDialog.tsx` 신설. 메뉴 "ahwp 정보" + 명령 팔레트 "도움말
+  → ahwp 정보" 둘 다 동일 dialog 호출. 버전 / Apache 2.0 라이선스 / GitHub /
+  Releases / Issues 링크 / Electron · Chromium · Node.js · OS·arch 노출.
+- 신규 IPC `app:get-versions` + `AhwpApi.getVersions()`. main 의 `app.getVersion()`
+  과 `process.versions.{electron,chrome,node}` 통합.
+- macOS Apple menu 의 "About" 도 native 패널 대신 우리 dialog 로 라우팅
+  (`view:about` MenuAction). 명령 팔레트에도 추가.
+- 회귀 가드 `about-dialog.spec.ts` (1 케이스) — ⌘K → "정보" → Enter →
+  dialog 열림 + 버전 정규식 매칭.
+
+#### chunk 53 — electron-updater 통합 + GitHub Releases publish
+
+- `npm install electron-updater` (^6.8.3, lib).
+- `package.json` `build.publish` GitHub provider 설정 (owner: YEUNU,
+  repo: ahwp). electron-builder 가 release 빌드 시 `latest.yml` /
+  `latest-mac.yml` / `latest-linux.yml` 자동 생성 + GitHub Releases 업로드.
+- `electron/main.ts` `initAutoUpdater()` — `app.isPackaged` 일 때만 활성
+  (dev 모드 제외). 5초 후 `checkForUpdates()`. `autoDownload=false` (사용자
+  확인 요구), `autoInstallOnAppQuit=true` (다운로드 후 다음 quit 시 install).
+  `AHWP_DISABLE_UPDATER=1` env 로 강제 비활성 가능 (QA 용).
+- in-app update prompt UI 는 후속 (chunk 56) — 현재는 main console 로
+  로그만.
+
+#### chunk 54 — `docs/RELEASE.md` 신설
+
+- dev → main → tag → CI 매트릭스 빌드 → GitHub Release 흐름 8단계 박제
+- electron-updater 사용자 측 동작 흐름
+- 비상시 회수 / hotfix 절차
+- 검증 체크리스트 (typecheck/lint/test/e2e/version 일치/CHANGELOG)
+- macOS notarization / Windows code signing 미적용 사유 박제
+
+#### 검증
+
+- typecheck / lint / build 청정
+- e2e: studio 213 + chat 57 + about 1 = **271 통과** / 1 skipped
+- electron-updater 의 packaged 동작은 `v0.3.6` 태그 push 후 release CI
+  결과로 검증
+
 ### Added — Phase 3 chunk 44: Custom (OpenAI-호환) provider 잠금 해제 (0.3.5)
 
 자체 호스팅 Ollama / vLLM / LM Studio / on-prem LLM gateway 등을 한

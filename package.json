@@ -1,6 +1,6 @@
 {
   "name": "ahwp",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "private": true,
   "description": "AI-powered HWP/HWPX desktop editor",
   "author": "ahwp contributors",
@@ -78,6 +78,13 @@
     "asarUnpack": [
       "node_modules/better-sqlite3/**/*"
     ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "YEUNU",
+        "repo": "ahwp"
+      }
+    ],
     "mac": {
       "target": [
         "dmg"
@@ -116,6 +123,7 @@
     "chokidar": "^5.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "electron-updater": "^6.8.3",
     "lucide-react": "^1.14.0",
     "react-markdown": "^10.1.0",
     "react-resizable-panels": "^2.1.9",
