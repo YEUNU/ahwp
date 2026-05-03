@@ -6,6 +6,13 @@
 
 ## [Unreleased]
 
+### Accessibility — Phase 5 chunk 61: aria 보강 (0.3.13)
+
+- **Settings 사이드바 탭 — `role="tab"` + `aria-selected`** — 활성 탭의 시각 강조 (bg-card font-semibold) 만으로는 스크린 리더가 활성 상태를 인식 못 함. `role="tab"` 으로 셀렉션 시멘틱을 명시하고 `aria-selected={active === tab.id}` 로 활성 상태를 노출.
+- **FolderTree 행 — `aria-selected={isSelected}`** — 활성 트리 노드의 활성 상태를 보조 기술에 노출. 기존엔 `bg-muted` 클래스로만 구분.
+- **ChatPanel 히스토리 항목 — `aria-current="page"`** — 현재 로드된 대화에 `aria-current="page"` 부여. `bg-muted` 시각 표시는 유지.
+- **사전 검증** — radix shadcn 의 Dialog / DropdownMenu / Select 등은 이미 a11y 처리됨. 툴바 / 챗 입력 / 발췌 chip / 다이얼로그 X close / 셀 우클릭 메뉴 모두 `aria-label` 보유 (audit 결과 false-positive 0). 기존 e2e (folder-tree / chat-history / settings 19 케이스) 회귀 없음.
+
 ### Tests — Phase 5 chunk 60: 파일 다이얼로그 모킹 e2e (0.3.12)
 
 - **`tests/e2e/file-dialog-mock.spec.ts` 3 케이스 신규** — Playwright Electron 의 `app.evaluate(({ dialog }) => ...)` 로 main 의 `showOpenDialog` / `showSaveDialog` 를 monkey-patch. 그 후 `'menu:action'` IPC 를 직접 emit 해서 메뉴 액션 흐름을 트리거 (네이티브 OS 다이얼로그 우회).

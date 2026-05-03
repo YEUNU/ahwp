@@ -158,6 +158,7 @@ const TreeNode = memo(function TreeNode({
       ) : (
         <button
           type="button"
+          aria-selected={isSelected}
           onClick={handleClick}
           onContextMenu={(e) => onContextMenu(e, entry)}
           draggable

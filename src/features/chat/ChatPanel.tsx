@@ -800,6 +800,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                         'group flex items-center gap-1 rounded px-1 text-[11px] hover:bg-muted',
                         c.id === conversationId && 'bg-muted',
                       )}
+                      aria-current={
+                        c.id === conversationId ? 'page' : undefined
+                      }
                       data-testid="chat-history-item"
                       data-id={c.id}
                       data-active={c.id === conversationId ? 'true' : 'false'}

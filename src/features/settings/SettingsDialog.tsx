@@ -117,6 +117,8 @@ function SettingsDialogInner({
             <button
               key={tab.id}
               type="button"
+              role="tab"
+              aria-selected={active === tab.id}
               onClick={() => setActive(tab.id)}
               data-testid={`settings-tab-${tab.id}`}
               className={cn(
