@@ -29,7 +29,23 @@ ahwp 0.3.6 시점 codebase 리팩토링 청사진. **목표는 동작 변경 0**
   setter / sortRange / refreshAfterMutation / setCursorRect 만 주입.
   StudioViewer.tsx -303 라인 (9299 → 8996, **9000 라인 첫 돌파**).
   lint clean, unit 15/15, studio find/replace/smoke/undo 20/20 회귀 0.
-- ⏳ **R1.4** — `useKeyboardShortcuts` 추출. 다음 세션 시작점.
+- ✅ **R1.4** (2026-05-03) — `useKeyboardShortcuts` 추출. 1100-라인
+  handleKeyDown 전체 → `hooks/useKeyboardShortcuts.ts` (1333 라인,
+  KeyboardCellRef / KeyboardCaret / KeyboardSelection 등 도메인 타입
+  포함). 45+ 외부 심볼을 opts 로 받아 latest-ref 로 stable callback
+  identity 유지. 본체는 1:1 verbatim — Hancom 호환 키맵 / F-key cell
+  block / cell merge·split / table nav / page nav / undo·redo /
+  clipboard / find·replace / format toggle / select-all / printable
+  insert / IME guard 모두 동일. StudioViewer.tsx -1081 라인 (8996 →
+  7915, **누적 9610→7915, -17.6%**). lint 4→3 warnings (handleKeyDown
+  관련 1개 제거), unit 15/15, studio input/selection/edit/undo/find/
+  replace/format/paragraph-ops/cells×3 61/61 + cell-drag 3/3 회귀 0.
+- ⏳ **R1.5** — `useSelectionModel` 추출. 가장 위험 (drag/caret/auto-
+  scroll 얽힘). 별도 세션 권장.
+- ⏳ **R1.6** — `useCellDrag` 추출. 0.2.89~0.2.92 fix 회귀 가드 다층
+  필요. 별도 세션 권장.
+- ⏳ **R1.7** — `PaperPage` / coords 분리.
+- ⏳ **R1.8** — `useImperativeHandleBuilder` 추출.
 
 ---
 
