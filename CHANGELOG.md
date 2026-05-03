@@ -6,6 +6,90 @@
 
 ## [Unreleased]
 
+### Added — Phase 3 chunks 45~49: tool 카탈로그 한컴 한글 전수 노출 (0.3.3)
+
+Agent 모드 tool 카탈로그를 chunk 19 의 12개 → **45개** 로 확장. 한컴
+한글 lib (`@rhwp/core` 0.7.9) 의 주요 mutation API 약 50개 중 ~90%
+커버. 단일 진실 원천: `shared/ai-tools.ts`의 `AHWP_TOOL_NAMES`. 모든
+provider (OpenAI / NVIDIA NIM / Google Gemini) 가 동일 카탈로그 사용.
+
+#### 신규 33개 도구 (waves 1~6)
+
+**Wave 1 — 본문 편집 primitive (5)** — Agent 가 `applyHtml` 우회 없이
+직접 텍스트 조작:
+
+- `insertText` (좌표+텍스트), `deleteRange` (범위 삭제),
+  `insertParagraph` / `deleteParagraph` / `mergeParagraph`
+
+**Wave 2 — 글자/단락 서식 통합 (3)** — 기존 부분 노출 → 통합:
+
+- `applyCharFormat` (props 객체로 폰트/색/취소선/첨자/밑줄종류/shadow
+  등 한 호출), `applyParaProps` (alignment + lineSpacing + indent +
+  spacing + margin 통합), `applyStyle` (id 로 명명 스타일 적용)
+
+**Wave 3 — 표 구조 (12)** — Manual 모드 우클릭 메뉴와 동등:
+
+- `createTable` (N×M), `insertTableRow/Column`, `deleteTableRow/Column`,
+  `mergeTableCells` (사각 영역), `splitTableCellInto` (n×m 분할),
+  `unmergeCell`, `setTableProperties`, `setCellProperties`,
+  `evaluateTableFormula` (HWP 수식 평가), `deleteTableControl`
+
+**Wave 4 — 이미지/도형 (6)**:
+
+- `setPictureProperties`, `deletePictureControl`, `setShapeProperties`,
+  `deleteShapeControl`, `changeShapeZOrder` (top/bottom/forward/backward),
+  `insertPicture` (base64 PNG/JPEG/GIF/BMP)
+
+**Wave 5 — 페이지/섹션 (5)**:
+
+- `insertPageBreak`, `insertColumnBreak`, `setColumnDef` (다단 layout),
+  `setSectionDef`, `setPageHide` (header/footer/border/fill/pageNum 숨김)
+
+**Wave 6 — 머리/꼬리말 + 책갈피 (3 + 1)**:
+
+- `applyHfTemplate`, `createHeaderFooter`, `deleteHeaderFooter`,
+  `deleteBookmark`
+
+#### 인프라 변경
+
+- `ViewerHandle` (`src/features/studio/types.ts`) 에 `ir*` 메서드
+  28개 추가 — lib API thin wrapper. mutation 후 `refreshAfterMutation`
+  - try/catch (부분 성공 모델). insertPicture 는 base64 → Uint8Array
+    변환 포함.
+- `shared/ai-tools.ts` `AhwpToolArgs` / `validateArgs` / `TOOL_DESCRIPTORS`
+  세 군데 lockstep 확장. `nonNegInts` 헬퍼로 좌표 validation 중복
+  제거.
+- `src/features/chat/tools.ts` `runOne` switch + `previewArgs` switch
+  각각 33 케이스 확장. exhaustive switch로 컴파일러가 drift 차단.
+- 신규 회귀 가드: `chat-agent.spec.ts` 에 chunk 45 (insertText) +
+  chunk 46 (createTable) 케이스 추가.
+
+#### 새 문서 — `docs/AGENT_TOOLS.md`
+
+전체 카탈로그 reference: 카테고리별 표, 사용 예, 좌표 시스템 (HWPUNIT
+변환), lib 한계 (KNOWN_ISSUES L-006/L-008/chunk 36 대기), 신규 도구
+추가 절차 8단계.
+
+#### 검증
+
+- typecheck / lint 청정
+- studio 213 + chat **56 (+2)** = **269 통과** / 1 skipped
+- gemini-live 2/2 + nvidia-live 5/5 = 7/7 라이브 통과 (1 flaky
+  retry 통과)
+- e2e 단계: agent fake provider 의 `TOOL:<name>:<json>` 모드로 신규
+  카탈로그 dispatch round-trip 확인 (insertText / createTable /
+  unknown tool 거절)
+
+#### Phase 3 잔여 (외부 의존)
+
+| 청크 | 항목                                 | 차단                                           |
+| ---- | ------------------------------------ | ---------------------------------------------- |
+| 42   | Anthropic 어댑터 tool_use            | API 키 결정 대기                               |
+| 44   | Custom (OpenAI-호환) capability flag | optional                                       |
+| 47   | docId-aware 라우팅 (다중 문서 write) | 후속                                           |
+| —    | numbering/bullet 자동화              | lib API 복잡, Manual 모드 슬래시 명령으로 충분 |
+| —    | insertEquation tool                  | 수식 엔진 (renderEquationSvg 별도)             |
+
 ### Fixed — Gemini schema sanitize + live smoke 검증 (0.3.2)
 
 라이브 검증 시 발견한 Gemini API 제약 3건 + 회귀 가드 + 기본 모델

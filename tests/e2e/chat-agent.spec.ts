@@ -89,6 +89,42 @@ test.describe('chat — Phase 3 Agent 모드', () => {
       .not.toBe('running');
   });
 
+  test('Agent: chunk 45 insertText — 신규 본문 편집 primitive 호출', async () => {
+    const { page } = launched;
+    await page.getByTestId('chat-mode-agent').click();
+    await page
+      .getByTestId('chat-input')
+      .fill(
+        'TOOL:insertText:{"sectionIdx":0,"paragraphIdx":0,"charOffset":0,"text":"hi"}',
+      );
+    await page.getByTestId('chat-send').click();
+    const entry = page
+      .locator('[data-testid="chat-tool-entry"][data-tool-name="insertText"]')
+      .first();
+    await expect(entry).toBeVisible({ timeout: 5000 });
+    await expect
+      .poll(async () => entry.getAttribute('data-tool-status'))
+      .not.toBe('running');
+  });
+
+  test('Agent: chunk 46 createTable — 표 구조 도구 호출', async () => {
+    const { page } = launched;
+    await page.getByTestId('chat-mode-agent').click();
+    await page
+      .getByTestId('chat-input')
+      .fill(
+        'TOOL:createTable:{"sectionIdx":0,"paragraphIdx":0,"charOffset":0,"rowCount":2,"colCount":2}',
+      );
+    await page.getByTestId('chat-send').click();
+    const entry = page
+      .locator('[data-testid="chat-tool-entry"][data-tool-name="createTable"]')
+      .first();
+    await expect(entry).toBeVisible({ timeout: 5000 });
+    await expect
+      .poll(async () => entry.getAttribute('data-tool-status'))
+      .not.toBe('running');
+  });
+
   test('Agent: unknown tool — failed 표시 + 에러 reason', async () => {
     const { page } = launched;
 

@@ -4523,6 +4523,367 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             return null;
           }
         },
+        // Phase 3 chunks 45~49 — Agent tool 카탈로그 thin wrappers. lib API
+        // 1:1 매핑. mutation 후 refreshAfterMutation() 으로 viewer/dirty 동기화.
+        // 모든 wrapper 는 try/catch 로 throw 잡고 false 반환 — Agent 부분
+        // 성공 모델 유지 (한 op 실패해도 다음 op 계속).
+        irInsertText: (sec, para, charOffset, text) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            doc.insertText(sec, para, charOffset, text);
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irInsertText:', err);
+            return false;
+          }
+        },
+        irDeleteRange: (sec, sp, so, ep, eo) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            doc.deleteRange(sec, sp, so, ep, eo);
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irDeleteRange:', err);
+            return false;
+          }
+        },
+        irInsertParagraph: (sec, para) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            doc.insertParagraph(sec, para);
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irInsertParagraph:', err);
+            return false;
+          }
+        },
+        irDeleteParagraph: (sec, para) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            doc.deleteParagraph(sec, para);
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irDeleteParagraph:', err);
+            return false;
+          }
+        },
+        irMergeParagraph: (sec, para) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            doc.mergeParagraph(sec, para);
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irMergeParagraph:', err);
+            return false;
+          }
+        },
+        irApplyCharFormat: (sec, para, so, eo, props) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            doc.applyCharFormat(sec, para, so, eo, JSON.stringify(props));
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irApplyCharFormat:', err);
+            return false;
+          }
+        },
+        irApplyStyle: (sec, para, styleId) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            doc.applyStyle(sec, para, styleId);
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irApplyStyle:', err);
+            return false;
+          }
+        },
+        irCreateTable: (sec, para, charOffset, rowCount, colCount) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            doc.createTable(sec, para, charOffset, rowCount, colCount);
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irCreateTable:', err);
+            return false;
+          }
+        },
+        irInsertTableRow: (sec, ppara, ctrl, rowIdx, below) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            doc.insertTableRow(sec, ppara, ctrl, rowIdx, below);
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irInsertTableRow:', err);
+            return false;
+          }
+        },
+        irInsertTableColumn: (sec, ppara, ctrl, colIdx, right) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            doc.insertTableColumn(sec, ppara, ctrl, colIdx, right);
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irInsertTableColumn:', err);
+            return false;
+          }
+        },
+        irDeleteTableRow: (sec, ppara, ctrl, rowIdx) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            doc.deleteTableRow(sec, ppara, ctrl, rowIdx);
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irDeleteTableRow:', err);
+            return false;
+          }
+        },
+        irDeleteTableColumn: (sec, ppara, ctrl, colIdx) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            doc.deleteTableColumn(sec, ppara, ctrl, colIdx);
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irDeleteTableColumn:', err);
+            return false;
+          }
+        },
+        irMergeTableCells: (sec, ppara, ctrl, sr, sc, er, ec) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            doc.mergeTableCells(sec, ppara, ctrl, sr, sc, er, ec);
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irMergeTableCells:', err);
+            return false;
+          }
+        },
+        irSplitTableCellInto: (
+          sec,
+          ppara,
+          ctrl,
+          r,
+          c,
+          nr,
+          mc,
+          eqRow,
+          mergeFirst,
+        ) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            doc.splitTableCellInto(
+              sec,
+              ppara,
+              ctrl,
+              r,
+              c,
+              nr,
+              mc,
+              eqRow,
+              mergeFirst,
+            );
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irSplitTableCellInto:', err);
+            return false;
+          }
+        },
+        irUnmergeCell: (sec, ppara, ctrl, r, c) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            doc.splitTableCell(sec, ppara, ctrl, r, c);
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irUnmergeCell:', err);
+            return false;
+          }
+        },
+        irDeleteTableControl: (sec, ppara, ctrl) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            doc.deleteTableControl(sec, ppara, ctrl);
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irDeleteTableControl:', err);
+            return false;
+          }
+        },
+        irSetShapeProperties: (sec, ppara, ctrl, props) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            doc.setShapeProperties(sec, ppara, ctrl, JSON.stringify(props));
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irSetShapeProperties:', err);
+            return false;
+          }
+        },
+        irDeleteShapeControl: (sec, ppara, ctrl) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            doc.deleteShapeControl(sec, ppara, ctrl);
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irDeleteShapeControl:', err);
+            return false;
+          }
+        },
+        irChangeShapeZOrder: (sec, ppara, ctrl, op) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            doc.changeShapeZOrder(sec, ppara, ctrl, op);
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irChangeShapeZOrder:', err);
+            return false;
+          }
+        },
+        irInsertPicture: (sec, para, co, b64, w, h, nw, nh, ext, desc) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+            doc.insertPicture(sec, para, co, bytes, w, h, nw, nh, ext, desc);
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irInsertPicture:', err);
+            return false;
+          }
+        },
+        irInsertPageBreak: (sec, para, charOffset) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            doc.insertPageBreak(sec, para, charOffset);
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irInsertPageBreak:', err);
+            return false;
+          }
+        },
+        irInsertColumnBreak: (sec, para, charOffset) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            doc.insertColumnBreak(sec, para, charOffset);
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irInsertColumnBreak:', err);
+            return false;
+          }
+        },
+        irSetColumnDef: (sec, count, type, sameWidth, spacing) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            doc.setColumnDef(sec, count, type, sameWidth, spacing);
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irSetColumnDef:', err);
+            return false;
+          }
+        },
+        irSetSectionDef: (sec, props) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            doc.setSectionDef(sec, JSON.stringify(props));
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irSetSectionDef:', err);
+            return false;
+          }
+        },
+        irSetPageHide: (sec, para, hH, hF, hM, hB, hFi, hPN) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            doc.setPageHide(sec, para, hH, hF, hM, hB, hFi, hPN);
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irSetPageHide:', err);
+            return false;
+          }
+        },
+        irApplyHfTemplate: (sec, isHeader, applyTo, templateId) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            doc.applyHfTemplate(sec, isHeader, applyTo, templateId);
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irApplyHfTemplate:', err);
+            return false;
+          }
+        },
+        irCreateHeaderFooter: (sec, isHeader, applyTo) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            doc.createHeaderFooter(sec, isHeader, applyTo);
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irCreateHeaderFooter:', err);
+            return false;
+          }
+        },
+        irDeleteHeaderFooter: (sec, isHeader, applyTo) => {
+          const doc = docRef.current;
+          if (!doc) return false;
+          try {
+            doc.deleteHeaderFooter(sec, isHeader, applyTo);
+            refreshAfterMutation();
+            return true;
+          } catch (err) {
+            console.warn('[studio] irDeleteHeaderFooter:', err);
+            return false;
+          }
+        },
       }),
       [
         captureExcerpt,

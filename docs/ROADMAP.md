@@ -208,9 +208,12 @@
 - [ ] **chunk 42** — Anthropic 어댑터 tool_use — API 키 결정 대기
 - [x] **chunk 43** — Google Gemini 어댑터 ✅ (0.3.1): `streamGenerateContent?alt=sse` SSE 스트리밍. system → `systemInstruction`, assistant → role='model', tool result → user role + functionResponse part. tools = `[{functionDeclarations: [...]}]`, toolChoice → `toolConfig.functionCallingConfig.mode`. functionCall 부분이 있으면 finishReason='tool_calls' 로 재정의. listModels 는 `supportedGenerationMethods` 에 `generateContent` 포함 모델만
 - [ ] **chunk 44** — Custom (OpenAI-compatible): 모델별 capability flag (Settings 토글) — 자체 호스팅 Ollama / vLLM / LM Studio baseUrl 기반 엔드포인트 모델만 Agent 활성
-- [ ] **chunk 45** — 추가 본문 편집 tool (`insertTextAtCaret` / `deleteRange` / `applyParagraphStyle`) — 사용자 피드백 받아 추가
-- [ ] **chunk 46** — 추가 표 구조 tool (`insertTable` / `mergeCells` / `splitCells` / `runFormula`) — 사용자 피드백 받아 추가
-- [ ] **chunk 47** — docId-aware 라우팅 — `runTools(docId, items)` 다중 문서 write
+- [x] **chunk 45** — 본문 편집 primitive + 서식 통합 ✅ (0.3.3): `insertText`/`deleteRange`/`insertParagraph`/`deleteParagraph`/`mergeParagraph` + `applyCharFormat` (props 통합) + `applyParaProps` (props 통합) + `applyStyle`
+- [x] **chunk 46** — 표 구조 12개 tool ✅ (0.3.3): `createTable`/`insertTableRow`-`Column`/`deleteTableRow`-`Column`/`mergeTableCells`/`splitTableCellInto`/`unmergeCell`/`setTableProperties`/`setCellProperties`/`evaluateTableFormula`/`deleteTableControl`
+- [x] **chunk 47** — 이미지/도형 + 페이지/섹션 + HF/책갈피 ✅ (0.3.3): `setPictureProperties`/`deletePictureControl`/`setShapeProperties`/`deleteShapeControl`/`changeShapeZOrder`/`insertPicture` (base64) + `insertPageBreak`/`insertColumnBreak`/`setColumnDef`/`setSectionDef`/`setPageHide` + `applyHfTemplate`/`createHeaderFooter`/`deleteHeaderFooter`/`deleteBookmark`. 카탈로그 단일 진실 원천 `shared/ai-tools.ts` `AHWP_TOOL_NAMES`. 자세한 reference 는 [AGENT_TOOLS.md](AGENT_TOOLS.md)
+<!-- chunk 47 (docId-aware multi-doc) 은 위 chunk 47 통합 항목에 흡수되지
+     않은 별도 후속 — 다중 문서 write 분기. 키 결정 + 사용자 피드백 후. -->
+- [ ] **chunk 50** — docId-aware 라우팅 — `runTools(docId, items)` 다중 문서 write (현재 active doc fixed)
 
 검증: "이 표의 합계 행을 추가하고 모든 셀을 가운데 정렬해줘" 한 줄로 처리.
 
