@@ -74,3 +74,43 @@ export function callCellOp<TArgs extends readonly unknown[], TResult>(
     ...args,
   );
 }
+
+/**
+ * Variant for ops that take only `(sec, parentPara, ctrl)` on the
+ * non-path side — `getTableCellBboxes` / `getTableDimensions` etc. The
+ * cell's controlIndex is used (cellIdx/cellParaIdx aren't passed).
+ *
+ * `cell.parentParaIndex` is the parent paragraph for both variants.
+ */
+export function callTableOp<TArgs extends readonly unknown[], TResult>(
+  cell: CellLocation,
+  sectionIndex: number,
+  defaultFn: (
+    sec: number,
+    parentPara: number,
+    ctrl: number,
+    ...args: TArgs
+  ) => TResult,
+  byPathFn: (
+    sec: number,
+    parentPara: number,
+    pathJson: string,
+    ...args: TArgs
+  ) => TResult,
+  ...args: TArgs
+): TResult {
+  if (cell.path && cell.path.length > 1) {
+    return byPathFn(
+      sectionIndex,
+      cell.parentParaIndex,
+      JSON.stringify(cell.path),
+      ...args,
+    );
+  }
+  return defaultFn(
+    sectionIndex,
+    cell.parentParaIndex,
+    cell.controlIndex,
+    ...args,
+  );
+}

@@ -14,6 +14,7 @@ import { useImperativeHandle, type ForwardedRef } from 'react';
 import { HwpDocument } from '@/lib/rhwp-core';
 import { relocateExcerpt } from '@/features/studio/utils/relocate-excerpt';
 import type { CharFormatKey, ViewerHandle } from '../types';
+import type { RhwpStyleAt } from '@shared/rhwp-types';
 import type { LifecycleCursorRect } from './useDocumentLifecycle';
 
 type RhwpDoc = InstanceType<typeof HwpDocument>;
@@ -1025,9 +1026,7 @@ export function useViewerHandle(
       // Phase 3 chunk 51 — read-only tools. Agent 능동 검사용.
       irGetStyleAt: (sec, para) =>
         irRead('irGetStyleAt', (doc) => {
-          const atJson = JSON.parse(doc.getStyleAt(sec, para)) as {
-            styleId?: number;
-          };
+          const atJson = JSON.parse(doc.getStyleAt(sec, para)) as RhwpStyleAt;
           const styleId = atJson.styleId ?? 0;
           const detail = JSON.parse(doc.getStyleDetail(styleId)) as Record<
             string,

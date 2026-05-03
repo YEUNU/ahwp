@@ -26,6 +26,7 @@ import {
 import { primaryModifier } from '@/lib/platform';
 import { HwpDocument } from '@/lib/rhwp-core';
 import type { LifecycleCursorRect } from './useDocumentLifecycle';
+import type { RhwpHitTest } from '@shared/rhwp-types';
 
 type RhwpDoc = InstanceType<typeof HwpDocument>;
 
@@ -419,17 +420,11 @@ export function useKeyboardShortcuts(
         targetPage -= 1;
         targetY = pageH + targetY;
       }
-      let hit: {
-        sectionIndex: number;
-        paragraphIndex: number;
-        charOffset: number;
-      } | null;
+      let hit: RhwpHitTest | null;
       try {
-        hit = JSON.parse(doc.hitTest(targetPage, rect.x, targetY)) as {
-          sectionIndex: number;
-          paragraphIndex: number;
-          charOffset: number;
-        };
+        hit = JSON.parse(
+          doc.hitTest(targetPage, rect.x, targetY),
+        ) as RhwpHitTest;
       } catch {
         hit = null;
       }
