@@ -693,46 +693,68 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             +
           </button>
         </div>
-        {/* Phase 3 — Manual / Agent 모드 토글. Manual: 기존 응답-텍스트
-          dispatcher (사용자가 "도구 실행" 버튼 클릭). Agent: provider
-          native tool-use API + 자동 루프 + 묶음 undo. */}
-        <div
-          className="flex items-center gap-1 border-b border-border px-2 py-1 text-[11px]"
-          data-testid="chat-mode-bar"
-        >
-          <span className="text-muted-foreground">모드</span>
-          <button
-            type="button"
-            disabled={streaming}
-            onClick={() => setChatMode('manual')}
-            className={cn(
-              'rounded-md border px-2 py-0.5 transition',
-              chatMode === 'manual'
-                ? 'border-primary bg-primary/10 text-foreground'
-                : 'border-input text-muted-foreground hover:bg-muted',
-              'disabled:opacity-50',
-            )}
-            data-testid="chat-mode-manual"
-            title="Manual: AI 응답에 도구 블록이 있으면 사용자가 버튼 눌러 적용"
+        {/* Phase 3 — Manual / Agent 모드 pill 토글 (style_example). Manual:
+          AI 응답의 도구 블록을 사용자가 직접 적용. Agent: provider native
+          tool-use API + 자동 루프 + 묶음 undo. */}
+        <div className="px-3 pb-2 pt-3" data-testid="chat-mode-bar">
+          <div
+            className="flex gap-0.5 rounded-md bg-muted p-0.5"
+            role="tablist"
           >
-            Manual
-          </button>
-          <button
-            type="button"
-            disabled={streaming}
-            onClick={() => setChatMode('agent')}
-            className={cn(
-              'rounded-md border px-2 py-0.5 transition',
-              chatMode === 'agent'
-                ? 'border-primary bg-primary/10 text-foreground'
-                : 'border-input text-muted-foreground hover:bg-muted',
-              'disabled:opacity-50',
-            )}
-            data-testid="chat-mode-agent"
-            title="Agent (실험적): AI가 도구를 직접 호출해 자동으로 적용. 한 turn 내 묶음 undo."
-          >
-            Agent <span className="opacity-60">⚡</span>
-          </button>
+            <ModePill
+              active={chatMode === 'manual'}
+              disabled={streaming}
+              onClick={() => setChatMode('manual')}
+              testId="chat-mode-manual"
+              title="Manual: AI 응답에 도구 블록이 있으면 사용자가 버튼 눌러 적용"
+              icon={
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0" />
+                  <path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2" />
+                  <path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8" />
+                  <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />
+                </svg>
+              }
+              label="Manual"
+              sub="제안 → 승인"
+            />
+            <ModePill
+              active={chatMode === 'agent'}
+              disabled={streaming}
+              onClick={() => setChatMode('agent')}
+              testId="chat-mode-agent"
+              title="Agent (실험적): AI가 도구를 직접 호출해 자동으로 적용. 한 turn 내 묶음 undo."
+              icon={
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <rect x="3" y="11" width="18" height="10" rx="2" />
+                  <circle cx="12" cy="5" r="2" />
+                  <path d="M12 7v4" />
+                  <line x1="8" y1="16" x2="8" y2="16" />
+                  <line x1="16" y1="16" x2="16" y2="16" />
+                </svg>
+              }
+              label="Agent"
+              sub="자동 실행"
+            />
+          </div>
         </div>
         {historyOpen ? (
           <div
@@ -1057,6 +1079,62 @@ interface MessageProps {
    * when something was actually undone.
    */
   onUndoApply?: () => boolean;
+}
+
+/** Manual / Agent mode pill (style_example). Two-state segmented toggle
+ * with icon + label + sub-label, 5px radius pill containing a 6px-radius
+ * inner pill for the active button. */
+function ModePill({
+  active,
+  disabled,
+  onClick,
+  testId,
+  title,
+  icon,
+  label,
+  sub,
+}: {
+  active: boolean;
+  disabled: boolean;
+  onClick: () => void;
+  testId: string;
+  title: string;
+  icon: JSX.Element;
+  label: string;
+  sub: string;
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      disabled={disabled}
+      onClick={onClick}
+      title={title}
+      data-testid={testId}
+      className={cn(
+        'flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-[11.5px] transition disabled:opacity-50',
+        active
+          ? 'bg-card font-semibold text-foreground shadow-sm'
+          : 'text-muted-foreground hover:text-foreground',
+      )}
+    >
+      <span className="flex size-3.5 items-center justify-center opacity-90">
+        {icon}
+      </span>
+      <span className="flex flex-col items-start leading-tight">
+        <span className="tracking-tight">{label}</span>
+        <span
+          className={cn(
+            'text-[9.5px] font-normal',
+            active ? 'text-muted-foreground' : 'text-muted-foreground/70',
+          )}
+        >
+          {sub}
+        </span>
+      </span>
+    </button>
+  );
 }
 
 /** Multi-doc chip strip — chunk 21. Reads `getOpenDocs` each render so

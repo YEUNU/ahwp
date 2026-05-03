@@ -34,7 +34,7 @@ test.afterEach(async () => {
 });
 
 test.describe('chat — Phase 3 Agent 모드', () => {
-  test('toggle Manual/Agent 모드 — 라디오 시각 활성', async () => {
+  test('toggle Manual/Agent 모드 — pill 시각 활성', async () => {
     const { page } = launched;
     const manual = page.getByTestId('chat-mode-manual');
     const agent = page.getByTestId('chat-mode-agent');
@@ -42,15 +42,19 @@ test.describe('chat — Phase 3 Agent 모드', () => {
     await expect(manual).toBeVisible();
     await expect(agent).toBeVisible();
 
-    // Agent 클릭 → 시각 활성 (border-primary 클래스 적용).
+    // UI/UX align — pill 토글. 활성 버튼은 aria-selected=true.
+    await expect(manual).toHaveAttribute('aria-selected', 'true');
+    await expect(agent).toHaveAttribute('aria-selected', 'false');
+
+    // Agent 클릭.
     await agent.click();
-    await expect(agent).toHaveClass(/border-primary/);
-    await expect(manual).not.toHaveClass(/border-primary/);
+    await expect(agent).toHaveAttribute('aria-selected', 'true');
+    await expect(manual).toHaveAttribute('aria-selected', 'false');
 
     // 다시 Manual.
     await manual.click();
-    await expect(manual).toHaveClass(/border-primary/);
-    await expect(agent).not.toHaveClass(/border-primary/);
+    await expect(manual).toHaveAttribute('aria-selected', 'true');
+    await expect(agent).toHaveAttribute('aria-selected', 'false');
   });
 
   test('Agent: tool-use 응답 → tool-entry 표시 + ok 결과', async () => {

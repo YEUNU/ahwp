@@ -25,7 +25,10 @@ export interface UseDispatchMenuActionOptions {
   saveCurrent: () => Promise<void> | void;
   saveAsCurrent: () => Promise<void> | void;
   setSettingsOpen: Dispatch<SetStateAction<boolean>>;
-  setAboutOpen: Dispatch<SetStateAction<boolean>>;
+  /** UI/UX align — view:about / view:shortcuts 메뉴 액션은 Settings 의
+   * 해당 탭으로 라우팅. caller 가 setSettingsTab + setSettingsOpen 묶음
+   * 처리 함수를 제공. */
+  openSettingsTab: (tab: 'general' | 'ai' | 'shortcuts' | 'about') => void;
   setPageSetupOpen: Dispatch<SetStateAction<boolean>>;
   setHfOpen: Dispatch<SetStateAction<boolean>>;
   setBookmarkOpen: Dispatch<SetStateAction<boolean>>;
@@ -49,7 +52,7 @@ export function useDispatchMenuAction(
     saveCurrent,
     saveAsCurrent,
     setSettingsOpen,
-    setAboutOpen,
+    openSettingsTab,
     setPageSetupOpen,
     setHfOpen,
     setBookmarkOpen,
@@ -153,7 +156,7 @@ export function useDispatchMenuAction(
       } else if (action === 'view:settings') {
         setSettingsOpen(true);
       } else if (action === 'view:about') {
-        setAboutOpen(true);
+        openSettingsTab('about');
       } else if (action === 'view:page-setup') {
         setPageSetupOpen(true);
       } else if (action === 'insert:header-footer') {
@@ -186,7 +189,7 @@ export function useDispatchMenuAction(
       saveCurrent,
       saveAsCurrent,
       setSettingsOpen,
-      setAboutOpen,
+      openSettingsTab,
       setPageSetupOpen,
       setHfOpen,
       setBookmarkOpen,

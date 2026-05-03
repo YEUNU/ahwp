@@ -1,5 +1,5 @@
 import { FolderInput } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import type { PingResponse } from '@shared/api';
 import { ChatPanel, type ChatPanelHandle } from '@/features/chat/ChatPanel';
@@ -18,11 +18,12 @@ import {
   type CommandItem,
 } from '@/features/cmdk/CommandPalette';
 import { buildActionItems } from '@/features/cmdk/items';
-import { ShortcutsDialog } from '@/features/cmdk/ShortcutsDialog';
+// `ShortcutsDialog` 와 `AboutDialog` 는 SettingsDialog 의 탭으로 통합 (UI/UX
+// align). view:shortcuts / view:about 메뉴 액션은 settingsTab 을 설정하고
+// settingsOpen 을 true 로.
 import { FolderTree } from '@/features/files/FolderTree';
 import { SearchPanel } from '@/features/files/SearchPanel';
 import { SettingsDialog } from '@/features/settings/SettingsDialog';
-import { AboutDialog } from '@/app/AboutDialog';
 import { BookmarkDialog } from '@/features/studio/BookmarkDialog';
 import { EquationDialog } from '@/features/studio/EquationDialog';
 import { FootnoteDialog } from '@/features/studio/FootnoteDialog';
@@ -78,8 +79,13 @@ export default function AppShell() {
   const [pingResult, setPingResult] = useState<PingResponse | null>(null);
   const [pingError, setPingError] = useState<string | null>(null);
   const [folderRoot, setFolderRoot] = useState<string | null>(null);
+  // Settings is the single home for AI 공급자 / 단축키 / 정보 / 일반.
+  // `settingsTab` lets menu actions (view:about / view:shortcuts) route
+  // to the right tab on open.
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [aboutOpen, setAboutOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<
+    'general' | 'ai' | 'shortcuts' | 'about'
+  >('ai');
   const [pageSetupOpen, setPageSetupOpen] = useState(false);
   const [hfOpen, setHfOpen] = useState(false);
   const [bookmarkOpen, setBookmarkOpen] = useState(false);
@@ -144,8 +150,8 @@ export default function AppShell() {
       /* localStorage can throw under hardened CSP */
     }
   }, [showRuler]);
-  // chunk 53 — shortcut cheatsheet (⌘/).
-  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  // chunk 53 — shortcut cheatsheet (⌘/) — 이제 Settings 의 단축키 탭으로
+  // 라우팅. setSettingsTab('shortcuts') + setSettingsOpen(true).
   // chunk 62 — version history dialog.
   const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
   const sessionRestoredRef = useRef(false);
@@ -351,8 +357,9 @@ export default function AppShell() {
           setPaletteOpen((v) => !v);
           e.preventDefault();
         } else if (e.key === '/') {
-          // chunk 53 — ⌘/ toggles the shortcuts cheatsheet.
-          setShortcutsOpen((v) => !v);
+          // chunk 53 — ⌘/ opens Settings 의 단축키 탭 (UI/UX align).
+          setSettingsTab('shortcuts');
+          setSettingsOpen(true);
           e.preventDefault();
         }
       } else if (
@@ -445,6 +452,17 @@ export default function AppShell() {
   // ⌘K both feed into this.
   // R3 — dispatchMenuAction (~115 라인) + 메뉴 IPC 등록 effect →
   // useDispatchMenuAction hook.
+  // Helper: open Settings on a specific tab. view:about / view:shortcuts
+  // both reroute to Settings now (R3 + UI align — single home for all
+  // app-level config / info).
+  const openSettingsTab = useCallback(
+    (tab: 'general' | 'ai' | 'shortcuts' | 'about') => {
+      setSettingsTab(tab);
+      setSettingsOpen(true);
+    },
+    [],
+  );
+
   const dispatchMenuAction = useDispatchMenuAction({
     activeViewerRef,
     activeTab,
@@ -453,7 +471,7 @@ export default function AppShell() {
     saveCurrent,
     saveAsCurrent,
     setSettingsOpen,
-    setAboutOpen,
+    openSettingsTab,
     setPageSetupOpen,
     setHfOpen,
     setBookmarkOpen,
@@ -505,7 +523,6 @@ export default function AppShell() {
         onOpenChange={setPaletteOpen}
         items={paletteItems}
       />
-      <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
       <VersionHistoryDialog
         open={versionHistoryOpen}
         onOpenChange={setVersionHistoryOpen}
@@ -530,8 +547,11 @@ export default function AppShell() {
           showNotice('이전 버전으로 복원되었습니다.', 'info');
         }}
       />
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
-      <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} />
+      <SettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        initialTab={settingsTab}
+      />
       <PageSetupDialog
         open={pageSetupOpen}
         onOpenChange={setPageSetupOpen}

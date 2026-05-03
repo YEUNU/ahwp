@@ -148,10 +148,11 @@ test.describe('round 1 UX — chunks 50/51/52/53/54/55', () => {
 
     const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
     await page.keyboard.press(`${mod}+/`);
-    await expect(page.getByTestId('shortcuts-dialog')).toBeVisible();
-    await expect(page.getByTestId('shortcuts-dialog')).toContainText('⌘K');
+    // UI/UX align — 단축키는 Settings 의 단축키 탭으로 통합.
+    await expect(page.getByTestId('settings-dialog')).toBeVisible();
+    await expect(page.getByTestId('settings-pane-body')).toContainText('⌘K');
     await page.keyboard.press('Escape');
-    await expect(page.getByTestId('shortcuts-dialog')).not.toBeVisible();
+    await expect(page.getByTestId('settings-dialog')).not.toBeVisible();
   });
 
   test('chunk 54 — page div uses --paper variable (light mode = white)', async () => {
