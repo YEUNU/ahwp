@@ -74,9 +74,41 @@ export function useSaveFlow(opts: UseSaveFlowOptions): SaveFlowHandle {
     return bytes;
   }, [activeViewerRef]);
 
+  const saveAsCurrent = useCallback(async () => {
+    const tab = activeTab;
+    const bytes = await exportBytes();
+    if (!bytes) return;
+    const defaultPath = tab ? correctExtension(tab.path, 'hwpx') : undefined;
+    const result = await window.api.file.saveAs({ bytes, defaultPath });
+    if (result) {
+      if (tab) replaceTabPath(tab.path, result.path);
+      else openTab(result.path);
+      void window.api.file.clearDraft(result.path);
+      if (tab) void window.api.file.clearDraft(tab.path);
+      void window.api.file.createVersion({ path: result.path, bytes });
+      if (result.routedFrom) {
+        showNotice(
+          `'.hwpx' 저장은 라이브러리 한계로 일시 비활성화되어 있어 ${result.path.split(/[\\/]/).pop()} 로 저장했습니다.`,
+          'warn',
+        );
+      }
+    }
+  }, [activeTab, exportBytes, replaceTabPath, openTab, showNotice]);
+
   const saveCurrent = useCallback(async () => {
     const tab = activeTab;
     if (!tab) return;
+    // chunk 78 — `file:new` writes the scratch buffer to `userData/temp/
+    // new-<timestamp>.hwp`. Saving that path silently keeps the doc
+    // hidden in temp where the user can't find it later. Detect the
+    // temp scratch path and route to Save As so the user picks a real
+    // location. Same probe AppShell's autosave uses.
+    const isScratch =
+      tab.path.includes('/temp/new-') || tab.path.includes('\\temp\\new-');
+    if (isScratch) {
+      await saveAsCurrent();
+      return;
+    }
     const bytes = await exportBytes();
     if (!bytes) return;
     const result = await window.api.file.save({ path: tab.path, bytes });
@@ -98,28 +130,7 @@ export function useSaveFlow(opts: UseSaveFlowOptions): SaveFlowHandle {
         'warn',
       );
     }
-  }, [activeTab, exportBytes, replaceTabPath, showNotice]);
-
-  const saveAsCurrent = useCallback(async () => {
-    const tab = activeTab;
-    const bytes = await exportBytes();
-    if (!bytes) return;
-    const defaultPath = tab ? correctExtension(tab.path, 'hwpx') : undefined;
-    const result = await window.api.file.saveAs({ bytes, defaultPath });
-    if (result) {
-      if (tab) replaceTabPath(tab.path, result.path);
-      else openTab(result.path);
-      void window.api.file.clearDraft(result.path);
-      if (tab) void window.api.file.clearDraft(tab.path);
-      void window.api.file.createVersion({ path: result.path, bytes });
-      if (result.routedFrom) {
-        showNotice(
-          `'.hwpx' 저장은 라이브러리 한계로 일시 비활성화되어 있어 ${result.path.split(/[\\/]/).pop()} 로 저장했습니다.`,
-          'warn',
-        );
-      }
-    }
-  }, [activeTab, exportBytes, replaceTabPath, openTab, showNotice]);
+  }, [activeTab, exportBytes, replaceTabPath, saveAsCurrent, showNotice]);
 
   return {
     openFromDialog,

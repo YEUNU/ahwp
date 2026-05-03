@@ -38,7 +38,10 @@ test.describe('chat panel — secrets gate + provider/model selectors', () => {
   test('without a key: input is disabled, indicator shows ○', async () => {
     const { page } = launched;
     await expect(page.getByTestId('chat-input')).toBeDisabled();
-    await expect(page.getByTestId('chat-key-indicator')).toHaveText(/○/);
+    await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
+      'data-state',
+      'missing',
+    );
     await expect(page.getByTestId('chat-send')).toBeDisabled();
   });
 
@@ -46,18 +49,27 @@ test.describe('chat panel — secrets gate + provider/model selectors', () => {
     const { page } = launched;
     await setKey(page, 'openai');
     await expect(page.getByTestId('chat-input')).toBeEnabled();
-    await expect(page.getByTestId('chat-key-indicator')).toHaveText(/●/);
+    await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
+      'data-state',
+      'ok',
+    );
   });
 
   test('switching provider re-checks key for the new provider', async () => {
     const { page } = launched;
     // Set key for openai only.
     await setKey(page, 'openai');
-    await expect(page.getByTestId('chat-key-indicator')).toHaveText(/●/);
+    await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
+      'data-state',
+      'ok',
+    );
 
     // Switch to nvidia → indicator goes back to ○ (no key for nvidia).
     await page.getByTestId('chat-provider-select').selectOption('nvidia');
-    await expect(page.getByTestId('chat-key-indicator')).toHaveText(/○/);
+    await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
+      'data-state',
+      'missing',
+    );
     await expect(page.getByTestId('chat-input')).toBeDisabled();
 
     // Set nvidia key → indicator flips to ● again.
@@ -67,7 +79,10 @@ test.describe('chat panel — secrets gate + provider/model selectors', () => {
     // The has-check listens on provider change — switch back and forth to refresh.
     await page.getByTestId('chat-provider-select').selectOption('openai');
     await page.getByTestId('chat-provider-select').selectOption('nvidia');
-    await expect(page.getByTestId('chat-key-indicator')).toHaveText(/●/);
+    await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
+      'data-state',
+      'ok',
+    );
   });
 
   test('provider + model picks survive reload via localStorage', async () => {

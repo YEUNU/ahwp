@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, Menu } from 'electron';
+import { existsSync, readFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { PingRequest, PingResponse } from '../shared/api';
@@ -83,6 +84,33 @@ function registerIpcHandlers(): void {
   });
   // chunk 52 — About 창에서 사용. app/electron/node/chrome 버전 일괄 노출.
   // package.json 의 version 은 app.getVersion() 으로 읽음.
+  // chunk 79 — `@rhwp/core` package.json 에서 version 읽어 About pane
+  // 에 노출. cwd / __dirname 두 후보 path 시도 (packaged 와 dev 모두
+  // 커버). asar 의 readFileSync 도 투명하게 동작.
+  let rhwpCoreVersion = '?';
+  try {
+    const candidates = [
+      path.join(process.cwd(), 'node_modules', '@rhwp', 'core', 'package.json'),
+      path.join(
+        __dirname,
+        '..',
+        'node_modules',
+        '@rhwp',
+        'core',
+        'package.json',
+      ),
+    ];
+    for (const p of candidates) {
+      if (!existsSync(p)) continue;
+      const pkg = JSON.parse(readFileSync(p, 'utf8')) as { version?: string };
+      if (typeof pkg.version === 'string') {
+        rhwpCoreVersion = pkg.version;
+        break;
+      }
+    }
+  } catch {
+    /* fallback "?" — UI 에서도 "?" 로 표시. */
+  }
   ipcMain.handle(
     'app:get-versions',
     (): {
@@ -92,6 +120,7 @@ function registerIpcHandlers(): void {
       node: string;
       platform: string;
       arch: string;
+      rhwpCore: string;
     } => ({
       app: app.getVersion(),
       electron: process.versions.electron ?? '?',
@@ -99,6 +128,7 @@ function registerIpcHandlers(): void {
       node: process.versions.node ?? '?',
       platform: process.platform,
       arch: process.arch,
+      rhwpCore: rhwpCoreVersion,
     }),
   );
   // chunk 63 — renderer-side error bridge. window.onerror /

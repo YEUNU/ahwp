@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+### Changed — UX 보강 chunks 77~79 (0.3.24)
+
+- **chunk 77 — provider bar 2행 분리 + lucide SVG 아이콘** — 우측 챗 패널이 좁고 모델 id 가 길면 (NVIDIA NIM 의 `deepseek-ai/...` 등) 우측 history / + 버튼이 화면 밖으로 밀려나는 문제. provider+상태+히스토리/+ 행 ↔ model selector + refresh 행 두 줄로 분리. 모든 버튼 이모지 (`📚` / `+` / `↻` / `⚠` / `키 ●` / `키 ○`) → lucide-react SVG (`History` / `Plus` / `RefreshCw` / `AlertTriangle` / `Key` / `KeyRound` / `Loader2`) 로 교체. 테마 토큰 색상 (emerald / muted-foreground / amber) 자동 적용. `IconButton` / `KeyStatusIcon` / `ModelRefreshButton` 헬퍼 컴포넌트 추출. e2e 4개 케이스 텍스트 → `data-state` attribute 로 갱신.
+- **chunk 78 — 새 문서 ⌘S → Save As 자동 라우팅** — `⌘N` 으로 만든 새 문서는 `userData/temp/new-<timestamp>.hwp` scratch path 에 위치. ⌘S 가 그대로 저장하면 사용자가 못 찾는 곳에 숨음. `useSaveFlow.saveCurrent` 가 path 의 `/temp/new-` substring 으로 scratch 식별 → 자동으로 `saveAsCurrent()` 위임. 사용자가 매번 ⌘⇧S 눌러야 했던 흐름 제거.
+- **chunk 79 — Settings 정보에 @rhwp/core 버전 + 상단바 아이콘 404 fix** — packaged Electron 에서 `<img src="/icon.svg">` 가 `file:///icon.svg` 로 resolve 되어 404 (TitleBar 와 Settings 사이드바 두 군데). 두 곳 모두 inline `<svg>` 로 교체 — 빌드 산출물 / 외부 자산 의존 제거. About pane 에 `@rhwp/core` 버전 row 추가 — `electron/main.ts` 가 `require('@rhwp/core/package.json').version` 으로 읽어 IPC `app:get-versions` 응답에 포함. UI 에 viewer 를 구동하는 WASM lib 버전 노출.
+
 ### Changed — UX 보강 chunk 75 — send 후 attachDoc 자동 unset (0.3.23)
 
 - **send / sendDirect 후 `attachDoc` 자동 false 로 reset** — 사용자가 컨텍스트 첨부 → 한 번 보내면 doc HTML 이 이미 그 turn 의 시스템 프롬프트에 직렬화 됐으므로 다음 turn 에 또 보낼 필요 없음. 이전엔 chunk 74 에서 default true 로 만들어 항상 켜져 있었는데, 매 turn 마다 1000 단락 HTML 을 다시 보내 토큰 폭발 위험. 이제 명시적 한 번 첨부 패턴 — 사용자가 또 첨부하려면 체크박스 다시 켬. localStorage 저장도 unset 시점에 갱신되어 다음 실행에 첨부 안 됨.

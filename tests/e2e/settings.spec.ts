@@ -59,7 +59,10 @@ test.describe('settings dialog — flow', () => {
     await page.keyboard.press('Escape');
     await page.getByTestId('chat-provider-select').selectOption('nvidia');
     await page.getByTestId('chat-provider-select').selectOption('openai');
-    await expect(page.getByTestId('chat-key-indicator')).toHaveText(/●/);
+    await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
+      'data-state',
+      'ok',
+    );
     await expect(page.getByTestId('chat-input')).toBeEnabled();
   });
 

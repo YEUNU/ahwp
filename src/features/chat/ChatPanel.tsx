@@ -1,7 +1,13 @@
 import {
+  AlertTriangle,
   Check,
   Copy,
+  History,
+  Key,
+  KeyRound,
   Loader2,
+  Plus,
+  RefreshCw,
   RotateCcw,
   Send,
   Square,
@@ -16,6 +22,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from 'react';
 import type { ChatMessage, ProviderId } from '@shared/ai';
 import {
@@ -63,6 +70,16 @@ const STORAGE_PROVIDER = 'ahwp:chat:provider';
 const STORAGE_MODELS = 'ahwp:chat:models';
 const STORAGE_CHAT_MODE = 'ahwp:chat:mode';
 const STORAGE_ATTACH_DOC = 'ahwp:chat:attach-doc';
+
+// chunk 77 — module-scope so helper components below (ModelRefreshButton)
+// can declare prop types referencing it without crossing the React
+// component closure.
+type ModelListState =
+  | { kind: 'idle' }
+  | { kind: 'loading' }
+  | { kind: 'ok'; models: string[]; fetchedAt: number }
+  | { kind: 'stale'; models: string[]; fetchedAt: number; reason: string }
+  | { kind: 'error'; reason: string };
 
 export type ChatMode = 'manual' | 'agent';
 
@@ -312,12 +329,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // a fetch is in flight; `ok` / `stale` / `error` after. The free-text
     // input is always available — the dropdown just *suggests* values
     // (datalist), so a missing list (`error`) doesn't block chat.
-    type ModelListState =
-      | { kind: 'idle' }
-      | { kind: 'loading' }
-      | { kind: 'ok'; models: string[]; fetchedAt: number }
-      | { kind: 'stale'; models: string[]; fetchedAt: number; reason: string }
-      | { kind: 'error'; reason: string };
+    // chunk 77 — `ModelListState` 는 모듈 스코프로 hoist 해서 helper
+    // component (ModelRefreshButton) 가 참조할 수 있게 했다.
     const [modelList, setModelList] = useState<
       Record<ChatProviderId, ModelListState>
     >({
@@ -677,146 +690,110 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       // pushing the input form out of view (same root cause as the
       // Settings PaneBody issue in chunk 72).
       <div className="flex h-full min-h-0 flex-col">
+        {/* chunk 77 — provider bar 2-row layout. Row 1: provider +
+            status icons + actions (always visible regardless of model
+            id length). Row 2: full-width model selector + refresh.
+            Earlier single-row layout collapsed history/+ buttons when
+            NVIDIA / NIM model ids stretched the model select. */}
         <div
-          className="flex items-center gap-2 border-b border-border bg-card px-3 py-2"
+          className="flex flex-col gap-1.5 border-b border-border bg-card px-3 py-2"
           data-testid="chat-provider-bar"
         >
-          <select
-            value={provider}
-            onChange={(e) => onProviderChange(e.target.value as ChatProviderId)}
-            className="rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
-            data-testid="chat-provider-select"
-            aria-label="Provider"
-            title="AI 공급자 선택 (OpenAI / NVIDIA NIM / Google Gemini / Custom)"
-            disabled={streaming}
-          >
-            {PROVIDER_OPTIONS.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label}
-              </option>
-            ))}
-          </select>
-          {/* chunk 65 — model selector. 기존 free-text input + datalist
-            는 사용자 자유 입력을 허용했지만, provider 가 노출하지 않는
-            모델 id 를 직접 입력하는 경우는 드물고 오타 위험만 컸다.
-            이제 fetched 목록의 dropdown 만 사용. 현재 model 이 목록에
-            없으면 "(저장됨)" 마커와 함께 sticky 옵션으로 보존 — provider
-            전환 / fetch 실패 시에도 마지막 선택을 잃지 않는다. */}
-          {(() => {
-            const state = modelList[provider];
-            const fetched =
-              state.kind === 'ok' || state.kind === 'stale' ? state.models : [];
-            const inFetched = fetched.includes(model);
-            const empty = fetched.length === 0 && !model;
-            return (
-              <select
-                value={model}
-                onChange={(e) => onModelChange(e.target.value)}
-                className="flex-1 truncate rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
-                data-testid="chat-model-input"
-                aria-label="Model"
-                title={
-                  empty
-                    ? '모델 목록 없음 — 키 등록 후 옆 ↻ 로 새로고침'
-                    : `현재 모델: ${model || '(미선택)'}\n클릭해 다른 모델 선택`
-                }
-                disabled={streaming || state.kind === 'loading' || empty}
-              >
-                {empty ? (
-                  <option value="">
-                    {state.kind === 'loading'
-                      ? '모델 목록 가져오는 중…'
-                      : state.kind === 'error'
-                        ? '모델 목록 확인 불가 — 새로고침'
-                        : '모델 없음'}
-                  </option>
-                ) : null}
-                {!inFetched && model ? (
-                  <option value={model}>{model} (저장됨)</option>
-                ) : null}
-                {fetched.map((id) => (
-                  <option key={id} value={id}>
-                    {id}
-                  </option>
-                ))}
-              </select>
-            );
-          })()}
-          {/* chunk 48 — refresh button + status badge. Click forces a
-            cache-bypassing refetch. The badge tells the user whether
-            we're using a fresh list, a stale-cache fallback, or a
-            "확인 불가" state where the dropdown is empty and they have
-            to type the model id by hand. */}
-          <button
-            type="button"
-            onClick={() => void fetchModels(provider, true)}
-            disabled={streaming || modelList[provider].kind === 'loading'}
-            className="rounded-md border border-input bg-background px-1.5 py-1 text-[10px] hover:bg-muted disabled:opacity-50"
-            data-testid="chat-model-refresh"
-            title={
-              modelList[provider].kind === 'error'
-                ? `모델 목록 확인 불가: ${(modelList[provider] as { reason: string }).reason}`
-                : modelList[provider].kind === 'stale'
-                  ? `오래된 캐시: ${(modelList[provider] as { reason: string }).reason}`
-                  : '모델 목록 새로고침'
-            }
-            aria-label="모델 목록 새로고침"
-          >
-            {modelList[provider].kind === 'loading'
-              ? '⟳'
-              : modelList[provider].kind === 'error'
-                ? '⚠'
-                : modelList[provider].kind === 'stale'
-                  ? '⚠'
-                  : '↻'}
-          </button>
-          <span
-            className={cn(
-              'text-[10px]',
-              hasKey === true
-                ? 'text-emerald-600 dark:text-emerald-400'
-                : hasKey === false
-                  ? 'text-muted-foreground'
-                  : 'text-muted-foreground/60',
-            )}
-            data-testid="chat-key-indicator"
-            aria-label={hasKey ? 'API 키 있음' : 'API 키 없음'}
-            title={
-              hasKey === true
-                ? `${providerLabel} API 키 등록됨 — 채팅 가능`
-                : hasKey === false
-                  ? `${providerLabel} API 키 미등록 — Settings 에서 등록 필요`
-                  : 'API 키 상태 확인 중…'
-            }
-          >
-            {hasKey === true ? '키 ●' : hasKey === false ? '키 ○' : '…'}
-          </span>
-          <button
-            type="button"
-            onClick={() => {
-              const next = !historyOpen;
-              setHistoryOpen(next);
-              if (next) void refreshHistory();
-            }}
-            disabled={streaming}
-            className="rounded-md border border-input px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
-            data-testid="chat-history-toggle"
-            aria-label="대화 목록"
-            title="대화 목록 (현재 문서 기준 — 클릭해 이전 대화 불러오기)"
-          >
-            📚
-          </button>
-          <button
-            type="button"
-            onClick={newConversation}
-            disabled={streaming}
-            className="rounded-md border border-input px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
-            data-testid="chat-history-new"
-            aria-label="새 대화"
-            title="새 대화 시작 (기존 대화는 DB 에 보존)"
-          >
-            +
-          </button>
+          <div className="flex items-center gap-1.5">
+            <select
+              value={provider}
+              onChange={(e) =>
+                onProviderChange(e.target.value as ChatProviderId)
+              }
+              className="flex-1 rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+              data-testid="chat-provider-select"
+              aria-label="Provider"
+              title="AI 공급자 선택 (OpenAI / NVIDIA NIM / Google Gemini / Custom)"
+              disabled={streaming}
+            >
+              {PROVIDER_OPTIONS.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+            <KeyStatusIcon hasKey={hasKey} providerLabel={providerLabel} />
+            <IconButton
+              onClick={() => {
+                const next = !historyOpen;
+                setHistoryOpen(next);
+                if (next) void refreshHistory();
+              }}
+              disabled={streaming}
+              testid="chat-history-toggle"
+              ariaLabel="대화 목록"
+              title="대화 목록 (현재 문서 기준 — 클릭해 이전 대화 불러오기)"
+              active={historyOpen}
+            >
+              <History className="size-3.5" />
+            </IconButton>
+            <IconButton
+              onClick={newConversation}
+              disabled={streaming}
+              testid="chat-history-new"
+              ariaLabel="새 대화"
+              title="새 대화 시작 (기존 대화는 DB 에 보존)"
+            >
+              <Plus className="size-3.5" />
+            </IconButton>
+          </div>
+          <div className="flex items-center gap-1.5">
+            {/* chunk 65 — model selector. fetched 목록의 dropdown 만
+              사용. 현재 model 이 목록에 없으면 "(저장됨)" sticky 옵션
+              으로 보존. */}
+            {(() => {
+              const state = modelList[provider];
+              const fetched =
+                state.kind === 'ok' || state.kind === 'stale'
+                  ? state.models
+                  : [];
+              const inFetched = fetched.includes(model);
+              const empty = fetched.length === 0 && !model;
+              return (
+                <select
+                  value={model}
+                  onChange={(e) => onModelChange(e.target.value)}
+                  className="min-w-0 flex-1 truncate rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+                  data-testid="chat-model-input"
+                  aria-label="Model"
+                  title={
+                    empty
+                      ? '모델 목록 없음 — 키 등록 후 옆 새로고침 버튼'
+                      : `현재 모델: ${model || '(미선택)'}\n클릭해 다른 모델 선택`
+                  }
+                  disabled={streaming || state.kind === 'loading' || empty}
+                >
+                  {empty ? (
+                    <option value="">
+                      {state.kind === 'loading'
+                        ? '모델 목록 가져오는 중…'
+                        : state.kind === 'error'
+                          ? '모델 목록 확인 불가 — 새로고침'
+                          : '모델 없음'}
+                    </option>
+                  ) : null}
+                  {!inFetched && model ? (
+                    <option value={model}>{model} (저장됨)</option>
+                  ) : null}
+                  {fetched.map((id) => (
+                    <option key={id} value={id}>
+                      {id}
+                    </option>
+                  ))}
+                </select>
+              );
+            })()}
+            <ModelRefreshButton
+              state={modelList[provider]}
+              streaming={streaming}
+              onClick={() => void fetchModels(provider, true)}
+            />
+          </div>
         </div>
         {/* Phase 3 — Manual / Agent 모드 pill 토글 (style_example). Manual:
           AI 응답의 도구 블록을 사용자가 직접 적용. Agent: provider native
@@ -1204,6 +1181,128 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     );
   },
 );
+
+// chunk 77 — provider-bar 작은 SVG 아이콘 버튼 helper. 일관된
+// border / hover / disabled 스타일 + lucide 아이콘 size 정렬.
+function IconButton({
+  onClick,
+  disabled,
+  testid,
+  ariaLabel,
+  title,
+  active,
+  dataState,
+  children,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  testid: string;
+  ariaLabel: string;
+  title: string;
+  active?: boolean;
+  dataState?: string;
+  children: ReactNode;
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      data-testid={testid}
+      data-state={dataState}
+      aria-label={ariaLabel}
+      title={title}
+      className={cn(
+        'flex size-7 shrink-0 items-center justify-center rounded-md border border-input transition disabled:opacity-50',
+        active ? 'bg-muted text-foreground' : 'hover:bg-muted',
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+// chunk 77 — API 키 상태 아이콘. lucide Key (등록) / KeyRound 윤곽
+// (미등록) / Loader2 (확인 중). 테마의 emerald / muted-foreground 토큰
+// 사용. 텍스트 "키 ●" / "키 ○" 이모지 → SVG 교체.
+function KeyStatusIcon({
+  hasKey,
+  providerLabel,
+}: {
+  hasKey: boolean | null;
+  providerLabel: string;
+}): JSX.Element {
+  const title =
+    hasKey === true
+      ? `${providerLabel} API 키 등록됨 — 채팅 가능`
+      : hasKey === false
+        ? `${providerLabel} API 키 미등록 — Settings 에서 등록 필요`
+        : 'API 키 상태 확인 중…';
+  return (
+    <span
+      className={cn(
+        'flex size-7 shrink-0 items-center justify-center rounded-md',
+        hasKey === true
+          ? 'text-emerald-600 dark:text-emerald-400'
+          : hasKey === false
+            ? 'text-muted-foreground'
+            : 'text-muted-foreground/60',
+      )}
+      data-testid="chat-key-indicator"
+      data-state={
+        hasKey === true ? 'ok' : hasKey === false ? 'missing' : 'loading'
+      }
+      aria-label={hasKey ? 'API 키 있음' : 'API 키 없음'}
+      title={title}
+    >
+      {hasKey === null ? (
+        <Loader2 className="size-3.5 animate-spin" />
+      ) : hasKey ? (
+        <Key className="size-3.5" />
+      ) : (
+        <KeyRound className="size-3.5" />
+      )}
+    </span>
+  );
+}
+
+// chunk 77 — 모델 목록 새로고침 버튼. 상태에 따라 RefreshCw (idle/ok)
+// / Loader2 spin (loading) / AlertTriangle (error/stale) 아이콘 교체.
+// 이전엔 ↻ / ⟳ / ⚠ 텍스트로 OS 폰트에 따라 모양이 일정치 않았다.
+function ModelRefreshButton({
+  state,
+  streaming,
+  onClick,
+}: {
+  state: ModelListState;
+  streaming: boolean;
+  onClick: () => void;
+}): JSX.Element {
+  const title =
+    state.kind === 'error'
+      ? `모델 목록 확인 불가: ${state.reason}`
+      : state.kind === 'stale'
+        ? `오래된 캐시: ${state.reason}`
+        : '모델 목록 새로고침';
+  return (
+    <IconButton
+      onClick={onClick}
+      disabled={streaming || state.kind === 'loading'}
+      testid="chat-model-refresh"
+      ariaLabel="모델 목록 새로고침"
+      title={title}
+      dataState={state.kind}
+    >
+      {state.kind === 'loading' ? (
+        <Loader2 className="size-3.5 animate-spin" />
+      ) : state.kind === 'error' || state.kind === 'stale' ? (
+        <AlertTriangle className="size-3.5 text-amber-600 dark:text-amber-400" />
+      ) : (
+        <RefreshCw className="size-3.5" />
+      )}
+    </IconButton>
+  );
+}
 
 interface MessageProps {
   message: UiMessage;

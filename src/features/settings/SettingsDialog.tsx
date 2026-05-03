@@ -104,13 +104,41 @@ function SettingsDialogInner({
         {/* Left tabs */}
         <div className="flex flex-col border-r border-border bg-muted/40 p-3">
           <div className="flex items-center gap-2 px-2 pb-3 pt-1">
-            <img
-              src="/icon.svg"
-              alt=""
-              width={18}
-              height={18}
-              className="rounded"
-            />
+            {/* chunk 77 — packaged Electron 에서 `<img src="/icon.svg">`
+                는 file:/// resolve 로 404. inline SVG 로 교체. */}
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 64 64"
+              width={16}
+              height={16}
+              aria-hidden="true"
+              className="rounded-[4px]"
+            >
+              <defs>
+                <clipPath id="settings-logo-squircle">
+                  <path d="M 14.3168 0 L 49.6832 0 Q 64 0 64 14.3168 L 64 49.6832 Q 64 64 49.6832 64 L 14.3168 64 Q 0 64 0 49.6832 L 0 14.3168 Q 0 0 14.3168 0 Z" />
+                </clipPath>
+              </defs>
+              <g clipPath="url(#settings-logo-squircle)">
+                <rect width="64" height="64" fill="#2b6a6b" />
+                <rect
+                  x="26.88"
+                  y="10.24"
+                  width="6.4"
+                  height="43.52"
+                  rx="0.768"
+                  fill="#f6f4ef"
+                />
+                <rect
+                  x="33.28"
+                  y="29.44"
+                  width="20.48"
+                  height="6.4"
+                  rx="0.768"
+                  fill="#f6f4ef"
+                />
+              </g>
+            </svg>
             <span className="text-[13px] font-bold tracking-tight">설정</span>
           </div>
           {TABS.map((tab) => (
@@ -352,6 +380,11 @@ function AboutPane(): JSX.Element {
             <Row label="Electron" value={versions?.electron} />
             <Row label="Chromium" value={versions?.chrome} />
             <Row label="Node.js" value={versions?.node} />
+            <Row
+              label="@rhwp/core"
+              value={versions?.rhwpCore}
+              testid="about-rhwp-core"
+            />
             <Row
               label="OS"
               value={
@@ -689,12 +722,14 @@ function Field({
 function Row({
   label,
   value,
+  testid,
 }: {
   label: string;
   value: string | undefined;
+  testid?: string;
 }): JSX.Element {
   return (
-    <div className="flex justify-between">
+    <div className="flex justify-between" data-testid={testid}>
       <span className="text-muted-foreground">{label}</span>
       <span>{value ?? '…'}</span>
     </div>

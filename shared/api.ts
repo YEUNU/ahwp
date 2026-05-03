@@ -453,6 +453,10 @@ export interface AppVersions {
   node: string;
   platform: string;
   arch: string;
+  /** chunk 79 — `@rhwp/core` (HWP/HWPX WASM lib) version. Read from
+   *  `package.json` dependencies at app launch — surfaced in Settings
+   *  → 정보 so users know which WASM build powers their viewer. */
+  rhwpCore: string;
 }
 
 export interface AhwpApi {

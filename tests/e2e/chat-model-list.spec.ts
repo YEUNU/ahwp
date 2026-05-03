@@ -113,11 +113,15 @@ test.describe('chat — chunk 48 model list (cache + datalist)', () => {
     await page.waitForLoadState('domcontentloaded');
     await openFixture(page);
     // Wait for the panel's auto-fetch to finish — refresh button reflects
-    // the post-fetch state (↻ for ok, ⚠ for stale/error).
+    // chunk 77 — refresh button is now SVG-icon driven; state is
+    // exposed via data-state attribute (idle / loading / ok / stale /
+    // error) instead of the ↻ / ⚠ unicode glyphs.
     await expect(page.getByTestId('chat-model-refresh')).toBeVisible();
-    await expect(page.getByTestId('chat-model-refresh')).toHaveText('↻', {
-      timeout: 5000,
-    });
+    await expect(page.getByTestId('chat-model-refresh')).toHaveAttribute(
+      'data-state',
+      'ok',
+      { timeout: 5000 },
+    );
 
     // chunk 65 — model is a <select>, not <input list=...> + <datalist>.
     // Inspect the option values directly.
@@ -148,7 +152,10 @@ test.describe('chat — chunk 48 model list (cache + datalist)', () => {
     // The button title carries the reason string when in error/stale.
     const btn = page.getByTestId('chat-model-refresh');
     await expect(btn).toBeVisible();
-    await expect(btn).toHaveText('⚠', { timeout: 5000 });
+    // chunk 77 — error / stale state surfaces via data-state attribute.
+    await expect(btn).toHaveAttribute('data-state', /error|stale/, {
+      timeout: 5000,
+    });
     const title = await btn.getAttribute('title');
     expect(title).toMatch(/확인 불가|오래된 캐시/);
 

@@ -22,6 +22,7 @@ describe('App', () => {
         node: '20.0.0',
         platform: 'darwin',
         arch: 'arm64',
+        rhwpCore: '0.7.9',
       }),
       file: {
         new: vi.fn().mockResolvedValue({ path: '/tmp/new.hwp' }),
