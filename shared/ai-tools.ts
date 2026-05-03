@@ -62,7 +62,10 @@ const TOOL_DESCRIPTORS: AhwpToolDescriptor[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        align: { enum: ['left', 'center', 'right', 'justify'] },
+        align: {
+          type: 'string',
+          enum: ['left', 'center', 'right', 'justify'],
+        },
       },
       required: ['align'],
     },
@@ -90,7 +93,12 @@ const TOOL_DESCRIPTORS: AhwpToolDescriptor[] = [
     description: '활성 selection / caret 의 진하게/기울임/밑줄 토글.',
     inputSchema: {
       type: 'object',
-      properties: { key: { enum: ['bold', 'italic', 'underline'] } },
+      properties: {
+        key: {
+          type: 'string',
+          enum: ['bold', 'italic', 'underline'],
+        },
+      },
       required: ['key'],
     },
   },

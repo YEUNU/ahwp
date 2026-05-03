@@ -27,9 +27,58 @@ import { getProviderMeta } from '../../../shared/ai';
  *
  * Tool 카탈로그:
  *   - `{tools: [{functionDeclarations: [{name, description, parameters}]}]}`
- *   - parameters 는 JSON Schema (draft-07) — OpenAI 와 동일 포맷이지만
- *     Gemini 는 일부 제약 (예: `additionalProperties` 무시, `enum` 만 허용)
+ *   - parameters 는 JSON Schema 의 Gemini-호환 subset 만 — 우리 카탈로그 는
+ *     OpenAI 풀 호환 schema 라 Gemini 거부 키워드 (exclusiveMinimum/Maximum,
+ *     pattern, additionalProperties, anyOf/oneOf 등) 를 sanitize 해서 보낸다.
+ *     Gemini 가 enforce 하지 않아도 우리 validator (shared/ai-tools.ts) 가
+ *     서버 응답 받기 전 검증하므로 안전.
  */
+
+/** Gemini 가 받는 JSON Schema keyword 화이트리스트.
+ *
+ * 출처: https://ai.google.dev/gemini-api/docs/structured-output#json_schemas
+ * + 실험으로 확인. exclusiveMinimum / exclusiveMaximum / pattern /
+ * additionalProperties / $ref / definitions / anyOf / oneOf / allOf /
+ * not / const 모두 거부.
+ */
+const GEMINI_SCHEMA_ALLOWED = new Set([
+  'type',
+  'description',
+  'nullable',
+  'enum',
+  'properties',
+  'required',
+  'items',
+  'minimum',
+  'maximum',
+  'minItems',
+  'maxItems',
+  'minLength',
+  'maxLength',
+  'format',
+  'title',
+]);
+
+function sanitizeForGemini(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(sanitizeForGemini);
+  if (schema === null || typeof schema !== 'object') return schema;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(schema as Record<string, unknown>)) {
+    if (!GEMINI_SCHEMA_ALLOWED.has(k)) continue;
+    if (k === 'properties' && v !== null && typeof v === 'object') {
+      // properties: 키는 schema keyword 가 아니라 property 이름이라
+      // 그대로 보존하고 VALUE 만 재귀 sanitize.
+      const propsOut: Record<string, unknown> = {};
+      for (const [pk, pv] of Object.entries(v as Record<string, unknown>)) {
+        propsOut[pk] = sanitizeForGemini(pv);
+      }
+      out[k] = propsOut;
+    } else {
+      out[k] = sanitizeForGemini(v);
+    }
+  }
+  return out;
+}
 
 const DEFAULT_BASE_URL = 'https://generativelanguage.googleapis.com';
 const API_VERSION = 'v1beta';
@@ -187,7 +236,7 @@ export const googleProvider: Provider = {
           functionDeclarations: req.tools.map((t) => ({
             name: t.name,
             description: t.description,
-            parameters: t.inputSchema,
+            parameters: sanitizeForGemini(t.inputSchema),
           })),
         },
       ];
