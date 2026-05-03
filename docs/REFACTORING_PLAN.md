@@ -2,6 +2,13 @@
 
 ahwp 0.3.6 시점 codebase 리팩토링 청사진. **목표는 동작 변경 0** — 사용자 영향 없이 유지보수성과 안전성만 끌어올린다. 신규 기능 작업과 분리해서 별도 phase 로 진행 (`refactor/*` 브랜치).
 
+## 진행 상황
+
+- ✅ **R1.0** (commit `8fa0a67`, 2026-05-03) — pure utils 추출.
+  `parsePageDimensions` + `relocateExcerpt` → `utils/`. 단위 테스트 12개
+  추가 (3 → 15). StudioViewer.tsx -72 라인 (9610 → 9538). 회귀 0.
+- ⏳ **R1.1** — `useDocumentLifecycle` 추출. 다음 세션 시작점.
+
 ---
 
 ## 0. 측량 (현재 상태)
