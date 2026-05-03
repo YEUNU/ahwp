@@ -1051,9 +1051,32 @@ export default function AppShell() {
                     v.applyHtmlAtCaret(html);
                     v.markChangedParagraphsSince(before);
                   }}
-                  runTools={(items) => {
-                    const v = activeViewerRef();
-                    if (!v) return [];
+                  runTools={(items, targetPath) => {
+                    // Phase 3 chunk 50 — docId-aware routing. If the
+                    // chat turn pinned a target path, look up the
+                    // matching mounted viewer (it stays mounted with
+                    // display:none even when the user switches tabs).
+                    // null targetPath = legacy / Manual "도구 실행"
+                    // button → fall back to active viewer.
+                    const lookupByPath = (p: string) => {
+                      const tab = tabsState.find((t) => t.path === p);
+                      return tab
+                        ? (viewerRefsRef.current.get(tab.key) ?? null)
+                        : null;
+                    };
+                    const v = targetPath
+                      ? lookupByPath(targetPath)
+                      : activeViewerRef();
+                    if (!v) {
+                      if (targetPath) {
+                        return items.map((it) => ({
+                          ok: false,
+                          tool: it.ok ? it.call.tool : it.tool,
+                          reason: `target-doc-not-mounted:${targetPath}`,
+                        }));
+                      }
+                      return [];
+                    }
                     const before = v.snapshotParagraphs();
                     const results = runTools(v, items);
                     v.markChangedParagraphsSince(before);

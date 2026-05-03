@@ -214,7 +214,7 @@
 - [x] **chunk 51** — Read tool 카탈로그 + 양식 매칭 워크플로우 ✅ (0.3.4): 9개 read-only tool (`getDocumentOutline`/`getStyleListJson`/`getStyleAt`/`getCharPropertiesAt`/`getParaPropertiesAt`/`getTextRange`/`getCaretPosition`/`findInDocument`/`getCellInfo`). Agent 가 turn 안에서 read → reason → write 시퀀스로 양식 매칭 가능. `AhwpToolResult.data` 캐리어 + tool_result 메시지에 JSON 회신. system prompt `SYSTEM_PROMPT_AGENT_GUIDE` 양식 매칭 가이드 (`applyStyle` > `applyParaProps` > `applyHtml` 우선순위). 총 54 tools (write 45 + read 9). 자세한 시나리오는 [PHASE3_PLAN.md](PHASE3_PLAN.md) D-7
 <!-- chunk 47 (docId-aware multi-doc) 은 위 chunk 47 통합 항목에 흡수되지
      않은 별도 후속 — 다중 문서 write 분기. 키 결정 + 사용자 피드백 후. -->
-- [ ] **chunk 50** — docId-aware 라우팅 — `runTools(docId, items)` 다중 문서 write (현재 active doc fixed)
+- [x] **chunk 50** — docId-aware 라우팅 ✅ (0.3.11): `runTools(items, targetPath)` 두 번째 인자 추가. `useChatStreaming` 의 `turnTargetPathRef` 가 `send`/`sendDirect` 에서 active path 캡처, Agent 루프 dispatch 가 ref 사용. AppShell 이 path → tab.key → `viewerRefsRef.current.get(...)` 로 mounted viewer 라우팅. target 탭이 닫혔으면 `target-doc-not-mounted` reason 실패. mid-turn 탭 전환에도 원본 doc 으로 적용. e2e `chat-agent-multidoc.spec.ts` 1 케이스 회귀 가드
 
 검증: "이 표의 합계 행을 추가하고 모든 셀을 가운데 정렬해줘" 한 줄로 처리.
 

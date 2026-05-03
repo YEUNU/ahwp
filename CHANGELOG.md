@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+### Changed — Phase 3 chunk 59: docId-aware Agent dispatch (0.3.11)
+
+- **`runTools(items, targetPath)` — turn 시작 시점의 target doc 으로 dispatch 핀** — 사용자가 Agent turn 중간에 탭을 전환해도 write tool 은 원본 target doc 으로 라우팅. `useChatStreaming` 의 `turnTargetPathRef` 가 `send` / `sendDirect` 에서 `activeDocPath()` 를 캡처, Agent 루프 안 dispatch 사이트가 ref 를 두 번째 인자로 전달. `legacy null` 은 active viewer fallback (Manual "도구 실행" 버튼 호환).
+- **AppShell viewer-by-path 라우팅** — `runTools` prop 이 `targetPath` 를 받으면 `tabsState.find(t => t.path === targetPath)` + `viewerRefsRef.current.get(tab.key)` 로 mounted viewer 조회. target tab 이 닫힌 경우 모든 op 가 `target-doc-not-mounted:<path>` reason 으로 실패. inactive tab viewer 도 `display:none` 으로 mount 유지되므로 dispatch 가 정상 동작.
+- **회귀 가드** — `tests/e2e/chat-agent-multidoc.spec.ts` (1 케이스): 두 doc open 상태에서 active=target Agent insertText → target 첫 단락에 sentinel 존재 + reference 첫 단락에 sentinel 부재 검증.
+
 ### Documented — Phase 4 chunk 58: ROADMAP 정정 (0.3.10)
 
 - **앱 아이콘 항목 ✅ 처리** — `build/icon.png` (1024×1024 RGBA) + `public/icon.svg` / `favicon-16/32.png` / `icon-large.svg` 가 사용자 제공으로 이미 트리에 존재. electron-builder 가 단일 1024 source 에서 mac (.icns) / win (.ico) / linux (.png) 을 자동 생성하므로 별도 디자인 작업 불필요. 이전 ROADMAP 의 미체크 상태는 잘못된 누락이었음

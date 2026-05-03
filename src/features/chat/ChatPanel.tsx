@@ -154,12 +154,17 @@ export interface ChatPanelProps {
    */
   applyHtml?: (html: string) => void;
   /**
-   * Run a pre-flighted ahwp-tools op list against the active doc — chunk 19.
-   * Wraps `runTools` from src/features/chat/tools.ts. Surfaced as a
-   * "도구 실행" button on assistant messages that contain
-   * ```ahwp-tools``` JSON blocks.
+   * Run a pre-flighted ahwp-tools op list against a target doc — chunk 19,
+   * extended in chunk 59 to be docId-aware. `targetPath` is the absolute
+   * path of the doc the turn was started on; AppShell looks up the matching
+   * mounted viewer and dispatches the ops there. Passing `null` falls back
+   * to the active viewer (legacy / "도구 실행" button on Manual responses).
+   * Wraps `runTools` from src/features/chat/tools.ts.
    */
-  runTools?: (items: AhwpPreflightItem[]) => AhwpToolResult[];
+  runTools?: (
+    items: AhwpPreflightItem[],
+    targetPath?: string | null,
+  ) => AhwpToolResult[];
   /**
    * Capture the active StudioViewer selection as a portable excerpt — chunk 20.
    * `null` when no selection is active or the selection spans paragraphs.

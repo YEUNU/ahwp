@@ -87,7 +87,7 @@ export interface UseChatStreamingOptions {
   onOpenSettings?: () => void;
   getDocHtml?: () => string;
   applyHtml?: (html: string) => void;
-  runTools?: (items: any) => any;
+  runTools?: (items: any, targetPath?: string | null) => any;
   captureExcerpt?: () => any;
   activeDocPath?: () => string | null;
   verifyExcerpt?: (anchor: any, expected: string) => any;
@@ -176,6 +176,12 @@ export function useChatStreaming(
   useEffect(() => {
     runToolsPropRef.current = runTools;
   }, [runTools]);
+
+  // Phase 3 chunk 50 — turn 시작 시점의 target doc path. Agent 루프
+  // 가 여러 turn 을 거쳐도 동일 doc 으로 dispatch 하기 위해 ref 에 핀.
+  // 사용자가 mid-turn 에 탭을 바꿔도 write tool 은 원본 target 으로 감.
+  // null = legacy fallback (active viewer).
+  const turnTargetPathRef = useRef<string | null>(null);
 
   /**
    * chunk 31 — 자동 제목 요약. 대화의 메시지 4개 이상 누적 후 1회만
@@ -378,7 +384,13 @@ export function useChatStreaming(
             });
             continue;
           }
-          const out = dispatcher([{ ok: true, call: v.value }]);
+          // Phase 3 chunk 50 — Agent 루프 안에서는 turn 시작 시점의
+          // target path 로 고정 dispatch. 사용자가 mid-turn 에 탭을
+          // 전환해도 원본 doc 에 적용된다.
+          const out = dispatcher(
+            [{ ok: true, call: v.value }],
+            turnTargetPathRef.current,
+          );
           const first = out[0];
           if (first && first.ok) {
             toolResults.push({
@@ -646,13 +658,18 @@ export function useChatStreaming(
     const userMsg: UiMessage = { id: newId(), role: 'user', content: text };
     setInput('');
 
+    // Phase 3 chunk 50 — pin the target doc path at turn start so the
+    // Agent loop dispatches to the original doc even if the user
+    // switches tabs mid-turn.
+    turnTargetPathRef.current = activeDocPath?.() ?? null;
+
     // chunk 26 — ensure the conversation exists BEFORE starting the
     // stream so onEvent's terminator (which persists the assistant
     // turn) sees a non-null conversationIdRef. We await the create +
     // user-append so persistence is in lockstep with the visual turn.
     try {
       if (conversationIdRef.current === null) {
-        const docPath = activeDocPath?.() ?? null;
+        const docPath = turnTargetPathRef.current;
         const title = text.slice(0, 60);
         const r = await window.api.chatHistory.create(docPath, title);
         conversationIdRef.current = r.id;
@@ -694,9 +711,13 @@ export function useChatStreaming(
         role: 'user',
         content: trimmed,
       };
+      // Phase 3 chunk 50 — pin target doc at turn start (parity with
+      // `send`). selection-menu invocation always runs against the doc
+      // the selection lives in, which is the active doc here.
+      turnTargetPathRef.current = activeDocPath?.() ?? null;
       try {
         if (conversationIdRef.current === null) {
-          const docPath = activeDocPath?.() ?? null;
+          const docPath = turnTargetPathRef.current;
           const title = trimmed.slice(0, 60);
           const r = await window.api.chatHistory.create(docPath, title);
           conversationIdRef.current = r.id;
