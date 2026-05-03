@@ -5,3 +5,12 @@ node_modules
 coverage
 package-lock.json
 LICENSE
+# Anchored to repo root: design mockups + sample HWP fixtures we don't want
+# format-checked. Trailing slash ensures we ignore the directory contents
+# regardless of glob expansion order.
+/style_example/
+/examples/
+# Playwright artifacts
+/test-results/
+/playwright-report/
+electron/hwp/blank-seed.ts

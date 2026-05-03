@@ -13,6 +13,10 @@ export default tseslint.config(
       'release',
       'node_modules',
       'coverage',
+      'style_example',
+      'examples',
+      'scripts/inspect-*.mjs',
+      'scripts/check-*.mjs',
       '*.config.cjs',
       '**/*.d.ts',
     ],
@@ -38,7 +42,12 @@ export default tseslint.config(
     },
   },
   {
-    files: ['electron/**/*.ts', 'shared/**/*.ts', 'vite.config.ts'],
+    files: [
+      'electron/**/*.ts',
+      'shared/**/*.ts',
+      'scripts/**/*.{js,mjs,ts}',
+      'vite.config.ts',
+    ],
     languageOptions: {
       ecmaVersion: 2022,
       globals: { ...globals.node },

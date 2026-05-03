@@ -2,11 +2,18 @@
 <html lang="ko">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      script-src 'wasm-unsafe-eval': required by @rhwp/core (WASM in renderer
+      via WebAssembly.instantiate). Narrower than 'unsafe-eval'.
+    -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://localhost:* ws://localhost:*"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://localhost:* ws://localhost:*"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
     <title>ahwp</title>
   </head>
   <body class="bg-background text-foreground antialiased">

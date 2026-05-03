@@ -1,6 +1,6 @@
 {
   "name": "ahwp",
-  "version": "0.0.1",
+  "version": "0.2.94",
   "private": true,
   "description": "AI-powered HWP/HWPX desktop editor",
   "author": "ahwp contributors",
@@ -14,6 +14,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "e2e": "vite build && playwright test",
+    "e2e:headed": "vite build && playwright test --headed",
     "lint": "eslint .",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,css,html}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,css,html}\"",
@@ -31,11 +33,14 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.59.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.10.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
+    "@types/react-syntax-highlighter": "^15.5.13",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
     "electron": "^33.2.0",
@@ -70,6 +75,9 @@
       "dist",
       "dist-electron"
     ],
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**/*"
+    ],
     "mac": {
       "target": [
         "dmg"
@@ -97,7 +105,23 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDir": true
+      "allowToChangeInstallationDirectory": true
     }
+  },
+  "dependencies": {
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@radix-ui/react-slot": "^1.2.4",
+    "@rhwp/core": "^0.7.9",
+    "better-sqlite3": "^12.9.0",
+    "chokidar": "^5.0.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.14.0",
+    "react-markdown": "^10.1.0",
+    "react-resizable-panels": "^2.1.9",
+    "react-syntax-highlighter": "^16.1.1",
+    "remark-gfm": "^4.0.1",
+    "tailwind-merge": "^3.5.0",
+    "tailwindcss-animate": "^1.0.7"
   }
 }

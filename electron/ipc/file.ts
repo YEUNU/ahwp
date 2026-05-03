@@ -1,0 +1,581 @@
+import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import chokidar, { type FSWatcher } from 'chokidar';
+import { createHash } from 'node:crypto';
+import { promises as fs } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import type {
+  ExternalFileChangeEvent,
+  FileOpenResult,
+  FileSaveAsRequest,
+  FileSaveRequest,
+  RecentFile,
+} from '../../shared/api';
+import { correctExtension } from '../../shared/format';
+import {
+  createBlankHwpBytes,
+  ensureHwpxBytes,
+  normalizeToHwp,
+} from '../hwp/converter';
+import { addRecent, listRecent } from '../store/recent';
+
+const ALLOWED_EXTENSIONS = ['.hwp', '.hwpx'] as const;
+
+function isAllowed(filePath: string): boolean {
+  const ext = path.extname(filePath).toLowerCase();
+  return (ALLOWED_EXTENSIONS as readonly string[]).includes(ext);
+}
+
+async function exists(filePath: string): Promise<boolean> {
+  try {
+    const stat = await fs.stat(filePath);
+    return stat.isFile();
+  } catch {
+    return false;
+  }
+}
+
+export function registerFileIpc(): void {
+  ipcMain.handle('file:new', async (): Promise<FileOpenResult> => {
+    // Build a fresh blank HWP via @rhwp/core's createEmpty + exportHwp,
+    // write to a per-session temp path, and hand the path back. The
+    // viewer treats it like any other open file. Until the user runs
+    // Save As, the file lives in `userData/temp` — never added to recent.
+    const bytes = await createBlankHwpBytes();
+    const dir = path.join(app.getPath('userData'), 'temp');
+    await fs.mkdir(dir, { recursive: true });
+    const target = path.join(dir, `new-${Date.now()}.hwp`);
+    await writeAtomic(target, bytes);
+    return { path: target };
+  });
+
+  ipcMain.handle('file:open', async (event): Promise<FileOpenResult | null> => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showOpenDialog(
+      window ?? new BrowserWindow({ show: false }),
+      {
+        title: '한글 문서 열기',
+        properties: ['openFile'],
+        filters: [
+          { name: '한글 문서', extensions: ['hwp', 'hwpx'] },
+          { name: '모든 파일', extensions: ['*'] },
+        ],
+      },
+    );
+    if (result.canceled || result.filePaths.length === 0) return null;
+    const picked = result.filePaths[0];
+    if (!isAllowed(picked)) return null;
+    await addRecent(picked);
+    return { path: picked };
+  });
+
+  ipcMain.handle(
+    'file:open-by-path',
+    async (_event, filePath: string): Promise<FileOpenResult | null> => {
+      if (typeof filePath !== 'string' || !filePath) return null;
+      if (!isAllowed(filePath)) return null;
+      if (!(await exists(filePath))) return null;
+      await addRecent(filePath);
+      return { path: filePath };
+    },
+  );
+
+  ipcMain.handle('file:list-recent', async (): Promise<RecentFile[]> => {
+    return listRecent();
+  });
+
+  ipcMain.handle(
+    'file:read',
+    async (_event, filePath: string): Promise<ArrayBuffer> => {
+      if (typeof filePath !== 'string' || !filePath) {
+        throw new Error('file:read requires a path');
+      }
+      if (!isAllowed(filePath)) {
+        throw new Error(`Unsupported extension: ${path.extname(filePath)}`);
+      }
+      const raw = await fs.readFile(filePath);
+      // Always hand HWPX bytes back to the renderer — converts HWP via
+      // @rhwp/core if needed. ARCHITECTURE.md §B: canonical internal = HWPX.
+      const hwpxBytes = await ensureHwpxBytes(
+        new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength),
+      );
+      // Hand off as a fresh ArrayBuffer (renderer expects ArrayBuffer).
+      return hwpxBytes.buffer.slice(
+        hwpxBytes.byteOffset,
+        hwpxBytes.byteOffset + hwpxBytes.byteLength,
+      ) as ArrayBuffer;
+    },
+  );
+
+  ipcMain.handle(
+    'file:save',
+    async (_event, req: FileSaveRequest): Promise<FileOpenResult> => {
+      if (!req || typeof req.path !== 'string' || !req.path) {
+        throw new Error('file:save requires { path, bytes }');
+      }
+      if (!isAllowed(req.path)) {
+        throw new Error(`Unsupported extension: ${path.extname(req.path)}`);
+      }
+      // Normalize to HWP (CFB). HWPX round-trip drops images in @rhwp/core
+      // v0.7.8 — see electron/hwp/converter.ts.
+      const normalized = await normalizeToHwp(toUint8(req.bytes));
+      // Output is always HWP; route the path's extension to match. Caller's
+      // requested .hwpx path becomes the sibling .hwp; .hwp passes through.
+      const target = correctExtension(req.path, 'hwp');
+      const routed = target !== req.path;
+      if (routed) {
+        console.info(
+          `[file:save] auto-routing extension ${req.path} → ${target}`,
+        );
+      }
+      // Sidecar `.bak` of the prior on-disk content — written ONCE per
+      // path so we don't churn `.bak` on every save. If a `.bak` already
+      // exists from an earlier save, it stays put (preserves the
+      // pre-edit-session original). New files (no prior content) skip
+      // backup entirely.
+      const backupPath = await maybeWriteBackup(target);
+      await writeAtomic(target, normalized);
+      noteOwnWrite(target);
+      await addRecent(target);
+      const result: FileOpenResult = { path: target };
+      if (routed) result.routedFrom = req.path;
+      if (backupPath) result.backupPath = backupPath;
+      return result;
+    },
+  );
+
+  ipcMain.handle(
+    'file:export-html',
+    async (
+      event,
+      req: { html: string; defaultPath?: string },
+    ): Promise<FileOpenResult | null> => {
+      const window = BrowserWindow.fromWebContents(event.sender);
+      const result = await dialog.showSaveDialog(
+        window ?? new BrowserWindow({ show: false }),
+        {
+          title: 'HTML로 내보내기',
+          defaultPath: req.defaultPath
+            ? req.defaultPath.replace(/\.hwpx?$/i, '.html')
+            : undefined,
+          filters: [{ name: 'HTML', extensions: ['html', 'htm'] }],
+        },
+      );
+      if (result.canceled || !result.filePath) return null;
+      const picked = result.filePath;
+      // Wrap the HTML body in a minimal document shell so the file
+      // opens cleanly in a browser. We don't try to inline CSS — the
+      // exported HTML is intentionally lossy for AI / paste use cases.
+      const wrapped = `<!DOCTYPE html>
+<html lang="ko"><head>
+<meta charset="utf-8">
+<title>${path.basename(picked, path.extname(picked))}</title>
+</head><body>
+${req.html}
+</body></html>`;
+      await writeAtomic(picked, new TextEncoder().encode(wrapped));
+      return { path: picked };
+    },
+  );
+
+  // chunk 59 — PDF export. We piggyback on Electron's Chrome PDF
+  // backend (`webContents.printToPDF`) by mounting the document HTML in
+  // a hidden BrowserWindow, asking Chrome to render it to PDF, and
+  // writing the bytes to a user-picked path. Quality is "Chrome's HTML
+  // → PDF" which matches the system "Save as PDF" output. Lossy on
+  // header/footer/footnote/표 layout vs the native HWP→PDF tools, but
+  // sufficient for review / sharing flows.
+  ipcMain.handle(
+    'file:export-pdf',
+    async (
+      event,
+      req: { html: string; defaultPath?: string },
+    ): Promise<FileOpenResult | null> => {
+      const callerWindow = BrowserWindow.fromWebContents(event.sender);
+      const dialogResult = await dialog.showSaveDialog(
+        callerWindow ?? new BrowserWindow({ show: false }),
+        {
+          title: 'PDF로 내보내기',
+          defaultPath: req.defaultPath
+            ? req.defaultPath.replace(/\.hwpx?$/i, '.pdf')
+            : undefined,
+          filters: [{ name: 'PDF', extensions: ['pdf'] }],
+        },
+      );
+      if (dialogResult.canceled || !dialogResult.filePath) return null;
+      const picked = dialogResult.filePath;
+
+      // Hidden offscreen window — sandboxed, no node integration. The
+      // shell wraps the body HTML with a print-friendly stylesheet so
+      // Chrome's pagination respects sane margins / line spacing.
+      const printWin = new BrowserWindow({
+        show: false,
+        webPreferences: {
+          sandbox: true,
+          contextIsolation: true,
+          nodeIntegration: false,
+        },
+      });
+      try {
+        const shell = `<!DOCTYPE html>
+<html lang="ko"><head>
+<meta charset="utf-8">
+<title>${path.basename(picked, path.extname(picked))}</title>
+<style>
+  @page { margin: 25mm; }
+  body { font-family: 'Pretendard', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; font-size: 11pt; line-height: 1.5; color: #1c1a16; }
+  p { margin: 0 0 0.4em 0; }
+  table { border-collapse: collapse; }
+  td, th { border: 1px solid #aaa; padding: 4px 6px; }
+  img { max-width: 100%; }
+</style>
+</head><body>
+${req.html}
+</body></html>`;
+        // loadURL with a data: URL — no temp file, no FS leak.
+        const dataUrl = `data:text/html;charset=utf-8,${encodeURIComponent(shell)}`;
+        await printWin.loadURL(dataUrl);
+        const pdfBytes = await printWin.webContents.printToPDF({
+          printBackground: true,
+          pageSize: 'A4',
+          margins: { marginType: 'default' },
+        });
+        await writeAtomic(picked, new Uint8Array(pdfBytes));
+        return { path: picked };
+      } finally {
+        if (!printWin.isDestroyed()) printWin.destroy();
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'file:save-as',
+    async (event, req: FileSaveAsRequest): Promise<FileOpenResult | null> => {
+      const window = BrowserWindow.fromWebContents(event.sender);
+      const result = await dialog.showSaveDialog(
+        window ?? new BrowserWindow({ show: false }),
+        {
+          title: '다른 이름으로 저장',
+          defaultPath: req.defaultPath,
+          // HWP-only filter — HWPX disabled until @rhwp/core fixes the image
+          // round-trip (KNOWN_ISSUES). Re-enable HWPX option once upstream
+          // ships the fix.
+          filters: [{ name: '한글 문서 (HWP)', extensions: ['hwp'] }],
+        },
+      );
+      if (result.canceled || !result.filePath) return null;
+      const picked = result.filePath;
+      if (!isAllowed(picked)) {
+        throw new Error(`Unsupported extension: ${path.extname(picked)}`);
+      }
+      const normalized = await normalizeToHwp(toUint8(req.bytes));
+      const target = correctExtension(picked, 'hwp');
+      const routed = target !== picked;
+      if (routed) {
+        console.info(
+          `[file:save-as] auto-routing extension ${picked} → ${target}`,
+        );
+      }
+      const backupPath = await maybeWriteBackup(target);
+      await writeAtomic(target, normalized);
+      noteOwnWrite(target);
+      await addRecent(target);
+      const out: FileOpenResult = { path: target };
+      if (routed) out.routedFrom = picked;
+      if (backupPath) out.backupPath = backupPath;
+      return out;
+    },
+  );
+
+  // chunk 62 — version history. Each successful explicit save spawns a
+  // versioned snapshot under `userData/versions/<hash>/<ISO>.hwp`. We
+  // keep the latest 50 per file (FIFO trim). Restore is a separate
+  // user action — the dialog reads the bytes back and AppShell pipes
+  // them through the regular file:save flow so .bak / atomic write /
+  // watcher suppression still apply.
+  ipcMain.handle(
+    'file:create-version',
+    async (
+      _event,
+      req: { path: string; bytes: ArrayBuffer | Uint8Array },
+    ): Promise<void> => {
+      if (!req || typeof req.path !== 'string' || !req.path) return;
+      try {
+        const dir = path.join(
+          app.getPath('userData'),
+          'versions',
+          versionDirHash(req.path),
+        );
+        await fs.mkdir(dir, { recursive: true });
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const filename = `${stamp}.hwp`;
+        await fs.writeFile(path.join(dir, filename), toUint8(req.bytes));
+        // FIFO trim. Sort by name (ISO sorts naturally) and drop oldest
+        // beyond cap.
+        const entries = (await fs.readdir(dir))
+          .filter((n) => n.endsWith('.hwp'))
+          .sort();
+        const KEEP = 50;
+        while (entries.length > KEEP) {
+          const oldest = entries.shift()!;
+          try {
+            await fs.unlink(path.join(dir, oldest));
+          } catch {
+            /* ignore */
+          }
+        }
+      } catch (err) {
+        console.warn('[file] create-version failed (non-fatal):', err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'file:list-versions',
+    async (
+      _event,
+      p: unknown,
+    ): Promise<{ filename: string; size: number; createdAt: number }[]> => {
+      if (typeof p !== 'string' || !p) return [];
+      try {
+        const dir = path.join(
+          app.getPath('userData'),
+          'versions',
+          versionDirHash(p),
+        );
+        const entries = await fs.readdir(dir, { withFileTypes: true });
+        const items: { filename: string; size: number; createdAt: number }[] =
+          [];
+        for (const e of entries) {
+          if (!e.isFile() || !e.name.endsWith('.hwp')) continue;
+          const fp = path.join(dir, e.name);
+          try {
+            const st = await fs.stat(fp);
+            items.push({
+              filename: e.name,
+              size: st.size,
+              createdAt: st.mtimeMs,
+            });
+          } catch {
+            /* ignore */
+          }
+        }
+        items.sort((a, b) => b.createdAt - a.createdAt);
+        return items;
+      } catch {
+        return [];
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'file:read-version',
+    async (
+      _event,
+      req: { path: string; filename: string },
+    ): Promise<ArrayBuffer | null> => {
+      if (
+        !req ||
+        typeof req.path !== 'string' ||
+        typeof req.filename !== 'string'
+      )
+        return null;
+      // Defense in depth: prevent path traversal in `filename`.
+      if (req.filename.includes('/') || req.filename.includes('\\'))
+        return null;
+      try {
+        const fp = path.join(
+          app.getPath('userData'),
+          'versions',
+          versionDirHash(req.path),
+          req.filename,
+        );
+        const buf = await fs.readFile(fp);
+        return buf.buffer.slice(
+          buf.byteOffset,
+          buf.byteOffset + buf.byteLength,
+        ) as ArrayBuffer;
+      } catch {
+        return null;
+      }
+    },
+  );
+
+  // chunk 52 (auto-save draft) — 0.2.85: 저장 위치를 원본 파일 옆
+  // sidecar에서 OS temp 디렉토리(`os.tmpdir()/ahwp-drafts/`)로 이동.
+  //   - 원본 파일이 있는 폴더가 read-only / 권한 없는 경우에도 동작
+  //   - 사용자 폴더에 .ahwp-draft 잔여물이 흩어지지 않음
+  //   - 시스템이 주기적으로 /tmp 정리해도 원본 파일은 무사
+  // draft 파일명: `<sha1(path):16>.ahwp-draft` (충돌 회피 + 안전한 파일명).
+  // 외부 변화 watcher와 무관 (원본 옆이 아니므로 noteOwnWrite 불필요).
+  const DRAFT_DIR = path.join(os.tmpdir(), 'ahwp-drafts');
+  const draftPathFor = (origPath: string): string => {
+    const key = createHash('sha1').update(origPath).digest('hex').slice(0, 16);
+    return path.join(DRAFT_DIR, `${key}.ahwp-draft`);
+  };
+  const ensureDraftDir = async (): Promise<void> => {
+    await fs.mkdir(DRAFT_DIR, { recursive: true });
+  };
+
+  ipcMain.handle(
+    'file:save-draft',
+    async (
+      _event,
+      req: { path: string; bytes: ArrayBuffer | Uint8Array },
+    ): Promise<void> => {
+      if (!req || typeof req.path !== 'string' || !req.path) return;
+      try {
+        await ensureDraftDir();
+        await writeAtomic(draftPathFor(req.path), toUint8(req.bytes));
+      } catch (err) {
+        console.warn('[file] save-draft failed (non-fatal):', err);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'file:has-draft',
+    async (_event, p: unknown): Promise<boolean> => {
+      if (typeof p !== 'string' || !p) return false;
+      return await exists(draftPathFor(p));
+    },
+  );
+
+  ipcMain.handle(
+    'file:load-draft',
+    async (_event, p: unknown): Promise<ArrayBuffer | null> => {
+      if (typeof p !== 'string' || !p) return null;
+      try {
+        const buf = await fs.readFile(draftPathFor(p));
+        return buf.buffer.slice(
+          buf.byteOffset,
+          buf.byteOffset + buf.byteLength,
+        ) as ArrayBuffer;
+      } catch {
+        return null;
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'file:clear-draft',
+    async (_event, p: unknown): Promise<void> => {
+      if (typeof p !== 'string' || !p) return;
+      try {
+        await fs.unlink(draftPathFor(p));
+      } catch {
+        /* nothing to clear */
+      }
+    },
+  );
+
+  // External file watcher — chokidar instance shared across all open tabs.
+  // The renderer resends the full path list whenever its tabs change; we
+  // tear down the previous watcher and start a fresh one. Reload-during-
+  // save false positives are suppressed by `recentlySavedPaths` (we
+  // record each successful write here and ignore the next change event
+  // for that path within a short window).
+  ipcMain.handle(
+    'file:watch-paths',
+    async (event, paths: string[]): Promise<void> => {
+      const window = BrowserWindow.fromWebContents(event.sender);
+      tabsWatcherWindow = window;
+      // Always tear down before reconfiguring — chokidar's `.unwatch()` +
+      // `.add()` is incremental but tracking incremental state at this
+      // small scale is more bug-prone than just rebuilding.
+      if (tabsWatcher) {
+        await tabsWatcher.close();
+        tabsWatcher = null;
+      }
+      const list = (paths ?? []).filter(
+        (p) => typeof p === 'string' && p.length > 0,
+      );
+      if (list.length === 0) return;
+      const w = chokidar.watch(list, {
+        ignoreInitial: true,
+        awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 },
+      });
+      const emit = (
+        type: ExternalFileChangeEvent['type'],
+        changedPath: string,
+      ): void => {
+        // Suppress events for our own writes.
+        const until = recentlySavedPaths.get(changedPath);
+        if (until !== undefined && Date.now() < until) return;
+        if (!tabsWatcherWindow || tabsWatcherWindow.isDestroyed()) return;
+        const evt: ExternalFileChangeEvent = { type, path: changedPath };
+        tabsWatcherWindow.webContents.send('file:external-change', evt);
+      };
+      w.on('change', (p: string) => emit('change', p));
+      w.on('unlink', (p: string) => emit('unlink', p));
+      tabsWatcher = w;
+    },
+  );
+}
+
+// Module-scope state for the tab-watcher (one per main process; the app
+// has a single window in normal use).
+let tabsWatcher: FSWatcher | null = null;
+let tabsWatcherWindow: BrowserWindow | null = null;
+const recentlySavedPaths = new Map<string, number>(); // path → epoch ms
+
+/** Mark a path as recently-saved by us so external-change events for the
+ *  next ~1.5s are suppressed. Called from save / save-as / new flows. */
+function noteOwnWrite(p: string): void {
+  recentlySavedPaths.set(p, Date.now() + 1500);
+  // Lazy GC — drop entries older than 5s on each insert.
+  const cutoff = Date.now() - 5000;
+  for (const [k, v] of recentlySavedPaths) {
+    if (v < cutoff) recentlySavedPaths.delete(k);
+  }
+}
+
+/** Called from main during shutdown to release the tab watcher. */
+export async function teardownTabsWatcher(): Promise<void> {
+  if (tabsWatcher) {
+    await tabsWatcher.close();
+    tabsWatcher = null;
+  }
+  tabsWatcherWindow = null;
+}
+
+function toUint8(input: ArrayBuffer | Uint8Array): Uint8Array {
+  if (input instanceof Uint8Array) return input;
+  return new Uint8Array(input);
+}
+
+async function writeAtomic(target: string, data: Uint8Array): Promise<void> {
+  // tmp + rename so a crash mid-write doesn't corrupt the target.
+  const tmp = `${target}.tmp-${process.pid}-${Date.now()}`;
+  await fs.writeFile(tmp, data);
+  await fs.rename(tmp, target);
+}
+
+/**
+ * Side-car backup of the prior on-disk content. The first save of an
+ * existing file produces `<target>.bak`; subsequent saves of the same path
+ * leave the existing `.bak` alone so the pre-edit-session snapshot is
+ * preserved across the entire run. New files (no prior content) return
+ * null. Failures are non-fatal: a missing `.bak` shouldn't block a save.
+ */
+/** Stable per-path hash → folder name under `userData/versions/`. We
+ *  use the first 16 hex chars of SHA1(absolute path) as the directory
+ *  key. Collisions are theoretically possible but irrelevant at the
+ *  scale of a personal-use editor (a user would need ~2^64 documents
+ *  to hit one). */
+function versionDirHash(absPath: string): string {
+  return createHash('sha1').update(absPath).digest('hex').slice(0, 16);
+}
+
+async function maybeWriteBackup(target: string): Promise<string | undefined> {
+  try {
+    if (!(await exists(target))) return undefined;
+    const backup = `${target}.bak`;
+    if (await exists(backup)) return backup; // keep existing
+    await fs.copyFile(target, backup);
+    return backup;
+  } catch (err) {
+    console.warn('[file] backup failed (non-fatal):', err);
+    return undefined;
+  }
+}
