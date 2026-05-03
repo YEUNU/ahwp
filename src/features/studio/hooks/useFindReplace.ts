@@ -321,8 +321,20 @@ export function useFindReplace(opts: UseFindReplaceOptions): FindReplaceHandle {
       }
     }
     // Move focus to the input on next tick so the caret lands inside.
+    // chunk 82 — React 19 batches setState updates more aggressively
+    // than 18, so a setTimeout 0 fires before the find-bar input is
+    // mounted (findInputRef.current === null). useLayoutEffect on
+    // findOpen handles focus reliably after commit; this setTimeout
+    // is kept as a fallback for legacy autofocus paths.
     setTimeout(() => findInputRef.current?.focus(), 0);
   }, [runFindSearch]);
+
+  // chunk 82 — autofocus the find input when the bar opens. React 19
+  // commits the DOM before useLayoutEffect runs, so the ref is bound.
+  useEffect(() => {
+    if (!findOpen) return;
+    findInputRef.current?.focus();
+  }, [findOpen]);
 
   const closeFind = useCallback((): void => {
     setFindOpen(false);

@@ -1,6 +1,6 @@
 {
   "name": "ahwp",
-  "version": "0.3.25",
+  "version": "0.3.26",
   "private": true,
   "description": "AI-powered HWP/HWPX desktop editor",
   "author": "ahwp contributors",
@@ -127,7 +127,7 @@
     "electron-updater": "^6.8.3",
     "lucide-react": "^1.14.0",
     "react-markdown": "^10.1.0",
-    "react-resizable-panels": "^4.11.0",
+    "react-resizable-panels": "^2.1.9",
     "react-syntax-highlighter": "^16.1.1",
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.5.0",

@@ -6,6 +6,17 @@
 
 ## [Unreleased]
 
+### Fixed — chunk 82: 메이저 일괄 업그레이드 회귀 fix (0.3.26)
+
+chunks 80~81 의 9개 메이저 일괄 업그레이드 후 full e2e (376 케이스) 결과 19 fail. 8개는 live spec env-gated 예상 실패 (Anthropic / NIM / Ollama / Gemini 키 부재). 11개 실제 회귀 중 10개 fix.
+
+- **`electron/hwp/converter.ts` createRequire 런타임 크래시** — vite 8 의 CJS bundle 이 `import.meta.url` 을 `({}).url` (=undefined) 로 erase 하면서 `createRequire(undefined)` 가 throw → main process 가 부팅 직후 죽어 모든 e2e 가 1분 타임아웃. WASM 경로 resolve 를 candidate path list (`process.cwd()` / `__dirname` 두 후보) 로 교체 — `import.meta.url` 의존 제거. asar 안에서도 `existsSync` + `readFileSync` 가 투명하게 동작.
+- **react-resizable-panels v4 → v2 다운그레이드** — v4 의 새 Group / Separator / orientation API 가 Electron 렌더러에서 flex children 을 간헐적으로 hidden 처리. chat-history popover button (`flex-1 truncate text-left`) 이 0px 사이즈로 잡혀 Playwright 가 `not visible` 로 실패. RP v2 (PanelGroup / Panel / PanelResizeHandle / direction / autoSaveId / order) 로 되돌려 14 케이스 회귀 해소. RP v4 의 layout 안정화 후 재시도.
+- **studio-find autoFocus** — React 19 의 batched setState 변경 후 `setTimeout(0) → input.focus()` 가 input 마운트 전에 fire. `useEffect([findOpen])` 으로 commit 후 focus 옮기는 effect 추가 (기존 setTimeout 은 fallback 으로 유지).
+- **ChatPanel `shrink-0` 가드** — chunk 73 의 `chat-scroller flex-1 + min-h-0` 가 sibling 들 (provider bar / mode bar / popover / input form) 을 default `shrink: 1` 로 collapse 시키는 이슈. 정적 영역 4 곳에 `shrink-0` 추가 — RP v2 환경에선 무영향이지만 CSS 위생 측면에서 유지.
+
+**알려진 잔여 (1 케이스)**: `studio-paraformat — alignment + fontSize + color survive save → reopen`. save 직후엔 center 로 적용되지만 reload 후 justify 로 복귀. @rhwp/core 0.7.9 의 alignment encode/decode 라운드트립 한계로 추정 (lib 변경은 없었으나 메이저 업그레이드 누적 환경에서만 확인됨). lib upgrade 후 재검증 예정.
+
 ### Changed — Phase 4 chunks 80~81: 라이브러리 일괄 메이저 업그레이드 (0.3.25)
 
 ROADMAP 의 "메이저 버전 일괄 업그레이드" 항목 (Phase 4 별도 마이그레이션 트랙) 일괄 처리. 사용자 요청 "라이브러리 최신화 전부다".

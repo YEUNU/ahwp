@@ -1,5 +1,5 @@
-import { promises as fs } from 'node:fs';
-import { createRequire } from 'node:module';
+import { existsSync, promises as fs } from 'node:fs';
+import path from 'node:path';
 import { detectHwpFormat } from '../../shared/format';
 import { BLANK_HWPX_BASE64 } from './blank-seed';
 
@@ -17,7 +17,20 @@ import { BLANK_HWPX_BASE64 } from './blank-seed';
  * HwpDocument.applyXxx (Phase 3 AI agent edits).
  */
 
-const require = createRequire(import.meta.url);
+// chunk 82 — vite 8 CJS bundle 에서 `import.meta.url` 이 `undefined`
+// 로 erase 되어 `createRequire(import.meta.url)` 가 throw. 대신 후보
+// 경로 list 로 WASM 파일 직접 resolve. asar packed 빌드에서도
+// `__dirname` 이 asar virtual root 을 가리켜 fs 가 투명하게 읽음.
+function resolveRhwpWasm(): string {
+  const candidates = [
+    path.join(process.cwd(), 'node_modules', '@rhwp', 'core', 'rhwp_bg.wasm'),
+    path.join(__dirname, '..', 'node_modules', '@rhwp', 'core', 'rhwp_bg.wasm'),
+  ];
+  for (const p of candidates) {
+    if (existsSync(p)) return p;
+  }
+  throw new Error(`@rhwp/core WASM not found. Tried: ${candidates.join(', ')}`);
+}
 
 interface RhwpDocLike {
   exportHwp(): Uint8Array;
@@ -60,7 +73,7 @@ export async function loadRhwpCore(): Promise<RhwpCoreModule> {
     // Dynamic import — bypasses the CJS `require` ESM restriction.
     const mod = (await import('@rhwp/core')) as unknown as RhwpCoreModule;
     // Resolve the WASM file shipped with @rhwp/core.
-    const wasmPath = require.resolve('@rhwp/core/rhwp_bg.wasm');
+    const wasmPath = resolveRhwpWasm();
     const bytes = await fs.readFile(wasmPath);
     await mod.default({ module_or_path: bytes });
     // Activate WASM panic hook so Rust panics surface as throw'd Errors with

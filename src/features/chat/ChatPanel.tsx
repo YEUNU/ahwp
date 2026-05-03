@@ -696,7 +696,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             Earlier single-row layout collapsed history/+ buttons when
             NVIDIA / NIM model ids stretched the model select. */}
         <div
-          className="flex flex-col gap-1.5 border-b border-border bg-card px-3 py-2"
+          className="flex shrink-0 flex-col gap-1.5 border-b border-border bg-card px-3 py-2"
           data-testid="chat-provider-bar"
         >
           <div className="flex items-center gap-1.5">
@@ -798,7 +798,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         {/* Phase 3 — Manual / Agent 모드 pill 토글 (style_example). Manual:
           AI 응답의 도구 블록을 사용자가 직접 적용. Agent: provider native
           tool-use API + 자동 루프 + 묶음 undo. */}
-        <div className="px-3 pb-2 pt-3" data-testid="chat-mode-bar">
+        <div className="shrink-0 px-3 pb-2 pt-3" data-testid="chat-mode-bar">
           <div
             className="flex gap-0.5 rounded-md bg-muted p-0.5"
             role="tablist"
@@ -860,7 +860,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         </div>
         {historyOpen ? (
           <div
-            className="border-b border-border bg-card px-3 py-2"
+            // chunk 82 — `shrink-0` 가드. chat-scroller 가 `flex-1 +
+            // min-h-0` 로 잡혀 있어서 sibling 들이 default `shrink: 1`
+            // 로 0 height 까지 줄어들 수 있다 (popover 컨텐츠가 보여
+            // 야 하는데 button 들이 0 size 로 hidden 처리됨).
+            className="shrink-0 border-b border-border bg-card px-3 py-2"
             data-testid="chat-history-popover"
           >
             {historyList.length === 0 ? (
@@ -1011,7 +1015,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           onSubmit={onSubmit}
           onDragOver={onDragOverExcerpt}
           onDrop={onDropExcerpt}
-          className="border-t border-border bg-card p-3"
+          className="shrink-0 border-t border-border bg-card p-3"
           data-testid="chat-input-form"
         >
           {getOpenDocs ? (
