@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### Documentation — Phase 5 chunk 62: 사용자 가이드 (0.3.14)
+
+- **`docs/USER_GUIDE.md` 신설** — 베타 사용자 대상의 흐름 위주 가이드. (1) 시작하기 (설치 / 첫 실행 / 폴더), (2) 편집 기본 (탭 / 저장 / .bak / 자동 초안 / 버전 히스토리), (3) AI 챗봇 (BYOK / Manual vs Agent / 발췌 첨부 / 멀티 문서 / Diff Viewer / 히스토리), (4) 단축키 요약 표, (5) 데이터 위치 (`userData/...`), (6) 알려진 한계, (7) 피드백 채널. 기능 카탈로그가 아니라 자주 막히는 지점 + 사용 흐름 권장안 위주.
+
 ### Accessibility — Phase 5 chunk 61: aria 보강 (0.3.13)
 
 - **Settings 사이드바 탭 — `role="tab"` + `aria-selected`** — 활성 탭의 시각 강조 (bg-card font-semibold) 만으로는 스크린 리더가 활성 상태를 인식 못 함. `role="tab"` 으로 셀렉션 시멘틱을 명시하고 `aria-selected={active === tab.id}` 로 활성 상태를 노출.

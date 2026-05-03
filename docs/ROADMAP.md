@@ -251,7 +251,7 @@
 - [x] E2E 확장 — studio 청크 1~12 + 표/이미지/폴더 ops/탭 (134/134 케이스)
 - [x] E2E 추가 — `tests/e2e/file-dialog-mock.spec.ts` 3 케이스 ✅ (chunk 60, 0.3.12): `app.evaluate` 로 main 의 `showOpenDialog`/`showSaveDialog` monkey-patch + `'menu:action'` IPC 직접 emit. open dialog 모킹 / save-as 신규 path / save-as overwrite (.bak 사이드카). IME/다국어 입력은 Playwright 한계로 보류 (composition event 를 emit 못 함). 표 셀 selection v4 는 chunk 32 에서 이미 진행 (chat-multidoc/cell-block 회귀 가드)
 - [x] 접근성 점검 ✅ (chunk 61, 0.3.13): radix shadcn 기본 + 추가 보강 — Settings 탭 `role="tab"` + `aria-selected`, FolderTree 행 `aria-selected`, ChatPanel 히스토리 `aria-current="page"`. 툴바 / 챗 입력 / 발췌 chip 등 인터랙티브 요소는 audit 결과 모두 `aria-label` 보유 (false-positive 0)
-- [ ] 사용자 가이드 문서 (`docs/USER_GUIDE.md`)
+- [x] 사용자 가이드 문서 ✅ (chunk 62, 0.3.14): [USER_GUIDE.md](USER_GUIDE.md) — 시작하기 / 편집 기본 / AI 챗봇 (Manual·Agent·발췌·멀티 문서·Diff Viewer) / 단축키 / 데이터 위치 / 알려진 한계. 흐름 위주 + 자주 막히는 지점 정리
 - [ ] 베타 사용자 피드백 채널 (GitHub Discussions)
 - [ ] 성능: 큰 .hwpx 파일(50p 이상) 로드 시 측정·개선
 - [ ] 다국어 도입 (한·영) — Phase 5에서 검토
