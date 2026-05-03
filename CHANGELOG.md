@@ -6,6 +6,13 @@
 
 ## [Unreleased]
 
+### Added — chunks 91~94: 한컴 툴팁 / SVG title / i18n 마이그레이션 / e2e (0.3.29)
+
+- **chunk 91 — 한컴 툴팁 전체 적용** — Studio 툴바의 정렬 (left/center/right/justify), 들여쓰기/내어쓰기, undo/redo, zoom (in/out/fit/reset), find prev/next/close, insert-image 등 추가 적용. ChatPanel 의 Manual/Agent 모드 pill 도 hancomTitle 로 교체. 매핑 사용 사이트 7 → 25+ 곳.
+- **chunk 92 — SVG `<title>` 후처리** — `renderPageInto` 가 SVG 마운트 직후 모든 비-empty `<text>` 에 자기 textContent 를 `<title>` 자식으로 추가. 네이티브 hover tooltip 으로 narrow column 에 잘린 셀 텍스트도 hover 로 읽기 가능. SVG 레이아웃 변경 없음. lib SVG 가 이미 title 을 가지고 있으면 idempotent skip.
+- **chunk 93 — i18n 마이그레이션 (점진)** — WelcomePane (제목/부제목/카드 라벨/설명/⌘N⌘O 표기) + TitleBar (다크/라이트/설정/저장 안 됨/열린 문서 없음) 마이그레이션. 단축키 표기는 `localizeShortcutPublic` 으로 mac↔Win/Linux 자동 분기. 로케일 키 `welcome.drop_here`, `welcome.unsaved`, `titlebar.unsaved` 추가. Settings/Folder/Chat 의 추가 hardcoded 텍스트는 후속 청크.
+- **chunk 94 — e2e 8 케이스 + edge cases** — `tests/e2e/tooltip-i18n-svg.spec.ts`. (a) Studio Bold/가운데 정렬 title 검증 + 플랫폼별 단축키 분기 (mac `⌘B` / Win/Linux `Ctrl+B`), (b) `studio-zoom-reset` 인라인 title fallback, (c) 모든 `<text>` 의 `<title>` 자식 보유 + textContent 일치 (직접 child text node 만 추출해 nested title 노이즈 제거), (d) 빈 텍스트 element 는 title 추가 제외 (idempotent), (e) 로케일 default ko / 명시 en / 잘못된 locale (`xx-INVALID`) → fallback ko. 8/8 통과.
+
 ### Added / Changed — chunks 85~90 (0.3.28)
 
 - **chunk 85 — Diff Viewer 다중 패치 e2e 보강** — `tests/e2e/chat-diff.spec.ts` 에 2 케이스 추가: (1) multi patch 의 개별 Reject — 첫 번째 reject → 두 번째 여전히 accept 가능 → 부분 적용 검증, (2) preview 클릭 시 onPreview 콜백 wired 확인 (smoke). 기존 3 → 5 케이스.

@@ -33,12 +33,15 @@ export const en: Partial<Record<LocaleKey, string>> = {
   'welcome.cta.open': 'Open file',
   'welcome.cta.open.subtitle':
     'Select a .hwp or .hwpx file, or drop it onto this region.',
+  'welcome.drop_here': 'Drop to open',
+  'welcome.unsaved': 'Unsaved',
 
   // TitleBar
   'titlebar.theme.dark': 'Dark mode',
   'titlebar.theme.light': 'Light mode',
   'titlebar.settings': 'Settings',
   'titlebar.no_doc': 'No open document',
+  'titlebar.unsaved': 'Unsaved',
 
   // Folder
   'folder.title': 'Folder',

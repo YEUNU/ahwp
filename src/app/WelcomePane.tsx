@@ -12,7 +12,9 @@
  */
 import { FileText, Upload } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { PingResponse, RecentFile } from '@shared/api';
+import { localizeShortcutPublic } from '@/lib/hancom-tooltips';
 
 export interface WelcomePaneProps {
   onNewDoc: () => void;
@@ -58,6 +60,7 @@ export function WelcomePane({
   pingError,
   pingResult,
 }: WelcomePaneProps): JSX.Element {
+  const { t } = useTranslation();
   const [recents, setRecents] = useState<RecentFile[]>([]);
   const [drag, setDrag] = useState(false);
   const [hover, setHover] = useState<'blank' | 'open' | null>(null);
@@ -99,13 +102,10 @@ export function WelcomePane({
             WELCOME
           </div>
           <h1 className="m-0 text-[30px] font-bold tracking-tight">
-            안녕하세요.
+            {t('welcome.title')}
           </h1>
           <p className="mt-2 max-w-[560px] text-sm leading-relaxed text-muted-foreground">
-            새 문서로 시작하거나, 기존 한글 문서를 열어 AI와 함께 작업해 보세요.{' '}
-            <span className="text-muted-foreground/70">
-              .hwp 와 .hwpx 모두 지원합니다.
-            </span>
+            {t('welcome.subtitle')}
           </p>
         </div>
 
@@ -128,14 +128,13 @@ export function WelcomePane({
               <FileText className="size-5" />
             </div>
             <div className="mb-1 text-[15px] font-semibold tracking-tight">
-              빈 문서로 시작
+              {t('welcome.cta.new')}
             </div>
             <div className="text-[12.5px] leading-relaxed text-muted-foreground">
-              0부터 작성하거나 AI에게 양식을 맡기세요. 빈 문서에서도 채팅이 바로
-              작동합니다.
+              {t('welcome.cta.new.subtitle')}
             </div>
             <div className="absolute right-3.5 top-3.5 rounded border border-border px-1.5 py-0.5 font-mono text-[10.5px] text-muted-foreground/70">
-              ⌘N
+              {localizeShortcutPublic('⌘N')}
             </div>
           </button>
 
@@ -162,16 +161,16 @@ export function WelcomePane({
               <Upload className="size-5" />
             </div>
             <div className="mb-1 text-[15px] font-semibold tracking-tight">
-              파일 열기{' '}
+              {t('welcome.cta.open')}{' '}
               {drag ? (
-                <span className="text-primary">· 놓아 주세요</span>
+                <span className="text-primary">· {t('welcome.drop_here')}</span>
               ) : null}
             </div>
             <div className="text-[12.5px] leading-relaxed text-muted-foreground">
-              .hwp 또는 .hwpx 파일을 선택하거나, 이 영역에 끌어다 놓으세요.
+              {t('welcome.cta.open.subtitle')}
             </div>
             <div className="absolute right-3.5 top-3.5 rounded border border-border px-1.5 py-0.5 font-mono text-[10.5px] text-muted-foreground/70">
-              ⌘O
+              {localizeShortcutPublic('⌘O')}
             </div>
           </button>
         </div>

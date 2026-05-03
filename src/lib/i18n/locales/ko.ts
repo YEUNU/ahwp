@@ -31,12 +31,15 @@ export const ko = {
   'welcome.cta.open': '파일 열기',
   'welcome.cta.open.subtitle':
     '.hwp 또는 .hwpx 파일을 선택하거나, 이 영역에 끌어다 놓으세요.',
+  'welcome.drop_here': '놓아 주세요',
+  'welcome.unsaved': '저장 안 됨',
 
   // TitleBar
   'titlebar.theme.dark': '다크 모드',
   'titlebar.theme.light': '라이트 모드',
   'titlebar.settings': '설정',
   'titlebar.no_doc': '열린 문서 없음',
+  'titlebar.unsaved': '저장 안 됨',
 
   // Folder pane
   'folder.title': '폴더',

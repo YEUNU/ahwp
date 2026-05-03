@@ -31,6 +31,7 @@ import {
   type AhwpToolResult,
 } from '@shared/ai-tools';
 import { parsePatchBlock, type AhwpPatch } from '@shared/ai-patches';
+import { hancomTitle } from '@/lib/hancom-tooltips';
 import { MultiPatchStack, type PatchStatus } from './DiffCard';
 import {
   EXCERPT_SOFT_CHAR_LIMIT,
@@ -808,7 +809,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               disabled={streaming}
               onClick={() => setChatMode('manual')}
               testId="chat-mode-manual"
-              title="Manual: AI 응답에 도구 블록이 있으면 사용자가 버튼 눌러 적용"
+              title={hancomTitle('chat-mode-manual')}
               icon={
                 <svg
                   width="13"
@@ -834,7 +835,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               disabled={streaming}
               onClick={() => setChatMode('agent')}
               testId="chat-mode-agent"
-              title="Agent (실험적): AI가 도구를 직접 호출해 자동으로 적용. 한 turn 내 묶음 undo."
+              title={hancomTitle('chat-mode-agent')}
               icon={
                 <svg
                   width="13"

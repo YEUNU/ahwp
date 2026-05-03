@@ -949,6 +949,23 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       adopted.style.width = '100%';
       adopted.style.height = '100%';
       adopted.style.display = 'block';
+      // chunk 92 — narrow column 텍스트 잘림 우회 (KNOWN_ISSUES L-004).
+      // lib 가 추정한 column width 가 좁아서 text 가 잘려 보일 때, native
+      // browser 의 <title> tooltip 로 full text 를 hover-read 가능하게
+      // 한다. 모든 <text> 에 자기 textContent 를 <title> 로 한 번 더
+      // 노출 — clipping 자체는 그대로지만 hover 시 잘린 부분도 볼 수
+      // 있다. SVG 레이아웃 변경 없음 (안전).
+      const SVG_NS = 'http://www.w3.org/2000/svg';
+      adopted.querySelectorAll('text').forEach((t) => {
+        const txt = t.textContent?.trim();
+        if (!txt) return;
+        // Skip if a <title> child already exists (lib may add its own).
+        if (t.querySelector(':scope > title')) return;
+        const title = document.createElementNS(SVG_NS, 'title');
+        title.textContent = txt;
+        // <title> must be the first child for spec-compliant tooltip behavior.
+        t.insertBefore(title, t.firstChild);
+      });
       el.replaceChildren(adopted);
       // Diagnostic: track image counts per page for debugging.
       const stringCount = (svg.match(/<image\b/g) ?? []).length;
@@ -4034,6 +4051,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                 onClick={() => applyAlignment(a)}
                 aria-label={label}
                 aria-pressed={activeFormat.alignment === a}
+                title={hancomTitle(`studio-align-${a}` as never)}
                 data-testid={`studio-align-${a}`}
               >
                 <Icon className="size-4" />
@@ -4175,7 +4193,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               variant="ghost"
               onClick={() => imageInputRef.current?.click()}
               aria-label="이미지 삽입"
-              title="이미지 삽입"
+              title={hancomTitle('studio-insert-image')}
               data-testid="studio-insert-image"
             >
               <ImageIcon className="size-4" />
@@ -4226,6 +4244,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               variant="ghost"
               onClick={() => stepIndent('decrease')}
               aria-label="내어쓰기"
+              title={hancomTitle('studio-indent-decrease')}
               data-testid="studio-indent-decrease"
             >
               <IndentDecrease className="size-4" />
@@ -4235,6 +4254,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               variant="ghost"
               onClick={() => stepIndent('increase')}
               aria-label="들여쓰기"
+              title={hancomTitle('studio-indent-increase')}
               data-testid="studio-indent-increase"
             >
               <IndentIncrease className="size-4" />
@@ -4328,6 +4348,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                 onClick={findPrev}
                 disabled={findMatches.length === 0}
                 aria-label="이전 매치"
+                title="이전 매치 (Shift+Enter)"
                 data-testid="studio-find-prev"
               >
                 <ChevronUp className="size-4" />
@@ -4338,6 +4359,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                 onClick={findNext}
                 disabled={findMatches.length === 0}
                 aria-label="다음 매치"
+                title="다음 매치 (Enter)"
                 data-testid="studio-find-next"
               >
                 <ChevronDown className="size-4" />
@@ -4347,6 +4369,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                 variant="ghost"
                 onClick={closeFind}
                 aria-label="닫기"
+                title="찾기 닫기 (Esc)"
                 data-testid="studio-find-close"
               >
                 <X className="size-4" />
@@ -4740,6 +4763,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               onClick={() => undo()}
               disabled={!canUndo}
               aria-label="실행 취소"
+              title={hancomTitle('studio-undo')}
               data-testid="studio-undo"
             >
               <Undo2 className="size-4" />
@@ -4750,6 +4774,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               onClick={() => redo()}
               disabled={!canRedo}
               aria-label="다시 실행"
+              title={hancomTitle('studio-redo')}
               data-testid="studio-redo"
             >
               <Redo2 className="size-4" />
@@ -4760,6 +4785,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               variant="ghost"
               onClick={() => stepZoom('out')}
               aria-label="축소"
+              title={hancomTitle('studio-zoom-out')}
               data-testid="studio-zoom-out"
             >
               <ZoomOut className="size-4" />
@@ -4775,6 +4801,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               variant="ghost"
               onClick={() => stepZoom('in')}
               aria-label="확대"
+              title={hancomTitle('studio-zoom-in')}
               data-testid="studio-zoom-in"
             >
               <ZoomIn className="size-4" />
@@ -4784,6 +4811,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               variant="ghost"
               onClick={() => setZoom(1)}
               data-testid="studio-zoom-reset"
+              title="원래 크기 (100%)"
             >
               100%
             </Button>
@@ -4792,6 +4820,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               variant="ghost"
               onClick={setZoomFit}
               aria-label="너비 맞춤"
+              title={hancomTitle('studio-zoom-fit')}
               data-testid="studio-zoom-fit"
             >
               <Maximize2 className="size-4" />
