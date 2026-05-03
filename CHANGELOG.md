@@ -6,6 +6,11 @@
 
 ## [Unreleased]
 
+### Fixed — UX 보강 chunks 68~69 (0.3.18)
+
+- **chunk 68 — 모달 스크롤바** — Dialog primitive 의 `DialogContent` 베이스에 `max-h-[calc(100vh-4rem)] overflow-y-auto` 추가. 그 동안 다이얼로그 내용이 viewport 보다 길어지면 화면 밖으로 잘려 form 끝부분 / Apply 버튼 등이 안 보였다. 자체 height + `overflow-hidden` 을 갖는 SettingsDialog 처럼 커스텀 레이아웃 다이얼로그는 twMerge 가 자동 우선이라 영향 없음.
+- **chunk 69 — 앱 시작 시 모든 provider 모델 리스트 pre-fetch** — 기존엔 ChatPanel 의 active provider 만 마운트 / 전환 시 fetch → 다른 provider 로 처음 전환할 때 "확인 불가 → 새로고침 → 대기" 패턴 발생. 이제 ChatPanel 마운트 시 1회 `secrets.has()` 로 키가 등록된 모든 provider 를 식별하고 `listModels` 를 병렬 발사. 메인 측 24h 캐시 덕분에 fresh cache 면 IPC 가 즉시 반환 — 처음 실행 한 번만 네트워크 사용.
+
 ### Fixed — UX 보강 chunks 65~67 (0.3.17)
 
 - **chunk 65 — 모델 선택 selector 화** — 기존 `<input list>` + `<datalist>` (자유 입력 + 자동완성) → 순수 `<select>` dropdown. provider `/v1/models` 가 노출하지 않는 모델을 직접 입력하는 일이 드물고 오타 위험만 컸다. 현재 `model` 이 fetched 목록에 없으면 "(저장됨)" sticky 옵션으로 보존 — provider 전환 / fetch 실패 시에도 마지막 선택을 잃지 않음. 빈 목록 + 저장 모델 없음 → "모델 없음" disabled placeholder.

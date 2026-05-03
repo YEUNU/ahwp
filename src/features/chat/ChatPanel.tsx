@@ -479,6 +479,37 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       void fetchModels(provider);
     }, [provider, hasKey, fetchModels]);
 
+    // chunk 69 — startup pre-fetch every provider that has a stored key
+    // so the model selector is ready the moment the user switches to it
+    // (no "확인 불가" → click 새로고침 → wait dance). The cache layer in
+    // main keeps the cost trivial after the first run; force is false so
+    // a fresh < 24h cache short-circuits immediately. We fire in parallel
+    // — providers don't block each other.
+    useEffect(() => {
+      let cancelled = false;
+      void (async () => {
+        const checks = await Promise.all(
+          PROVIDER_OPTIONS.map(async (p) => ({
+            id: p.id,
+            has: await window.api.secrets.has(p.id),
+          })),
+        );
+        if (cancelled) return;
+        for (const { id, has } of checks) {
+          if (has) void fetchModels(id);
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+      // Mount-only: we don't re-run on every secrets change. The
+      // per-provider auto-fetch above (provider, hasKey) handles the
+      // case when the user adds a key for the *active* provider after
+      // launch. Other providers get refreshed on next launch / when
+      // user switches to them. Trade-off vs. a secrets change listener
+      // that would fire N IPC calls every time the user saves any key.
+    }, [fetchModels]);
+
     useEffect(() => {
       const el = scrollerRef.current;
       if (!el) return;
