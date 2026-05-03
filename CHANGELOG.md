@@ -6,6 +6,26 @@
 
 ## [Unreleased]
 
+### Fixed — 셀 드래그 sticky cell-block 모드 (0.2.90)
+
+사용자 보고: "되었다 안되었다 / 근본적인 원인" — drag 중 cursor가
+anchor 셀로 복귀하면 highlight가 wipe되며 char-select 모드로 toggle,
+다시 다른 셀로 가면 cell-block 복귀 → "깜빡거림" 으로 인지.
+
+- `cellDragStickyRef` 신설 — drag 중 cross-cell 한 번이라도 진입하면
+  true, 이후 anchor 셀 복귀해도 cell-block 모드 유지.
+- mousedown(셀)에서 false reset, mouseup에서 항상 false reset.
+- 한컴 reference 동작 — drag 시작 후 한 번 cross-cell 하면 그
+  drag 동안은 cell-block 단위 selection 고정.
+- 회귀 가드 spec 추가 (sticky mode case) — cell 2 → 3 → 2 → 3
+  드래그 후 highlight 2개 유지 검증.
+
+#### 미해결 — "1,2,3,4 / 3,4 드래그 / 2,3,4 선택" 보고
+
+합성 e2e (텍스트 채운 1×4 표, 각 셀 클릭 위치별 cellIndex 검증)에서
+재현 불가. 사용자의 실제 파일 / 표 구조 (병합 셀? 중첩? 헤더?) 확인
+필요. 후속 보고 받으면 fixture 추가 + 추가 가드.
+
 ### Fixed — 셀 드래그 mouseup 시 highlight 통째 wipe (0.2.89)
 
 사용자 보고 ("표 셀 드래그 하는거 불안정해 / 2->3 드래그 했는데

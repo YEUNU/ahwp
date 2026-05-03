@@ -250,4 +250,103 @@ test.describe('Cell drag debug — text-filled cells', () => {
     );
     expect(caretCell?.cellIndex).toBe(2);
   });
+
+  test('sticky mode — drag with backward overshoot keeps cell-block', async () => {
+    const { page } = launched;
+
+    await page.evaluate(() => {
+      const dbg = (window as Window & { __studioDebug?: StudioDebug })
+        .__studioDebug!;
+      dbg.insertText(0, 5, 0, '');
+    });
+    await page.getByTestId('studio-toolbar-more').click();
+    await page.getByTestId('studio-insert-table').click();
+    await page
+      .locator(
+        '[data-testid="studio-table-picker-cell"][data-rows="1"][data-cols="3"]',
+      )
+      .first()
+      .click();
+    await page.waitForTimeout(200);
+
+    const tableParaIdx = 5;
+    for (let cellIdx = 0; cellIdx < 3; cellIdx++) {
+      await page.evaluate(
+        ({ ci, p }) => {
+          const dbg = (window as Window & { __studioDebug?: StudioDebug })
+            .__studioDebug!;
+          dbg.enterCell(0, p, 0, ci, 0, 0);
+          dbg.focusViewer();
+        },
+        { ci: cellIdx, p: tableParaIdx },
+      );
+      await page.keyboard.type(`Text${cellIdx + 1}`);
+      await page.waitForTimeout(80);
+    }
+
+    await page.evaluate(
+      ({ p }) => {
+        const dbg = (window as Window & { __studioDebug?: StudioDebug })
+          .__studioDebug!;
+        dbg.enterCell(0, p, 0, 0, 0, 0);
+        dbg.focusViewer();
+      },
+      { p: tableParaIdx },
+    );
+    await page.keyboard.press('F5');
+    await page.keyboard.press('F5');
+    await page.keyboard.press('F5');
+    await page.waitForTimeout(150);
+    await page
+      .locator('[data-testid="studio-cell-block-rect"]')
+      .first()
+      .scrollIntoViewIfNeeded();
+    await page.waitForTimeout(300);
+
+    const cellRects = await page
+      .locator('[data-testid="studio-cell-block-rect"]')
+      .evaluateAll((nodes) =>
+        nodes.map((n) => {
+          const r = (n as HTMLElement).getBoundingClientRect();
+          return { x: r.x, y: r.y, w: r.width, h: r.height };
+        }),
+      );
+    cellRects.sort((a, b) => a.x - b.x);
+    const cell2 = cellRects[1];
+    const cell3 = cellRects[2];
+
+    await page.evaluate(() => {
+      const dbg = (window as Window & { __studioDebug?: StudioDebug })
+        .__studioDebug!;
+      dbg.exitCell();
+      dbg.focusViewer();
+    });
+    await page.waitForTimeout(80);
+
+    // Drag pattern: cell 2 → cell 3 → 복귀 cell 2 → cell 3 mouseup.
+    // Sticky 동작 시 mouseup 시점 cell-block 유지 (highlight 2개).
+    const startX = cell2.x + cell2.w / 2;
+    const startY = cell2.y + cell2.h / 2;
+    const cell3X = cell3.x + cell3.w / 2;
+    const cell3Y = cell3.y + cell3.h / 2;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.waitForTimeout(50);
+    await page.mouse.move(cell3X, cell3Y, { steps: 5 });
+    await page.waitForTimeout(50);
+    // 잠깐 anchor cell로 복귀.
+    await page.mouse.move(startX, startY, { steps: 5 });
+    await page.waitForTimeout(50);
+    // 다시 cell 3로 종료.
+    await page.mouse.move(cell3X, cell3Y, { steps: 5 });
+    await page.waitForTimeout(50);
+    await page.mouse.up();
+    await page.waitForTimeout(300);
+
+    const finalCount = await page
+      .locator('[data-testid="studio-cell-block-rect"]')
+      .count();
+    expect(finalCount).toBe(2);
+  });
 });

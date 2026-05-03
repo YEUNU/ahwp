@@ -876,6 +876,12 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       cellIndex: number;
       cellParaIndex: number;
     } | null>(null);
+    // Sticky cell-block 모드. cell drag 중 cursor가 anchor 셀을 벗어나
+    // 다른 셀로 진입한 적이 한 번이라도 있으면 true. 이후 cursor가
+    // anchor 셀로 되돌아와도 char-level selection으로 toggle 안 함
+    // (highlight 깜빡임 방지) — 한컴 reference 동작.
+    // mousedown(셀)에서 false로 reset, mouseup에서 항상 false.
+    const cellDragStickyRef = useRef(false);
     // F5 press counter — Hancom convention: F5 1×=current cell block,
     // F5 2×=확장 모드(arrow로 cell block 확장), F5 3×=표 전체 block.
     // Reset whenever caret moves or any non-F5 key fires.
@@ -5971,12 +5977,14 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           setCellBlockHighlights({});
           setSelectedControlBboxes({});
           cellDragRef.current = cell;
+          cellDragStickyRef.current = false;
           dragOriginSelectionRef.current = null;
           draggingRef.current = true;
           // Fall through to the shared drag listener attachment below
           // (skip body-only word/paragraph + shift-click handling).
         } else {
           cellDragRef.current = null;
+          cellDragStickyRef.current = false;
         }
         if (!cell && e.detail === 3) {
           // Triple click → entire paragraph.
@@ -6180,18 +6188,23 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             caretRef.current = focus;
             if (moveResult.cursorRect) setCursorRect(moveResult.cursorRect);
             // Crossed into a different cell? Switch to cell-block mode.
-            const isCrossCell =
+            const crossedNow =
               moveCell.cellIndex !== cd.cellIndex ||
               moveCell.cellParaIndex !== cd.cellParaIndex;
+            // Sticky: 한 번 cross-cell 진입 후 anchor 셀 복귀해도
+            // cell-block 유지 (highlight 깜빡임 방지). mousedown에서 false
+            // reset이라 새 drag는 깨끗하게 시작.
+            if (crossedNow) cellDragStickyRef.current = true;
+            const useCellBlock = cellDragStickyRef.current;
             setSelection((prev) => {
               if (!prev) return null;
               const next = { ...prev, focus };
-              if (isCrossCell) {
+              if (useCellBlock) {
                 // Cell-block mode: drop char-level rects, draw cell bboxes.
                 setSelectionRectsByPage({});
                 refreshCellBlockHighlights(next);
               } else {
-                // Same cell + same cellParaIndex: char-level selection.
+                // Still inside anchor cell + never crossed: char-level select.
                 setCellBlockHighlights({});
                 refreshSelectionRects(next);
               }
@@ -6379,6 +6392,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           if (!draggingRef.current) return;
           draggingRef.current = false;
           cellDragRef.current = null;
+          cellDragStickyRef.current = false;
           dragOriginSelectionRef.current = null;
           setSelection((prev) => {
             if (!prev) return null;
