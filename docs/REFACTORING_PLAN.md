@@ -69,6 +69,31 @@ ahwp 0.3.6 시점 codebase 리팩토링 청사진. **목표는 동작 변경 0**
   clipboard + cell-edge + cells-merge 27/27 PASS (chunk-5b range
   model + 0.2.89~0.2.92 cell-drag fix 모두 보존).
 
+### R2 — ChatPanel 분해
+
+- ✅ **R2.1** (2026-05-03) — `useChatHistory` 추출. chunk 26 history
+  list (sidebar) + chunk 30 inline rename → `hooks/useChatHistory.ts`
+  (229 라인). 7개 callback + 4개 state. SQLite IPC + auto-title 마킹
+  자연 reset 모두 보존.
+- ✅ **R2.2** (2026-05-03) — `useExcerptAttachments` 추출. chunk 20
+  발췌 첨부 + chunk 22 drag/drop → `hooks/useExcerptAttachments.ts`
+  (162 라인). 5개 callback. ChatPanel.tsx 2396 → 2207 (-189 라인,
+  R2.1+R2.2 합산).
+- ⏳ **R2.3** — `useChatStreaming` 추출 (onEvent / fireChat / send /
+  regenerate / agent loop). 가장 복잡 — 별도 세션 권장.
+
+### R3 — AppShell 분해
+
+- ✅ **R3 (1차)** (2026-05-03) — `useDispatchMenuAction` 추출.
+  dispatchMenuAction (~115 라인) + 메뉴 IPC 등록 effect →
+  `hooks/useDispatchMenuAction.ts` (203 라인). MenuAction 라우팅
+  (file/edit/format/view/insert) 모두 1:1 보존. AppShell.tsx 1545 →
+  1439 (-106 라인). file-roundtrip + settings + about + bookmark +
+  pagesetup 24/24 PASS.
+- ⏳ **R3 (2차)** — `useTabManagement` (tabsState + 10+ tab callback)
+  - `useSaveFlow` (exportBytes / saveCurrent / saveAsCurrent) +
+    `useNotice` 분리.
+
 ---
 
 ## 0. 측량 (현재 상태)
