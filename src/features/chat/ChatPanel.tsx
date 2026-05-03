@@ -32,9 +32,7 @@ import {
   type AhwpToolResult,
 } from '@shared/ai-tools';
 import {
-  EXCERPT_HARD_CHAR_LIMIT,
   EXCERPT_SOFT_CHAR_LIMIT,
-  hashText,
   type ExcerptAttachment,
   type ExcerptStatus,
   type TextRange,
@@ -43,6 +41,8 @@ import type { AiChatHandle } from '@shared/api';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { MessageContent } from './MessageContent';
+import { useChatHistory } from './hooks/useChatHistory';
+import { useExcerptAttachments } from './hooks/useExcerptAttachments';
 import { previewArgs } from './tools';
 
 type ChatProviderId = Extract<
@@ -455,17 +455,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // 같은 대화 내 중복 호출 방지. 실패는 silent — 첫 user 메시지 60자
     // truncated title이 그대로 유지됨.
     const autoTitledConvIdsRef = useRef<Set<number>>(new Set());
-    // chunk 26 — history list for the popover. Loaded on demand when
-    // the user opens the dropdown; refreshed after rename/delete.
-    const [historyList, setHistoryList] = useState<
-      {
-        id: number;
-        docPath: string | null;
-        title: string;
-        updatedAt: number;
-      }[]
-    >([]);
-    const [historyOpen, setHistoryOpen] = useState(false);
+    // chunk 26 — history list for the popover. State + callbacks live
+    // in `useChatHistory` (R2.1).
     // chunk 21 — paths the user opted in as references. Active tab is
     // implicit target (always included) and never appears in this set.
     // Stored as an array (not Set) so React equality is straightforward.
@@ -1049,227 +1040,47 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // path is only hit during a race (selection cleared between hover
     // and click). Drag-and-drop wiring is a follow-up; this gives us
     // the data model NOW.
-    /** Push a captured excerpt onto the chip list. Shared between the
-     * `📌 발췌 첨부` button click and the HTML5 drag-and-drop path
-     * (chunk 22). The payload differs only in the source: the button
-     * reads via captureExcerpt(); drop reads via dataTransfer's
-     * `application/x-ahwp-excerpt` MIME. */
-    const addExcerptFromPayload = useCallback(
-      (cap: {
-        sectionIndex: number;
-        startParagraphIndex: number;
-        startOffset: number;
-        endParagraphIndex: number;
-        endOffset: number;
-        text: string;
-        docPath?: string | null;
-      }) => {
-        if (cap.text.length > EXCERPT_HARD_CHAR_LIMIT) {
-          setExcerptError(
-            `발췌가 너무 깁니다 (${cap.text.length} / ${EXCERPT_HARD_CHAR_LIMIT}자 상한).`,
-          );
-          return;
-        }
-        setExcerptError(null);
-        const path =
-          cap.docPath !== undefined ? cap.docPath : (activeDocPath?.() ?? null);
-        const label = path
-          ? (path.split(/[/\\]/).pop() ?? path)
-          : '(이름 없음)';
-        const chip: ExcerptAttachment = {
-          id: newId(),
-          docPath: path,
-          docLabel: label,
-          role: 'target',
-          anchor: {
-            sectionIndex: cap.sectionIndex,
-            startParagraphIndex: cap.startParagraphIndex,
-            startOffset: cap.startOffset,
-            endParagraphIndex: cap.endParagraphIndex,
-            endOffset: cap.endOffset,
-          },
-          text: cap.text,
-          hash: hashText(cap.text),
-          status: 'fresh',
-        };
-        setExcerpts((prev) => [...prev, chip]);
-      },
-      [activeDocPath],
-    );
+    // R2.2 — chunk 20 (excerpt 첨부) + chunk 22 (drag/drop) →
+    // useExcerptAttachments hook.
+    const {
+      onCaptureExcerpt,
+      onDropExcerpt,
+      onDragOverExcerpt,
+      removeExcerpt,
+    } = useExcerptAttachments({
+      activeDocPath,
+      captureExcerpt,
+      setExcerpts,
+      setExcerptError,
+    });
 
-    const onCaptureExcerpt = useCallback(() => {
-      if (!captureExcerpt) return;
-      const cap = captureExcerpt();
-      if (!cap) {
-        setExcerptError(
-          '선택된 텍스트가 없습니다. 먼저 문서에서 텍스트를 선택해 주세요.',
-        );
-        return;
-      }
-      addExcerptFromPayload(cap);
-    }, [addExcerptFromPayload, captureExcerpt]);
-
-    /** Drop handler for the input form — chunk 22. Accepts the custom
-     * `application/x-ahwp-excerpt` MIME emitted by `studio-selection-rect`
-     * dragstart. Falls back to creating a chip from `text/plain` if the
-     * structured payload is missing — that case has no anchor and so is
-     * marked stale-relocated immediately on send (verifyExcerpt will
-     * either find the text or reject). */
-    const onDropExcerpt = useCallback(
-      (e: React.DragEvent<HTMLFormElement>) => {
-        const types = Array.from(e.dataTransfer.types);
-        if (!types.includes('application/x-ahwp-excerpt')) return;
-        e.preventDefault();
-        const raw = e.dataTransfer.getData('application/x-ahwp-excerpt');
-        if (!raw) return;
-        try {
-          const parsed = JSON.parse(raw) as {
-            docPath?: string | null;
-            sectionIndex: number;
-            startParagraphIndex: number;
-            startOffset: number;
-            endParagraphIndex: number;
-            endOffset: number;
-            text: string;
-          };
-          addExcerptFromPayload(parsed);
-        } catch {
-          setExcerptError('발췌 페이로드를 읽지 못했습니다.');
-        }
-      },
-      [addExcerptFromPayload],
-    );
-
-    /** preventDefault on dragover lets the drop fire. Without it the
-     * browser rejects the drop ahead of our handler. */
-    const onDragOverExcerpt = useCallback(
-      (e: React.DragEvent<HTMLFormElement>) => {
-        const types = Array.from(e.dataTransfer.types);
-        if (!types.includes('application/x-ahwp-excerpt')) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'copy';
-      },
-      [],
-    );
-
-    // chunk 26 — history list pull. Filtered by active doc when one is
-    // loaded so the dropdown is scoped to the doc you're editing.
-    const refreshHistory = useCallback(async () => {
-      try {
-        const docPath = activeDocPath?.() ?? null;
-        const rows = await window.api.chatHistory.list(docPath);
-        setHistoryList(
-          rows.map((r) => ({
-            id: r.id,
-            docPath: r.docPath,
-            title: r.title,
-            updatedAt: r.updatedAt,
-          })),
-        );
-      } catch (err) {
-        console.warn('[chat] history.list failed', err);
-      }
-    }, [activeDocPath]);
-    useEffect(() => {
-      refreshHistoryRef.current = refreshHistory;
-    }, [refreshHistory]);
-
-    const newConversation = useCallback(() => {
-      if (streaming) return;
-      setMessages([]);
-      setConversationId(null);
-      conversationIdRef.current = null;
-      setError(null);
-      setExcerpts([]);
-      setExcerptError(null);
-      setHistoryOpen(false);
-      // chunk 31 — 새 대화 시작 시 auto-title 마킹은 conversation id 단위
-      // 라 따로 clear할 필요 없음 (id가 새로 발급될 때 자연히 미마킹 상태).
-    }, [streaming]);
-
-    const loadConversation = useCallback(async (id: number) => {
-      try {
-        const r = await window.api.chatHistory.get(id);
-        setMessages(
-          r.messages
-            .filter((m) => m.role === 'user' || m.role === 'assistant')
-            .map((m) => ({
-              id: `db-${m.id}`,
-              role: m.role,
-              content: m.content,
-            })),
-        );
-        setConversationId(id);
-        conversationIdRef.current = id;
-        setHistoryOpen(false);
-        setError(null);
-      } catch (err) {
-        console.warn('[chat] history.get failed', err);
-      }
-    }, []);
-
-    const deleteHistoryItem = useCallback(
-      async (id: number) => {
-        try {
-          await window.api.chatHistory.delete(id);
-          // If we deleted the currently-loaded conversation, reset to a fresh chat.
-          if (conversationIdRef.current === id) {
-            newConversation();
-          }
-          await refreshHistory();
-        } catch (err) {
-          console.warn('[chat] history.delete failed', err);
-        }
-      },
-      [newConversation, refreshHistory],
-    );
-
-    // Inline rename — chunk 30. Double-click on a conversation title swaps
-    // it for an input; Enter persists, Esc cancels. The conversation row
-    // shows the new title immediately via optimistic local update; the
-    // chatHistory.rename IPC writes through to SQLite. On failure we revert
-    // by re-fetching the list.
-    const [renamingId, setRenamingId] = useState<number | null>(null);
-    const [renameDraft, setRenameDraft] = useState('');
-    const beginRename = useCallback(
-      (id: number, currentTitle: string | null): void => {
-        setRenamingId(id);
-        setRenameDraft(currentTitle ?? '');
-      },
-      [],
-    );
-    const cancelRename = useCallback(() => {
-      setRenamingId(null);
-      setRenameDraft('');
-    }, []);
-    const commitRename = useCallback(
-      async (id: number): Promise<void> => {
-        const next = renameDraft.trim();
-        if (next.length === 0) {
-          cancelRename();
-          return;
-        }
-        // Optimistic update so the row reflects the new title before the
-        // IPC round-trip completes.
-        setHistoryList((prev) =>
-          prev.map((row) => (row.id === id ? { ...row, title: next } : row)),
-        );
-        setRenamingId(null);
-        setRenameDraft('');
-        try {
-          await window.api.chatHistory.rename(id, next);
-        } catch (err) {
-          console.warn('[chat] history.rename failed', err);
-          // Revert: re-fetch authoritative list from SQLite.
-          await refreshHistory();
-        }
-      },
-      [renameDraft, cancelRename, refreshHistory],
-    );
-
-    const removeExcerpt = useCallback((id: string) => {
-      setExcerpts((prev) => prev.filter((e) => e.id !== id));
-    }, []);
+    // R2.1 — chunk 26 (history list) + chunk 30 (inline rename) →
+    // useChatHistory hook.
+    const {
+      historyList,
+      historyOpen,
+      setHistoryOpen,
+      renamingId,
+      renameDraft,
+      setRenameDraft,
+      refreshHistory,
+      newConversation,
+      loadConversation,
+      deleteHistoryItem,
+      beginRename,
+      cancelRename,
+      commitRename,
+    } = useChatHistory({
+      activeDocPath,
+      conversationIdRef,
+      streaming,
+      setMessages,
+      setConversationId,
+      setError,
+      setExcerpts,
+      setExcerptError,
+      refreshHistoryRef,
+    });
 
     const send = useCallback(async () => {
       const text = input.trim();
