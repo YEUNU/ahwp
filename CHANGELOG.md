@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+### Changed — Phase 4 chunk 57: Q8 사이드바-디테일 (0.3.9)
+
+- **`PicturePropsDialog` 사이드바-디테일 재구성** — 기존의 단일 `<select>` picker (1개일 땐 숨김 / 2+ 개일 땐 dropdown) 를 좌측 사이드바 리스트로 교체. 각 행은 `1` `2` `3`… numbered avatar + `1페이지 · 단락 4` 형태 라벨, 활성 행은 `bg-card font-semibold shadow-sm`. 우측 디테일 패널은 Settings 와 동일한 17px 볼드 타이틀 (그림 라벨) + 12px description + 폼 영역 + footer (삭제 / 취소 / 적용). 빈 문서일 때는 사이드바 "이 문서에 그림이 없습니다." + 우측 "그림을 삽입한 뒤 다시 시도하세요." empty state — 다이얼로그 자동 닫힘 없이 일관된 레이아웃 유지.
+- **레이아웃 사양** — `grid-cols-[220px_1fr] h-[min(520px,82vh)] max-w-[min(760px,92vw)]`. 사이드바 footer 에 그림 개수 표시 (`3개`). 단일-목적 dialog 가 아닌 list-detail 성격이라 sidebar pattern 이 자연스럽게 fit.
+- **testid 호환** — 기존 `picture-props-dialog` / `picture-props-width` / `picture-props-height` / `picture-props-treat-as-char` / `picture-props-delete` / `picture-props-apply` 보존. `picture-props-picker` (dropdown) 는 제거 + `picture-props-list` / `picture-props-item` / `picture-props-empty` / `picture-props-form` 추가. 기존 e2e (`dialogs-ui.spec.ts` 4 케이스) 모두 통과.
+
 ### Refactored — Phase 4 chunk 56: R5.A consumer narrowing (0.3.8)
 
 - **`shared/rhwp-types.ts` 필드 보정** — `RhwpPageDef` 의 잘못된 `paperWidth/paperHeight` → `width/height` 로 정정 (실제 lib 응답과 일치). HWPUNIT 단위 주석 추가.

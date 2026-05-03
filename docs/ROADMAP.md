@@ -237,6 +237,7 @@
       • Manual/Agent pill 토글 (sub-label "제안 → 승인" / "자동 실행").
       • R1: StudioViewer 9610→4843 (8 hooks + PaperPage). R2: ChatPanel 2396→1501 (3 hooks + prompts). R3: AppShell 1545→1080 (4 hooks). R4: ai-tools 1965→429 (4-way split). R5: safeIrCall helper + 33개 ir\* tool wrapper 일원화. R6: callCellOp helper + 3개 사이트 적용. 외부 contract / e2e 동작 1:1 보존. 자세한 진행은 [REFACTORING_PLAN.md](REFACTORING_PLAN.md)
 - [x] **chunk 56** — R5.A consumer narrowing 패턴 확립 ✅ (0.3.8): `shared/rhwp-types.ts` `RhwpPageDef` 필드명 정정 (`paperWidth/paperHeight` → `width/height`). `PageSetupDialog` props 를 `RhwpPageDef` 로 좁히고 AppShell 입구에서 명시 캐스트로 viewer (`Record<string, unknown>`) ↔ dialog (narrow) 연결. typeof guard 보일러플레이트 -12 라인. public `ViewerHandle` 은 그대로 (narrow type 의 index signature 부재로 ripple 크기 때문) — 패턴만 확립, 21개 narrow type 중 PageSetupDialog 1개 consume
+- [x] **chunk 57** — Q8 보강: `PicturePropsDialog` 사이드바-디테일 재구성 ✅ (0.3.9): list-detail 성격 dialog (그림 N개 + 각자 props) 를 Settings 와 동일한 220px 사이드바 + 우측 PaneHeader/Body/Footer 구조로 변환. 기존 `<select>` picker → 좌측 numbered list. 빈 문서 일관 empty state. `grid-cols-[220px_1fr] h-[min(520px,82vh)]`. e2e 4개 케이스 회귀 없음. 다른 다이얼로그 (CharFormat / ParaFormat / TableProps / CellProps / Bookmark / HeaderFooter / etc.) 는 단일-목적 form 이라 변환 보류
 - [ ] 메이저 버전 일괄 업그레이드 (React 19, Tailwind 4, Electron 41, vite 8, TS 6 등 별도 마이그레이션)
 
 검증: 새 OS에서 설치 → 자동 업데이트 시뮬레이션.
