@@ -6,6 +6,22 @@
 
 ## [Unreleased]
 
+### Fixed — 셀 드래그 mouseup 시 highlight 통째 wipe (0.2.89)
+
+사용자 보고 ("표 셀 드래그 하는거 불안정해 / 2->3 드래그 했는데
+2 -> 1, 3 동시에 선택됨 / 글씨 있는 셀 / 위치도 안맞아").
+
+- `onWinUp` (drag commit) 의 selection-empty 판단이 `paragraphIndex`
+  / `charOffset` 만 비교 → cross-cell drag 는 둘 다 0 이라 무조건
+  empty 로 분류, `setCellBlockHighlights({})` 가 highlight 를 통째
+  wipe → 사용자는 "release 직후 셀 선택이 사라지거나 유실됨" 으로 인지.
+- 수정: `anchor.cell` 과 `focus.cell` 의 `cellIndex` / `cellParaIndex`
+  가 다르면 paragraphIndex 같아도 non-empty. cross-cell 셀 블록
+  selection 보존.
+- 신규 회귀 가드 spec — `studio-cell-drag.spec.ts` (2 케이스):
+  텍스트 채운 1×3 표에서 셀 2 → 셀 3 실제 마우스 드래그 후
+  highlight 2개 + caret cell index 2 검증.
+
 ### Changed — 플랫폼별 단축키 컨벤션 통일 (0.2.88)
 
 Mac에서 Ctrl+좌클릭이 우클릭(secondary click → contextmenu)으로

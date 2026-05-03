@@ -6382,7 +6382,19 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           dragOriginSelectionRef.current = null;
           setSelection((prev) => {
             if (!prev) return null;
+            // 셀 cross-cell drag(anchor.cell ≠ focus.cell)은
+            // paragraphIndex/charOffset이 둘 다 0이라도 비어있지 않음 —
+            // 셀 블록 selection이 살아있어야 함. 셀 컨텍스트 다르면
+            // empty 처리에서 제외.
+            const ac = prev.anchor.cell;
+            const fc = prev.focus.cell;
+            const cellDifferent =
+              ac &&
+              fc &&
+              (ac.cellIndex !== fc.cellIndex ||
+                ac.cellParaIndex !== fc.cellParaIndex);
             const empty =
+              !cellDifferent &&
               prev.anchor.paragraphIndex === prev.focus.paragraphIndex &&
               prev.anchor.charOffset === prev.focus.charOffset;
             if (empty) {
