@@ -1,19 +1,18 @@
 import { FolderInput } from 'lucide-react';
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type RefCallback,
-} from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import type { PingResponse } from '@shared/api';
-import { correctExtension } from '@shared/format';
 import { ChatPanel, type ChatPanelHandle } from '@/features/chat/ChatPanel';
 import { runTools } from '@/features/chat/tools';
 import { primaryModifier } from '@/lib/platform';
 import { useDispatchMenuAction } from '@/app/hooks/useDispatchMenuAction';
+import {
+  useTabManagement,
+  makeTabKey,
+  type TabState,
+} from '@/app/hooks/useTabManagement';
+import { useNotice } from '@/app/hooks/useNotice';
+import { useSaveFlow } from '@/app/hooks/useSaveFlow';
 import {
   CommandPalette,
   type CommandItem,
@@ -55,8 +54,7 @@ import {
   TableFormulaDialog,
   type FormulaCellContext,
 } from '@/features/studio/TableFormulaDialog';
-import { TabBar, type TabDescriptor } from '@/features/studio/TabBar';
-import type { ViewerHandle } from '@/features/studio/types';
+import { TabBar } from '@/features/studio/TabBar';
 import { TitleBar } from './TitleBar';
 import { WelcomePane } from './WelcomePane';
 
@@ -74,24 +72,11 @@ import { WelcomePane } from './WelcomePane';
  *   re-mounted and `lastActivePath` is the activated tab.
  */
 
-interface TabState extends TabDescriptor {
-  /** Stable React key — survives re-orderings (tabs aren't reorderable
-   * yet, but this also distinguishes two tabs at the same path which we
-   * disallow today). */
-  key: string;
-}
-
-let tabKeyCounter = 0;
-function makeTabKey(): string {
-  tabKeyCounter += 1;
-  return `tab-${tabKeyCounter}`;
-}
+// `TabState` / `makeTabKey` 는 R3 (2차) 에서 useTabManagement 로 이동.
 
 export default function AppShell() {
   const [pingResult, setPingResult] = useState<PingResponse | null>(null);
   const [pingError, setPingError] = useState<string | null>(null);
-  const [tabsState, setTabsState] = useState<TabState[]>([]);
-  const [activeIndex, setActiveIndex] = useState(-1);
   const [folderRoot, setFolderRoot] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
@@ -122,14 +107,8 @@ export default function AppShell() {
   // until apply / cancel.
   const [formulaOpen, setFormulaOpen] = useState(false);
   const [formulaCtx, setFormulaCtx] = useState<FormulaCellContext | null>(null);
-  // Lightweight in-app notice — surfaces non-fatal save-time messages
-  // (e.g. "saved as .hwp because .hwpx round-trip is lossy"). Auto-clears
-  // after a short delay; see `showNotice` below.
-  const [notice, setNotice] = useState<{
-    kind: 'info' | 'warn';
-    text: string;
-  } | null>(null);
-  const noticeTimerRef = useRef<number | null>(null);
+  // R3 (2차) — notice → useNotice hook.
+  const { notice, showNotice, dismissNotice } = useNotice();
   // chunk 50 — command palette (⌘K). Open state lives here so any
   // sub-component (welcome screen, future help button) can also
   // trigger it.
@@ -169,281 +148,29 @@ export default function AppShell() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   // chunk 62 — version history dialog.
   const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
-  // viewerRef per tab (by key). The active tab's viewer is what menu /
-  // shortcut actions target.
-  const viewerRefsRef = useRef<Map<string, ViewerHandle | null>>(new Map());
   const sessionRestoredRef = useRef(false);
 
-  const activeTab: TabState | null =
-    activeIndex >= 0 && activeIndex < tabsState.length
-      ? tabsState[activeIndex]
-      : null;
-
-  const activeViewerRef = useCallback((): ViewerHandle | null => {
-    if (!activeTab) return null;
-    return viewerRefsRef.current.get(activeTab.key) ?? null;
-  }, [activeTab]);
-
-  // Add a new tab for `path` (or focus an existing one). Returns the
-  // index of the resulting active tab.
-  const openTab = useCallback((path: string): void => {
-    let isNewTab = false;
-    setTabsState((prev) => {
-      const existing = prev.findIndex((t) => t.path === path);
-      if (existing >= 0) {
-        setActiveIndex(existing);
-        return prev;
-      }
-      isNewTab = true;
-      const next: TabState[] = [
-        ...prev,
-        { path, dirty: false, key: makeTabKey() },
-      ];
-      setActiveIndex(next.length - 1);
-      return next;
-    });
-    // chunk 52 — auto-save recovery. After a fresh tab mount, check if
-    // an `<path>.ahwp-draft` sidecar exists from a previous crashed
-    // session. Skip temp paths (file:new scratch files) — drafts are
-    // never written for those.
-    if (isNewTab && !path.includes('/temp/') && !path.includes('\\temp\\')) {
-      void (async () => {
-        const has = await window.api.file.hasDraft(path);
-        if (!has) return;
-        const fname = path.split(/[\\/]/).pop() ?? path;
-        const ok = window.confirm(
-          `'${fname}' 파일에 자동 저장된 변경사항이 있습니다. 복구하시겠습니까?\n\n취소하면 자동 저장 사본이 삭제됩니다.`,
-        );
-        if (ok) {
-          // Load the draft bytes, save them through the regular path so
-          // the file:save flow handles HWPX routing + .bak + watcher
-          // suppression, then bump the tab key to remount the viewer
-          // off the freshly-saved content.
-          try {
-            const bytes = await window.api.file.loadDraft(path);
-            if (bytes) {
-              await window.api.file.save({ path, bytes });
-              setTabsState((prev) =>
-                prev.map((t) =>
-                  t.path === path ? { ...t, key: makeTabKey() } : t,
-                ),
-              );
-            }
-          } catch (err) {
-            console.warn('[autosave] recovery failed:', err);
-          }
-        }
-        // Either way (recovered or declined), the draft is no longer
-        // useful — drop it so we don't keep prompting on every open.
-        await window.api.file.clearDraft(path);
-      })();
-    }
-  }, []);
-
-  // Replace the path of a tab — used after Save As or after the main
-  // process auto-routes the extension (.hwpx → .hwp). Doesn't open a
-  // new tab; the underlying viewer keeps its mounted state.
-  const replaceTabPath = useCallback(
-    (oldPath: string, newPath: string): void => {
-      if (oldPath === newPath) return;
-      setTabsState((prev) =>
-        prev.map((t) => (t.path === oldPath ? { ...t, path: newPath } : t)),
-      );
-    },
-    [],
-  );
-
-  // Close a tab. If dirty, prompt the user first. Pinned tabs (chunk 55)
-  // are protected here too — closing requires explicit confirmation
-  // even when clean.
-  const closeTab = useCallback((index: number): void => {
-    setTabsState((prev) => {
-      const tab = prev[index];
-      if (!tab) return prev;
-      if (tab.pinned) {
-        const ok = window.confirm('고정된 탭입니다. 정말로 닫으시겠습니까?');
-        if (!ok) return prev;
-      }
-      if (tab.dirty) {
-        const ok = window.confirm(
-          '저장하지 않은 변경사항이 있습니다. 정말로 닫으시겠습니까?',
-        );
-        if (!ok) return prev;
-      }
-      viewerRefsRef.current.delete(tab.key);
-      const next = prev.filter((_, i) => i !== index);
-      // Activate the previous tab (or the next one if we closed the first).
-      setActiveIndex((curIdx) => {
-        if (next.length === 0) return -1;
-        if (curIdx > index) return curIdx - 1;
-        if (curIdx === index) return Math.min(index, next.length - 1);
-        return curIdx;
-      });
-      return next;
-    });
-  }, []);
-
-  // chunk 55 — toggle a tab's pinned flag. Pinned tabs sort to the
-  // left of unpinned tabs and survive bulk close-others / close-right.
-  const togglePinTab = useCallback((index: number): void => {
-    setTabsState((prev) => {
-      if (index < 0 || index >= prev.length) return prev;
-      const target = prev[index];
-      const willPin = !target.pinned;
-      const next = prev.map((t, i) =>
-        i === index ? { ...t, pinned: willPin } : t,
-      );
-      // Re-sort so all pinned tabs come first, preserving relative order
-      // within each group. Active index follows the moved tab.
-      const indexed = next.map((t, i) => ({ t, i }));
-      indexed.sort((a, b) => {
-        const ap = a.t.pinned ? 0 : 1;
-        const bp = b.t.pinned ? 0 : 1;
-        if (ap !== bp) return ap - bp;
-        return a.i - b.i;
-      });
-      const sorted = indexed.map((x) => x.t);
-      const newIdx = sorted.findIndex((t) => t.key === target.key);
-      setActiveIndex((curIdx) => {
-        const cur = next[curIdx];
-        if (!cur) return curIdx;
-        return sorted.findIndex((t) => t.key === cur.key);
-      });
-      void newIdx;
-      return sorted;
-    });
-  }, []);
-
-  // Phase 1 잔여 — drag-reorder + context menu.
-  const reorderTab = useCallback((from: number, to: number): void => {
-    setTabsState((prev) => {
-      if (from < 0 || from >= prev.length || to < 0 || to >= prev.length)
-        return prev;
-      if (from === to) return prev;
-      const next = [...prev];
-      const [moved] = next.splice(from, 1);
-      next.splice(to, 0, moved);
-      // Keep the same logical tab active by chasing the moved id.
-      setActiveIndex((curIdx) => {
-        if (curIdx === from) return to;
-        // Closing a tab on either side may shift the active index.
-        if (from < curIdx && to >= curIdx) return curIdx - 1;
-        if (from > curIdx && to <= curIdx) return curIdx + 1;
-        return curIdx;
-      });
-      return next;
-    });
-  }, []);
-
-  const closeOtherTabs = useCallback((keepIndex: number): void => {
-    setTabsState((prev) => {
-      const keep = prev[keepIndex];
-      if (!keep) return prev;
-      // chunk 55 — pinned tabs (and the keep target) survive the bulk
-      // close. Confirm only on the dirty subset that's actually about
-      // to disappear.
-      const willClose = prev.filter((t, i) => i !== keepIndex && !t.pinned);
-      const willKeep = prev.filter((t, i) => i === keepIndex || t.pinned);
-      if (willClose.length === 0) return prev;
-      const dirtyNames = willClose
-        .filter((t) => t.dirty)
-        .map((t) => t.path.split(/[/\\]/).pop() ?? t.path);
-      if (dirtyNames.length > 0) {
-        const ok = window.confirm(
-          `저장하지 않은 변경사항이 있는 탭을 닫습니다 (${dirtyNames.length}개). 계속하시겠습니까?`,
-        );
-        if (!ok) return prev;
-      }
-      for (const t of willClose) viewerRefsRef.current.delete(t.key);
-      // Re-locate the active tab (keep target) within the shrunken array.
-      const newIdx = willKeep.findIndex((t) => t.key === keep.key);
-      setActiveIndex(newIdx >= 0 ? newIdx : 0);
-      return willKeep;
-    });
-  }, []);
-
-  const closeTabsToRight = useCallback((index: number): void => {
-    setTabsState((prev) => {
-      if (index < 0 || index >= prev.length - 1) return prev;
-      // chunk 55 — pinned tabs to the right are preserved.
-      const right = prev.slice(index + 1);
-      const willClose = right.filter((t) => !t.pinned);
-      const pinnedRight = right.filter((t) => t.pinned);
-      if (willClose.length === 0) return prev;
-      const dirtyNames = willClose
-        .filter((t) => t.dirty)
-        .map((t) => t.path.split(/[/\\]/).pop() ?? t.path);
-      if (dirtyNames.length > 0) {
-        const ok = window.confirm(
-          `저장하지 않은 변경사항이 있는 탭을 닫습니다 (${dirtyNames.length}개). 계속하시겠습니까?`,
-        );
-        if (!ok) return prev;
-      }
-      for (const t of willClose) viewerRefsRef.current.delete(t.key);
-      const next = [...prev.slice(0, index + 1), ...pinnedRight];
-      setActiveIndex((curIdx) => Math.min(curIdx, next.length - 1));
-      return next;
-    });
-  }, []);
-
-  const copyTabPath = useCallback((index: number): void => {
-    setTabsState((prev) => {
-      const tab = prev[index];
-      if (tab) {
-        void window.api.clipboard.writeText(tab.path);
-      }
-      return prev;
-    });
-  }, []);
-
-  const revealTab = useCallback((index: number): void => {
-    setTabsState((prev) => {
-      const tab = prev[index];
-      if (tab) {
-        void window.api.folder.reveal(tab.path);
-      }
-      return prev;
-    });
-  }, []);
-
-  const handleDirtyChange = useCallback((key: string, dirty: boolean): void => {
-    setTabsState((prev) => {
-      const idx = prev.findIndex((t) => t.key === key);
-      if (idx < 0) return prev;
-      if (prev[idx].dirty === dirty) return prev;
-      const next = [...prev];
-      next[idx] = { ...next[idx], dirty };
-      return next;
-    });
-    // chunk 58 — bump the outline refresh signal so the TOC sidebar
-    // re-fetches without polling. The sidebar is cheap (single IR walk
-    // bounded to 1k paragraphs).
-    setOutlineKey((v) => v + 1);
-  }, []);
-
-  // Stable ref-callback factory per tab key. Each StudioViewer's ref
-  // funnels into our Map.
-  const refCallbackFor = useCallback(
-    (key: string): RefCallback<ViewerHandle> =>
-      (handle) => {
-        if (handle) {
-          viewerRefsRef.current.set(key, handle);
-        } else {
-          viewerRefsRef.current.delete(key);
-        }
-      },
-    [],
-  );
-
-  // Memoized dirty-change callback per tab key (avoids re-attaching on
-  // every parent render).
-  const dirtyCallbacks = useMemo(() => {
-    const m = new Map<string, (dirty: boolean) => void>();
-    for (const t of tabsState) {
-      m.set(t.key, (dirty) => handleDirtyChange(t.key, dirty));
-    }
-    return m;
-  }, [tabsState, handleDirtyChange]);
+  // R3 (2차) — tab management → useTabManagement hook.
+  const {
+    tabsState,
+    setTabsState,
+    activeIndex,
+    setActiveIndex,
+    activeTab,
+    viewerRefsRef,
+    activeViewerRef,
+    openTab,
+    replaceTabPath,
+    closeTab,
+    togglePinTab,
+    reorderTab,
+    closeOtherTabs,
+    closeTabsToRight,
+    copyTabPath,
+    revealTab,
+    refCallbackFor,
+    dirtyCallbacks,
+  } = useTabManagement({ setOutlineKey });
 
   useEffect(() => {
     void (async () => {
@@ -512,30 +239,7 @@ export default function AppShell() {
     });
   }, [tabsState, activeTab, folderRoot]);
 
-  // Surfaces a non-fatal message inline at the top of the app for
-  // ~5 seconds — used for save-time notices (HWPX → HWP route),
-  // external-change conflicts, etc. Replaces any in-flight notice; the
-  // timer auto-clears unless `dismissNotice` is called sooner.
-  const showNotice = useCallback(
-    (text: string, kind: 'info' | 'warn' = 'info'): void => {
-      setNotice({ kind, text });
-      if (noticeTimerRef.current !== null) {
-        window.clearTimeout(noticeTimerRef.current);
-      }
-      noticeTimerRef.current = window.setTimeout(() => {
-        setNotice(null);
-        noticeTimerRef.current = null;
-      }, 5000);
-    },
-    [],
-  );
-  const dismissNotice = useCallback(() => {
-    if (noticeTimerRef.current !== null) {
-      window.clearTimeout(noticeTimerRef.current);
-      noticeTimerRef.current = null;
-    }
-    setNotice(null);
-  }, []);
+  // (showNotice / dismissNotice now provided by useNotice hook above)
 
   // External file watcher — keep main's chokidar tracking exactly the
   // currently open tab paths. Resends the full list on every tab change,
@@ -612,86 +316,23 @@ export default function AppShell() {
     return off;
   }, [showNotice]);
 
-  const openFromDialog = useCallback(async () => {
-    const result = await window.api.file.open();
-    if (result) openTab(result.path);
-  }, [openTab]);
-
-  const openByPath = useCallback(
-    async (path: string) => {
-      const result = await window.api.file.openByPath(path);
-      if (result) openTab(result.path);
-    },
-    [openTab],
-  );
-
-  const newDocument = useCallback(async () => {
-    const result = await window.api.file.new();
-    openTab(result.path);
-  }, [openTab]);
-
-  const openFolder = useCallback(async () => {
-    const picked = await window.api.folder.pick();
-    if (picked) setFolderRoot(picked);
-  }, []);
-
-  const exportBytes = useCallback(async (): Promise<Uint8Array | null> => {
-    const handle = activeViewerRef();
-    if (!handle) return null;
-    const t0 = performance.now();
-    const bytes = await handle.exportBytes();
-    console.info(
-      `[ahwp] export ${(bytes.byteLength / 1024 / 1024).toFixed(2)}MB in ${(performance.now() - t0).toFixed(0)}ms`,
-    );
-    return bytes;
-  }, [activeViewerRef]);
-
-  const saveCurrent = useCallback(async () => {
-    const tab = activeTab;
-    if (!tab) return;
-    const bytes = await exportBytes();
-    if (!bytes) return;
-    const result = await window.api.file.save({ path: tab.path, bytes });
-    if (result.path !== tab.path) replaceTabPath(tab.path, result.path);
-    // chunk 52 — explicit save invalidates the auto-save draft.
-    void window.api.file.clearDraft(tab.path);
-    if (result.path !== tab.path) {
-      void window.api.file.clearDraft(result.path);
-    }
-    // chunk 62 — every explicit save spawns a version snapshot under
-    // userData/versions/<hash>/<ISO>.hwp. FIFO trim at 50.
-    void window.api.file.createVersion({ path: result.path, bytes });
-    if (result.routedFrom) {
-      // The user requested .hwpx but @rhwp/core's HWPX round-trip drops
-      // images (KNOWN_ISSUES L-001), so file:save auto-routes to .hwp.
-      // Tell them so they don't go looking for a missing .hwpx.
-      showNotice(
-        `'.hwpx' 저장은 라이브러리 한계로 일시 비활성화되어 있어 ${result.path.split(/[\\/]/).pop()} 로 저장했습니다.`,
-        'warn',
-      );
-    }
-  }, [activeTab, exportBytes, replaceTabPath, showNotice]);
-
-  const saveAsCurrent = useCallback(async () => {
-    const tab = activeTab;
-    const bytes = await exportBytes();
-    if (!bytes) return;
-    const defaultPath = tab ? correctExtension(tab.path, 'hwpx') : undefined;
-    const result = await window.api.file.saveAs({ bytes, defaultPath });
-    if (result) {
-      if (tab) replaceTabPath(tab.path, result.path);
-      else openTab(result.path);
-      void window.api.file.clearDraft(result.path);
-      if (tab) void window.api.file.clearDraft(tab.path);
-      void window.api.file.createVersion({ path: result.path, bytes });
-      if (result.routedFrom) {
-        showNotice(
-          `'.hwpx' 저장은 라이브러리 한계로 일시 비활성화되어 있어 ${result.path.split(/[\\/]/).pop()} 로 저장했습니다.`,
-          'warn',
-        );
-      }
-    }
-  }, [activeTab, exportBytes, replaceTabPath, openTab, showNotice]);
+  // R3 (2차) — file open / new / save / saveAs / folder pick →
+  // useSaveFlow hook.
+  const {
+    openFromDialog,
+    openByPath,
+    newDocument,
+    openFolder,
+    saveCurrent,
+    saveAsCurrent,
+  } = useSaveFlow({
+    activeTab,
+    activeViewerRef,
+    openTab,
+    replaceTabPath,
+    setFolderRoot,
+    showNotice,
+  });
 
   // ⌘W / Ctrl+W: close the active tab. Bound at the document level
   // because the StudioViewer's keydown handler doesn't run when the
