@@ -1,11 +1,13 @@
 import type { Provider, ProviderId } from '../../shared/ai';
 import { fakeProvider } from './providers/fake';
+import { googleProvider } from './providers/google';
 import { nvidiaProvider } from './providers/nvidia';
 import { openaiProvider } from './providers/openai';
 
 const providers = new Map<ProviderId, Provider>([
   ['openai', openaiProvider],
   ['nvidia', nvidiaProvider],
+  ['google', googleProvider],
 ]);
 
 /**

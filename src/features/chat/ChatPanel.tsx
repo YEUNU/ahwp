@@ -45,16 +45,18 @@ import { cn } from '@/lib/utils';
 import { MessageContent } from './MessageContent';
 import { previewArgs } from './tools';
 
-type ChatProviderId = Extract<ProviderId, 'openai' | 'nvidia'>;
+type ChatProviderId = Extract<ProviderId, 'openai' | 'nvidia' | 'google'>;
 
 const PROVIDER_OPTIONS: { id: ChatProviderId; label: string }[] = [
   { id: 'openai', label: 'OpenAI' },
   { id: 'nvidia', label: 'NVIDIA NIM' },
+  { id: 'google', label: 'Google (Gemini)' },
 ];
 
 const DEFAULT_MODELS: Record<ChatProviderId, string> = {
   openai: 'gpt-4o-mini',
   nvidia: 'meta/llama-3.1-70b-instruct',
+  google: 'gemini-2.0-flash',
 };
 
 const STORAGE_PROVIDER = 'ahwp:chat:provider';
@@ -87,7 +89,7 @@ function newId(): string {
 function loadProvider(): ChatProviderId {
   try {
     const raw = localStorage.getItem(STORAGE_PROVIDER);
-    if (raw === 'openai' || raw === 'nvidia') return raw;
+    if (raw === 'openai' || raw === 'nvidia' || raw === 'google') return raw;
   } catch {
     /* no-op */
   }
@@ -118,6 +120,10 @@ function loadModels(): Record<ChatProviderId, string> {
           typeof parsed.nvidia === 'string' && parsed.nvidia.length > 0
             ? parsed.nvidia
             : DEFAULT_MODELS.nvidia,
+        google:
+          typeof parsed.google === 'string' && parsed.google.length > 0
+            ? parsed.google
+            : DEFAULT_MODELS.google,
       };
     }
   } catch {
@@ -380,6 +386,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     >({
       openai: { kind: 'idle' },
       nvidia: { kind: 'idle' },
+      google: { kind: 'idle' },
     });
     const [attachDoc, setAttachDoc] = useState(false);
     // chunk 20 — excerpt chips. When non-empty, the system message

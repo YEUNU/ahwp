@@ -20,7 +20,7 @@ import { cn } from '@/lib/utils';
  * covers any OpenAI-compatible endpoint — self-hosted Ollama via /v1
  * shim, vLLM, LM Studio, on-prem LLM gateway — once the adapter ships.
  */
-const SHOWN_IDS = new Set<ProviderId>(['openai', 'nvidia']);
+const SHOWN_IDS = new Set<ProviderId>(['openai', 'nvidia', 'google']);
 const SHOWN_PROVIDERS = PROVIDERS.filter((p) => SHOWN_IDS.has(p.id));
 
 type PingState =

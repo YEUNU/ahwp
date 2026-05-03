@@ -6,6 +6,45 @@
 
 ## [Unreleased]
 
+### Added — Google Gemini 어댑터 (chunk 43, 0.3.1)
+
+Phase 3 chunk 43 — Google Gemini provider 잠금 해제. 기존 OpenAI/NIM과
+동일한 Manual + Agent 모드 양쪽에서 동작. tool calling (functionCall /
+functionResponse) 정식 지원.
+
+- `electron/ai/providers/google.ts` 신설:
+  - Endpoint: `generativelanguage.googleapis.com/v1beta/models/<model>:streamGenerateContent?alt=sse&key=...`
+  - 메시지 변환: system → top-level `systemInstruction`, user/assistant
+    → `contents[].role` ('model' for assistant), tool result → user role
+    - functionResponse part.
+  - tool 카탈로그: `{tools: [{functionDeclarations: [{name, description,
+parameters}]}]}`. `toolChoice` → `toolConfig.functionCallingConfig.mode`
+    (NONE/AUTO/ANY).
+  - functionCall part 즉시 emit (OpenAI 와 달리 chunk 분할 없음).
+    `finishReason='STOP'` 이라도 functionCall 있으면 `tool_calls` 로
+    재정의.
+  - `listModels` — `/v1beta/models` 응답에서 `supportedGenerationMethods`
+    가 `generateContent` 포함 모델만, `models/` prefix 제거 후 정렬.
+- 등록: `registry.ts` 에 `googleProvider` 추가.
+- UI: `SettingsDialog.SHOWN_IDS` + `ChatPanel.PROVIDER_OPTIONS` 에
+  `'google'` 추가. 기본 모델 `gemini-2.0-flash`.
+
+#### 사용법
+
+1. Settings → Provider 'Google (Gemini)' 선택 → API 키 입력 → 연결
+   테스트
+2. ChatPanel → Provider Google 선택 → 모델 입력 (`gemini-2.0-flash`,
+   `gemini-1.5-pro` 등 — 새로고침 ↻ 으로 fetch)
+3. Manual / Agent 모드 둘 다 동작 — Agent 모드면 tool-use API 자동 사용
+
+#### 제한
+
+- 한 호출 안에 tool result 메시지가 여러 개여도 Gemini 는 **tool name
+  으로만 매칭** (id 무시). 우리 내부적으로는 직전 model 메시지의
+  toolUses 에서 같은 id 의 name 을 lookup 해서 채움.
+- JSON Schema 일부 키워드 (예: `additionalProperties`) Gemini 가 무시 —
+  현재 카탈로그는 OpenAI/Gemini 양쪽 호환되는 subset 만 사용.
+
 ### Added — Phase 3 MVP: Agent 모드 (chunks 37~41, 0.3.0)
 
 provider native tool-use API 정식 통합. 사용자가 ChatPanel 상단의

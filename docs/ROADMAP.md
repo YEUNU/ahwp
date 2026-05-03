@@ -206,7 +206,7 @@
 ### Phase 3 잔여 (외부 의존 / 후속)
 
 - [ ] **chunk 42** — Anthropic 어댑터 tool_use — API 키 결정 대기
-- [ ] **chunk 43** — Google function calling — API 키 결정 대기
+- [x] **chunk 43** — Google Gemini 어댑터 ✅ (0.3.1): `streamGenerateContent?alt=sse` SSE 스트리밍. system → `systemInstruction`, assistant → role='model', tool result → user role + functionResponse part. tools = `[{functionDeclarations: [...]}]`, toolChoice → `toolConfig.functionCallingConfig.mode`. functionCall 부분이 있으면 finishReason='tool_calls' 로 재정의. listModels 는 `supportedGenerationMethods` 에 `generateContent` 포함 모델만
 - [ ] **chunk 44** — Custom (OpenAI-compatible): 모델별 capability flag (Settings 토글) — 자체 호스팅 Ollama / vLLM / LM Studio baseUrl 기반 엔드포인트 모델만 Agent 활성
 - [ ] **chunk 45** — 추가 본문 편집 tool (`insertTextAtCaret` / `deleteRange` / `applyParagraphStyle`) — 사용자 피드백 받아 추가
 - [ ] **chunk 46** — 추가 표 구조 tool (`insertTable` / `mergeCells` / `splitCells` / `runFormula`) — 사용자 피드백 받아 추가
