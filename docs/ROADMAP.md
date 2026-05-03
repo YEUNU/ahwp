@@ -224,8 +224,8 @@
 
 - [x] `electron-builder` 설정 (mac dmg / win NSIS / linux AppImage·deb — Phase 0에 미리 셋업)
 - [x] CI 매트릭스 빌드: `main`에 `v*` 태그 push 시 자동 트리거 (`.github/workflows/release.yml`, mac/win/linux)
-- [ ] 앱 아이콘 (macOS .icns, Windows .ico, Linux .png) 디자인
-- [ ] **rhwp studio 자산 로컬 번들링** — `https://edwardkim.github.io/rhwp/` iframe 의존 제거 → `app://` 자체 호스팅. CSP의 `frame-src` 외부 origin 항목도 제거
+- [x] 앱 아이콘 ✅: 사용자 제공 — `build/icon.png` (1024×1024 RGBA), `public/icon.svg` / `public/favicon-16.png` / `public/favicon-32.png` / `public/icon-large.svg`. electron-builder 가 단일 1024 source 에서 mac (.icns) / win (.ico) / linux (.png) 자동 생성
+- [x] ~~rhwp studio 자산 로컬 번들링~~ ✅ N/A: chunk 6 에서 iframe 자체 제거 (자체 Studio viewer 로 전환). `frame-src` 도 CSP 에서 미사용 — 외부 origin 의존 0
 - [ ] macOS notarization 결정 (개인 개발자 계정 → entitlements / 미서명 배포 옵션)
 - [ ] Windows 코드 사이닝 (옵션)
 - [x] **chunk 53** — `electron-updater` + GitHub Releases 연동 ✅ (0.3.6): main 의 `initAutoUpdater()` (packaged + AHWP_DISABLE_UPDATER 미설정 시), `autoDownload=false` + `autoInstallOnAppQuit=true`. `package.json` `build.publish` github provider. release CI 가 `latest*.yml` 자동 업로드

@@ -6,6 +6,11 @@
 
 ## [Unreleased]
 
+### Documented — Phase 4 chunk 58: ROADMAP 정정 (0.3.10)
+
+- **앱 아이콘 항목 ✅ 처리** — `build/icon.png` (1024×1024 RGBA) + `public/icon.svg` / `favicon-16/32.png` / `icon-large.svg` 가 사용자 제공으로 이미 트리에 존재. electron-builder 가 단일 1024 source 에서 mac (.icns) / win (.ico) / linux (.png) 을 자동 생성하므로 별도 디자인 작업 불필요. 이전 ROADMAP 의 미체크 상태는 잘못된 누락이었음
+- **rhwp studio 자산 로컬 번들링 ✅ N/A** — chunk 6 의 자체 Studio viewer 전환으로 iframe 자체가 제거됨. CSP `frame-src` 도 미사용 — 외부 origin 의존 0 의 보안 모델 유지
+
 ### Changed — Phase 4 chunk 57: Q8 사이드바-디테일 (0.3.9)
 
 - **`PicturePropsDialog` 사이드바-디테일 재구성** — 기존의 단일 `<select>` picker (1개일 땐 숨김 / 2+ 개일 땐 dropdown) 를 좌측 사이드바 리스트로 교체. 각 행은 `1` `2` `3`… numbered avatar + `1페이지 · 단락 4` 형태 라벨, 활성 행은 `bg-card font-semibold shadow-sm`. 우측 디테일 패널은 Settings 와 동일한 17px 볼드 타이틀 (그림 라벨) + 12px description + 폼 영역 + footer (삭제 / 취소 / 적용). 빈 문서일 때는 사이드바 "이 문서에 그림이 없습니다." + 우측 "그림을 삽입한 뒤 다시 시도하세요." empty state — 다이얼로그 자동 닫힘 없이 일관된 레이아웃 유지.
