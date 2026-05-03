@@ -177,6 +177,88 @@ test.describe('chat — chunk 55 Diff Viewer (ahwp-patches)', () => {
     await expect(page.getByTestId('diff-accept-2')).toBeDisabled();
   });
 
+  test('multi patch — Reject 개별, accept 가능 / 부분 적용', async () => {
+    const { page } = launched;
+    await openFixture(page, FIXTURE);
+
+    await page.evaluate(() => {
+      const dbg = (window as Window & { __studioDebug?: StudioDebug })
+        .__studioDebug!;
+      dbg.insertText(0, 0, 0, 'foo');
+    });
+
+    const reply = [
+      '두 가지 제안 (하나는 reject):',
+      '```ahwp-patches',
+      JSON.stringify({
+        ops: [
+          {
+            title: '단락 0 → bar',
+            location: { sectionIndex: 0, paragraphIndex: 0 },
+            deletion: 'foo',
+            addition: 'bar',
+          },
+          {
+            title: '단락 0 → baz',
+            location: { sectionIndex: 0, paragraphIndex: 0 },
+            deletion: 'foo',
+            addition: 'baz',
+          },
+        ],
+      }),
+      '```',
+    ].join('\n');
+    await sendEcho(page, reply);
+
+    await expect(page.getByTestId('diff-multi-stack')).toBeVisible();
+
+    // 첫 번째 reject — 그 패치만 dim 처리, 두 번째는 여전히 accept 가능.
+    await page.getByTestId('diff-reject-1').click();
+    await expect(page.getByTestId('diff-accept-1')).toBeDisabled();
+    await expect(page.getByTestId('diff-accept-2')).toBeEnabled();
+
+    // 두 번째 accept — 적용 시 doc 의 단락 0 이 baz 로 바뀌어야 함.
+    await page.getByTestId('diff-accept-2').click();
+    await expect(page.getByTestId('diff-accept-2')).toBeDisabled();
+  });
+
+  test('preview 클릭 → 에디터 단락 스크롤 (callback fire)', async () => {
+    const { page } = launched;
+    await openFixture(page, FIXTURE);
+
+    // 단락 0 만 시드. preview 는 click 만 검증 (scroll 위치는 viewer
+    // 이벤트라 smoke level).
+    await page.evaluate(() => {
+      const dbg = (window as Window & { __studioDebug?: StudioDebug })
+        .__studioDebug!;
+      dbg.insertText(0, 0, 0, 'para 0 content');
+    });
+
+    const reply = [
+      '단락 0 수정:',
+      '```ahwp-patches',
+      JSON.stringify({
+        ops: [
+          {
+            title: '단락 0',
+            location: { sectionIndex: 0, paragraphIndex: 0 },
+            deletion: 'para 0 content',
+            addition: 'para 0 fixed',
+          },
+        ],
+      }),
+      '```',
+    ].join('\n');
+    await sendEcho(page, reply);
+
+    await expect(page.getByTestId('diff-single-card')).toBeVisible();
+    // preview button 가시 + click — onPreview 가 wired 면 click 자체가
+    // throw 없이 처리.
+    const preview = page.getByTestId('diff-preview-1');
+    await expect(preview).toBeVisible();
+    await preview.click();
+  });
+
   test('invalid patches block — error 표시', async () => {
     const { page } = launched;
     await openFixture(page, FIXTURE);

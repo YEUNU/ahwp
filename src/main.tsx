@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import './lib/i18n'; // chunk 89 — i18next side-effect init
 import { ensureRhwpCore } from './lib/rhwp-core';
 import './index.css';
 

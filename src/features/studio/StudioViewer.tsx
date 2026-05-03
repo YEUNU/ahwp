@@ -36,6 +36,7 @@ import {
   type CompositionEvent as ReactCompositionEvent,
 } from 'react';
 import { Button } from '@/components/ui/button';
+import { hancomTitle } from '@/lib/hancom-tooltips';
 // `ensureRhwpCore` 는 R1.1 에서 useDocumentLifecycle 로 이동.
 import { HwpDocument } from '@/lib/rhwp-core';
 import { type PageDims } from '@/features/studio/utils/page-dims';
@@ -3989,6 +3990,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               onClick={() => toggleCharFormat('bold')}
               aria-label="진하게"
               aria-pressed={activeFormat.bold}
+              title={hancomTitle('studio-format-bold')}
               data-testid="studio-format-bold"
             >
               <Bold className="size-4" />
@@ -3999,6 +4001,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               onClick={() => toggleCharFormat('italic')}
               aria-label="기울임"
               aria-pressed={activeFormat.italic}
+              title={hancomTitle('studio-format-italic')}
               data-testid="studio-format-italic"
             >
               <Italic className="size-4" />
@@ -4009,6 +4012,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               onClick={() => toggleCharFormat('underline')}
               aria-label="밑줄"
               aria-pressed={activeFormat.underline}
+              title={hancomTitle('studio-format-underline')}
               data-testid="studio-format-underline"
             >
               <Underline className="size-4" />
@@ -4109,6 +4113,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               variant="ghost"
               onClick={() => toggleList('bullet')}
               aria-label="글머리 기호"
+              title={hancomTitle('studio-toggle-bullet')}
               data-testid="studio-toggle-bullet"
             >
               <List className="size-4" />
@@ -4118,6 +4123,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               variant="ghost"
               onClick={() => toggleList('number')}
               aria-label="번호 매기기"
+              title={hancomTitle('studio-toggle-number')}
               data-testid="studio-toggle-number"
             >
               <ListOrdered className="size-4" />
@@ -4129,7 +4135,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               variant="ghost"
               onClick={() => insertPageBreak()}
               aria-label="페이지 나누기"
-              title="페이지 나누기"
+              title={hancomTitle('studio-insert-page-break')}
               data-testid="studio-insert-page-break"
             >
               <SeparatorHorizontal className="size-4" />
@@ -4141,6 +4147,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                 onClick={() => setTablePickerOpen((v) => !v)}
                 aria-label="표 삽입"
                 aria-pressed={tablePickerOpen}
+                title={hancomTitle('studio-insert-table')}
                 data-testid="studio-insert-table"
               >
                 <Table2 className="size-4" />

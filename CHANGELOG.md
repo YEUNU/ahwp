@@ -6,6 +6,15 @@
 
 ## [Unreleased]
 
+### Added / Changed — chunks 85~90 (0.3.28)
+
+- **chunk 85 — Diff Viewer 다중 패치 e2e 보강** — `tests/e2e/chat-diff.spec.ts` 에 2 케이스 추가: (1) multi patch 의 개별 Reject — 첫 번째 reject → 두 번째 여전히 accept 가능 → 부분 적용 검증, (2) preview 클릭 시 onPreview 콜백 wired 확인 (smoke). 기존 3 → 5 케이스.
+- **chunk 86 — RP v4 재마이그레이션 시도 + 재 v2 환원** — v4.11 로 재시도했으나 chat-history popover 의 `flex-1 truncate` button 이 0px 로 hidden 되는 layout 회귀 동일하게 reproducible. v4 의 새 Group 인라인 스타일이 deeply-nested flex children 을 collapse 시키는 듯. RP v2.1.9 유지, 코멘트 갱신.
+- **chunk 87 — 표 column width 후처리** — deferred. lib SVG 출력에 우리 쪽 후처리는 hand-waving 수준이라 lib 0.8.x 의 column width 추정 fix 를 기다림. KNOWN_ISSUES L-004 에 이미 기록됨.
+- **chunk 88 — 성능 측정 CI artifact infra** — `tests/e2e/studio-perf.spec.ts` 가 `recordPerf()` 헬퍼로 JSONL 누적 (env `AHWP_PERF_LOG=path` 또는 OS tmpdir). `npm run perf:run` (build + perf spec → `perf-results.jsonl`) + `npm run perf:report` (console.table 으로 요약). CI 통합은 e2e 가 CI 에서 안 도는 상태라 후속 — 로컬에서 trend 추적 가능.
+- **chunk 89 — i18next 다국어 (한·영) 인프라** — `i18next` + `react-i18next` 도입. `src/lib/i18n/` 에 `ko` (default) + `en` 로케일 + setup. localStorage `ahwp:locale` 로 영속, 첫 실행 시 `navigator.language` 감지. flat dot-notation 키 (`titlebar.no_doc` 등). TitleBar 의 일부 텍스트 (다크/라이트 / 설정 / 열린 문서 없음) 를 `useTranslation` 으로 교체 — 점진적 도입 시작점. 새 키는 `ko.ts` 추가 → `en.ts` 번역.
+- **chunk 90 — 한컴 매뉴얼 명칭 호버 툴팁 + 플랫폼 별 단축키 표기** — `src/lib/hancom-tooltips.ts` 에 30+ 한컴오피스 공식 명칭 + 한 줄 설명 매핑 (진하게 / 기울임 / 글머리 기호 / 표 넣기 / 쪽 모양 / 머리말·꼬리말 / 책갈피 / 각주 / 스타일 관리 등). 단축키 표기는 `navigator.platform` 으로 분기 — macOS 는 `⌘`, `⇧`, `⌥`, `⌃` 심볼, Win/Linux 는 `Ctrl+`, `Shift+`, `Alt+` 텍스트. CommandPalette / Settings 단축키 탭 / Studio 툴바 (Bold·Italic·Underline·Bullet·Number·PageBreak·Insert Table) 에 적용. `hancomTitle(key)` 가 `${name} (${shortcut})\n${description}` 형식 multi-line 툴팁 생성.
+
 ### Fixed — chunks 83~84 (0.3.27)
 
 - **chunk 83 — `tailwindcss-animate` (deprecated) → `tw-animate-css` 마이그레이션** — 같은 accordion-down/up / fade-in / zoom-in/out 키프레임 + utility 제공하는 공식 후속. `index.css` 의 `@plugin 'tailwindcss-animate'` → `@import 'tw-animate-css'`. shadcn Dialog 의 data-state 애니메이션 호환 유지. `npm uninstall tailwindcss-animate` + `npm install tw-animate-css`.

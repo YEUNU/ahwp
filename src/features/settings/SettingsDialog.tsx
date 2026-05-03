@@ -29,6 +29,7 @@ import { PROVIDERS, type ProviderId, type ProviderMeta } from '@shared/ai';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { localizeShortcutPublic } from '@/lib/hancom-tooltips';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/app/use-theme';
 
@@ -324,7 +325,7 @@ function ShortcutsPane(): JSX.Element {
                   >
                     <span className="text-foreground">{r.label}</span>
                     <kbd className="shrink-0 rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-                      {r.keys}
+                      {localizeShortcutPublic(r.keys)}
                     </kbd>
                   </li>
                 ))}

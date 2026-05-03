@@ -1,8 +1,44 @@
 /// <reference lib="dom" />
-import { existsSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { launchApp, type LaunchedApp } from './launch';
+
+// chunk 88 — perf metrics 를 jsonl 로 누적해서 CI artifact 로 업로드
+// 하기 위한 sink. 환경 변수 `AHWP_PERF_LOG=path` 가 설정되면 거기로,
+// 아니면 OS tmpdir 의 ahwp-perf-<runId>.jsonl. 각 측정은 한 줄 JSON
+// `{ts, name, elapsedMs, ...meta}` — `jq -s` 로 합집합 가능.
+const PERF_LOG = (() => {
+  const env = process.env.AHWP_PERF_LOG;
+  if (env) return env;
+  const dir = path.join(tmpdir(), 'ahwp-perf');
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch {
+    /* ignore */
+  }
+  return path.join(dir, `run-${Date.now()}.jsonl`);
+})();
+
+function recordPerf(
+  name: string,
+  elapsedMs: number,
+  meta: Record<string, unknown> = {},
+): void {
+  const line = JSON.stringify({
+    ts: new Date().toISOString(),
+    name,
+    elapsedMs,
+    ...meta,
+  });
+  console.log(`[perf] ${name}: ${elapsedMs}ms`, JSON.stringify(meta));
+  try {
+    appendFileSync(PERF_LOG, line + '\n', 'utf8');
+  } catch {
+    /* swallow — perf logging은 best-effort */
+  }
+}
 
 /**
  * Performance smoke — chunk 64. Records timing for the three flows
@@ -86,8 +122,7 @@ test.describe('studio perf — chunk 64', () => {
       ).__studioDebug!.getPageCount(),
     );
     expect(pageCount).toBeGreaterThan(50);
-    // Telemetry — surfaced in playwright report stdout.
-    console.log(`[perf] initial load: ${elapsed}ms (pages=${pageCount})`);
+    recordPerf('initial-load', elapsed, { pageCount });
   });
 
   test('cmd+End on 144p doc completes scroll within budget', async () => {
@@ -120,7 +155,7 @@ test.describe('studio perf — chunk 64', () => {
     // 10s ceiling = catastrophic regression. Real value on dev box
     // is sub-second.
     expect(elapsed).toBeLessThan(10_000);
-    console.log(`[perf] cmd+End: ${elapsed}ms`);
+    recordPerf('cmd-end', elapsed);
   });
 
   test('10× PageDown sequence keeps each press under budget', async () => {
@@ -155,8 +190,8 @@ test.describe('studio perf — chunk 64', () => {
     // 10 page-downs in under 15s = ~1.5s per step ceiling. Real
     // value on dev is ~100-200ms per step.
     expect(elapsed).toBeLessThan(15_000);
-    console.log(
-      `[perf] 10× PageDown: ${elapsed}ms (avg ${(elapsed / 10).toFixed(0)}ms/press)`,
-    );
+    recordPerf('pagedown-x10', elapsed, {
+      perPressMs: Math.round(elapsed / 10),
+    });
   });
 });

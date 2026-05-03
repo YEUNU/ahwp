@@ -10,6 +10,7 @@
  * left padding is conditional via getDragPaddingLeft.
  */
 import { Moon, Settings as SettingsIcon, Sun } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { useTheme } from './use-theme';
 
 export interface TitleBarProps {
@@ -30,6 +31,7 @@ export function TitleBar({
   onOpenSettings,
 }: TitleBarProps): JSX.Element {
   const { resolvedTheme, setTheme } = useTheme();
+  const { t } = useTranslation();
   const isDark = resolvedTheme === 'dark';
   return (
     <div
@@ -57,18 +59,18 @@ export function TitleBar({
           {dirty ? (
             <span
               className="inline-block size-1 rounded-full bg-primary"
-              aria-label="저장 안 됨"
+              aria-label={t('titlebar.unsaved') || '저장 안 됨'}
             />
           ) : null}
         </div>
       ) : (
-        <span className="text-muted-foreground/70">열린 문서 없음</span>
+        <span className="text-muted-foreground/70">{t('titlebar.no_doc')}</span>
       )}
       <div className="flex-1" />
       <button
         type="button"
         onClick={() => setTheme(isDark ? 'light' : 'dark')}
-        title={isDark ? '라이트 모드' : '다크 모드'}
+        title={isDark ? t('titlebar.theme.light') : t('titlebar.theme.dark')}
         className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         data-testid="titlebar-theme"
@@ -78,7 +80,7 @@ export function TitleBar({
       <button
         type="button"
         onClick={onOpenSettings}
-        title="설정"
+        title={t('titlebar.settings')}
         className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         data-testid="titlebar-settings"

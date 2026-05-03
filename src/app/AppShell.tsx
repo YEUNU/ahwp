@@ -1,8 +1,9 @@
 import { FolderInput } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-// chunk 82 — RP downgraded to v2 (v4 had layout regressions in Electron
-// renderer that hid flex children intermittently). When RP releases a
-// fix, retry the v4 migration (Group / Separator / orientation API).
+// chunk 86 — RP v2 유지 (v4 재시도 결과 동일 layout 회귀: chat-history
+// popover 의 flex-1 truncate button 이 0px 로 hidden). v4 의 새 Group
+// 인라인 스타일이 deeply-nested flex children 을 collapse 시키는 듯.
+// lib upstream issue 추적 후 재시도.
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import type { PingResponse } from '@shared/api';
 import { ChatPanel, type ChatPanelHandle } from '@/features/chat/ChatPanel';

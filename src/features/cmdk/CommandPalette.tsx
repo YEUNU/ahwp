@@ -5,6 +5,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { localizeShortcutPublic } from '@/lib/hancom-tooltips';
 import { cn } from '@/lib/utils';
 
 /**
@@ -217,7 +218,7 @@ export function CommandPalette({
                 </span>
                 {item.hint ? (
                   <span className="shrink-0 text-[10px] text-muted-foreground">
-                    {item.hint}
+                    {localizeShortcutPublic(item.hint)}
                   </span>
                 ) : null}
               </button>
