@@ -1089,6 +1089,57 @@ export default function AppShell() {
                     v.undo();
                     return true;
                   }}
+                  applyPatches={(patches) => {
+                    // Q5 Diff Viewer — apply a batch of patches as a single
+                    // grouped-undo turn. Per-patch: irDeleteRange to remove
+                    // the existing range, then irInsertText with addition.
+                    // Whole-paragraph patches (no startOffset/endOffset)
+                    // use irGetTextRange to discover paragraph length first.
+                    const v = activeViewerRef();
+                    if (!v) return patches.map(() => false);
+                    v.beginUndoGroup();
+                    const results = patches.map((p) => {
+                      try {
+                        const sec = p.location.sectionIndex;
+                        const para = p.location.paragraphIndex;
+                        const start = p.location.startOffset ?? 0;
+                        let end = p.location.endOffset;
+                        if (end === undefined) {
+                          // Whole-paragraph — find current length via the
+                          // text range read tool (caps at 4096 bytes which
+                          // is plenty for a paragraph).
+                          const txt = v.irGetTextRange(
+                            sec,
+                            para,
+                            0,
+                            para,
+                            10_000,
+                          );
+                          end = (txt ?? '').length;
+                        }
+                        const okDel = v.irDeleteRange(
+                          sec,
+                          para,
+                          start,
+                          para,
+                          end,
+                        );
+                        if (!okDel) return false;
+                        const okIns = v.irInsertText(
+                          sec,
+                          para,
+                          start,
+                          p.addition,
+                        );
+                        return okIns;
+                      } catch (err) {
+                        console.warn('[diff] applyPatch failed:', err);
+                        return false;
+                      }
+                    });
+                    v.endUndoGroup();
+                    return results;
+                  }}
                 />
               </div>
             </aside>

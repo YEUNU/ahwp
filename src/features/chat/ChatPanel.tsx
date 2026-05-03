@@ -22,6 +22,8 @@ import {
   type AhwpPreflightItem,
   type AhwpToolResult,
 } from '@shared/ai-tools';
+import { parsePatchBlock, type AhwpPatch } from '@shared/ai-patches';
+import { MultiPatchStack, type PatchStatus } from './DiffCard';
 import {
   EXCERPT_SOFT_CHAR_LIMIT,
   type ExcerptAttachment,
@@ -217,6 +219,14 @@ export interface ChatPanelProps {
    * "✓ 적용됨" / "도구 실행" affordances for ~15 seconds after apply.
    */
   undoLastApply?: () => boolean;
+  /**
+   * Diff Viewer apply (Q5 UI/UX align). Apply a batch of patches as a
+   * single grouped-undo turn. Returns per-patch success/failure (parallel
+   * to the input array). Caller (AppShell) wraps in
+   * `beginUndoGroup` / `endUndoGroup` so a single ⌘Z rolls back the
+   * whole batch.
+   */
+  applyPatches?: (patches: AhwpPatch[]) => boolean[];
 }
 
 /**
@@ -236,6 +246,7 @@ export interface ChatPanelHandle {
 
 const HTML_BLOCK_RE = /```html\n?([\s\S]*?)```/i;
 const TOOLS_BLOCK_RE = /```ahwp-tools\n?([\s\S]*?)```/i;
+const PATCHES_BLOCK_RE = /```ahwp-patches\n?([\s\S]*?)```/i;
 
 export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
   function ChatPanel(
@@ -250,6 +261,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       getOpenDocs,
       getDocOutline,
       undoLastApply,
+      applyPatches,
     },
     ref,
   ) {
@@ -882,6 +894,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   onApplyHtml={applyHtml}
                   onRunTools={runTools}
                   onUndoApply={undoLastApply}
+                  onApplyPatches={applyPatches}
                 />
               ))
           )}
@@ -1079,6 +1092,8 @@ interface MessageProps {
    * when something was actually undone.
    */
   onUndoApply?: () => boolean;
+  /** Apply a batch of patches as a grouped-undo turn (Q5 diff viewer). */
+  onApplyPatches?: (patches: AhwpPatch[]) => boolean[];
 }
 
 /** Manual / Agent mode pill (style_example). Two-state segmented toggle
@@ -1217,6 +1232,7 @@ function Message({
   onApplyHtml,
   onRunTools,
   onUndoApply,
+  onApplyPatches,
 }: MessageProps): JSX.Element {
   const isUser = message.role === 'user';
   const isAssistantStreaming =
@@ -1291,6 +1307,67 @@ function Message({
         setUndone(false);
       }, 2000);
     }
+  };
+
+  // Diff Viewer affordance — Q5 (UI/UX align). The model emits a
+  // ```ahwp-patches``` block when it has discrete, location-anchored
+  // changes that benefit from per-patch Accept/Reject. We pre-flight
+  // here so the preview can show invalid patches in red.
+  const patchesMatch =
+    !isUser && !streaming && onApplyPatches
+      ? PATCHES_BLOCK_RE.exec(message.content)
+      : null;
+  const patchesParsed = useMemo(() => {
+    if (!patchesMatch) return null;
+    return parsePatchBlock(patchesMatch[1].trim());
+  }, [patchesMatch]);
+  // Per-patch status (parallel to patchesParsed.items). Initialized
+  // lazily from patchCount on first read — `useState` initializer runs
+  // only on mount, so re-renders don't re-trigger and no setState-in-
+  // effect is needed.
+  const patchCount =
+    patchesParsed && patchesParsed.ok ? patchesParsed.items.length : 0;
+  const [patchStatuses, setPatchStatuses] = useState<PatchStatus[]>(() =>
+    patchCount > 0 ? Array<PatchStatus>(patchCount).fill('pending') : [],
+  );
+
+  const handlePatchAcceptIdx = (idx: number): void => {
+    if (!patchesParsed?.ok || !onApplyPatches) return;
+    const item = patchesParsed.items[idx];
+    if (!item.ok) return;
+    const results = onApplyPatches([item.patch]);
+    if (results[0]) {
+      setPatchStatuses((prev) => {
+        const next = [...prev];
+        next[idx] = 'accepted';
+        return next;
+      });
+    }
+  };
+  const handlePatchRejectIdx = (idx: number): void => {
+    setPatchStatuses((prev) => {
+      const next = [...prev];
+      next[idx] = 'rejected';
+      return next;
+    });
+  };
+  const handlePatchAcceptAll = (): void => {
+    if (!patchesParsed?.ok || !onApplyPatches) return;
+    const pendingItems: { idx: number; patch: AhwpPatch }[] = [];
+    patchesParsed.items.forEach((it, i) => {
+      if (it.ok && patchStatuses[i] === 'pending') {
+        pendingItems.push({ idx: i, patch: it.patch });
+      }
+    });
+    if (pendingItems.length === 0) return;
+    const results = onApplyPatches(pendingItems.map((x) => x.patch));
+    setPatchStatuses((prev) => {
+      const next = [...prev];
+      pendingItems.forEach((it, k) => {
+        next[it.idx] = results[k] ? 'accepted' : 'rejected';
+      });
+      return next;
+    });
   };
 
   // Tool-call dispatcher affordance — chunk 19. The model emits a
@@ -1433,6 +1510,29 @@ function Message({
                 되돌리기
               </Button>
             ) : null}
+          </div>
+        ) : null}
+        {/* Q5 Diff Viewer — render patches block as Accept/Reject cards. */}
+        {patchesParsed && patchesParsed.ok && patchCount > 0 ? (
+          <div
+            className="mt-2 border-t border-border pt-2"
+            data-testid="chat-patches-block"
+          >
+            <MultiPatchStack
+              items={patchesParsed.items}
+              statuses={patchStatuses}
+              onAccept={handlePatchAcceptIdx}
+              onReject={handlePatchRejectIdx}
+              onAcceptAll={handlePatchAcceptAll}
+            />
+          </div>
+        ) : null}
+        {patchesParsed && !patchesParsed.ok ? (
+          <div
+            className="mt-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+            data-testid="chat-patches-error"
+          >
+            패치 블록 파싱 실패: {patchesParsed.reason}
           </div>
         ) : null}
         {toolsParsed ? (
