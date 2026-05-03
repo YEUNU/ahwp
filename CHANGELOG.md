@@ -6,6 +6,30 @@
 
 ## [Unreleased]
 
+### Added — Phase 4 chunk 55: Diff Viewer (0.3.7)
+
+- **`ahwp-patches` 응답 블록** — Manual 모드의 세 번째 응답 형식 (HTML / ahwp-tools 와 공존). 모델이 위치 한정 미세 수정 (오타 / 톤 / 표현) 을 제안할 때 사용. `shared/ai-patches.ts` (parser + AHWP_PATCH_LIMITS — maxOps 20, maxText 8KB)
+- **DiffCard UI** — `src/features/chat/DiffCard.tsx`. 1개 패치는 큰 카드 (제목 + 위치 + +/− diff line + reason expander + Accept/Reject), 2개 이상은 외부 컨테이너 + 컴팩트 StackedPatch + "모두 Accept" 버튼. accepted 상태는 emerald 글로우, rejected 는 dim
+- **묶음 undo** — Accept All 한 번 누르면 모든 pending 패치를 single ⌘Z 로 롤백 가능 (chunk 27 grouped-undo 활용). AppShell.applyPatches 가 `beginUndoGroup` → 각 패치 `irDeleteRange` + `irInsertText` → `endUndoGroup`
+- **System prompt 가이드** — `prompts.ts` SYSTEM_PROMPT_DOC_CONTEXT 에 [C] ahwp-patches 섹션 추가. location.startOffset/endOffset 으로 단락 내 일부만 교체 (없으면 전체 단락)
+
+### Changed — Phase 4 chunk 55: UI/UX align (0.3.7)
+
+- **Settings 다이얼로그 4탭 재설계** — 좌측 사이드바 (일반 / AI 공급자 / 단축키 / 정보) + 우측 디테일. 720×620 모달. 기존 AboutDialog + ShortcutsDialog 두 다이얼로그 통합 → 두 파일 삭제. `view:about` / `view:shortcuts` 메뉴 액션은 Settings 의 해당 탭으로 라우팅 (`openSettingsTab(tab)`)
+- **Manual / Agent pill 토글** — 라디오-스타일 토글을 inset pill segmented control 로 교체. icon + label + sub-label ("제안 → 승인" / "자동 실행"). 활성 버튼은 bg-card + shadow-sm + aria-selected=true
+- **AI 공급자 카드형 ProviderCard** — icon avatar + connected pill ("연결됨" / "미연결") + API 키 / Base URL / supportsTools / 저장·연결테스트·삭제 버튼. 기존 `●` / `○` indicator → 텍스트 pill 로 교체
+
+### Refactored — Phase 4 chunk 55: 코어 리팩토링 R1~R6 (0.3.7)
+
+전체 13551 → 7853 라인 (-49.4%). 외부 contract / e2e 동작 1:1 보존. 자세한 phase 별 진행 상황은 [docs/REFACTORING_PLAN.md](docs/REFACTORING_PLAN.md) 참조.
+
+- **R1: StudioViewer 분해 (9610 → 4843)** — `useDocumentLifecycle` (R1.1) / `useUndoHistory` (R1.2) / `useFindReplace` (R1.3) / `useKeyboardShortcuts` (R1.4) / `usePageMouseHandlers` (R1.5+R1.6 — selection model + cell drag) / `useViewerHandle` + `useDebugSurface` (R1.8) hook 추출 + `PaperPage` 컴포넌트 분리 (R1.7) + pure utils (`page-dims` / `relocate-excerpt`)
+- **R2: ChatPanel 분해 (2396 → 1501)** — `useChatHistory` (R2.1) / `useExcerptAttachments` (R2.2) / `useChatStreaming` (R2.3) hook 추출 + `prompts.ts` 모듈 분리 (시스템 프롬프트 + reference outline / 발췌 직렬화)
+- **R3: AppShell 분해 (1545 → 1080)** — `useDispatchMenuAction` / `useTabManagement` / `useNotice` / `useSaveFlow` hook 추출
+- **R4: ai-tools 4-way split (1965 → 429)** — `ai-tool-catalog` / `ai-tool-validate` / `ai-tool-parse` 모듈 분리, 본 파일은 타입 + 한도만 보유 + barrel re-export
+- **R5: safeIrCall helper (`src/lib/safe-ir-call.ts`) + irMutate / irRead 패턴** — useViewerHandle 의 33개 ir\* tool wrapper 보일러플레이트 try/catch 일원화 (-240 라인)
+- **R6: callCellOp helper (`src/features/studio/utils/cell-op.ts`)** — Phase E nested table InCell / ByPath 분기 통합. insertAtCaret / deleteAtCaret / getCursorRect 사이트에 적용 (잔여 28+ 사이트는 후속 sweep)
+
 ### Added — Phase 4 진입: chunks 52~54 — About / electron-updater / RELEASE.md (0.3.6)
 
 베타 배포 준비. 사용자 측 자동 업데이트 인프라 + 버전/라이선스 표시 +

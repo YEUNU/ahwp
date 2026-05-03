@@ -231,6 +231,11 @@
 - [x] **chunk 53** — `electron-updater` + GitHub Releases 연동 ✅ (0.3.6): main 의 `initAutoUpdater()` (packaged + AHWP_DISABLE_UPDATER 미설정 시), `autoDownload=false` + `autoInstallOnAppQuit=true`. `package.json` `build.publish` github provider. release CI 가 `latest*.yml` 자동 업로드
 - [x] **chunk 54** — 릴리스 흐름 문서화 ✅ (0.3.6): [RELEASE.md](RELEASE.md) — dev → main → tag → CI matrix → GitHub Release 8단계 + 검증 체크리스트 + electron-updater 사용자 흐름 + 비상 회수
 - [x] **chunk 52** — About 창에 버전·라이선스 표시 ✅ (0.3.6): `src/app/AboutDialog.tsx`, 메뉴 "ahwp 정보" + ⌘K "도움말 → ahwp 정보". 버전 + Apache 2.0 + GitHub 링크 + Electron/Chromium/Node/OS 표시. Apple menu native About 도 dialog 로 라우팅
+- [x] **chunk 55** — UI/UX 2차 align + 코어 리팩토링 R1~R6 ✅ (0.3.7):
+      • Diff Viewer 신규 (`ahwp-patches` 응답 블록 + DiffCard UI + 묶음 undo).
+      • Settings 4탭 재설계 (일반/AI 공급자/단축키/정보) — AboutDialog + ShortcutsDialog 통합 → 두 파일 삭제.
+      • Manual/Agent pill 토글 (sub-label "제안 → 승인" / "자동 실행").
+      • R1: StudioViewer 9610→4843 (8 hooks + PaperPage). R2: ChatPanel 2396→1501 (3 hooks + prompts). R3: AppShell 1545→1080 (4 hooks). R4: ai-tools 1965→429 (4-way split). R5: safeIrCall helper + 33개 ir\* tool wrapper 일원화. R6: callCellOp helper + 3개 사이트 적용. 외부 contract / e2e 동작 1:1 보존. 자세한 진행은 [REFACTORING_PLAN.md](REFACTORING_PLAN.md)
 - [ ] 메이저 버전 일괄 업그레이드 (React 19, Tailwind 4, Electron 41, vite 8, TS 6 등 별도 마이그레이션)
 
 검증: 새 OS에서 설치 → 자동 업데이트 시뮬레이션.
