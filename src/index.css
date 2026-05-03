@@ -1,6 +1,10 @@
 @import 'tailwindcss';
 
-@plugin 'tailwindcss-animate';
+/* chunk 83 — tailwindcss-animate (deprecated, last release 2024) →
+ * tw-animate-css (공식 후속, Tailwind 4 first-class). 같은
+ * accordion-down/up / fade-in / zoom-in/out 키프레임 + utility 제공
+ * 이라 import 만 교체. shadcn Dialog 의 data-state animation 호환. */
+@import 'tw-animate-css';
 
 @custom-variant dark (&:is(.dark *));
 

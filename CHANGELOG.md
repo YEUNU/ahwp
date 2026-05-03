@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+### Fixed — chunks 83~84 (0.3.27)
+
+- **chunk 83 — `tailwindcss-animate` (deprecated) → `tw-animate-css` 마이그레이션** — 같은 accordion-down/up / fade-in / zoom-in/out 키프레임 + utility 제공하는 공식 후속. `index.css` 의 `@plugin 'tailwindcss-animate'` → `@import 'tw-animate-css'`. shadcn Dialog 의 data-state 애니메이션 호환 유지. `npm uninstall tailwindcss-animate` + `npm install tw-animate-css`.
+- **chunk 84 — `studio-paraformat` alignment save→reopen 회귀 root cause fix** — 격리 테스트로 분리: lib 의 in-process `exportHwp → new HwpDocument(bytes)` roundtrip 은 alignment 를 떨구지만 (lib 한계) `file:save` IPC 를 통한 normalize-and-export-twice 흐름은 alignment 를 보존. 그렇다면 reload 후 doc 자체엔 alignment=center 가 살아있는데 왜 테스트가 fail? `__studioDebug.getActiveFormat()` 이 React `activeFormat` state 의 closure 를 캡처해서 React 19 의 더 공격적인 batching 에서 stale 값을 반환했기 때문. fresh read 로 교체 — `getCharPropertiesAt` / `getParaPropertiesAt` 을 호출 시점에 doc 으로부터 직접 읽어 React state 의존 제거. 결과: studio-paraformat / chat-agent 류의 다른 timing-sensitive 테스트도 안정.
+- **격리 디버깅을 위한 신규 debug 메서드** — `__studioDebug.reparseAndReadParaProps(sectionIdx, paraIdx)` — 현재 doc 을 export 한 뒤 fresh `HwpDocument` 로 재파싱해 같은 paragraph props 를 읽음. 향후 lib roundtrip 회귀를 격리할 수 있는 공통 도구.
+
 ### Fixed — chunk 82: 메이저 일괄 업그레이드 회귀 fix (0.3.26)
 
 chunks 80~81 의 9개 메이저 일괄 업그레이드 후 full e2e (376 케이스) 결과 19 fail. 8개는 live spec env-gated 예상 실패 (Anthropic / NIM / Ollama / Gemini 키 부재). 11개 실제 회귀 중 10개 fix.

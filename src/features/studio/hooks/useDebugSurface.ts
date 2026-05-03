@@ -392,6 +392,24 @@ export function useDebugSurface(opts: UseDebugSurfaceOptions): void {
         // HWP, not HWPX — see imperative handle comment.
         return doc.exportHwp();
       },
+      // chunk 84 — alignment save→reopen 회귀 격리. 현재 doc 의 bytes
+      // 를 export 한 뒤 fresh HwpDocument 로 재파싱해 같은 paragraph
+      // props 를 읽는다. 우리 file IPC 를 거치지 않는 pure lib
+      // roundtrip — 결과가 lib 한계인지 우리 흐름인지 분리해 준다.
+      reparseAndReadParaProps: (
+        sectionIdx: number,
+        paraIdx: number,
+      ): string => {
+        const doc = docRef.current;
+        if (!doc) throw new Error('Document not loaded');
+        const bytes = doc.exportHwp();
+        const fresh = new HwpDocument(bytes);
+        try {
+          return fresh.getParaPropertiesAt(sectionIdx, paraIdx);
+        } finally {
+          fresh.free();
+        }
+      },
       getPageCount: (): number => pageCount,
       isDirty: (): boolean => dirtyRef.current,
       getCaret: (): {
@@ -408,7 +426,73 @@ export function useDebugSurface(opts: UseDebugSurfaceOptions): void {
       applyStyle: (styleId: number): void => {
         applyParagraphStyle(styleId);
       },
-      getActiveFormat: () => ({ ...activeFormat }),
+      // chunk 84 — fresh read from the IR each call instead of the
+      // React `activeFormat` state. The state is updated only after
+      // refreshActiveFormat fires + a React render commits + this
+      // useEffect re-binds the debug surface. In React 19 batching,
+      // a synchronous test sequence (setSelection → getActiveFormat)
+      // can read a stale closure. Reading via getCharPropertiesAt /
+      // getParaPropertiesAt at call time avoids the lag — same code
+      // path refreshActiveFormat uses, just without the round-trip
+      // through React state.
+      getActiveFormat: () => {
+        const doc = docRef.current;
+        if (!doc) return { ...activeFormat };
+        const c = caretRef.current;
+        if (c.cell) return { ...activeFormat };
+        let readPara = c.paragraphIndex;
+        let readOffset = c.charOffset;
+        const sel = selectionRef.current;
+        if (sel) {
+          const r = sortRange(sel.anchor, sel.focus);
+          if (!r.empty) {
+            readPara = r.startPara;
+            readOffset = r.startOffset + 1;
+          }
+        }
+        try {
+          const cp = JSON.parse(
+            doc.getCharPropertiesAt(c.sectionIndex, readPara, readOffset),
+          ) as {
+            bold?: boolean;
+            italic?: boolean;
+            underline?: boolean;
+            fontSize?: number;
+            textColor?: string;
+          };
+          const at = JSON.parse(doc.getStyleAt(c.sectionIndex, readPara)) as {
+            id?: number;
+          };
+          let alignment: 'left' | 'center' | 'right' | 'justify' = 'left';
+          try {
+            const pp = JSON.parse(
+              doc.getParaPropertiesAt(c.sectionIndex, readPara),
+            ) as { alignment?: string };
+            if (
+              pp.alignment === 'left' ||
+              pp.alignment === 'center' ||
+              pp.alignment === 'right' ||
+              pp.alignment === 'justify'
+            ) {
+              alignment = pp.alignment;
+            }
+          } catch {
+            /* keep default */
+          }
+          return {
+            bold: !!cp.bold,
+            italic: !!cp.italic,
+            underline: !!cp.underline,
+            styleId: at.id,
+            fontSize: typeof cp.fontSize === 'number' ? cp.fontSize : 1000,
+            textColor:
+              typeof cp.textColor === 'string' ? cp.textColor : '#000000',
+            alignment,
+          };
+        } catch {
+          return { ...activeFormat };
+        }
+      },
       getStyleList: () => [...styleList],
       // Selection helpers (chunk 5b). Set anchor and focus directly so
       // tests can drive range ops without simulating mouse drag.
