@@ -152,7 +152,7 @@ function SettingsDialogInner({
               className={cn(
                 'mb-px flex items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[12.5px] transition',
                 active === tab.id
-                  ? 'bg-card font-semibold text-foreground shadow-sm'
+                  ? 'bg-card font-semibold text-foreground shadow-xs'
                   : 'text-muted-foreground hover:bg-muted hover:text-foreground',
               )}
             >

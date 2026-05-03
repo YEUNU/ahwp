@@ -17,7 +17,21 @@ export interface PingRequest {
 export interface PingResponse {
   pong: string;
   at: number;
-  platform: NodeJS.Platform;
+  /** Literal union of `process.platform` values. Inlined to avoid the
+   *  `NodeJS` global namespace which only exists in node-typed contexts
+   *  — `shared/api.ts` is read by the renderer (DOM) tsconfig too. */
+  platform:
+    | 'aix'
+    | 'darwin'
+    | 'freebsd'
+    | 'linux'
+    | 'openbsd'
+    | 'sunos'
+    | 'win32'
+    | 'cygwin'
+    | 'netbsd'
+    | 'haiku'
+    | 'android';
   electron: string;
 }
 

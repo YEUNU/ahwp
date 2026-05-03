@@ -175,7 +175,7 @@ export function CommandPalette({
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKeyDown}
           placeholder="명령 검색 — 메뉴, 파일, 단축키…"
-          className="w-full border-b border-border bg-transparent px-4 py-3 text-sm outline-none"
+          className="w-full border-b border-border bg-transparent px-4 py-3 text-sm outline-hidden"
           data-testid="command-palette-input"
         />
         <div

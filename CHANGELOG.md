@@ -6,6 +6,43 @@
 
 ## [Unreleased]
 
+### Changed — Phase 4 chunks 80~81: 라이브러리 일괄 메이저 업그레이드 (0.3.25)
+
+ROADMAP 의 "메이저 버전 일괄 업그레이드" 항목 (Phase 4 별도 마이그레이션 트랙) 일괄 처리. 사용자 요청 "라이브러리 최신화 전부다".
+
+#### chunk 80 — vite `base: './'` + 추가 absolute path fix
+
+packaged Electron 의 `loadFile('dist/index.html')` 흐름에서 absolute root 경로 (`/icon.svg`, `/assets/*.js`) 가 `file:///icon.svg` 로 resolve 되어 404. `vite.config.ts` 에 `base: './'` 추가하면 vite 가 빌드 시 모든 자산 경로를 `./assets/...` 으로 작성, file:// 환경에서도 정상 로드.
+
+#### chunk 81 — 메이저 일괄
+
+| 패키지                                                                       | 이전          | 이후                                                                                                                                           | 마이그레이션                                      |
+| ---------------------------------------------------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `vite`                                                                       | 6.4           | 8.0                                                                                                                                            | (변경 없음 — base:./ 만 추가)                     |
+| `@vitejs/plugin-react`                                                       | 4.7           | 6.0                                                                                                                                            | peer 호환만                                       |
+| `esbuild`                                                                    | (peer 의존만) | 0.27 explicit                                                                                                                                  | vite-plugin-electron-renderer 가 peer 로 요구     |
+| `electron`                                                                   | 33.4          | 41.5                                                                                                                                           | API 변경 없음 — 빌드 통과                         |
+| `electron-builder`                                                           | 25.1          | 26.8                                                                                                                                           | 빌드 통과                                         |
+| `react`/`react-dom`                                                          | 18.3          | 19.2                                                                                                                                           | `JSX` global namespace 폐기 → `src/jsx.d.ts` shim |
+| `@types/react`/`@types/react-dom`                                            | 18 → 19       | (React 19 와 함께)                                                                                                                             |
+| `react-resizable-panels`                                                     | 2.1 → 4.11    | API 변경: `PanelGroup` → `Group`, `PanelResizeHandle` → `Separator`, `direction` → `orientation`, `autoSaveId` → `autoSave`, `order` prop 폐기 |
+| `typescript`                                                                 | 5.9 → 6.0     | `baseUrl` 폐기 (`paths` 만 사용)                                                                                                               |
+| `@types/node`                                                                | 22 → 25       | 글로벌 `NodeJS.Platform` 인라인 union 으로 교체 (renderer DOM tsconfig 에서 안 보임)                                                           |
+| `tailwindcss`                                                                | 3.4 → 4.2     | CSS-first config 자동 마이그레이션 (`@import "tailwindcss"` + `@theme` + `@plugin`). postcss 플러그인 `tailwindcss` → `@tailwindcss/postcss`   |
+| `globals` / `jsdom` / `postcss` / `eslint` / `vite-plugin-electron-renderer` | 패치/마이너   | 일괄                                                                                                                                           |
+
+**주요 코드 변경**:
+
+- `src/jsx.d.ts` 신설 — `import type { JSX as ReactJSX } from 'react'` 후 global namespace `JSX` 로 재노출. 14개 컴포넌트의 `: JSX.Element` 시그니처 그대로 유지.
+- `vitest.setup.ts` — `ResizeObserver` stub 추가 (react-resizable-panels v4 가 jsdom 에서 사용).
+- `tsconfig.json` / `tsconfig.node.json` — `baseUrl` 제거, `paths` 가 tsconfig 위치 기준 자동 resolve.
+- `shared/api.ts` — `NodeJS.Platform` → 리터럴 union (renderer 에서 보임).
+- `electron/menu.ts` — N/A. Electron 41 의 메뉴 / IPC API 변경 없음.
+- `tailwind.config.ts` — 유지 (Tailwind 4 의 `@config` directive 로 CSS 에서 import). `tailwindcss-animate` → `@plugin 'tailwindcss-animate'` (CSS 안에서).
+- HeaderFooterDialog — Tailwind upgrade tool 이 `variant="outline"` (Button prop) 을 잘못 `outline-solid` 로 렌이밍한 3 곳 수동 복원.
+
+**검증**: typecheck 통과, unit tests 15/15, build 통과 (mac arm64). e2e 는 사용자 검증으로 갈음.
+
 ### Changed — UX 보강 chunks 77~79 (0.3.24)
 
 - **chunk 77 — provider bar 2행 분리 + lucide SVG 아이콘** — 우측 챗 패널이 좁고 모델 id 가 길면 (NVIDIA NIM 의 `deepseek-ai/...` 등) 우측 history / + 버튼이 화면 밖으로 밀려나는 문제. provider+상태+히스토리/+ 행 ↔ model selector + refresh 행 두 줄로 분리. 모든 버튼 이모지 (`📚` / `+` / `↻` / `⚠` / `키 ●` / `키 ○`) → lucide-react SVG (`History` / `Plus` / `RefreshCw` / `AlertTriangle` / `Key` / `KeyRound` / `Loader2`) 로 교체. 테마 토큰 색상 (emerald / muted-foreground / amber) 자동 적용. `IconButton` / `KeyStatusIcon` / `ModelRefreshButton` 헬퍼 컴포넌트 추출. e2e 4개 케이스 텍스트 → `data-state` attribute 로 갱신.

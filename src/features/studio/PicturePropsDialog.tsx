@@ -146,7 +146,7 @@ export function PicturePropsDialog({
                       className={cn(
                         'flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[12px] transition',
                         i === activeIdx
-                          ? 'bg-card font-semibold text-foreground shadow-sm'
+                          ? 'bg-card font-semibold text-foreground shadow-xs'
                           : 'text-muted-foreground hover:bg-muted hover:text-foreground',
                       )}
                     >

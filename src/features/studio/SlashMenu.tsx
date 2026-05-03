@@ -159,7 +159,7 @@ export function SlashMenu({
         onChange={(e) => setFilter(e.target.value)}
         onKeyDown={onKey}
         placeholder="명령 검색…"
-        className="w-full border-b border-border bg-transparent px-2 py-1 text-xs outline-none"
+        className="w-full border-b border-border bg-transparent px-2 py-1 text-xs outline-hidden"
         data-testid="studio-slash-input"
       />
       <ul className="max-h-60 overflow-auto">

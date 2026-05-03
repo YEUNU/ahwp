@@ -1,6 +1,13 @@
 import { FolderInput } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
+// chunk 81 — react-resizable-panels v4 renamed: PanelGroup→Group,
+// PanelResizeHandle→Separator. The `order` prop on Panel was removed
+// (DOM order is now authoritative).
+import {
+  Group as PanelGroup,
+  Panel,
+  Separator as PanelResizeHandle,
+} from 'react-resizable-panels';
 import type { PingResponse } from '@shared/api';
 import { ChatPanel, type ChatPanelHandle } from '@/features/chat/ChatPanel';
 import { runTools } from '@/features/chat/tools';
@@ -860,13 +867,12 @@ export default function AppShell() {
           </div>
         )}
         <PanelGroup
-          direction="horizontal"
-          autoSaveId="ahwp:shell"
+          orientation="horizontal"
+          autoSave="ahwp:shell"
           className="flex-1"
         >
           <Panel
             id="files"
-            order={1}
             defaultSize={18}
             minSize={12}
             maxSize={40}
@@ -934,7 +940,7 @@ export default function AppShell() {
 
           <PanelResizeHandle className="w-px bg-border transition-colors hover:bg-ring data-[resize-handle-state=drag]:bg-ring" />
 
-          <Panel id="editor" order={2} defaultSize={56} minSize={30}>
+          <Panel id="editor" defaultSize={56} minSize={30}>
             <main className="flex h-full flex-col">
               {tabsState.length > 0 && (
                 <TabBar
@@ -1053,7 +1059,6 @@ export default function AppShell() {
 
           <Panel
             id="chat"
-            order={3}
             defaultSize={26}
             minSize={18}
             maxSize={50}

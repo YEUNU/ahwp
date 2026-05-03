@@ -339,7 +339,7 @@ function DiffLine({
       >
         {sigil}
       </span>
-      <span className="whitespace-pre-wrap break-words">{text}</span>
+      <span className="whitespace-pre-wrap wrap-break-word">{text}</span>
     </div>
   );
 }

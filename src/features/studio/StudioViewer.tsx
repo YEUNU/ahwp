@@ -347,7 +347,7 @@ function CellContextMenu({
     <div
       ref={ref}
       role="menu"
-      className="fixed z-50 min-w-[10rem] rounded-md border border-border bg-popover py-1 shadow-md"
+      className="fixed z-50 min-w-40 rounded-md border border-border bg-popover py-1 shadow-md"
       style={{ left: state.x, top: state.y }}
       data-testid="studio-cell-context-menu"
     >
@@ -473,7 +473,7 @@ function AiCommandMenu({
       ref={ref}
       role="menu"
       data-testid="studio-ai-context-menu"
-      className="fixed z-50 min-w-[12rem] rounded-md border border-border bg-popover py-1 shadow-md"
+      className="fixed z-50 min-w-48 rounded-md border border-border bg-popover py-1 shadow-md"
       style={{ left: x, top: y }}
     >
       <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
@@ -4401,7 +4401,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         <div
           ref={scrollRef}
           className={
-            'relative flex-1 overflow-auto bg-muted/30 outline-none ' +
+            'relative flex-1 overflow-auto bg-muted/30 outline-hidden ' +
             (isImageDropTarget ? 'ring-2 ring-inset ring-ring' : '')
           }
           data-testid="studio-scroll"
@@ -4444,7 +4444,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           {marqueeMode && (
             <div
               data-testid="studio-marquee-mode"
-              className="pointer-events-none absolute left-1/2 top-2 z-50 -translate-x-1/2 rounded bg-primary/80 px-3 py-1 text-xs font-medium text-primary-foreground shadow"
+              className="pointer-events-none absolute left-1/2 top-2 z-50 -translate-x-1/2 rounded bg-primary/80 px-3 py-1 text-xs font-medium text-primary-foreground shadow-sm"
             >
               개체 선택 모드 (Esc 해제 / 드래그로 표 영역 선택)
             </div>
@@ -4703,7 +4703,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         )}
 
         {phase !== 'ready' && !error && (
-          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background/60 backdrop-blur-sm">
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background/60 backdrop-blur-xs">
             <Loader2 className="size-6 animate-spin text-muted-foreground" />
             <span className="text-xs text-muted-foreground">
               {phase === 'mounting' && '@rhwp/core 초기화 중…'}
@@ -4758,7 +4758,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               <ZoomOut className="size-4" />
             </Button>
             <span
-              className="min-w-[3.5rem] text-center font-mono text-muted-foreground"
+              className="min-w-14 text-center font-mono text-muted-foreground"
               data-testid="studio-zoom-level"
             >
               {Math.round(zoom * 100)}%

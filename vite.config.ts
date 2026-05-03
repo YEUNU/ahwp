@@ -4,6 +4,13 @@ import electron from 'vite-plugin-electron/simple';
 import path from 'node:path';
 
 export default defineConfig({
+  // chunk 80 — packaged Electron 은 `file://...../dist/index.html` 로
+  // 로드되어 absolute root path (`/icon.svg`, `/assets/*.js`) 가
+  // `file:///icon.svg` 같은 잘못된 위치로 resolve → 404. relative base
+  // 로 vite 가 출력 자산 경로를 `./assets/...` 로 작성하면 file:// 환경
+  // 에서도 정상 로드. dev server (vite serve) 는 / 가 항상 server root
+  // 라 영향 없음.
+  base: './',
   plugins: [
     react(),
     electron({

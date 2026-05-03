@@ -705,7 +705,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               onChange={(e) =>
                 onProviderChange(e.target.value as ChatProviderId)
               }
-              className="flex-1 rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+              className="flex-1 rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-hidden focus:ring-2 focus:ring-ring"
               data-testid="chat-provider-select"
               aria-label="Provider"
               title="AI 공급자 선택 (OpenAI / NVIDIA NIM / Google Gemini / Custom)"
@@ -758,7 +758,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 <select
                   value={model}
                   onChange={(e) => onModelChange(e.target.value)}
-                  className="min-w-0 flex-1 truncate rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="min-w-0 flex-1 truncate rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-hidden focus:ring-2 focus:ring-ring"
                   data-testid="chat-model-input"
                   aria-label="Model"
                   title={
@@ -902,7 +902,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                           }}
                           onBlur={() => void commitRename(c.id)}
                           autoFocus
-                          className="flex-1 rounded border border-input bg-background px-1 py-0.5 text-[11px] outline-none focus:ring-1 focus:ring-ring"
+                          className="flex-1 rounded border border-input bg-background px-1 py-0.5 text-[11px] outline-hidden focus:ring-1 focus:ring-ring"
                           data-testid="chat-history-item-rename-input"
                           aria-label="대화 제목 수정"
                         />
@@ -1096,7 +1096,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                         ? `..${ex.anchor.endParagraphIndex}`
                         : ''}
                     </span>
-                    <span className="max-w-[14rem] truncate">
+                    <span className="max-w-56 truncate">
                       {ex.text.replace(/\s+/g, ' ').trim()}
                     </span>
                     {tooLong ? (
@@ -1145,7 +1145,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 // overflow-y-auto so the scrollbar shows once the
                 // auto-grow useLayoutEffect hits the ceiling.
                 'max-h-48 overflow-y-auto',
-                'placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring',
+                'placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-ring',
                 'disabled:opacity-50',
               )}
               disabled={hasKey === false}
@@ -1361,7 +1361,7 @@ function ModePill({
       className={cn(
         'flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-[11.5px] transition disabled:opacity-50',
         active
-          ? 'bg-card font-semibold text-foreground shadow-sm'
+          ? 'bg-card font-semibold text-foreground shadow-xs'
           : 'text-muted-foreground hover:text-foreground',
       )}
     >
@@ -1959,7 +1959,7 @@ function ActionButton({
       aria-label={label}
       title={label}
       data-testid={testid}
-      className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
     >
       {children}
     </button>
