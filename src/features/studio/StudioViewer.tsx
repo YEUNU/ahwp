@@ -5680,7 +5680,13 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         const doc = docRef.current;
         if (!doc) return null;
         const rect = target.getBoundingClientRect();
-        const x = (clientX - rect.left) / zoom;
+        // 셀 경계 off-by-one 회피 — lib의 hitTest는 x=cellLeftEdge일 때
+        // 이전 cell을 돌려줌 (right-inclusive). 텍스트가 셀 좌측에 close
+        // 하게 시작하면 click이 정확히 boundary에 떨어져 anchor cell이
+        // 한 칸 왼쪽으로 잡히는 버그 (사용자 보고 0.2.91). Sub-pixel
+        // 우측 nudge로 boundary 모호성 해소. body text caret 위치
+        // 영향 미미 (subpixel 단위라 char 경계 안 넘음).
+        const x = (clientX - rect.left) / zoom + 1;
         const y = (clientY - rect.top) / zoom;
         try {
           return JSON.parse(doc.hitTest(idx, x, y)) as HitTestResult;

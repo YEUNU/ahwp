@@ -6,6 +6,28 @@
 
 ## [Unreleased]
 
+### Fixed — 셀 좌측 경계 hit test off-by-one (0.2.91, 진짜 근본 원인)
+
+**근본 원인 확인**: lib `doc.hitTest`가 `x = cellLeftEdge` 정확히 그
+boundary일 때 이전 cell을 반환 (right-inclusive 경계). e2e diagnostic
+sweep으로 +0px / +1px / +2px ... 클릭 결과 측정 시 +0px만 1 작은
+cellIndex 반환 확인.
+
+사용자 보고 ("1,2,3,4 / 3,4 드래그 / 2,3,4 선택 / 글자가 왼쪽
+가까운데서 시작하면 왼쪽 셀 포함")과 정확히 매칭. 셀의 텍스트가
+좌측 정렬된 경우 mousedown이 boundary 1px에 떨어져 anchor가 한 칸
+왼쪽 셀로 잡힘 → cell-block drag로 추가 셀까지 highlight.
+
+- `hitTestAt` 에서 local x 에 +1 nudge 추가 — boundary 모호성 해소.
+  body text caret 위치 영향 미미 (1 CSS px 이동은 char 경계 거의
+  안 넘음).
+- 회귀 가드 spec — `studio-cell-edge.spec.ts`. 1×4 표에서 각 셀
+  left-edge +0/+1/+2/+5px 클릭 시 cellIndex 매핑 검증.
+
+#### 부수효과: 0.2.90의 sticky-mode + 0.2.89의 mouseup-empty 수정도
+
+함께 살아있음 — 셀 드래그 안정성 다층 방어. studio e2e 211/212 통과.
+
 ### Fixed — 셀 드래그 sticky cell-block 모드 (0.2.90)
 
 사용자 보고: "되었다 안되었다 / 근본적인 원인" — drag 중 cursor가
