@@ -6,6 +6,15 @@
 
 ## [Unreleased]
 
+### Fixed — UX 보강 chunk 74 — 현재 문서 첨부 (0.3.22)
+
+세 가지 누적 버그가 "AI 가 첨부된 문서를 인식 못 함" 증상으로 합쳐져 있었음. 사용자가 active doc 을 컨텍스트로 첨부했는데 모델이 "문서를 받지 못했습니다" 라고 응답하는 문제.
+
+- **AppShell `getDocHtml(1000)` 으로 명시** — 기존 `exportDocumentHtml()` 가 default `maxParagraphs=50` 호출. 144페이지짜리 보고서면 표지 / 목차 / 빈 단락만 50개 포함되고 본문은 단 한 줄도 첨부 안 되는 케이스 흔함. 메뉴 HTML 내보내기 / PDF 내보내기 와 동일한 1000 단락으로 통일.
+- **`attachDoc` default `true` + localStorage 영속** — 사용자 기대는 "ChatPanel 열려있고 active doc 있으면 AI 도 같이 본다". 기존 default false 라 사용자가 매번 체크박스 켜야 했음. 토큰 부담 큰 거대 문서에선 끄면 됨 — preference 가 로컬에 저장되어 다음 실행에도 유지.
+- **`SYSTEM_PROMPT_DOC_CONTEXT` 보강** — 첨부 잘 됐는데도 모델이 "문서 못 받았다" 응답하는 두 번째 원인. 기존 프롬프트가 응답 형식 가이드 (HTML / ahwp-tools / ahwp-patches 코드 블록) 만 있었고 `[현재 문서]:` 블록의 의미를 명시 안 함. 모델이 컨텍스트 헤더를 무시하거나 "단순 대화 → 코드 블록 형식 강제 → 부적절한 응답 거부" 흐름 발생. 프롬프트 앞부분에 `[현재 문서]:` / `[발췌]:` / `[참조 문서]:` 블록의 의미 + "절대 '문서를 받지 못했다'고 말하지 마" 안내 + 단순 대화 / 분석 / 요약 / Q&A 시 코드 블록 없이 자연어로 답해도 된다는 명시 추가.
+- **회귀 가드** — chat-html-apply / chat-tools / chat-multidoc / chat 등 chat 관련 e2e 30+ 케이스 통과. `chat-attach-checkbox` default 가 unchecked → checked 로 바뀌어 chat-html-apply 의 첫 케이스만 갱신.
+
 ### Fixed — UX 보강 chunk 73 (0.3.21)
 
 - **ChatPanel 메시지 스크롤 fix** — chunk 72 의 Settings 와 동일한 `min-h-0` 누락 패턴이 ChatPanel 에도 있었음. 어시스턴트 메시지가 길어지면 chat-scroller (`flex-1 overflow-auto`) 가 제 height bound 안에 갇히지 않고 input form 을 viewport 밖으로 밀어냈다. AppShell 의 chat panel 래퍼 + ChatPanel root + chat-scroller 세 군데에 `min-h-0` 추가. `overflow-auto` → `overflow-y-auto` 명시. 이제 긴 응답이 와도 input + 컨텍스트 chip 영역은 항상 보이고 메시지 영역만 자체 스크롤.

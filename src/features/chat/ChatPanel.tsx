@@ -62,6 +62,7 @@ const DEFAULT_MODELS: Record<ChatProviderId, string> = {
 const STORAGE_PROVIDER = 'ahwp:chat:provider';
 const STORAGE_MODELS = 'ahwp:chat:models';
 const STORAGE_CHAT_MODE = 'ahwp:chat:mode';
+const STORAGE_ATTACH_DOC = 'ahwp:chat:attach-doc';
 
 export type ChatMode = 'manual' | 'agent';
 
@@ -325,7 +326,25 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       google: { kind: 'idle' },
       custom: { kind: 'idle' },
     });
-    const [attachDoc, setAttachDoc] = useState(false);
+    // chunk 74 — default true. The user expectation when opening
+    // ChatPanel with an active doc is "AI knows what I'm looking at".
+    // Toggling off is for very long docs where token cost is a concern.
+    // Persisted via localStorage so the user's preference sticks.
+    const [attachDoc, setAttachDoc] = useState<boolean>(() => {
+      try {
+        const raw = localStorage.getItem(STORAGE_ATTACH_DOC);
+        return raw === null ? true : raw === '1';
+      } catch {
+        return true;
+      }
+    });
+    useEffect(() => {
+      try {
+        localStorage.setItem(STORAGE_ATTACH_DOC, attachDoc ? '1' : '0');
+      } catch {
+        /* no-op */
+      }
+    }, [attachDoc]);
     // chunk 20 — excerpt chips. When non-empty, the system message
     // injects a structured `[발췌]:` block instead of the whole-doc
     // HTML (the toggle still appears but the docHtml path is suppressed).

@@ -1075,7 +1075,14 @@ export default function AppShell() {
                   ref={chatRef}
                   onOpenSettings={() => setSettingsOpen(true)}
                   getDocHtml={() =>
-                    activeViewerRef()?.exportDocumentHtml() ?? ''
+                    // chunk 74 — `exportDocumentHtml()` defaults to 50
+                    // paragraphs which on a 100p+ doc only captures the
+                    // title page / TOC. The model then replies "문서를
+                    // 받지 못했습니다" because the body looks empty. Pass
+                    // 1000 to match the menu HTML-export and PDF paths.
+                    // The provider truncates at the token cap if the
+                    // payload is too large.
+                    activeViewerRef()?.exportDocumentHtml(1000) ?? ''
                   }
                   applyHtml={(html) => {
                     // chunk 57 — bracket the AI apply with a

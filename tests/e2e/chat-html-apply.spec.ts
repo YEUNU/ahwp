@@ -64,7 +64,10 @@ test.describe('chat — chunk 18 doc-context + apply-html', () => {
     const { page } = launched;
     await openFixture(page, FIXTURE);
     await expect(page.getByTestId('chat-attach-toggle')).toBeVisible();
-    await expect(page.getByTestId('chat-attach-checkbox')).not.toBeChecked();
+    // chunk 74 — default true (persisted via localStorage). User
+    // expectation when opening ChatPanel with an active doc is "AI
+    // already sees what I'm looking at".
+    await expect(page.getByTestId('chat-attach-checkbox')).toBeChecked();
   });
 
   test('apply-html button surfaces on assistant html block + applies to doc', async () => {
