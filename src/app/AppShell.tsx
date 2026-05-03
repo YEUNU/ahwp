@@ -1065,7 +1065,12 @@ export default function AppShell() {
                   챗봇
                 </h2>
               </div>
-              <div className="flex-1 overflow-hidden">
+              {/* chunk 73 — `min-h-0` propagates the resizable Panel's
+                  height bound through the flex column so ChatPanel's
+                  inner scroller doesn't grow past its allotted region.
+                  Without it, long assistant messages pushed the input
+                  form below the viewport. */}
+              <div className="min-h-0 flex-1 overflow-hidden">
                 <ChatPanel
                   ref={chatRef}
                   onOpenSettings={() => setSettingsOpen(true)}

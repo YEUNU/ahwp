@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### Fixed — UX 보강 chunk 73 (0.3.21)
+
+- **ChatPanel 메시지 스크롤 fix** — chunk 72 의 Settings 와 동일한 `min-h-0` 누락 패턴이 ChatPanel 에도 있었음. 어시스턴트 메시지가 길어지면 chat-scroller (`flex-1 overflow-auto`) 가 제 height bound 안에 갇히지 않고 input form 을 viewport 밖으로 밀어냈다. AppShell 의 chat panel 래퍼 + ChatPanel root + chat-scroller 세 군데에 `min-h-0` 추가. `overflow-auto` → `overflow-y-auto` 명시. 이제 긴 응답이 와도 input + 컨텍스트 chip 영역은 항상 보이고 메시지 영역만 자체 스크롤.
+
 ### Fixed — UX 보강 chunk 72 (0.3.20)
 
 - **Settings 모달 우측 패널 스크롤 fix** — chunk 55 의 4탭 사이드바 재설계 후 AI 공급자 / 단축키 탭에서 우측 PaneBody 가 스크롤 안 되던 문제. 원인은 nested flex/grid 의 `min-h-0` 누락 — 부모 grid track 이 height 를 부여해도 자식 flex 컬럼의 default `min-height: auto` 가 컨텐츠를 그대로 늘려 PaneBody 의 `flex-1 + overflow-auto` 가 무효화. 우측 컬럼 div 와 PaneBody 양쪽에 `min-h-0` 추가, PaneBody 의 `overflow-auto` → `overflow-y-auto` 로 명시.

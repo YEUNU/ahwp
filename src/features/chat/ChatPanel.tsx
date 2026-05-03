@@ -651,7 +651,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     );
 
     return (
-      <div className="flex h-full flex-col">
+      // chunk 73 — `min-h-0` lets nested flex children honor the
+      // parent's height bound. Without it the chat-scroller's
+      // `flex-1 overflow-auto` collapsed when the message list grew,
+      // pushing the input form out of view (same root cause as the
+      // Settings PaneBody issue in chunk 72).
+      <div className="flex h-full min-h-0 flex-col">
         <div
           className="flex items-center gap-2 border-b border-border bg-card px-3 py-2"
           data-testid="chat-provider-bar"
@@ -948,7 +953,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         ) : null}
         <div
           ref={scrollerRef}
-          className="flex-1 space-y-4 overflow-auto px-4 py-4"
+          // chunk 73 — `min-h-0` so this region can shrink below its
+          // intrinsic content height when the parent flex container
+          // caps it. Pairs with `flex-1` + `overflow-y-auto` so long
+          // assistant replies scroll within the bounds instead of
+          // pushing the input form below the viewport.
+          className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4"
           data-testid="chat-scroller"
         >
           {messages.length === 0 ? (
