@@ -8,11 +8,12 @@ import {
   type RefCallback,
 } from 'react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
-import type { MenuAction, PingResponse } from '@shared/api';
+import type { PingResponse } from '@shared/api';
 import { correctExtension } from '@shared/format';
 import { ChatPanel, type ChatPanelHandle } from '@/features/chat/ChatPanel';
 import { runTools } from '@/features/chat/tools';
 import { primaryModifier } from '@/lib/platform';
+import { useDispatchMenuAction } from '@/app/hooks/useDispatchMenuAction';
 import {
   CommandPalette,
   type CommandItem,
@@ -801,135 +802,28 @@ export default function AppShell() {
   // onMenuAction useEffect so the command palette (chunk 50) can fire
   // the same actions through the same code path. The native menu and
   // ⌘K both feed into this.
-  const dispatchMenuAction = useCallback(
-    (action: MenuAction): void => {
-      const handle = activeViewerRef();
-      if (action === 'file:new') {
-        void newDocument();
-      } else if (action === 'file:open') {
-        void openFromDialog();
-      } else if (action === 'file:save') {
-        void saveCurrent();
-      } else if (action === 'file:save-as') {
-        void saveAsCurrent();
-      } else if (action === 'file:export-html') {
-        const v = activeViewerRef();
-        const html = v?.exportDocumentHtml(1000) ?? '';
-        if (html.length === 0) {
-          window.alert('내보낼 문서가 없습니다.');
-        } else {
-          void window.api.file.exportHtml({
-            html,
-            defaultPath: activeTab?.path,
-          });
-        }
-      } else if (action === 'file:export-pdf') {
-        // chunk 59 — same HTML pipeline as export-html, but main runs it
-        // through Chrome's printToPDF instead of writing the source.
-        const v = activeViewerRef();
-        const html = v?.exportDocumentHtml(1000) ?? '';
-        if (html.length === 0) {
-          window.alert('내보낼 문서가 없습니다.');
-        } else {
-          void window.api.file.exportPdf({
-            html,
-            defaultPath: activeTab?.path,
-          });
-        }
-      } else if (action === 'edit:undo') {
-        handle?.undo();
-      } else if (action === 'edit:redo') {
-        handle?.redo();
-      } else if (
-        action === 'edit:copy' ||
-        action === 'edit:cut' ||
-        action === 'edit:paste'
-      ) {
-        // Studio 에디터(가운데)가 활성일 때만 IR clipboard 사용,
-        // 그 외(폴더 트리, 채팅, 입력창 등)에서는 표준 DOM clipboard로
-        // 라우팅. activeElement가 [data-studio-pane]의 자손이면 Studio
-        // 활성으로 본다 (Studio mousedown 시 scrollRef가 focus를 받음).
-        const ae = document.activeElement;
-        const inStudio = !!(
-          ae && (ae as HTMLElement).closest?.('[data-studio-pane]')
-        );
-        if (inStudio) {
-          if (action === 'edit:copy') void handle?.copy();
-          else if (action === 'edit:cut') void handle?.cut();
-          else void handle?.paste();
-        } else {
-          // document.execCommand는 deprecated이지만 input/textarea/일반
-          // selection 모두에 대해 활성 element 기준으로 동작 — Electron
-          // 에서 가장 호환성 좋은 fallback. 표준 Clipboard API는 paste 시
-          // 권한 프롬프트가 필요해 적합하지 않다.
-          const op =
-            action === 'edit:copy'
-              ? 'copy'
-              : action === 'edit:cut'
-                ? 'cut'
-                : 'paste';
-          try {
-            document.execCommand(op);
-          } catch {
-            /* swallow — best-effort fallback */
-          }
-        }
-      } else if (action === 'edit:find') {
-        handle?.openFind();
-      } else if (action === 'edit:replace') {
-        handle?.openReplace();
-      } else if (action === 'edit:copy-control') {
-        handle?.copyControlAtCaret();
-      } else if (action === 'edit:paste-control') {
-        handle?.pasteControlAtCurrentCaret();
-      } else if (
-        action === 'format:bold' ||
-        action === 'format:italic' ||
-        action === 'format:underline'
-      ) {
-        const key = action.split(':')[1] as 'bold' | 'italic' | 'underline';
-        handle?.toggleCharFormat(key);
-      } else if (action === 'view:settings') {
-        setSettingsOpen(true);
-      } else if (action === 'view:about') {
-        setAboutOpen(true);
-      } else if (action === 'view:page-setup') {
-        setPageSetupOpen(true);
-      } else if (action === 'insert:header-footer') {
-        setHfOpen(true);
-      } else if (action === 'insert:bookmark') {
-        setBookmarkOpen(true);
-      } else if (action === 'insert:footnote') {
-        setFootnoteOpen(true);
-      } else if (action === 'view:style-manager') {
-        setStyleManagerOpen(true);
-      } else if (action === 'insert:equation') {
-        setEquationOpen(true);
-      } else if (action === 'insert:shape') {
-        setShapeOpen(true);
-      } else if (action === 'view:picture-props') {
-        setPicturePropsOpen(true);
-      } else if (action === 'view:toggle-ruler') {
-        setShowRuler((v) => !v);
-      } else if (action === 'view:version-history') {
-        setVersionHistoryOpen(true);
-      } else if (action === 'app:new-window') {
-        void window.api.newWindow();
-      }
-    },
-    [
-      activeTab?.path,
-      activeViewerRef,
-      newDocument,
-      openFromDialog,
-      saveCurrent,
-      saveAsCurrent,
-    ],
-  );
-
-  useEffect(() => {
-    return window.api.onMenuAction(dispatchMenuAction);
-  }, [dispatchMenuAction]);
+  // R3 — dispatchMenuAction (~115 라인) + 메뉴 IPC 등록 effect →
+  // useDispatchMenuAction hook.
+  const dispatchMenuAction = useDispatchMenuAction({
+    activeViewerRef,
+    activeTab,
+    newDocument,
+    openFromDialog,
+    saveCurrent,
+    saveAsCurrent,
+    setSettingsOpen,
+    setAboutOpen,
+    setPageSetupOpen,
+    setHfOpen,
+    setBookmarkOpen,
+    setFootnoteOpen,
+    setStyleManagerOpen,
+    setEquationOpen,
+    setShapeOpen,
+    setPicturePropsOpen,
+    setShowRuler,
+    setVersionHistoryOpen,
+  });
 
   // Build the command-palette item list. The lint rule `react-hooks/refs`
   // flags passing dispatchMenuAction (or anything closing over the
