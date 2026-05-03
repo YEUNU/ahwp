@@ -40,6 +40,11 @@ import {
 } from 'react';
 import { Button } from '@/components/ui/button';
 import { ensureRhwpCore, HwpDocument } from '@/lib/rhwp-core';
+import {
+  parsePageDimensions,
+  type PageDims,
+} from '@/features/studio/utils/page-dims';
+import { relocateExcerpt } from '@/features/studio/utils/relocate-excerpt';
 import { primaryModifier } from '@/lib/platform';
 import { SlashMenu } from './SlashMenu';
 import type { CharFormatKey, ViewerHandle } from './types';
@@ -83,10 +88,7 @@ type Phase = 'mounting' | 'reading' | 'rendering' | 'ready';
 
 type RhwpDoc = InstanceType<typeof HwpDocument>;
 
-interface PageDims {
-  w: number;
-  h: number;
-}
+// `PageDims` 는 R1.0 에서 `utils/page-dims.ts` 로 추출됨.
 
 interface StyleListItem {
   id: number;
@@ -171,66 +173,9 @@ const PAGE_PADDING_PX = 32;
  * relocation guarantee past the cap and the chip falls to
  * `stale-missing`. The IR's getTextRange / getParagraphCount /
  * getParagraphLength are hot paths so this is a thin wrapper. */
-const RELOCATE_PARA_SCAN_LIMIT = 1000;
-interface DocReadOnly {
-  getParagraphCount: (sectionIdx: number) => number;
-  getParagraphLength: (sectionIdx: number, paraIdx: number) => number;
-  getTextRange: (
-    sectionIdx: number,
-    paraIdx: number,
-    startOffset: number,
-    length: number,
-  ) => string;
-}
-function relocateExcerpt(
-  doc: DocReadOnly,
-  expected: string,
-): {
-  sectionIndex: number;
-  startParagraphIndex: number;
-  startOffset: number;
-  endParagraphIndex: number;
-  endOffset: number;
-} | null {
-  if (expected.length === 0) return null;
-  // Single-section docs only (matches captureExcerpt). When we move to
-  // multi-section, walk every section the same way.
-  // Multi-paragraph excerpts that span paragraph breaks WILL have a
-  // '\n' in `expected`; we don't try to rejoin paragraphs to relocate
-  // those — they fall through to stale-missing. Single-line search
-  // covers the common case (single-para excerpt edited in place).
-  const SECTION_INDEX = 0;
-  let paraCount: number;
-  try {
-    paraCount = doc.getParagraphCount(SECTION_INDEX);
-  } catch {
-    return null;
-  }
-  const limit = Math.min(paraCount, RELOCATE_PARA_SCAN_LIMIT);
-  for (let p = 0; p < limit; p++) {
-    let paraText: string;
-    try {
-      const len = doc.getParagraphLength(SECTION_INDEX, p);
-      if (len < expected.length) continue;
-      paraText = doc.getTextRange(SECTION_INDEX, p, 0, len);
-    } catch {
-      continue;
-    }
-    const idx = paraText.indexOf(expected);
-    if (idx >= 0) {
-      return {
-        sectionIndex: SECTION_INDEX,
-        startParagraphIndex: p,
-        startOffset: idx,
-        endParagraphIndex: p,
-        endOffset: idx + expected.length,
-      };
-    }
-  }
-  return null;
-}
-
-/** Parse <svg width="X" height="Y"> or fall back to viewBox last two numbers. */
+// `relocateExcerpt` + `RELOCATE_PARA_SCAN_LIMIT` + `DocReadOnly` 는
+// `src/features/studio/utils/relocate-excerpt.ts` 로 추출됨 (R1.0
+// refactor). 본 파일은 import 만.
 /**
  * Mini "rows × cols" picker — 8×8 grid of cells the user can hover over.
  * Hovering highlights the rectangle from (1,1) up to the hover cell;
@@ -610,25 +555,8 @@ function HorizontalRuler({
   );
 }
 
-function parsePageDimensions(svg: string): PageDims | null {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(svg, 'image/svg+xml');
-  const root = doc.documentElement;
-  if (!root || root.tagName.toLowerCase() !== 'svg') return null;
-  const w = parseFloat(root.getAttribute('width') || '');
-  const h = parseFloat(root.getAttribute('height') || '');
-  if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
-    return { w, h };
-  }
-  const vb = root.getAttribute('viewBox');
-  if (vb) {
-    const parts = vb.split(/\s+/).map(parseFloat);
-    if (parts.length === 4 && parts.every((n) => Number.isFinite(n))) {
-      return { w: parts[2], h: parts[3] };
-    }
-  }
-  return null;
-}
+// `parsePageDimensions` + `PageDims` 는 `src/features/studio/utils/page-dims.ts`
+// 로 추출됨 (R1.0 refactor). 본 파일은 import 만.
 
 /**
  * Studio migration chunk 3 — multi-page + virtualized scroll + zoom.
