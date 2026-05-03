@@ -621,6 +621,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       chatMode,
       modelList,
       attachDoc,
+      setAttachDoc,
       excerpts,
       excerptError,
       setExcerptError,

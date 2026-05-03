@@ -76,6 +76,9 @@ export interface UseChatStreamingOptions {
   chatMode: any;
   modelList: any;
   attachDoc: boolean;
+  /** chunk 75 — clear the attach toggle after a successful send so the
+   *  user explicitly opts in for each context-attached turn. */
+  setAttachDoc: (v: boolean) => void;
   excerpts: any;
   excerptError: string | null;
   setExcerptError: any;
@@ -133,6 +136,7 @@ export function useChatStreaming(
     provider,
     model,
     attachDoc,
+    setAttachDoc,
     excerpts,
     setExcerptError,
     setExcerpts,
@@ -687,12 +691,18 @@ export function useChatStreaming(
     }
 
     fireChat([...messages, userMsg], verified);
+    // chunk 75 — clear the attach toggle after a successful send so
+    // the user explicitly opts in for each context-attached turn (the
+    // doc HTML is already serialized into this turn's system prompt).
+    if (attachDoc) setAttachDoc(false);
   }, [
     activeDocPath,
+    attachDoc,
     excerpts,
     fireChat,
     input,
     messages,
+    setAttachDoc,
     streaming,
     verifyExcerpt,
   ]);
@@ -732,8 +742,11 @@ export function useChatStreaming(
         console.warn('[chat] history.append user (direct) failed', err);
       }
       fireChat([...messages, userMsg], []);
+      // chunk 75 — same auto-unset as `send`. selection-menu invocation
+      // counts as one explicit attach turn.
+      if (attachDoc) setAttachDoc(false);
     },
-    [activeDocPath, fireChat, messages, streaming],
+    [activeDocPath, attachDoc, fireChat, messages, setAttachDoc, streaming],
   );
 
   // useImperativeHandle for ChatPanelHandle stays in ChatPanel — it

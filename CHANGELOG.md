@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+### Changed — UX 보강 chunk 75 — send 후 attachDoc 자동 unset (0.3.23)
+
+- **send / sendDirect 후 `attachDoc` 자동 false 로 reset** — 사용자가 컨텍스트 첨부 → 한 번 보내면 doc HTML 이 이미 그 turn 의 시스템 프롬프트에 직렬화 됐으므로 다음 turn 에 또 보낼 필요 없음. 이전엔 chunk 74 에서 default true 로 만들어 항상 켜져 있었는데, 매 turn 마다 1000 단락 HTML 을 다시 보내 토큰 폭발 위험. 이제 명시적 한 번 첨부 패턴 — 사용자가 또 첨부하려면 체크박스 다시 켬. localStorage 저장도 unset 시점에 갱신되어 다음 실행에 첨부 안 됨.
+
+### Documented — KNOWN_ISSUES L-004 보강 (chunk 76)
+
+- **복잡한 표·병합 셀 렌더링 한계** — 사용자 보고: 다중 행/열 병합이 있는 양식 표에서 우측 narrow column (예: SF-AD3 코드 컬럼) 텍스트가 잘리고 행 높이가 불균형. 원인은 `@rhwp/core` 의 `renderPageSvg` 가 column width 를 추정해 SVG 를 직접 그려 우리에게 넘기는 구조 — 우리 쪽 viewer 는 그 SVG 를 그대로 표시할 뿐 셀 너비 / 행 높이 재계산 권한 없음. lib v0.7.x 활발히 개발 중이라 lib upgrade 후 해결 예상. 영향도 표 항목을 **중간 → 높음** 으로 갱신.
+
 ### Fixed — UX 보강 chunk 74 — 현재 문서 첨부 (0.3.22)
 
 세 가지 누적 버그가 "AI 가 첨부된 문서를 인식 못 함" 증상으로 합쳐져 있었음. 사용자가 active doc 을 컨텍스트로 첨부했는데 모델이 "문서를 받지 못했습니다" 라고 응답하는 문제.
