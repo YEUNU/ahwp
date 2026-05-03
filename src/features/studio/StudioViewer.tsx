@@ -45,6 +45,7 @@ import { type PageDims } from '@/features/studio/utils/page-dims';
 import { relocateExcerpt } from '@/features/studio/utils/relocate-excerpt';
 import { useDocumentLifecycle } from '@/features/studio/hooks/useDocumentLifecycle';
 import { useUndoHistory } from '@/features/studio/hooks/useUndoHistory';
+import { useFindReplace } from '@/features/studio/hooks/useFindReplace';
 import { primaryModifier } from '@/lib/platform';
 import { SlashMenu } from './SlashMenu';
 import type { CharFormatKey, ViewerHandle } from './types';
@@ -851,40 +852,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     const undoGroupDepthRef = useRef(0);
     const [canUndo, setCanUndo] = useState(false);
     const [canRedo, setCanRedo] = useState(false);
-    // Find (chunk 9). When `findOpen=true` a small search bar overlays
-    // the toolbar. Matches are computed by iterating sections+paragraphs
-    // and indexOf-searching their text. Each match becomes a {s,p,off,len}
-    // tuple; the active one is highlighted distinctly and brought into view.
-    const [findOpen, setFindOpen] = useState(false);
-    const [findQuery, setFindQuery] = useState('');
-    const [findMatches, setFindMatches] = useState<
-      {
-        sectionIndex: number;
-        paragraphIndex: number;
-        offset: number;
-        length: number;
-      }[]
-    >([]);
-    const [findIndex, setFindIndex] = useState(0);
-    const [findHighlightsByPage, setFindHighlightsByPage] = useState<
-      Record<
-        number,
-        {
-          x: number;
-          y: number;
-          width: number;
-          height: number;
-          isActive: boolean;
-        }[]
-      >
-    >({});
-    const findInputRef = useRef<HTMLInputElement>(null);
-    /** Replace UI state — chunk 7. ⌘H opens the bar with replace focused;
-     *  ⌘F keeps the search-only entry point. The replace string can be empty
-     *  (= delete matches), so we don't gate the buttons on emptiness. */
-    const [replaceQuery, setReplaceQuery] = useState('');
-    const [replaceFeedback, setReplaceFeedback] = useState<string | null>(null);
-    const replaceInputRef = useRef<HTMLInputElement>(null);
+    // Find/Replace (chunk 9 + 7) — state · refs · callbacks · effects 모두
+    // R1.3 에서 useFindReplace hook 으로 이전. 호출은 sortRange /
+    // refreshAfterMutation 등 dependencies 가 모두 정의된 뒤 (아래) 에서.
     /** Hidden file input for the toolbar's "이미지 삽입" button. */
     const imageInputRef = useRef<HTMLInputElement>(null);
     /** Drop overlay state — true while a file drag is hovering the viewer. */
@@ -3021,314 +2991,39 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       return false;
     }, [copySelection, deleteSelectionIfAny, refreshAfterMutation]);
 
-    /**
-     * Iterate every paragraph in every section, indexOf-searching each
-     * paragraph's text for the query. Builds a flat list of matches. Big
-     * docs may take a few hundred ms — Phase 1 minimal. Future optimization:
-     * incremental search per typed char, debounce, or maintain a section
-     * text cache.
-     */
-    const runFindSearch = useCallback((query: string): void => {
-      const doc = docRef.current;
-      if (!doc || !query) {
-        setFindMatches([]);
-        setFindIndex(0);
-        setFindHighlightsByPage({});
-        return;
-      }
-      // Build the paragraph text cache on first run after the doc loads
-      // (or after a mutation cleared it). Entries are stored already-
-      // lowercased so the inner loop only needs indexOf on a primitive.
-      if (!findTextCacheRef.current) {
-        const cache = new Map<string, string>();
-        try {
-          const sectionCount = doc.getSectionCount();
-          for (let s = 0; s < sectionCount; s++) {
-            const paraCount = doc.getParagraphCount(s);
-            for (let p = 0; p < paraCount; p++) {
-              const text = doc.getTextRange(s, p, 0, 1_000_000);
-              if (!text) continue;
-              cache.set(`${s}:${p}`, text.toLowerCase());
-            }
-          }
-        } catch (err) {
-          console.warn('[studio] find cache build failed:', err);
-        }
-        findTextCacheRef.current = cache;
-      }
-      const lc = query.toLowerCase();
-      const matches: {
-        sectionIndex: number;
-        paragraphIndex: number;
-        offset: number;
-        length: number;
-      }[] = [];
-      const cache = findTextCacheRef.current;
-      for (const [key, haystack] of cache) {
-        const colon = key.indexOf(':');
-        const s = Number(key.slice(0, colon));
-        const p = Number(key.slice(colon + 1));
-        let from = 0;
-        while (from <= haystack.length - lc.length) {
-          const idx = haystack.indexOf(lc, from);
-          if (idx === -1) break;
-          matches.push({
-            sectionIndex: s,
-            paragraphIndex: p,
-            offset: idx,
-            length: query.length,
-          });
-          from = idx + Math.max(1, lc.length);
-        }
-      }
-      setFindMatches(matches);
-      setFindIndex(0);
-    }, []);
-
-    /**
-     * Project the matches list to per-page rect overlays. The active match
-     * (findIndex) is flagged so the renderer can color it differently.
-     */
-    const refreshFindHighlights = useCallback(
-      (matches: typeof findMatches, activeIdx: number): void => {
-        const doc = docRef.current;
-        if (!doc || matches.length === 0) {
-          setFindHighlightsByPage({});
-          return;
-        }
-        const grouped: Record<
-          number,
-          {
-            x: number;
-            y: number;
-            width: number;
-            height: number;
-            isActive: boolean;
-          }[]
-        > = {};
-        for (let i = 0; i < matches.length; i++) {
-          const m = matches[i];
-          try {
-            const rects = JSON.parse(
-              doc.getSelectionRects(
-                m.sectionIndex,
-                m.paragraphIndex,
-                m.offset,
-                m.paragraphIndex,
-                m.offset + m.length,
-              ),
-            ) as {
-              pageIndex: number;
-              x: number;
-              y: number;
-              width: number;
-              height: number;
-            }[];
-            for (const r of rects) {
-              (grouped[r.pageIndex] ??= []).push({
-                x: r.x,
-                y: r.y,
-                width: r.width,
-                height: r.height,
-                isActive: i === activeIdx,
-              });
-            }
-          } catch {
-            /* skip a paragraph that fails (no layout) */
-          }
-        }
-        setFindHighlightsByPage(grouped);
-      },
-      [],
-    );
-
-    /**
-     * Scroll the active match's page into view, set caret to the start of
-     * the match. Called after navigation between matches.
-     */
-    const focusFindMatch = useCallback(
-      (matches: typeof findMatches, idx: number): void => {
-        const m = matches[idx];
-        if (!m) return;
-        const doc = docRef.current;
-        if (!doc) return;
-        // Move caret + selection to the match, so subsequent edits target it.
-        caretRef.current = {
-          sectionIndex: m.sectionIndex,
-          paragraphIndex: m.paragraphIndex,
-          charOffset: m.offset,
-        };
-        try {
-          const rect = JSON.parse(
-            doc.getCursorRect(m.sectionIndex, m.paragraphIndex, m.offset),
-          ) as { pageIndex: number; x: number; y: number; height: number };
-          const pageEl = pageRefsRef.current[rect.pageIndex];
-          pageEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          setCursorRect(rect);
-        } catch {
-          /* keep previous */
-        }
-      },
-      [],
-    );
-
-    const findNext = useCallback((): void => {
-      if (findMatches.length === 0) return;
-      const next = (findIndex + 1) % findMatches.length;
-      setFindIndex(next);
-      refreshFindHighlights(findMatches, next);
-      focusFindMatch(findMatches, next);
-    }, [findMatches, findIndex, refreshFindHighlights, focusFindMatch]);
-
-    const findPrev = useCallback((): void => {
-      if (findMatches.length === 0) return;
-      const prev = (findIndex - 1 + findMatches.length) % findMatches.length;
-      setFindIndex(prev);
-      refreshFindHighlights(findMatches, prev);
-      focusFindMatch(findMatches, prev);
-    }, [findMatches, findIndex, refreshFindHighlights, focusFindMatch]);
-
-    const openFind = useCallback((): void => {
-      setFindOpen(true);
-      // Prime with current selection text if any (so users can hit ⌘F to
-      // search the selected word).
-      const sel = selectionRef.current;
-      if (sel) {
-        const r = sortRange(sel.anchor, sel.focus);
-        if (
-          !r.empty &&
-          r.startPara === r.endPara &&
-          r.endOffset - r.startOffset < 200
-        ) {
-          const doc = docRef.current;
-          if (doc) {
-            try {
-              const text = doc.getTextRange(
-                sel.anchor.sectionIndex,
-                r.startPara,
-                r.startOffset,
-                r.endOffset - r.startOffset,
-              );
-              if (text) {
-                setFindQuery(text);
-                runFindSearch(text);
-              }
-            } catch {
-              /* ignore */
-            }
-          }
-        }
-      }
-      // Move focus to the input on next tick so the caret lands inside.
-      setTimeout(() => findInputRef.current?.focus(), 0);
-    }, [sortRange, runFindSearch]);
-
-    const closeFind = useCallback((): void => {
-      setFindOpen(false);
-      setFindMatches([]);
-      setFindIndex(0);
-      setFindHighlightsByPage({});
-      setReplaceFeedback(null);
-      // Return focus to the scroll container so keyboard editing resumes.
-      scrollRef.current?.focus();
-    }, []);
-
-    /**
-     * Open the find bar with replace focused — chunk 7. Same surface as
-     * `openFind` but shifts focus to the replace input. Triggered by
-     * ⌘H / Ctrl+H or the Edit menu's "바꾸기…" entry.
-     */
-    const openReplace = useCallback((): void => {
-      setFindOpen(true);
-      setReplaceFeedback(null);
-      setTimeout(() => replaceInputRef.current?.focus(), 0);
-    }, []);
-
-    /**
-     * Run a single replace (replaceOne) or replace-all (replaceAll) on the
-     * IR via @rhwp/core. We delegate to the library rather than splicing
-     * matches ourselves so case-handling, multi-paragraph spans, and any
-     * future regex/whole-word options stay consistent with what the lib
-     * does internally.
-     *
-     * `replacementOverride` lets callers (e2e debug surface) inject a value
-     * without first round-tripping through React state — same UI buttons
-     * use the state-driven path with `undefined`.
-     *
-     * After the mutation:
-     *   - Find paragraph cache is invalidated (text changed)
-     *   - refreshAfterMutation re-reads page count + marks dirty
-     *   - runFindSearch(query) re-fires to populate updated match list
-     */
-    const applyReplace = useCallback(
-      (all: boolean, replacementOverride?: string): void => {
-        const doc = docRef.current;
-        if (!doc) return;
-        const query = findQuery;
-        if (query.length === 0) return;
-        const replacement =
-          replacementOverride !== undefined
-            ? replacementOverride
-            : replaceQuery;
-        try {
-          // Library is case-insensitive when the third arg is false — matches
-          // our own find cache behavior (we lowercase both sides).
-          const raw = all
-            ? doc.replaceAll(query, replacement, false)
-            : doc.replaceOne(query, replacement, false);
-          // The IR returns a JSON status string; we parse defensively because
-          // the lib doesn't expose a typed schema for this. The {count}
-          // shape is what 0.7.9 returns; falling back to "1 match replaced"
-          // for replaceOne keeps the UI honest if shape changes.
-          let count = all ? null : 1;
-          try {
-            const parsed = JSON.parse(raw) as { count?: number };
-            if (typeof parsed.count === 'number') count = parsed.count;
-          } catch {
-            /* ignore — feedback text falls back to a generic message */
-          }
-          // Invalidate the find text cache before re-running the search
-          // — the cached lowercase strings still hold the old matches.
-          findTextCacheRef.current = null;
-          refreshAfterMutation();
-          runFindSearch(query);
-          setReplaceFeedback(
-            count == null ? (all ? '모두 바꿈' : '바꿈') : `${count}건 바꿈`,
-          );
-        } catch (err) {
-          console.warn('[studio] replace failed:', err);
-          setReplaceFeedback(
-            err instanceof Error ? `에러: ${err.message}` : '에러',
-          );
-        }
-      },
-      [findQuery, replaceQuery, refreshAfterMutation, runFindSearch],
-    );
-
-    const replaceCurrent = useCallback(
-      (override?: string): void => applyReplace(false, override),
-      [applyReplace],
-    );
-    const replaceAllMatches = useCallback(
-      (override?: string): void => applyReplace(true, override),
-      [applyReplace],
-    );
-
-    // Recompute highlight rects whenever matches or active index change.
-    useEffect(() => {
-      if (findOpen) {
-        refreshFindHighlights(findMatches, findIndex);
-      }
-    }, [findOpen, findMatches, findIndex, refreshFindHighlights]);
-
-    // After matches first arrive, jump to the first one.
-    const matchCount = findMatches.length;
-    useEffect(() => {
-      if (findOpen && matchCount > 0) {
-        focusFindMatch(findMatches, 0);
-      }
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [matchCount, findOpen]);
+    // R1.3 — Find/Replace (chunk 9 + 7) → useFindReplace hook. State /
+    // refs / callbacks / 두 effects 모두 hook 안으로 이전.
+    const {
+      findOpen,
+      findQuery,
+      findMatches,
+      findIndex,
+      findHighlightsByPage,
+      replaceQuery,
+      replaceFeedback,
+      findInputRef,
+      replaceInputRef,
+      setFindQuery,
+      setReplaceQuery,
+      runFindSearch,
+      findNext,
+      findPrev,
+      openFind,
+      closeFind,
+      openReplace,
+      replaceCurrent,
+      replaceAllMatches,
+    } = useFindReplace({
+      docRef,
+      caretRef,
+      pageRefsRef,
+      selectionRef,
+      scrollRef,
+      findTextCacheRef,
+      sortRange,
+      refreshAfterMutation,
+      setCursorRect,
+    });
 
     /**
      * Paste at caret. If a selection is active it's deleted first
@@ -8102,6 +7797,8 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       replaceAllMatches,
       replaceQuery,
       replaceFeedback,
+      setFindQuery,
+      setReplaceQuery,
       applyAlignment,
       applyFontSizePt,
       applyTextColor,

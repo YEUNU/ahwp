@@ -22,7 +22,14 @@ ahwp 0.3.6 시점 codebase 리팩토링 청사진. **목표는 동작 변경 0**
   교체 — single source of truth. StudioViewer.tsx -99 라인 (9398 →
   9299). lint clean, unit 15/15, studio undo/edit/smoke 11/11 +
   agent/html-apply/cells-v3 14/14 회귀 0.
-- ⏳ **R1.3** — `useFindReplace` 추출. 다음 세션 시작점.
+- ✅ **R1.3** (2026-05-03) — `useFindReplace` 추출. chunk 9 (찾기) +
+  chunk 7 (바꾸기) state · refs · callbacks · 두 effects 모두 →
+  `hooks/useFindReplace.ts` (456 라인). 7개 state + 2 input refs + 9개
+  callback 일괄. latest-ref 패턴으로 stable identity. caller 는 ref /
+  setter / sortRange / refreshAfterMutation / setCursorRect 만 주입.
+  StudioViewer.tsx -303 라인 (9299 → 8996, **9000 라인 첫 돌파**).
+  lint clean, unit 15/15, studio find/replace/smoke/undo 20/20 회귀 0.
+- ⏳ **R1.4** — `useKeyboardShortcuts` 추출. 다음 세션 시작점.
 
 ---
 
