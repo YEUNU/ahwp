@@ -40,12 +40,24 @@ ahwp 0.3.6 시점 codebase 리팩토링 청사진. **목표는 동작 변경 0**
   7915, **누적 9610→7915, -17.6%**). lint 4→3 warnings (handleKeyDown
   관련 1개 제거), unit 15/15, studio input/selection/edit/undo/find/
   replace/format/paragraph-ops/cells×3 61/61 + cell-drag 3/3 회귀 0.
-- ⏳ **R1.5** — `useSelectionModel` 추출. 가장 위험 (drag/caret/auto-
-  scroll 얽힘). 별도 세션 권장.
+- ✅ **R1.7** (2026-05-03) — `PaperPage` 컴포넌트 + `HorizontalRuler`
+  분리. 페이지 한 장의 SVG mount + 5종 overlay (changedPara stripe /
+  selection rects / control bbox / cell-block / find highlight) +
+  cursor caret 을 render-only 컴포넌트로 추출. `PaperPage.tsx` (344
+  라인). StudioViewer.tsx -225 라인 (7915 → 7690). 회귀 0
+  (smoke + edit + find + pagenav + image 19/19 PASS).
+- ✅ **R1.8** (2026-05-03) — `useViewerHandle` + `useDebugSurface` 추출.
+  ViewerHandle imperative handle (~1180 라인 / 70+ 메서드) →
+  `hooks/useViewerHandle.ts` (1415 라인). \_\_studioDebug useEffect
+  (~970 라인 / 80+ 메서드) → `hooks/useDebugSurface.ts` (1277 라인).
+  StudioViewer.tsx -1994 라인 (7690 → **5696**, **누적 9610→5696,
+  -40.7%, 2000 목표 대비 ~80%**). lint 4→2 warnings (debug effect
+  관련 1개 제거 + viewer handle 관련 1개 새로 silence). 회귀 0
+  (edit + undo + find + replace + format + cells-v3 + input + para-ops
+  - bookmark + image + equation + chat-agent 62/62 PASS).
+- ⏳ **R1.5** — `useSelectionModel` 추출. 가장 위험. 다음 세션 시작점.
 - ⏳ **R1.6** — `useCellDrag` 추출. 0.2.89~0.2.92 fix 회귀 가드 다층
   필요. 별도 세션 권장.
-- ⏳ **R1.7** — `PaperPage` / coords 분리.
-- ⏳ **R1.8** — `useImperativeHandleBuilder` 추출.
 
 ---
 
