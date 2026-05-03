@@ -93,6 +93,27 @@ ahwp 0.3.6 시점 codebase 리팩토링 청사진. **목표는 동작 변경 0**
 
 🎉 **R2 완료** — ChatPanel 분해 phase 종료.
 
+### R5 — 타입 정밀화 + safeIrCall (1차)
+
+- ✅ **R5.B (1차)** (2026-05-03) — `safeIrCall` / `tryIgnore` helper.
+  `src/lib/safe-ir-call.ts` (44 라인) + 호출자 측 local `irMutate` /
+  `irRead` helper 패턴. useViewerHandle 의 33개 ir\* tool wrapper
+  (Phase 3 chunks 45~49 mutate + chunk 51 read) 일괄 적용 — 보일러
+  플레이트 try/catch 33개 → helper 호출 33개로 일원화.
+  useViewerHandle.ts 1402 → 1162 (-240 라인).
+- ⏳ **R5.A** — `Record<string, unknown>` 62회 → narrow types. 대규모
+  타입 작업 (각 lib API 응답 shape 확정 필요). 별도 세션 권장.
+- ⏳ **R5.B (2차)** — StudioViewer.tsx (66 catch) + useDebugSurface
+  (18 catch) + 나머지 hook 들의 잔여 try/catch 사이트 적용.
+
+### R6 — Cell-path 통합
+
+- ✅ **R6 (1차)** (2026-05-03) — `callCellOp` helper.
+  `src/features/studio/utils/cell-op.ts` (76 라인). insertAtCaret +
+  deleteAtCaret 2 사이트 적용 — `if (path.length > 1) { ByPath } else
+{ InCell }` 분기 collapse.
+- ⏳ **R6 (2차)** — 나머지 31+개 InCell/ByPath 분기 사이트 적용.
+
 ### R3 — AppShell 분해
 
 - ✅ **R3 (1차)** (2026-05-03) — `useDispatchMenuAction` 추출.

@@ -40,6 +40,7 @@ import { Button } from '@/components/ui/button';
 import { HwpDocument } from '@/lib/rhwp-core';
 import { type PageDims } from '@/features/studio/utils/page-dims';
 // `relocateExcerpt` 는 R1.8 에서 useViewerHandle 로 이동.
+import { callCellOp } from '@/features/studio/utils/cell-op';
 import { useDocumentLifecycle } from '@/features/studio/hooks/useDocumentLifecycle';
 import { useUndoHistory } from '@/features/studio/hooks/useUndoHistory';
 import { useFindReplace } from '@/features/studio/hooks/useFindReplace';
@@ -1661,27 +1662,15 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       if (!doc) return;
       const c = caretRef.current;
       if (c.cell) {
-        // Phase E — nested table 지원. path.length > 1이면 ByPath
-        // variant 사용 (insertTextInCellByPath). 1단계 cell이면 기존 API.
-        if (c.cell.path && c.cell.path.length > 1) {
-          doc.insertTextInCellByPath(
-            c.sectionIndex,
-            c.cell.parentParaIndex,
-            JSON.stringify(c.cell.path),
-            c.charOffset,
-            text,
-          );
-        } else {
-          doc.insertTextInCell(
-            c.sectionIndex,
-            c.cell.parentParaIndex,
-            c.cell.controlIndex,
-            c.cell.cellIndex,
-            c.cell.cellParaIndex,
-            c.charOffset,
-            text,
-          );
-        }
+        // R6 — Phase E nested table 분기를 callCellOp 으로 일원화.
+        callCellOp(
+          c.cell,
+          c.sectionIndex,
+          doc.insertTextInCell.bind(doc),
+          doc.insertTextInCellByPath.bind(doc),
+          c.charOffset,
+          text,
+        );
         caretRef.current = { ...c, charOffset: c.charOffset + text.length };
       } else {
         doc.insertText(c.sectionIndex, c.paragraphIndex, c.charOffset, text);
@@ -1699,26 +1688,15 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       if (!doc) return;
       const c = caretRef.current;
       if (c.cell) {
-        // Phase E — nested cell 지원.
-        if (c.cell.path && c.cell.path.length > 1) {
-          doc.deleteTextInCellByPath(
-            c.sectionIndex,
-            c.cell.parentParaIndex,
-            JSON.stringify(c.cell.path),
-            at,
-            count,
-          );
-        } else {
-          doc.deleteTextInCell(
-            c.sectionIndex,
-            c.cell.parentParaIndex,
-            c.cell.controlIndex,
-            c.cell.cellIndex,
-            c.cell.cellParaIndex,
-            at,
-            count,
-          );
-        }
+        // R6 — Phase E nested table 분기를 callCellOp 으로 일원화.
+        callCellOp(
+          c.cell,
+          c.sectionIndex,
+          doc.deleteTextInCell.bind(doc),
+          doc.deleteTextInCellByPath.bind(doc),
+          at,
+          count,
+        );
         if (at < c.charOffset) {
           caretRef.current = { ...c, charOffset: at };
         }
