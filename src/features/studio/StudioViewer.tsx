@@ -4884,6 +4884,140 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             return false;
           }
         },
+        // Phase 3 chunk 51 — read-only tools. Agent 능동 검사용.
+        irGetStyleAt: (sec, para) => {
+          const doc = docRef.current;
+          if (!doc) return null;
+          try {
+            const atJson = JSON.parse(doc.getStyleAt(sec, para)) as {
+              styleId?: number;
+            };
+            const styleId = atJson.styleId ?? 0;
+            const detail = JSON.parse(doc.getStyleDetail(styleId)) as Record<
+              string,
+              unknown
+            >;
+            return { ...detail, styleId };
+          } catch (err) {
+            console.warn('[studio] irGetStyleAt:', err);
+            return null;
+          }
+        },
+        irGetCharPropertiesAt: (sec, para, charOffset) => {
+          const doc = docRef.current;
+          if (!doc) return null;
+          try {
+            return JSON.parse(
+              doc.getCharPropertiesAt(sec, para, charOffset),
+            ) as Record<string, unknown>;
+          } catch (err) {
+            console.warn('[studio] irGetCharPropertiesAt:', err);
+            return null;
+          }
+        },
+        irGetParaPropertiesAt: (sec, para) => {
+          const doc = docRef.current;
+          if (!doc) return null;
+          try {
+            return JSON.parse(doc.getParaPropertiesAt(sec, para)) as Record<
+              string,
+              unknown
+            >;
+          } catch (err) {
+            console.warn('[studio] irGetParaPropertiesAt:', err);
+            return null;
+          }
+        },
+        irGetTextRange: (sec, sp, so, ep, eo) => {
+          const doc = docRef.current;
+          if (!doc) return null;
+          try {
+            const parts: string[] = [];
+            if (sp === ep) {
+              parts.push(doc.getTextRange(sec, sp, so, eo));
+            } else {
+              const len0 = doc.getParagraphLength(sec, sp);
+              parts.push(doc.getTextRange(sec, sp, so, len0));
+              for (let p = sp + 1; p < ep; p++) {
+                const lp = doc.getParagraphLength(sec, p);
+                parts.push(doc.getTextRange(sec, p, 0, lp));
+              }
+              parts.push(doc.getTextRange(sec, ep, 0, eo));
+            }
+            const out = parts.join('\n');
+            // Hard cap at 4096 bytes to prevent huge dumps in tool results.
+            const enc = new TextEncoder().encode(out);
+            if (enc.length > 4096) {
+              return (
+                new TextDecoder().decode(enc.slice(0, 4096)) + '…[trimmed]'
+              );
+            }
+            return out;
+          } catch (err) {
+            console.warn('[studio] irGetTextRange:', err);
+            return null;
+          }
+        },
+        irGetCaretPosition: () => {
+          const c = caretRef.current;
+          return {
+            sectionIndex: c.sectionIndex,
+            paragraphIndex: c.paragraphIndex,
+            charOffset: c.charOffset,
+            cell: c.cell ?? null,
+          };
+        },
+        irFindInDocument: (query, maxResults = 50) => {
+          const doc = docRef.current;
+          if (!doc || query.length === 0) return [];
+          try {
+            const out: {
+              sectionIdx: number;
+              paragraphIdx: number;
+              charOffset: number;
+            }[] = [];
+            const sec = 0;
+            const paraCount = doc.getParagraphCount(sec);
+            for (let p = 0; p < paraCount; p++) {
+              if (out.length >= maxResults) break;
+              const len = doc.getParagraphLength(sec, p);
+              if (len === 0) continue;
+              let text: string;
+              try {
+                text = doc.getTextRange(sec, p, 0, len);
+              } catch {
+                continue;
+              }
+              let from = 0;
+              while (out.length < maxResults) {
+                const idx = text.indexOf(query, from);
+                if (idx < 0) break;
+                out.push({
+                  sectionIdx: sec,
+                  paragraphIdx: p,
+                  charOffset: idx,
+                });
+                from = idx + query.length;
+              }
+            }
+            return out;
+          } catch (err) {
+            console.warn('[studio] irFindInDocument:', err);
+            return [];
+          }
+        },
+        irGetCellInfo: (sec, ppara, ctrl, cellIdx) => {
+          const doc = docRef.current;
+          if (!doc) return null;
+          try {
+            return JSON.parse(
+              doc.getCellInfo(sec, ppara, ctrl, cellIdx),
+            ) as Record<string, unknown>;
+          } catch (err) {
+            console.warn('[studio] irGetCellInfo:', err);
+            return null;
+          }
+        },
       }),
       [
         captureExcerpt,

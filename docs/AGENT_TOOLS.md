@@ -24,7 +24,7 @@ Phase 3 Agent 모드의 도구 카탈로그. **`shared/ai-tools.ts`의 `AHWP_TOO
 
 ---
 
-## 카탈로그 (45 tools)
+## 카탈로그 (54 tools — 45 write + 9 read)
 
 ### A. 본문 편집 — 텍스트/단락 primitives (5)
 
@@ -153,6 +153,45 @@ Phase 3 Agent 모드의 도구 카탈로그. **`shared/ai-tools.ts`의 `AHWP_TOO
 | `insertFootnote`   | 현재 caret에 각주 삽입 + 본문 텍스트                            |
 | `createNamedStyle` | 빈 명명 스타일 셸 추가 (이름만, shape 파라미터는 rhwp 0.8 대기) |
 
+### H. Read tools — 능동 검사 / 양식 매칭 (chunk 51, 9 tools)
+
+mutation 0. Agent 가 turn 안에서 능동적으로 문서 상태를 검사 → 양식
+매칭 / 위치 결정 / 본문 검색 등에 사용. 결과는 다음 turn 의 tool_result
+메시지에 JSON 직렬화 (4096B cap) 되어 회신.
+
+| 이름                  | 반환                                             | 용도                                                  |
+| --------------------- | ------------------------------------------------ | ----------------------------------------------------- |
+| `getDocumentOutline`  | `{paragraphIndex, level, text}[]` 제목 단락 목록 | 문서 구조 파악 / 어디 들어갈지 결정                   |
+| `getStyleListJson`    | `{id, name, englishName}[]` 사용 가능 스타일     | applyStyle 매칭할 styleId 카탈로그                    |
+| `getStyleAt`          | `{styleId, charShape, paraShape, ...}`           | 특정 단락의 활성 styleId + 상세                       |
+| `getCharPropertiesAt` | `{name, size_hu, color, bold, italic, ...}`      | 좌표 위치의 글자 서식 (matching applyCharFormat 입력) |
+| `getParaPropertiesAt` | `{alignment, lineSpacing, indent, spacing, ...}` | 단락 서식 (matching applyParaProps 입력)              |
+| `getTextRange`        | string (4096B cap, trim)                         | 본문 인용 / 근거 추출                                 |
+| `getCaretPosition`    | `{sectionIndex, paragraphIndex, charOffset}`     | 현재 caret 좌표 (사용자 의도 위치)                    |
+| `findInDocument`      | `{sectionIdx, paragraphIdx, charOffset}[]`       | 키워드 검색 (case-sensitive, max 200, query 1024B)    |
+| `getCellInfo`         | `{row, col, rowSpan, colSpan, ...}`              | 셀 메타 (병합 상태 검증)                              |
+
+**핵심 시나리오 — "내 주장 X 추가" (사용자 막연 요청)**:
+
+```
+1. getCaretPosition → {paragraphIndex:5, charOffset:42, ...}
+2. getStyleAt(0, 5)  → {styleId:0, name:"바탕글", paraShape:{...}}
+3. getParaPropertiesAt(0, 5) → {alignment:"justify", lineSpacing:160, ...}
+4. (LLM 추론: 인접 양식 그대로 사용 결정)
+5. insertParagraph(0, 6) → 새 단락 6
+6. insertText(0, 6, 0, "내 주장: ...") → 텍스트 삽입
+7. applyStyle(0, 6, 0) → "바탕글" 스타일 적용
+8. applyParaProps({alignment:"justify", lineSpacing:160}) → 양식 매칭
+```
+
+총 8 호출 (cap 10 안). 묶음 undo 1회로 전체 롤백.
+
+**우선순위**:
+
+1. **`applyStyle`** (named style id) — 같은 양식 재사용 가독성 / 회귀 안전성 best
+2. **`applyParaProps` / `applyCharFormat`** — props 직접 (named style 매칭 안 될 때)
+3. **`applyHtml`** — sledgehammer (여러 단락 한꺼번에 변경 / Manual 모드 호환)
+
 ---
 
 ## Agent 호출 시 제약/주의사항
@@ -193,9 +232,10 @@ Phase 3 Agent 모드의 도구 카탈로그. **`shared/ai-tools.ts`의 `AHWP_TOO
 
 ---
 
-## 통계 (0.3.3 기준)
+## 통계 (0.3.4 기준)
 
-- 총 도구: **45개** (Phase 2 chunk 19 시 12개 → Phase 3 chunks 45~49 +33개)
-- 카테고리: A(5) + B(8) + C(12) + D(7) + E(6) + F(4) + G(5) — 합 **47** (cross-listed 2 = 45 unique)
+- 총 도구: **54개** = write 45 + read 9 (Phase 2 chunk 19 시 12개 → Phase 3 chunks 45~49 +33 → chunk 51 +9 read)
+- 카테고리: A(5) + B(8) + C(12) + D(7) + E(6) + F(4) + G(5) + H(9) — 합 **56** (cross-listed 2 = 54 unique)
 - 한컴 한글 lib (`@rhwp/core` 0.7.9) 의 주요 mutation API 약 50개 중 **~90% 커버**
+- 능동 검사 (read) 9개 추가로 Agent 가 양식 매칭 / 위치 결정 / 인용 탐색 가능
 - 미커버: numbering/bullet 자동화 (lib API 복잡), insertEquation (수식 엔진), HF para format (`applyParaFormatInHf`), formField setActive 류 (편집 모델 외)

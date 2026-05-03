@@ -6,6 +6,76 @@
 
 ## [Unreleased]
 
+### Added — Phase 3 chunk 51: Read tool 카탈로그 + 양식 매칭 워크플로우 (0.3.4)
+
+사용자 시나리오 ("내 주장을 추가해줘 — 같은 양식으로 / 뒷받침 내용도
+파악해서") 를 위한 능동 검사 인프라. write tool 만 있던 카탈로그 (45개)
+에 **read tool 9개** 추가 → 총 **54 tools**. Agent 가 turn 안에서
+read → reason → write 시퀀스로 양식 매칭/위치 결정/근거 검색 가능.
+
+#### 신규 read tool 9개 (카테고리 H)
+
+| 이름                  | 반환                                         | 용도                              |
+| --------------------- | -------------------------------------------- | --------------------------------- |
+| `getDocumentOutline`  | 제목 단락 좌표+text                          | 문서 구조 파악, 새 단락 위치 결정 |
+| `getStyleListJson`    | 사용 가능 styleId 카탈로그                   | applyStyle 매칭                   |
+| `getStyleAt`          | 좌표 단락의 styleId+detail                   | 인접 양식 매칭                    |
+| `getCharPropertiesAt` | 글자 서식 (font/size/color/bold/...)         | applyCharFormat 입력 매칭         |
+| `getParaPropertiesAt` | 단락 서식 (alignment/lineSpacing/indent/...) | applyParaProps 입력 매칭          |
+| `getTextRange`        | 좌표 범위 텍스트 (4096B cap)                 | 인용/근거 추출                    |
+| `getCaretPosition`    | 현재 caret 좌표                              | "여기 추가" 의미 변환             |
+| `findInDocument`      | 검색어 매칭 좌표 list (max 200)              | 키워드 위치 찾기                  |
+| `getCellInfo`         | 셀 row/col/span 메타                         | 표 편집 전 검증                   |
+
+모두 mutation 0. 결과는 `AhwpToolResult.data` 에 JSON 직렬화 →
+다음 turn 의 tool_result 메시지에 stringify 회신 (4096B cap).
+
+#### Agent 모드 system prompt 보강
+
+`SYSTEM_PROMPT_AGENT_GUIDE` 신설 — Manual 모드용 `SYSTEM_PROMPT_DOC_CONTEXT`
+와 별개. `chatMode === 'agent'` 일 때만 inject. 핵심:
+
+1. **워크플로우** — read → reason → write
+2. **우선순위** — `applyStyle` > `applyParaProps`/`applyCharFormat` > `applyHtml`
+3. **흔한 실수** 가이드 — applyHtml만 의존 / 좌표 추측 / 셀 편집 직진
+4. **응답 형식** — Agent 모드는 코드 블록 안 씀 (도구 직접 호출 + 텍스트는 설명만)
+
+#### 시나리오 예 — "내 주장 X 추가" 8 호출 시퀀스
+
+```
+1. getCaretPosition → {paragraphIndex:5, ...}
+2. getStyleAt(0, 5) → {styleId:0, name:"바탕글"}
+3. getParaPropertiesAt(0, 5) → {alignment:"justify", lineSpacing:160}
+4. (LLM 추론: 인접 양식 그대로 사용)
+5. insertParagraph(0, 6)
+6. insertText(0, 6, 0, "내 주장: ...")
+7. applyStyle(0, 6, 0)
+8. applyParaProps({alignment:"justify", lineSpacing:160})
+```
+
+Cap 10 안. 묶음 undo 1회로 전체 롤백.
+
+#### 인프라 변경
+
+- `ViewerHandle` 에 `irGet*` read 메서드 7개 추가 (lib API thin wrap +
+  JSON parse). `irFindInDocument` 는 paragraph walk 자체 구현 (lib
+  `findText` 미노출).
+- `AhwpToolResult` 에 optional `data` 필드 추가 — read tool 결과 캐리어.
+- `chat/tools.ts` 의 `runOne` switch + `previewArgs` 에 9 케이스 추가.
+- `ChatPanel` Agent loop: tool result 메시지 content 에 `data` JSON
+  stringify (4096B cap) 회신.
+
+#### 신규 회귀 가드
+
+`chat-agent.spec.ts` 에 chunk 51 read tool round-trip 케이스 추가
+(getCaretPosition with blank.hwpx fixture).
+
+#### 통계 (0.3.4)
+
+- 총 도구: **54개** (write 45 + read 9)
+- 카테고리: A(5)+B(8)+C(12)+D(7)+E(6)+F(4)+G(5)+H(9) = 56 (cross 2)
+- e2e: studio 213 + chat 57 (+1) = 270 통과 / 1 skipped
+
 ### Added — Phase 3 chunks 45~49: tool 카탈로그 한컴 한글 전수 노출 (0.3.3)
 
 Agent 모드 tool 카탈로그를 chunk 19 의 12개 → **45개** 로 확장. 한컴

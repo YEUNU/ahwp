@@ -510,6 +510,88 @@ function runOne(viewer: ViewerHandle, call: AhwpToolCall): AhwpToolResult {
         viewer.deleteBookmarkAt(a.sectionIdx, a.paragraphIdx, a.controlIdx);
         return { ok: true, tool: call.tool };
       }
+      // === Phase 3 chunk 51 — read-only Agent tools ===
+      case 'getDocumentOutline': {
+        const data = viewer.getOutline();
+        return { ok: true, tool: call.tool, data };
+      }
+      case 'getStyleListJson': {
+        const data = viewer.getStyleListJson();
+        return { ok: true, tool: call.tool, data };
+      }
+      case 'getStyleAt': {
+        const a = call.args;
+        const data = viewer.irGetStyleAt(a.sectionIdx, a.paragraphIdx);
+        if (data === null)
+          return { ok: false, tool: call.tool, reason: 'getStyleAt-failed' };
+        return { ok: true, tool: call.tool, data };
+      }
+      case 'getCharPropertiesAt': {
+        const a = call.args;
+        const data = viewer.irGetCharPropertiesAt(
+          a.sectionIdx,
+          a.paragraphIdx,
+          a.charOffset,
+        );
+        if (data === null)
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: 'getCharPropertiesAt-failed',
+          };
+        return { ok: true, tool: call.tool, data };
+      }
+      case 'getParaPropertiesAt': {
+        const a = call.args;
+        const data = viewer.irGetParaPropertiesAt(a.sectionIdx, a.paragraphIdx);
+        if (data === null)
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: 'getParaPropertiesAt-failed',
+          };
+        return { ok: true, tool: call.tool, data };
+      }
+      case 'getTextRange': {
+        const a = call.args;
+        const data = viewer.irGetTextRange(
+          a.sectionIdx,
+          a.startParagraphIdx,
+          a.startOffset,
+          a.endParagraphIdx,
+          a.endOffset,
+        );
+        if (data === null)
+          return { ok: false, tool: call.tool, reason: 'getTextRange-failed' };
+        return { ok: true, tool: call.tool, data };
+      }
+      case 'getCaretPosition': {
+        const data = viewer.irGetCaretPosition();
+        if (data === null)
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: 'getCaretPosition-failed',
+          };
+        return { ok: true, tool: call.tool, data };
+      }
+      case 'findInDocument': {
+        const a = call.args;
+        const data = viewer.irFindInDocument(a.query, a.maxResults);
+        return { ok: true, tool: call.tool, data };
+      }
+      case 'getCellInfo': {
+        const a = call.args;
+        const data = viewer.irGetCellInfo(
+          a.sectionIdx,
+          a.parentParaIdx,
+          a.controlIdx,
+          a.cellIdx,
+        );
+        if (data === null)
+          return { ok: false, tool: call.tool, reason: 'getCellInfo-failed' };
+        return { ok: true, tool: call.tool, data };
+      }
       default: {
         // The pre-flight validator narrows AhwpToolCall to the union, so
         // this is unreachable without a registry/type drift.
@@ -676,5 +758,23 @@ export function previewArgs(call: AhwpToolCall): string {
       return `${call.args.isHeader ? 'header' : 'footer'} applyTo=${call.args.applyTo}`;
     case 'deleteBookmark':
       return `(${call.args.paragraphIdx},${call.args.controlIdx})`;
+    // === Phase 3 chunk 51 — read tools ===
+    case 'getDocumentOutline':
+    case 'getStyleListJson':
+    case 'getCaretPosition':
+      return '(read)';
+    case 'getStyleAt':
+    case 'getParaPropertiesAt':
+      return `para=${call.args.paragraphIdx}`;
+    case 'getCharPropertiesAt':
+      return `(${call.args.paragraphIdx},${call.args.charOffset})`;
+    case 'getTextRange':
+      return `(${call.args.startParagraphIdx},${call.args.startOffset})~(${call.args.endParagraphIdx},${call.args.endOffset})`;
+    case 'findInDocument': {
+      const q = call.args.query.replace(/\s+/g, ' ').trim();
+      return `"${q.length > 30 ? q.slice(0, 30) + '…' : q}"`;
+    }
+    case 'getCellInfo':
+      return `cell=${call.args.cellIdx}`;
   }
 }

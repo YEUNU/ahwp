@@ -344,6 +344,47 @@ export interface ViewerHandle {
     isHeader: boolean,
     applyTo: number,
   ) => boolean;
+  /**
+   * Phase 3 chunk 51 — read-only Agent tools. Mutation 0. Agent 가 양식
+   * 매칭 / 위치 결정 / 본문 검색 등을 turn 안에서 능동적으로 수행할 수
+   * 있게 함. 모든 read 는 lib API 직결 + JSON 결과 그대로 반환.
+   * 실패 시 null/[].
+   */
+  irGetStyleAt: (
+    sectionIdx: number,
+    paraIdx: number,
+  ) => Record<string, unknown> | null;
+  irGetCharPropertiesAt: (
+    sectionIdx: number,
+    paraIdx: number,
+    charOffset: number,
+  ) => Record<string, unknown> | null;
+  irGetParaPropertiesAt: (
+    sectionIdx: number,
+    paraIdx: number,
+  ) => Record<string, unknown> | null;
+  irGetTextRange: (
+    sectionIdx: number,
+    startParaIdx: number,
+    startOffset: number,
+    endParaIdx: number,
+    endOffset: number,
+  ) => string | null;
+  irGetCaretPosition: () => Record<string, unknown> | null;
+  irFindInDocument: (
+    query: string,
+    maxResults?: number,
+  ) => {
+    sectionIdx: number;
+    paragraphIdx: number;
+    charOffset: number;
+  }[];
+  irGetCellInfo: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+    cellIdx: number,
+  ) => Record<string, unknown> | null;
   /** Whether the doc has unsaved changes (mirrors internal dirtyRef). */
   isDirty: () => boolean;
   /** Read the active cell context — chunk 38. Returns the table+cell

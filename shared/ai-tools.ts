@@ -67,6 +67,16 @@ export const AHWP_TOOL_NAMES = [
   'createHeaderFooter',
   'deleteHeaderFooter',
   'deleteBookmark',
+  // Phase 3 chunk 51 — read-only Agent tools (양식 매칭 / 위치 결정)
+  'getDocumentOutline',
+  'getStyleListJson',
+  'getStyleAt',
+  'getCharPropertiesAt',
+  'getParaPropertiesAt',
+  'getTextRange',
+  'getCaretPosition',
+  'findInDocument',
+  'getCellInfo',
 ] as const;
 
 export type AhwpToolName = (typeof AHWP_TOOL_NAMES)[number];
@@ -850,6 +860,115 @@ const TOOL_DESCRIPTORS: AhwpToolDescriptor[] = [
       required: ['sectionIdx', 'paragraphIdx', 'controlIdx'],
     },
   },
+  // === Phase 3 chunk 51 — read-only Agent tools (양식 매칭 / 위치 결정) ===
+  {
+    name: 'getDocumentOutline',
+    description:
+      '문서의 제목 단락 outline 조회 (paragraphIndex/level/text). Agent 가 새 단락을 어디에 넣을지 결정할 때 사용.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'getStyleListJson',
+    description:
+      '문서에 등록된 모든 named style 목록 (id/name/englishName). Agent 가 applyStyle 로 매칭할 styleId 를 찾을 때 사용.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'getStyleAt',
+    description:
+      '특정 단락의 활성 styleId + 스타일 detail (charShape/paraShape) 조회. 인접 단락과 양식 매칭하려면 먼저 호출.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sectionIdx: { type: 'integer', minimum: 0 },
+        paragraphIdx: { type: 'integer', minimum: 0 },
+      },
+      required: ['sectionIdx', 'paragraphIdx'],
+    },
+  },
+  {
+    name: 'getCharPropertiesAt',
+    description:
+      '좌표 (sectionIdx, paragraphIdx, charOffset) 위치의 활성 글자 서식 (font/size/color/bold 등) 조회. applyCharFormat 으로 매칭하려면 먼저 호출.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sectionIdx: { type: 'integer', minimum: 0 },
+        paragraphIdx: { type: 'integer', minimum: 0 },
+        charOffset: { type: 'integer', minimum: 0 },
+      },
+      required: ['sectionIdx', 'paragraphIdx', 'charOffset'],
+    },
+  },
+  {
+    name: 'getParaPropertiesAt',
+    description:
+      '특정 단락의 활성 단락 서식 (alignment/lineSpacing/indent/spacing 등) 조회. applyParaProps 매칭용.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sectionIdx: { type: 'integer', minimum: 0 },
+        paragraphIdx: { type: 'integer', minimum: 0 },
+      },
+      required: ['sectionIdx', 'paragraphIdx'],
+    },
+  },
+  {
+    name: 'getTextRange',
+    description:
+      '좌표 범위의 텍스트 읽기. 인용/근거 찾기. 결과 4096B 상한 (초과 시 trim).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sectionIdx: { type: 'integer', minimum: 0 },
+        startParagraphIdx: { type: 'integer', minimum: 0 },
+        startOffset: { type: 'integer', minimum: 0 },
+        endParagraphIdx: { type: 'integer', minimum: 0 },
+        endOffset: { type: 'integer', minimum: 0 },
+      },
+      required: [
+        'sectionIdx',
+        'startParagraphIdx',
+        'startOffset',
+        'endParagraphIdx',
+        'endOffset',
+      ],
+    },
+  },
+  {
+    name: 'getCaretPosition',
+    description:
+      '현재 caret 위치 조회 (sectionIndex, paragraphIndex, charOffset, cell). "여기 추가" 의미를 좌표로 변환할 때.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'findInDocument',
+    description:
+      '본문 내 검색어 매칭 좌표 list. case-sensitive substring. maxResults 1~200 (기본 50). 검색어 1024B 상한.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', minLength: 1, maxLength: 1024 },
+        maxResults: { type: 'integer', minimum: 1, maximum: 200 },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'getCellInfo',
+    description:
+      '셀의 좌표 / 병합 상태 / row/col / rowSpan/colSpan / 이웃 cellIdx 조회. 표 편집 (mergeTableCells, splitTableCellInto 등) 전 검증용.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sectionIdx: { type: 'integer', minimum: 0 },
+        parentParaIdx: { type: 'integer', minimum: 0 },
+        controlIdx: { type: 'integer', minimum: 0 },
+        cellIdx: { type: 'integer', minimum: 0 },
+      },
+      required: ['sectionIdx', 'parentParaIdx', 'controlIdx', 'cellIdx'],
+    },
+  },
 ];
 
 /**
@@ -1129,6 +1248,31 @@ export interface AhwpToolArgs {
     paragraphIdx: number;
     controlIdx: number;
   };
+  // Phase 3 chunk 51 — read-only Agent tools
+  getDocumentOutline: Record<string, never>;
+  getStyleListJson: Record<string, never>;
+  getStyleAt: { sectionIdx: number; paragraphIdx: number };
+  getCharPropertiesAt: {
+    sectionIdx: number;
+    paragraphIdx: number;
+    charOffset: number;
+  };
+  getParaPropertiesAt: { sectionIdx: number; paragraphIdx: number };
+  getTextRange: {
+    sectionIdx: number;
+    startParagraphIdx: number;
+    startOffset: number;
+    endParagraphIdx: number;
+    endOffset: number;
+  };
+  getCaretPosition: Record<string, never>;
+  findInDocument: { query: string; maxResults?: number };
+  getCellInfo: {
+    sectionIdx: number;
+    parentParaIdx: number;
+    controlIdx: number;
+    cellIdx: number;
+  };
 }
 
 /** A single op as it appears inside the model-authored block. */
@@ -1143,9 +1287,13 @@ export interface AhwpToolBlock {
 
 /** Outcome of running a single op. `ok=false` covers both pre-flight
  * validation failures and IR-side throws (caller distinguishes via
- * `reason`). */
+ * `reason`).
+ *
+ * Phase 3 chunk 51 — read tool 의 결과는 `data` 에 JSON 으로 담음.
+ * Agent loop 가 다음 turn 의 tool_result 메시지에 stringify 해서 모델
+ * 에 회신. write tool 은 `data` 미사용 (success/failure 만 의미). */
 export type AhwpToolResult =
-  | { ok: true; tool: AhwpToolName }
+  | { ok: true; tool: AhwpToolName; data?: unknown }
   | { ok: false; tool: string; reason: string };
 
 /** Hard ceilings — anything bigger is rejected before dispatch. */
@@ -1711,6 +1859,64 @@ function validateArgs<T extends AhwpToolName>(
     }
     case 'deleteBookmark': {
       const v = nonNegInts(args, ['sectionIdx', 'paragraphIdx', 'controlIdx']);
+      if (!v.ok) return v;
+      return { ok: true, value: v.value as AhwpToolArgs[T] };
+    }
+    // === Phase 3 chunk 51 — read-only Agent tools ===
+    case 'getDocumentOutline':
+    case 'getStyleListJson':
+    case 'getCaretPosition':
+      return { ok: true, value: {} as AhwpToolArgs[T] };
+    case 'getStyleAt':
+    case 'getParaPropertiesAt': {
+      const v = nonNegInts(args, ['sectionIdx', 'paragraphIdx']);
+      if (!v.ok) return v;
+      return { ok: true, value: v.value as AhwpToolArgs[T] };
+    }
+    case 'getCharPropertiesAt': {
+      const v = nonNegInts(args, ['sectionIdx', 'paragraphIdx', 'charOffset']);
+      if (!v.ok) return v;
+      return { ok: true, value: v.value as AhwpToolArgs[T] };
+    }
+    case 'getTextRange': {
+      const v = nonNegInts(args, [
+        'sectionIdx',
+        'startParagraphIdx',
+        'startOffset',
+        'endParagraphIdx',
+        'endOffset',
+      ]);
+      if (!v.ok) return v;
+      return { ok: true, value: v.value as AhwpToolArgs[T] };
+    }
+    case 'findInDocument': {
+      const query = args.query;
+      if (typeof query !== 'string')
+        return { ok: false, reason: 'query-not-string' };
+      if (query.length === 0) return { ok: false, reason: 'query-empty' };
+      if (byteLen(query) > 1024)
+        return { ok: false, reason: 'query-too-large' };
+      const maxResults = args.maxResults;
+      if (
+        maxResults !== undefined &&
+        (typeof maxResults !== 'number' ||
+          !Number.isInteger(maxResults) ||
+          maxResults < 1 ||
+          maxResults > 200)
+      )
+        return { ok: false, reason: 'maxResults-out-of-range' };
+      return {
+        ok: true,
+        value: { query, maxResults } as AhwpToolArgs[T],
+      };
+    }
+    case 'getCellInfo': {
+      const v = nonNegInts(args, [
+        'sectionIdx',
+        'parentParaIdx',
+        'controlIdx',
+        'cellIdx',
+      ]);
       if (!v.ok) return v;
       return { ok: true, value: v.value as AhwpToolArgs[T] };
     }

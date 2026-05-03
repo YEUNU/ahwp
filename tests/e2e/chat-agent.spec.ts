@@ -1,4 +1,6 @@
 /// <reference lib="dom" />
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { launchApp, type LaunchedApp } from './launch';
 
@@ -105,6 +107,39 @@ test.describe('chat — Phase 3 Agent 모드', () => {
     await expect
       .poll(async () => entry.getAttribute('data-tool-status'))
       .not.toBe('running');
+  });
+
+  test('Agent: chunk 51 read tool — getCaretPosition 호출 + 결과 회신', async () => {
+    const { page } = launched;
+    // Load blank fixture so viewer is mounted (read tools need doc).
+    const FIXTURE = path.resolve(__dirname, 'fixtures', 'blank.hwpx');
+    if (!existsSync(FIXTURE)) {
+      test.skip(true, 'blank.hwpx fixture missing');
+      return;
+    }
+    await page.evaluate(async (p) => {
+      await window.api.session.set({ lastActivePath: p });
+    }, FIXTURE);
+    await page.reload();
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForFunction(
+      () =>
+        Boolean((window as Window & { __studioDebug?: unknown }).__studioDebug),
+      { timeout: 30_000 },
+    );
+
+    await page.getByTestId('chat-mode-agent').click();
+    await page.getByTestId('chat-input').fill('TOOL:getCaretPosition:{}');
+    await page.getByTestId('chat-send').click();
+    const entry = page
+      .locator(
+        '[data-testid="chat-tool-entry"][data-tool-name="getCaretPosition"]',
+      )
+      .first();
+    await expect(entry).toBeVisible({ timeout: 5000 });
+    await expect
+      .poll(async () => entry.getAttribute('data-tool-status'))
+      .toBe('ok');
   });
 
   test('Agent: chunk 46 createTable — 표 구조 도구 호출', async () => {

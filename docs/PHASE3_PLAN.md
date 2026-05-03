@@ -132,6 +132,71 @@ Agent 모드 진행 중 ChatPanel:
 - 묶음 turn 끝나면 chunk 29 토스트 ("되돌리기" 15s)
 - 중간 abort 버튼 — handle.abort() + 진행 중 IR 호출은 끝까지 (재진입 안전)
 
+### D-7. Read tool 카탈로그 — Agent 능동 검사 / 양식 매칭 (chunk 51)
+
+**문제**: chunks 45~49 의 카탈로그는 모두 **write tool** (45개). Agent 가
+"내 주장을 문서에 추가해줘 — 같은 양식으로" 처럼 막연한 요청을 받으면:
+
+1. 뒷받침할 내용을 **조사** (현재: prompt 에 박힌 `[현재 문서]` HTML 조각만 — 실시간 lookup 불가)
+2. 문서 형식을 **파악** (현재: 자체 추론, 정확한 styleId / 폰트는 모름)
+3. 같은 **양식 그대로 사용** (현재: applyHtml 안에 LLM 이 inline 으로 추측한 스타일)
+4. **적절한 위치에 삽입** (현재: caret 또는 사용자 발췌 위치만)
+
+prompt 첨부는 한 번 뿐이라 길이/정확도 한계. Agent 가 turn 안에서
+**read → reason → write** 시퀀스로 풀려면 read tool 필요.
+
+**결정**: read-only tool 9개 추가 (chunk 51, 카테고리 H). mutation 없으니
+undo group 영향 없음 — `runTools` 가 묶음 undo 안에서 read 도 호출 가능
+(read 는 op count 만 차지, snapshot 영향 0).
+
+| 도구                  | 반환                                     | 용도                                          |
+| --------------------- | ---------------------------------------- | --------------------------------------------- |
+| `getDocumentOutline`  | 제목 N 단락 좌표 + 텍스트                | 문서 구조 / 어디 들어갈지                     |
+| `getStyleListJson`    | 사용 가능 styleId + 이름                 | "본문" / "제목 1" / 사용자 스타일 등 카탈로그 |
+| `getStyleAt`          | 좌표의 styleId                           | 인접 단락 스타일 매칭 (양식 그대로 사용)      |
+| `getCharPropertiesAt` | 좌표의 char props (폰트/크기/색)         | 현재 위치 글자 서식 매칭                      |
+| `getParaPropertiesAt` | 좌표의 para props (정렬/줄간격/들여쓰기) | 현재 단락 서식 매칭                           |
+| `getTextRange`        | 좌표 범위 텍스트                         | 인용 / 근거 찾기                              |
+| `getCaretPosition`    | 현재 caret 좌표                          | "여기 추가" 의 위치 결정                      |
+| `findInDocument`      | 검색어 매칭 좌표 list                    | 본문 내 키워드 위치 찾기                      |
+| `getCellInfo`         | 셀 좌표/병합 상태                        | 표 편집 전 검증                               |
+
+**전형적 시퀀스 — "내 주장 X 추가"**:
+
+```
+1. getCaretPosition → {sectionIdx:0, paragraphIdx:5, charOffset:42}
+2. getStyleAt(0, 5)  → {styleId: 0, name: "바탕글"}
+3. getParaPropertiesAt(0, 5) → {alignment:'justify', lineSpacing:160, ...}
+4. getStyleListJson() → [...옵션 카탈로그]
+5. (LLM 추론: "바탕글" 그대로 사용 + 같은 정렬/줄간격)
+6. insertParagraph(0, 6) → 새 단락 6
+7. insertText(0, 6, 0, "내 주장: ...")
+8. applyStyle(0, 6, 0)  → 바탕글 적용
+9. applyParaProps({alignment:'justify', lineSpacing:160})  → 같은 양식 매칭
+```
+
+총 9 호출 — turn cap 10 안. 묶음 undo 1회로 전체 롤백 가능.
+
+**system prompt 가이드** (chunk 51 신설):
+
+```
+변경 적용 전, 다음 read tool 로 문서 양식 파악 권장:
+- 새 단락 추가 시 인접 단락의 getStyleAt + getParaPropertiesAt
+  → 같은 styleId 적용 (applyStyle) + 같은 props (applyParaProps)
+- 본문 내 인용/근거가 필요하면 findInDocument / getTextRange
+- 표 편집 전 getCellInfo 로 병합 상태 검증
+
+우선순위: applyStyle (named style) > applyParaProps (props 직접) >
+applyHtml (inline). 같은 양식 매칭의 가독성 / 회귀 안전성 측면.
+```
+
+**위험**: read tool 사용량 폭주 → quota / 응답 지연. 대응:
+
+- read 도 op cap (turn 10) 안에서 셈 — 무한 read 루프 방어 동일
+- 큰 read (`exportDocumentHtml`) 는 카탈로그에 노출 안 함 (prompt 첨부로 충분, tool 호출 시 응답 토큰 폭주)
+- `findInDocument` 는 매칭 상한 (50) — 거대 결과 차단
+- `getTextRange` 는 char count 상한 (4096B) — 본문 통째 dump 방지
+
 ## 청크 분할
 
 | 청크 | 작업                                                                                             | 의존   |
@@ -147,8 +212,11 @@ Agent 모드 진행 중 ChatPanel:
 | 45   | 추가 tool: `insertTextAtCaret` / `deleteRange` / `applyParagraphStyle`                           | 39     |
 | 46   | 추가 tool: 표 구조 (`insertTable` / `mergeCells` / `splitCells` / `runFormula`)                  | 39     |
 | 47   | docId-aware 라우팅 — `runTools(docId, items)` 다중 문서 write                                    | 39     |
+| 51   | **Read tool 카탈로그 (9개) + system prompt 양식 매칭 가이드** — D-7 박제                         | 39     |
 
 **MVP (37~41 + 45)**: OpenAI provider + 기본 12 tool + 본문 편집 3 tool + UI + 묶음 undo. Anthropic/Google/Custom 은 키 결정 후.
+
+**chunk 51 (read tool 카탈로그)** 은 0.3.4 에서 별도 wave — write 카탈로그 (chunks 45~49, 0.3.3 = 45 tools) 가 이미 완료된 후 추가. read + write 합 **54 tools**.
 
 ## 검증 기준
 
