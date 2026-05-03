@@ -390,6 +390,17 @@ export interface AiApi {
   /** Drop the on-disk cache entry for `providerId`. Used by Settings'
    * 새로고침 button when the user wants a hard refresh. */
   clearModelsCache: (providerId: ProviderId) => Promise<void>;
+  /** Phase 3 chunk 44 — read per-provider config (baseUrl, supportsTools). */
+  getProviderConfig: (
+    providerId: ProviderId,
+  ) => Promise<{ baseUrl?: string; supportsTools?: boolean }>;
+  /** Phase 3 chunk 44 — write per-provider config. Pass only the keys you
+   * want to update (existing keys preserved). */
+  setProviderConfig: (params: {
+    providerId: ProviderId;
+    baseUrl?: string;
+    supportsTools?: boolean;
+  }) => Promise<{ ok: true }>;
 }
 
 /** Chat history persistence — chunk 26. SQLite-backed conversations

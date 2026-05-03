@@ -20,7 +20,7 @@ import { cn } from '@/lib/utils';
  * covers any OpenAI-compatible endpoint — self-hosted Ollama via /v1
  * shim, vLLM, LM Studio, on-prem LLM gateway — once the adapter ships.
  */
-const SHOWN_IDS = new Set<ProviderId>(['openai', 'nvidia', 'google']);
+const SHOWN_IDS = new Set<ProviderId>(['openai', 'nvidia', 'google', 'custom']);
 const SHOWN_PROVIDERS = PROVIDERS.filter((p) => SHOWN_IDS.has(p.id));
 
 type PingState =
@@ -79,6 +79,24 @@ function ProviderRow({ meta }: { meta: ProviderMeta }): JSX.Element {
   const [input, setInput] = useState('');
   const [pingState, setPingState] = useState<PingState>({ kind: 'idle' });
   const [busy, setBusy] = useState<'save' | 'delete' | null>(null);
+  // Phase 3 chunk 44 — Custom (OpenAI-호환) provider 전용 필드.
+  // baseUrl 은 self-host endpoint (Ollama localhost:11434/v1 등),
+  // supportsTools 는 Agent 모드에서 tool 카탈로그 주입 여부 결정.
+  const [baseUrl, setBaseUrl] = useState('');
+  const [supportsTools, setSupportsTools] = useState(false);
+  // Initial load 표시용 — config IPC 반환 후 setState. requiresBaseUrl 만.
+  useEffect(() => {
+    if (!meta.requiresBaseUrl) return;
+    let cancelled = false;
+    void window.api.ai.getProviderConfig(meta.id).then((cfg) => {
+      if (cancelled) return;
+      setBaseUrl(cfg.baseUrl ?? '');
+      setSupportsTools(cfg.supportsTools ?? false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [meta.id, meta.requiresBaseUrl]);
 
   const refresh = useCallback(async () => {
     const v = await window.api.secrets.has(meta.id);
@@ -99,12 +117,25 @@ function ProviderRow({ meta }: { meta: ProviderMeta }): JSX.Element {
     async (e: FormEvent) => {
       e.preventDefault();
       const trimmed = input.trim();
-      if (trimmed.length === 0) return;
+      const baseUrlTrimmed = baseUrl.trim();
+      // For requiresBaseUrl providers, allow saving config-only (no key change).
+      const hasKeyInput = trimmed.length > 0;
+      const hasConfigChange = meta.requiresBaseUrl;
+      if (!hasKeyInput && !hasConfigChange) return;
       setBusy('save');
       setPingState({ kind: 'idle' });
       try {
-        await window.api.secrets.set(meta.id, trimmed);
-        setInput('');
+        if (hasKeyInput) {
+          await window.api.secrets.set(meta.id, trimmed);
+          setInput('');
+        }
+        if (meta.requiresBaseUrl) {
+          await window.api.ai.setProviderConfig({
+            providerId: meta.id,
+            baseUrl: baseUrlTrimmed,
+            supportsTools,
+          });
+        }
         await refresh();
       } catch (err) {
         setPingState({
@@ -115,7 +146,7 @@ function ProviderRow({ meta }: { meta: ProviderMeta }): JSX.Element {
         setBusy(null);
       }
     },
-    [input, meta.id, refresh],
+    [baseUrl, input, meta.id, meta.requiresBaseUrl, refresh, supportsTools],
   );
 
   const onTest = useCallback(async () => {
@@ -195,6 +226,36 @@ function ProviderRow({ meta }: { meta: ProviderMeta }): JSX.Element {
         data-testid={`settings-input-${meta.id}`}
         disabled={busy !== null}
       />
+
+      {/* Phase 3 chunk 44 — requiresBaseUrl provider (Custom OpenAI-호환)
+        에만 baseUrl + supportsTools 입력. Self-host endpoint URL +
+        Agent tool 주입 여부 토글. */}
+      {meta.requiresBaseUrl ? (
+        <>
+          <Input
+            type="text"
+            autoComplete="off"
+            spellCheck={false}
+            value={baseUrl}
+            onChange={(e) => setBaseUrl(e.target.value)}
+            placeholder="http://localhost:11434/v1 (Ollama 예시)"
+            data-testid={`settings-baseurl-${meta.id}`}
+            disabled={busy !== null}
+          />
+          <label
+            className="flex items-center gap-2 text-xs text-muted-foreground"
+            data-testid={`settings-supports-tools-${meta.id}`}
+          >
+            <input
+              type="checkbox"
+              checked={supportsTools}
+              onChange={(e) => setSupportsTools(e.target.checked)}
+              disabled={busy !== null}
+            />
+            이 모델은 tool calling 지원 (Agent 모드 활성)
+          </label>
+        </>
+      ) : null}
 
       <div className="flex flex-wrap gap-2">
         <Button

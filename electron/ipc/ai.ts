@@ -7,11 +7,13 @@ import {
   readCachedModels,
   writeCachedModels,
 } from '../store/model-cache';
+import { getProviderConfig, setProviderConfig } from '../store/provider-config';
 import { isProviderId } from '../../shared/ai';
 import type {
   ChatRequest,
   ChatStreamEvent,
   ModelListResult,
+  ProviderId,
 } from '../../shared/ai';
 
 interface ChatStartParams {
@@ -87,10 +89,15 @@ export function registerAiIpc(): void {
       const ctrl = new AbortController();
       inflight.set(params.id, ctrl);
 
+      // Phase 3 chunk 44 — provider-config (baseUrl 등) 를 chat 에도 주입.
+      // 기존엔 listModels 만 baseUrl 받아서 custom provider 가 chat 시점
+      // 에 default URL 로 떨어지던 문제 해결.
+      const cfg = getProviderConfig(request.provider);
       try {
         let terminated = false;
         for await (const evt of provider.chat(request, {
           apiKey: apiKey ?? undefined,
+          baseUrl: cfg.baseUrl,
           signal: ctrl.signal,
         })) {
           send(event.sender, channel, evt);
@@ -121,6 +128,36 @@ export function registerAiIpc(): void {
       inflight.delete(id);
     }
   });
+
+  // Phase 3 chunk 44 — provider-config (baseUrl, supportsTools) IPC.
+  ipcMain.handle(
+    'ai:provider-config-get',
+    (
+      _event,
+      providerId: unknown,
+    ): { baseUrl?: string; supportsTools?: boolean } => {
+      if (!isProviderId(providerId)) return {};
+      return getProviderConfig(providerId);
+    },
+  );
+  ipcMain.handle(
+    'ai:provider-config-set',
+    (_event, params: unknown): { ok: true } => {
+      const p = params as {
+        providerId?: unknown;
+        baseUrl?: unknown;
+        supportsTools?: unknown;
+      };
+      if (!isProviderId(p?.providerId as ProviderId | string))
+        throw new Error('invalid providerId');
+      const next: { baseUrl?: string; supportsTools?: boolean } = {};
+      if (typeof p.baseUrl === 'string') next.baseUrl = p.baseUrl;
+      if (typeof p.supportsTools === 'boolean')
+        next.supportsTools = p.supportsTools;
+      setProviderConfig(p.providerId as ProviderId, next);
+      return { ok: true };
+    },
+  );
 
   ipcMain.handle('ai:ping', async (_event, raw: unknown): Promise<void> => {
     const params = (raw ?? {}) as {

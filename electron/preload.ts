@@ -133,6 +133,10 @@ const api: AhwpApi = {
       ipcRenderer.invoke('ai:list-models', { providerId, ...opts }),
     clearModelsCache: (providerId) =>
       ipcRenderer.invoke('ai:clear-models-cache', { providerId }),
+    getProviderConfig: (providerId) =>
+      ipcRenderer.invoke('ai:provider-config-get', providerId),
+    setProviderConfig: (params) =>
+      ipcRenderer.invoke('ai:provider-config-set', params),
   },
   chatHistory: {
     list: (docPath) => ipcRenderer.invoke('chat-history:list', { docPath }),

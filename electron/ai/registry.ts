@@ -1,13 +1,31 @@
+import { getProviderMeta } from '../../shared/ai';
 import type { Provider, ProviderId } from '../../shared/ai';
 import { fakeProvider } from './providers/fake';
 import { googleProvider } from './providers/google';
 import { nvidiaProvider } from './providers/nvidia';
 import { openaiProvider } from './providers/openai';
 
+/**
+ * Phase 3 chunk 44 — `custom` (OpenAI-호환) provider.
+ *
+ * Self-hosted Ollama (`http://localhost:11434/v1`), vLLM, LM Studio, on-prem
+ * LLM gateway 등 OpenAI `/v1/chat/completions` 호환 endpoint 를 한 슬롯에
+ * 통합. baseUrl 은 `userData/provider-config.json` 의 custom 키에 저장.
+ *
+ * 어댑터 자체는 OpenAI 와 동일 — meta 만 swap (id='custom', label, requiresBaseUrl).
+ * 이렇게 하면 `Provider.meta.id` 검증 로직 (e.g. 'OpenAI ' 접두사 에러
+ * 메시지) 가 'Custom' 으로 자연스럽게 바뀜.
+ */
+const customProvider: Provider = {
+  ...openaiProvider,
+  meta: getProviderMeta('custom'),
+};
+
 const providers = new Map<ProviderId, Provider>([
   ['openai', openaiProvider],
   ['nvidia', nvidiaProvider],
   ['google', googleProvider],
+  ['custom', customProvider],
 ]);
 
 /**

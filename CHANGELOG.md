@@ -6,6 +6,52 @@
 
 ## [Unreleased]
 
+### Added — Phase 3 chunk 44: Custom (OpenAI-호환) provider 잠금 해제 (0.3.5)
+
+자체 호스팅 Ollama / vLLM / LM Studio / on-prem LLM gateway 등을 한
+슬롯에 통합. baseUrl + supportsTools 입력으로 BYOK 외 부가 설정 노출.
+
+#### 신규 인프라
+
+- **`electron/store/provider-config.ts`** 신설: `userData/provider-config.json`
+  per-provider 비-비밀 설정 (baseUrl, supportsTools). API 키는 기존
+  safeStorage (secrets.ts) 그대로 — URL 은 비밀 아니라 plain JSON.
+- **registry**: `customProvider` 등록 — `{ ...openaiProvider, meta:
+getProviderMeta('custom') }` 형태로 OpenAI 어댑터 재사용. baseUrl 만
+  별도라 코드 중복 0.
+- **chat-start IPC**: `getProviderConfig(request.provider).baseUrl` 을
+  `provider.chat({apiKey, baseUrl, signal})` 에 주입 — 기존엔 listModels
+  만 baseUrl 받았던 누락 fix.
+- **신규 IPC**: `ai:provider-config-get` / `ai:provider-config-set`
+  - `AhwpApi.getProviderConfig` / `setProviderConfig`.
+- **Settings UI**: `requiresBaseUrl` provider 에만 baseUrl 입력 + "이
+  모델은 tool calling 지원" 체크박스 노출. `SHOWN_IDS` 에 `custom` 추가.
+- **ChatPanel**: `ChatProviderId` union 에 `'custom'` 추가, modelList /
+  loadModels / loadProvider / DEFAULT_MODELS 모두 갱신. 빈 모델 placeholder.
+
+#### 신규 회귀 가드 — `tests/e2e/ollama-live.spec.ts`
+
+- **sentinel** — Ollama localhost:11434/v1 + gemma4:e2b 5.1B 로 OLLAMA_OK
+  echo round-trip. 5.3s 통과.
+- **Agent** — applyAlignment tool 호출. **AHWP_TEST_OLLAMA_AGENT=1 명시
+  시에만** 실행 (작은 모델 + 54-tool 카탈로그 조합은 모델 혼란 — 큰 모델
+  필요).
+
+#### 사용법
+
+1. 사용자가 Ollama 실행 (`ollama serve`)
+2. Settings → Provider 'Custom (OpenAI-호환)' 선택 → API 키 (Ollama 의
+   경우 더미 OK), baseUrl `http://localhost:11434/v1` 입력 → tool calling
+   지원 모델이면 체크박스 → 저장
+3. ChatPanel → Custom 선택 → 모델 입력 (Ollama `ollama list` 명령으로
+   확인) → 정상 동작
+
+#### 검증
+
+- typecheck / lint 청정
+- ollama-live: sentinel 1/1 통과 (Agent skipped due to model size)
+- 전체 chat 57 + studio 213 = 270 통과 / 1 skipped (1 flaky retry)
+
 ### Added — Phase 3 chunk 51: Read tool 카탈로그 + 양식 매칭 워크플로우 (0.3.4)
 
 사용자 시나리오 ("내 주장을 추가해줘 — 같은 양식으로 / 뒷받침 내용도

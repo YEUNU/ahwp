@@ -75,6 +75,8 @@ describe('App', () => {
           .fn()
           .mockResolvedValue({ status: 'ok', models: [], fetchedAt: 0 }),
         clearModelsCache: vi.fn().mockResolvedValue(undefined),
+        getProviderConfig: vi.fn().mockResolvedValue({}),
+        setProviderConfig: vi.fn().mockResolvedValue({ ok: true }),
       },
       chatHistory: {
         list: vi.fn().mockResolvedValue([]),
