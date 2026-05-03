@@ -6,6 +6,24 @@
 
 ## [Unreleased]
 
+### Changed — 텍스트 caret hard-blink 애니메이션 (0.2.93)
+
+사용자 요청 "커서 깜빡거리는거 넣어줘". 기존 `animate-pulse` 는
+opacity 1↔0.5 의 부드러운 fade 라 OS 텍스트 입력 캐럿처럼 안 보임.
+
+- `index.css` 에 `caret-blink` keyframe 추가 — `steps(1, end)` 로
+  hard 100% / 0% 토글, 1초 주기 (OS 텍스트 input 표준 비슷).
+- `studio-cursor` div 가 `animate-pulse` → `animate-caret-blink`.
+- 셀 안 텍스트에 클릭한 caret 이 두드러지게 깜빡 → 위치 인지가
+  명확.
+
+#### click-on-text 회귀 검증 (사용자 보고 "글자 위치 클릭하면 셀에
+
+생긴다") — 합성 spec 으로 ABCDEFGHIJ 텍스트 셀에 progressive x
+클릭 시 charOffset 0→1→2→3→5→7→10 정상 추적 확인 (`cursorX` 도
+click 위치 따라 이동). 만약 실제 사용자 환경에서 여전히 문제면
+fixture 공유 필요.
+
 ### Fixed — 0.2.91 글로벌 nudge revert + drag-only bbox validation (0.2.92)
 
 0.2.91 의 `hitTestAt` 글로벌 +1 px nudge 가 "셀 안에 커서 잘 안 들어가

@@ -8518,7 +8518,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                     {cursorRect && cursorRect.pageIndex === i && (
                       <div
                         data-testid="studio-cursor"
-                        className="pointer-events-none absolute animate-pulse bg-foreground"
+                        className="animate-caret-blink pointer-events-none absolute bg-foreground"
                         style={{
                           left: cursorRect.x * zoom,
                           top: cursorRect.y * zoom,
