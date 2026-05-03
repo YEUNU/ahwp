@@ -662,6 +662,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             className="rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
             data-testid="chat-provider-select"
             aria-label="Provider"
+            title="AI 공급자 선택 (OpenAI / NVIDIA NIM / Google Gemini / Custom)"
             disabled={streaming}
           >
             {PROVIDER_OPTIONS.map((p) => (
@@ -689,6 +690,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 className="flex-1 truncate rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
                 data-testid="chat-model-input"
                 aria-label="Model"
+                title={
+                  empty
+                    ? '모델 목록 없음 — 키 등록 후 옆 ↻ 로 새로고침'
+                    : `현재 모델: ${model || '(미선택)'}\n클릭해 다른 모델 선택`
+                }
                 disabled={streaming || state.kind === 'loading' || empty}
               >
                 {empty ? (
@@ -750,6 +756,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             )}
             data-testid="chat-key-indicator"
             aria-label={hasKey ? 'API 키 있음' : 'API 키 없음'}
+            title={
+              hasKey === true
+                ? `${providerLabel} API 키 등록됨 — 채팅 가능`
+                : hasKey === false
+                  ? `${providerLabel} API 키 미등록 — Settings 에서 등록 필요`
+                  : 'API 키 상태 확인 중…'
+            }
           >
             {hasKey === true ? '키 ●' : hasKey === false ? '키 ○' : '…'}
           </span>
@@ -764,7 +777,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             className="rounded-md border border-input px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
             data-testid="chat-history-toggle"
             aria-label="대화 목록"
-            title="대화 목록"
+            title="대화 목록 (현재 문서 기준 — 클릭해 이전 대화 불러오기)"
           >
             📚
           </button>
@@ -775,7 +788,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             className="rounded-md border border-input px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
             data-testid="chat-history-new"
             aria-label="새 대화"
-            title="새 대화"
+            title="새 대화 시작 (기존 대화는 DB 에 보존)"
           >
             +
           </button>
@@ -1019,7 +1032,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 title={
                   excerpts.length > 0
                     ? '발췌 첨부가 있을 때는 통째 첨부 대신 발췌가 사용됩니다.'
-                    : undefined
+                    : '체크하면 현재 문서 전체 HTML 을 시스템 프롬프트에 첨부 (긴 문서는 토큰 사용량 주의)'
                 }
               >
                 <input
@@ -1038,6 +1051,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   disabled={streaming}
                   data-testid="chat-capture-excerpt"
                   className="rounded-md border border-input px-2 py-0.5 hover:bg-muted disabled:opacity-50"
+                  title="에디터에서 선택한 텍스트를 칩으로 첨부 (selection rect 를 채팅 입력란으로 드래그해도 동일)"
                 >
                   📌 발췌 첨부
                 </button>
@@ -1137,6 +1151,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 size="icon"
                 onClick={stop}
                 aria-label="전송 중단"
+                title="전송 중단 (응답 스트리밍 취소)"
                 data-testid="chat-stop"
               >
                 <Square className="h-4 w-4" />
@@ -1147,6 +1162,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 size="icon"
                 disabled={input.trim().length === 0 || hasKey === false}
                 aria-label="전송"
+                title="전송 (Enter)"
                 data-testid="chat-send"
               >
                 <Send className="h-4 w-4" />

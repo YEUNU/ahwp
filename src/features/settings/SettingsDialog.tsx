@@ -139,7 +139,14 @@ function SettingsDialogInner({
         </div>
 
         {/* Right content */}
-        <div className="flex min-w-0 flex-col">
+        {/* chunk 72 — `min-h-0` is the unlock for nested flex/grid
+            scroll. Without it, the grid track height is given to this
+            div but the inner flex column collapses to its content
+            height (browser default `min-height: auto`), so PaneBody's
+            `flex-1 overflow-auto` never had bounded height to scroll
+            against. With `min-h-0` the grid track height drives the
+            flex column, PaneBody fills the residual, overflow kicks in. */}
+        <div className="flex min-h-0 min-w-0 flex-col">
           {active === 'general' && <GeneralPane />}
           {active === 'ai' && <AiProvidersPane />}
           {active === 'shortcuts' && <ShortcutsPane />}
@@ -174,7 +181,10 @@ function PaneHeader({
 function PaneBody({ children }: { children: ReactNode }): JSX.Element {
   return (
     <div
-      className="flex-1 overflow-auto px-7 py-5"
+      // `min-h-0` paired with `flex-1` lets this body shrink below its
+      // intrinsic height so the parent grid track caps it; combined
+      // with overflow-y-auto the content scrolls within the bounds.
+      className="min-h-0 flex-1 overflow-y-auto px-7 py-5"
       data-testid="settings-pane-body"
     >
       {children}

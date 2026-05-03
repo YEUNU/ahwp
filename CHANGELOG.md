@@ -6,6 +6,11 @@
 
 ## [Unreleased]
 
+### Fixed — UX 보강 chunk 72 (0.3.20)
+
+- **Settings 모달 우측 패널 스크롤 fix** — chunk 55 의 4탭 사이드바 재설계 후 AI 공급자 / 단축키 탭에서 우측 PaneBody 가 스크롤 안 되던 문제. 원인은 nested flex/grid 의 `min-h-0` 누락 — 부모 grid track 이 height 를 부여해도 자식 flex 컬럼의 default `min-height: auto` 가 컨텐츠를 그대로 늘려 PaneBody 의 `flex-1 + overflow-auto` 가 무효화. 우측 컬럼 div 와 PaneBody 양쪽에 `min-h-0` 추가, PaneBody 의 `overflow-auto` → `overflow-y-auto` 로 명시.
+- **ChatPanel provider bar 호버 tooltip 보강** — `chat-key-indicator` 에 title 추가 (`{provider} API 키 등록됨/미등록 — Settings 에서 등록 필요`), 모델 selector 에 현재 모델명 + dropdown 안내, provider select / send / stop / 발췌 첨부 / 현재 문서 첨부 등 모든 provider bar / 입력 폼 컨트롤에 명시적 title 추가. 처음 보는 사용자가 `키 ●` / `📚` / `+` 같은 아이콘만 보고 기능을 추측해야 했던 문제 해결.
+
 ### Fixed — UX 보강 chunks 70~71 (0.3.19)
 
 - **chunk 70 — secrets 변경 broadcast → ChatPanel re-fetch** — chunk 69 의 mount-only effect 는 앱 시작 시 키가 없으면 모든 provider 의 fetch 가 skipped 되고 다시 안 돌았다. main 의 `secrets:set` / `secrets:delete` 가 모든 BrowserWindow 에 `secrets:changed` 이벤트 broadcast → preload 가 `secrets.onChanged()` subscriber 로 노출 → ChatPanel 이 listen 해서 키 등록 직후 모든 provider 의 모델 리스트 pre-fetch 재실행. 이제 비-active provider 키를 등록해도 즉시 selector 가 채워짐.
