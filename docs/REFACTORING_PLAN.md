@@ -79,8 +79,19 @@ ahwp 0.3.6 시점 codebase 리팩토링 청사진. **목표는 동작 변경 0**
   발췌 첨부 + chunk 22 drag/drop → `hooks/useExcerptAttachments.ts`
   (162 라인). 5개 callback. ChatPanel.tsx 2396 → 2207 (-189 라인,
   R2.1+R2.2 합산).
-- ⏳ **R2.3** — `useChatStreaming` 추출 (onEvent / fireChat / send /
-  regenerate / agent loop). 가장 복잡 — 별도 세션 권장.
+- ✅ **R2.3** (2026-05-03) — `useChatStreaming` 추출 + prompts.ts
+  분리. streaming + agent loop (onEvent / fireChat / send / sendDirect
+  / regenerate / deleteMessage / copyMessage / onSubmit / onKeyDown /
+  stop / maybeAutoTitle + 6 refs) → `hooks/useChatStreaming.ts` (802
+  라인). 시스템 프롬프트 + collectReferenceOutlines /
+  buildReferenceSystemBlock / buildExcerptSystemPrompt → `prompts.ts`
+  (124 라인). file-level any + exhaustive-deps disable (opts ~50개).
+  ChatPanel.tsx 2207 → **1501** (-706 라인, **누적 2396 → 1501,
+  -37.4%**). 회귀 가드: vitest 15/15, chat history + excerpt +
+  multidoc + actions + html-apply + agent + auto-title + markdown
+  42/42 PASS.
+
+🎉 **R2 완료** — ChatPanel 분해 phase 종료.
 
 ### R3 — AppShell 분해
 

@@ -15,19 +15,10 @@ import {
   useMemo,
   useRef,
   useState,
-  type FormEvent,
-  type KeyboardEvent,
 } from 'react';
-import type {
-  ChatMessage,
-  ChatRequest,
-  ChatStreamEvent,
-  ProviderId,
-} from '@shared/ai';
+import type { ChatMessage, ProviderId } from '@shared/ai';
 import {
-  getAhwpToolCatalog,
   parseToolBlock,
-  validateToolCall,
   type AhwpPreflightItem,
   type AhwpToolResult,
 } from '@shared/ai-tools';
@@ -42,6 +33,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { MessageContent } from './MessageContent';
 import { useChatHistory } from './hooks/useChatHistory';
+import { useChatStreaming } from './hooks/useChatStreaming';
 import { useExcerptAttachments } from './hooks/useExcerptAttachments';
 import { previewArgs } from './tools';
 
@@ -70,9 +62,6 @@ const STORAGE_CHAT_MODE = 'ahwp:chat:mode';
 
 export type ChatMode = 'manual' | 'agent';
 
-/** Phase 3 — Agent 한 turn당 tool 호출 cap. 무한 루프 방어. */
-const AGENT_MAX_TOOLS_PER_TURN = 10;
-
 interface UiMessage extends ChatMessage {
   id: string;
   /** Phase 3 — tool 호출/결과 inline 표시 (assistant 메시지 안). */
@@ -85,10 +74,6 @@ interface UiToolEntry {
   argsPreview: string;
   status: 'running' | 'ok' | 'failed';
   reason?: string;
-}
-
-function newId(): string {
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function loadProvider(): ChatProviderId {
@@ -251,124 +236,6 @@ export interface ChatPanelHandle {
 
 const HTML_BLOCK_RE = /```html\n?([\s\S]*?)```/i;
 const TOOLS_BLOCK_RE = /```ahwp-tools\n?([\s\S]*?)```/i;
-
-const SYSTEM_PROMPT_DOC_CONTEXT = `너는 한컴 한글 문서 어시스턴트야. 사용자의 요청을 두 가지 코드 블록 중 하나(또는 둘 다)로 표현해서 응답해. 사용자가 코드 블록을 한 번의 클릭으로 문서에 적용해.
-
-[A] 흐르는 글자/문단 양식 → \`\`\`html ... \`\`\` 한 블록만:
-- 단락 정렬: <p style="text-align: left|center|right|justify;">...</p>
-- 줄 간격: <p style="line-height: 1.5;"> (배수, 1.0/1.15/1.5/2.0/3.0)
-- 문단 들여쓰기: <p style="margin-left: 30px;">
-- 첫 줄 들여쓰기: <p style="text-indent: 20pt;">
-- 문단 위/아래 간격: <p style="margin-top: 12px; margin-bottom: 6px;">
-- 글자 서식: <strong>, <em>, <u>, <s>, <span style="color:#ff0000;font-size:14pt;">
-- 표: <table><tr><td>...</td></tr></table>
-
-[B] 한컴 컨트롤 객체(각주·머리말·책갈피·페이지 설정·스타일·도형) → \`\`\`ahwp-tools ... \`\`\` 한 블록 (JSON):
-{
-  "ops": [
-    { "tool": "applyHtml",          "args": { "html": "<p style='text-align:center;'>제목</p>" } },
-    { "tool": "applyAlignment",     "args": { "align": "left|center|right|justify" } },
-    { "tool": "applyFontSize",      "args": { "pt": 12 } },
-    { "tool": "applyTextColor",     "args": { "hex": "#RRGGBB" } },
-    { "tool": "toggleCharFormat",   "args": { "key": "bold|italic|underline" } },
-    { "tool": "insertFootnote",     "args": { "text": "각주 본문" } },
-    { "tool": "addBookmark",        "args": { "name": "section1" } },
-    { "tool": "setHeaderFooterText","args": { "sectionIdx": 0, "isHeader": true, "applyTo": 0, "text": "머리말 텍스트" } },
-    { "tool": "applyPageDef",       "args": { "props": { "landscape": true } } },
-    { "tool": "createNamedStyle",   "args": { "name": "본문2", "englishName": "Body2" } },
-    { "tool": "createRectShape",    "args": { "widthHwpunit": 5670, "heightHwpunit": 2835 } }
-  ]
-}
-
-분리 기준: 양식(정렬/간격/글자 서식/표) = [A] HTML, 컨트롤 객체 = [B] ahwp-tools. 같은 일을 두 갈래로 보내지 마. 각 형식은 응답에 최대 한 블록만 포함해. 코드 블록 외에 짧은 설명을 함께 써도 돼.`;
-
-/**
- * Phase 3 chunk 51 — Agent 모드 system prompt 추가. provider tool-use
- * API 가 활성일 때 (`chatMode === 'agent'`) 만 inject. 양식 매칭 워크
- * 플로우 (read → reason → write) 와 우선순위 (applyStyle > applyParaProps
- * > applyHtml) 를 모델에 가이드.
- */
-const SYSTEM_PROMPT_AGENT_GUIDE = `너는 한컴 한글 문서 편집 Agent. 도구 호출 능력이 있어.
-
-#### 워크플로우 — 양식 매칭이 필요한 작업 (사용자가 "내 주장 추가" / "이 단락처럼 작성" 같이 막연하게 말할 때)
-
-1. **읽기**: \`getCaretPosition\`/\`getDocumentOutline\` → 위치 결정. \`getStyleAt\`+\`getParaPropertiesAt\` → 인접 단락의 양식 파악. 필요하면 \`findInDocument\` 로 근거/인용 위치 찾기.
-2. **추론**: 사용자 의도 + 읽은 양식 → 어떤 styleId 사용할지 / 어떤 props 매칭할지 결정.
-3. **쓰기**: 우선순위 — \`applyStyle\` (named style id) > \`applyParaProps\`/\`applyCharFormat\` (props 직접) > \`applyHtml\` (sledgehammer). 같은 양식 매칭의 가독성과 회귀 안전성 측면에서 named style 이 베스트.
-
-#### 도구 호출 원칙
-
-- 모르는 좌표를 추측하지 마. 먼저 read tool 로 확인.
-- 한 turn 안 호출 한도 10. 무한 read 루프 방지. 불필요한 read 는 생략.
-- 부분 성공 OK — 한 op 실패해도 다음 op 계속. 사용자에게 결과 toast 로 표시됨.
-- write tool 은 모두 묶음 undo (turn 전체 ⌘Z 1회 롤백).
-
-#### 흔한 실수
-
-- \`applyHtml\` 만으로 모든 변경 처리 — 가능하지만 named style 매칭이 깨짐. 인접 단락 스타일을 모를 땐 먼저 \`getStyleAt\` 호출.
-- 좌표 추측 — paragraphIdx 0 부터 시작하는 0-indexed. \`getCaretPosition\` 으로 현재 위치를 확인하거나, \`getDocumentOutline\` 으로 제목 좌표를 받아서 사용.
-- 셀 편집 직진 — 표 안 작업은 \`getCellInfo\` 로 병합 상태 확인 후 진행.
-
-응답에는 코드 블록을 쓰지 마 (Manual 모드 형식). Agent 모드는 도구를 직접 호출하고, 텍스트는 사용자에게 설명/요약만.`;
-
-/** Collect `{ label, outline }` for each reference doc the user has
- * opted in — chunk 21. Filters out paths that no longer correspond to
- * an open tab (closed since the user checked it) and active-tab paths
- * (target is implicit, never a reference). */
-function collectReferenceOutlines(
-  referencePaths: string[],
-  getOpenDocs?: () => { path: string; label: string; isActive: boolean }[],
-  getDocOutline?: (path: string) => string,
-): { label: string; outline: string }[] {
-  if (!getOpenDocs || !getDocOutline || referencePaths.length === 0) return [];
-  const docs = getOpenDocs();
-  const byPath = new Map(docs.map((d) => [d.path, d]));
-  const out: { label: string; outline: string }[] = [];
-  for (const path of referencePaths) {
-    const meta = byPath.get(path);
-    if (!meta || meta.isActive) continue;
-    const outline = getDocOutline(path);
-    if (outline.length === 0) continue;
-    out.push({ label: meta.label, outline });
-  }
-  return out;
-}
-
-/** Serialize references into the system prompt — chunk 21. Read-only
- * by contract; the system prompt explicitly forbids modification. */
-function buildReferenceSystemBlock(
-  refs: { label: string; outline: string }[],
-): string {
-  const lines: string[] = ['[참조 문서]:'];
-  refs.forEach((r, i) => {
-    lines.push(`[ref ${i + 1}] doc="${r.label}" (read-only)`);
-    lines.push(r.outline);
-    lines.push('');
-  });
-  lines.push(
-    '참조 규칙: [참조 문서]는 읽기·인용·문체 분석만 허용. 절대 수정 대상으로 삼지 마. 변경 적용 (` ```html``` ` / ` ```ahwp-tools``` `) 은 활성 문서(target)에만 한다.',
-  );
-  return lines.join('\n');
-}
-
-/** Serialize chips into the system message for chunk 20. The block
- * mirrors the spec in `docs/AI_INTEGRATION.md` §발췌 드래그 첨부 ›
- * 프롬프트 직렬화: numbered entries with role/doc/anchor metadata so
- * the model can refer to "[1]" without ambiguity. */
-function buildExcerptSystemPrompt(excerpts: ExcerptAttachment[]): string {
-  const lines: string[] = [SYSTEM_PROMPT_DOC_CONTEXT, '', '[발췌]:'];
-  excerpts.forEach((ex, i) => {
-    lines.push(
-      `[${i + 1}] role=${ex.role}  doc="${ex.docLabel}"  anchor={para:${ex.anchor.startParagraphIndex}${ex.anchor.endParagraphIndex !== ex.anchor.startParagraphIndex ? `..${ex.anchor.endParagraphIndex}` : ''}, [${ex.anchor.startOffset},${ex.anchor.endOffset}]}`,
-    );
-    lines.push(`    "${ex.text.replace(/\s+/g, ' ').trim()}"`);
-  });
-  lines.push('');
-  lines.push(
-    '발췌 규칙: 사용자가 "이 단락"이라고 하면 [발췌]의 첫 항목을 가리킴. 변경 대상은 role=target 발췌만. role=reference는 인용·문체 참고용으로만 읽고 절대 수정 대상으로 삼지 마.',
-  );
-  return lines.join('\n');
-}
 
 export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
   function ChatPanel(
@@ -582,464 +449,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       };
     }, []);
 
-    /** Buffer the assistant's streamed text so we can persist it once
-     * — chunk 26. setMessages would also work but reading state from
-     * onEvent (a useCallback with [] deps) requires an extra ref hop;
-     * a local string ref is cleaner.
-     */
-    const assistantBufferRef = useRef('');
-
-    // Phase 3 — Agent 한 turn 내 누적 상태. fireChat → onEvent → fireChat
-    // 재귀 호출 사이를 잇는다. chatMode='agent' 진입 시 reset.
-    const agentToolUsesRef = useRef<
-      { id: string; name: string; args: unknown }[]
-    >([]);
-    const agentTurnDepthRef = useRef(0);
-    const agentVerifiedExcerptsRef = useRef<ExcerptAttachment[]>([]);
-    // fireChat 자체가 useCallback이라 onEvent에서 직접 호출하면 stale
-    // closure. ref hop으로 회피.
-    const fireChatRef = useRef<
-      | ((history: UiMessage[], verifiedExcerpts?: ExcerptAttachment[]) => void)
-      | null
-    >(null);
-    // runTools prop을 ref로 mirror — onEvent 안에서 stale 없이 접근.
-    const runToolsPropRef = useRef(runTools);
-    useEffect(() => {
-      runToolsPropRef.current = runTools;
-    }, [runTools]);
-
-    /**
-     * chunk 31 — 자동 제목 요약. 대화의 메시지 4개 이상 누적 후 1회만
-     * 호출. 대화의 user/assistant 메시지를 모아 짧은 system prompt와
-     * 함께 보내고 응답 텍스트 첫 줄을 30자 이내 trim → renameConversation.
-     *
-     * - 같은 conversationId에 대해 한 번만 (autoTitledConvIdsRef로 dedup).
-     * - 모든 실패는 silent — 첫 user 메시지 60자 truncated title이 유지.
-     * - 사용자 진행 중인 chat과 별도 IPC 호출 (window.api.ai.chat) — abort
-     *   handle은 잡지 않음 (5단어 응답이라 곧 끝남).
-     */
+    // Mirror slot for `refreshHistory` so streaming send-completion can
+    // read the latest binding without stale closure.
     const refreshHistoryRef = useRef<(() => Promise<void>) | null>(null);
-    const maybeAutoTitle = useCallback(
-      (convId: number, finalMessages: UiMessage[]): void => {
-        if (autoTitledConvIdsRef.current.has(convId)) return;
-        if (finalMessages.length < 4) return;
-        autoTitledConvIdsRef.current.add(convId);
-        const provNow = providerRef.current;
-        const modelNow = modelRef.current;
-        if (!modelNow || modelNow.length === 0) return;
-        const transcript = finalMessages
-          .map(
-            (m) =>
-              `${m.role === 'user' ? '사용자' : '어시스턴트'}: ${m.content}`,
-          )
-          .join('\n')
-          .slice(0, 4000);
-        const req: ChatRequest = {
-          provider: provNow,
-          model: modelNow,
-          temperature: 0.2,
-          messages: [
-            {
-              role: 'system',
-              content:
-                '다음은 사용자와 AI의 대화 일부야. 이 대화의 핵심 주제를 한국어 5단어 이내의 명사구로 요약해줘. 따옴표나 마침표 없이 본문만 출력. 예: "표 합계 행 추가", "이미지 정렬 문의".',
-            },
-            { role: 'user', content: transcript },
-          ],
-        };
-        let buf = '';
-        try {
-          window.api.ai.chat(req, {
-            onEvent: (evt) => {
-              if (evt.type === 'text-delta') {
-                buf += evt.text;
-                return;
-              }
-              if (evt.type === 'done') {
-                const title = buf
-                  .split('\n')[0]
-                  .replace(/^["'`「『\s]+|["'`」』.\s]+$/g, '')
-                  .slice(0, 30);
-                if (title.length === 0) return;
-                void window.api.chatHistory
-                  .rename(convId, title)
-                  .then(() => refreshHistoryRef.current?.())
-                  .catch((err: unknown) =>
-                    console.warn('[chat] auto-title rename failed', err),
-                  );
-              } else if (evt.type === 'error') {
-                console.warn('[chat] auto-title stream error', evt.message);
-              }
-            },
-          });
-        } catch (err) {
-          console.warn('[chat] auto-title chat failed', err);
-        }
-      },
-      [],
-    );
 
-    const onEvent = useCallback(
-      (evt: ChatStreamEvent) => {
-        if (evt.type === 'text-delta') {
-          // Capture the id eagerly: the setMessages updater may run later in a
-          // React batch, by which point a terminal event might have cleared
-          // assistantIdRef. Reading it inside the updater drops late deltas.
-          const id = assistantIdRef.current;
-          if (!id) return;
-          assistantBufferRef.current += evt.text;
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === id ? { ...m, content: m.content + evt.text } : m,
-            ),
-          );
-          return;
-        }
-        // Phase 3 — tool-use 이벤트. assistant 메시지 안에 inline tool
-        // 호출 row 표시. dispatch는 done 까지 누적했다가 한 번에 (provider
-        // 가 한 turn 안 여러 호출을 모두 emit 한 후 finishReason).
-        if (evt.type === 'tool-use') {
-          const id = assistantIdRef.current;
-          agentToolUsesRef.current.push({
-            id: evt.id,
-            name: evt.name,
-            args: evt.args,
-          });
-          if (id) {
-            const argsPreview = (() => {
-              try {
-                const json = JSON.stringify(evt.args);
-                return json.length > 80 ? `${json.slice(0, 80)}…` : json;
-              } catch {
-                return '<unserializable>';
-              }
-            })();
-            const entry: UiToolEntry = {
-              id: evt.id,
-              name: evt.name,
-              argsPreview,
-              status: 'running',
-            };
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === id
-                  ? { ...m, toolEntries: [...(m.toolEntries ?? []), entry] }
-                  : m,
-              ),
-            );
-          }
-          return;
-        }
-        if (evt.type === 'error') {
-          setError(evt.message);
-        }
-        // chunk 26 — persist the assistant turn (best-effort). Errors here
-        // are logged but don't surface to the user; a chat history blip
-        // shouldn't block the conversation flow.
-        const convId = conversationIdRef.current;
-        const buf = assistantBufferRef.current;
-        if (convId !== null && buf.length > 0) {
-          void window.api.chatHistory
-            .append(convId, 'assistant', buf)
-            .catch((err: unknown) =>
-              console.warn('[chat] history.append assistant failed', err),
-            );
-          // chunk 31 — auto-title trigger. setMessages updater로 prev (현재
-          // assistant turn 이 들어간 messages) 길이를 보고 4 이상이면 1회.
-          setMessages((prev) => {
-            maybeAutoTitle(convId, prev);
-            return prev;
-          });
-        }
-
-        // Phase 3 — Agent 루프. done 시점에 finishReason='tool_calls' 면
-        // 누적된 tool-use 들을 dispatch 하고 결과를 새 메시지로 추가한 뒤
-        // fireChat 재귀. cap 도달 시 강제 종료.
-        const isAgentTurn =
-          chatModeRef.current === 'agent' &&
-          evt.type === 'done' &&
-          (evt.finishReason === 'tool_calls' ||
-            agentToolUsesRef.current.length > 0);
-        if (isAgentTurn && agentToolUsesRef.current.length > 0) {
-          const toolUses = agentToolUsesRef.current;
-          agentToolUsesRef.current = [];
-          const assistantId = assistantIdRef.current;
-          // assistant 메시지 finalize — toolUses 채움.
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantId
-                ? {
-                    ...m,
-                    toolUses: toolUses.map((t) => ({
-                      id: t.id,
-                      name: t.name,
-                      args: t.args,
-                    })),
-                  }
-                : m,
-            ),
-          );
-          // dispatch 각 tool — validate + runTools (단일 op group).
-          const dispatcher = runToolsPropRef.current;
-          const toolResults: {
-            id: string;
-            name: string;
-            ok: boolean;
-            reason?: string;
-            /** Phase 3 chunk 51 — read tool 결과. JSON 직렬화해서 모델에
-             *  회신. write tool 은 undefined. */
-            data?: unknown;
-          }[] = [];
-          for (const tu of toolUses) {
-            const v = validateToolCall({ tool: tu.name, args: tu.args });
-            if (!v.ok) {
-              toolResults.push({
-                id: tu.id,
-                name: tu.name,
-                ok: false,
-                reason: v.reason,
-              });
-              continue;
-            }
-            if (!dispatcher) {
-              toolResults.push({
-                id: tu.id,
-                name: tu.name,
-                ok: false,
-                reason: 'dispatcher-unavailable',
-              });
-              continue;
-            }
-            const out = dispatcher([{ ok: true, call: v.value }]);
-            const first = out[0];
-            if (first && first.ok) {
-              toolResults.push({
-                id: tu.id,
-                name: tu.name,
-                ok: true,
-                data: first.data,
-              });
-            } else {
-              toolResults.push({
-                id: tu.id,
-                name: tu.name,
-                ok: false,
-                reason: first?.ok === false ? first.reason : 'unknown',
-              });
-            }
-          }
-          // UI tool-entry 상태 업데이트.
-          if (assistantId) {
-            setMessages((prev) =>
-              prev.map((m) => {
-                if (m.id !== assistantId || !m.toolEntries) return m;
-                return {
-                  ...m,
-                  toolEntries: m.toolEntries.map((te) => {
-                    const r = toolResults.find((x) => x.id === te.id);
-                    if (!r) return te;
-                    return {
-                      ...te,
-                      status: r.ok ? 'ok' : 'failed',
-                      reason: r.reason,
-                    };
-                  }),
-                };
-              }),
-            );
-          }
-          // 다음 turn 호출 — cap 검사.
-          agentTurnDepthRef.current += 1;
-          if (agentTurnDepthRef.current >= AGENT_MAX_TOOLS_PER_TURN) {
-            setError(
-              `Agent: 한 턴 도구 호출 한계 (${AGENT_MAX_TOOLS_PER_TURN}) 도달.`,
-            );
-            agentTurnDepthRef.current = 0;
-            agentVerifiedExcerptsRef.current = [];
-            assistantBufferRef.current = '';
-            setStreaming(false);
-            handleRef.current = null;
-            assistantIdRef.current = null;
-            return;
-          }
-          // 새 history — 현재 메시지 (위 setMessages가 반영됐다고 가정)
-          // + tool result 메시지들. setMessages prev로 안전하게 접근.
-          setMessages((prev) => {
-            const toolMsgs: UiMessage[] = toolResults.map((r) => {
-              // Phase 3 chunk 51 — read tool 결과는 JSON 직렬화해서 모델
-              // 에 회신 (read 결과를 다음 turn 의 reasoning input 으로 사용).
-              // 4096B cap — 거대 dump 차단.
-              let content: string;
-              if (r.ok) {
-                if (r.data !== undefined) {
-                  let json: string;
-                  try {
-                    json = JSON.stringify(r.data);
-                  } catch {
-                    json = String(r.data);
-                  }
-                  if (json.length > 4096) json = json.slice(0, 4096) + '…';
-                  content = json;
-                } else {
-                  content = `ok: ${r.name}`;
-                }
-              } else {
-                content = `error: ${r.reason ?? '?'}`;
-              }
-              return {
-                id: newId(),
-                role: 'tool' as const,
-                content,
-                toolResult: { id: r.id, content, isError: !r.ok },
-              };
-            });
-            const next = [...prev, ...toolMsgs];
-            // Recurse — setMessages 반환 후 fireChat이 새 assistant 메시지
-            // 를 더 추가. agentToolUsesRef는 이미 비웠으니 다음 stream에서
-            // 재누적.
-            queueMicrotask(() => {
-              fireChatRef.current?.(next, agentVerifiedExcerptsRef.current);
-            });
-            return next;
-          });
-          // streaming flag는 keep on — 다음 fireChat이 다시 set true.
-          // assistantIdRef는 다음 fireChat이 새 id 발급.
-          assistantBufferRef.current = '';
-          handleRef.current = null;
-          assistantIdRef.current = null;
-          return;
-        }
-
-        // 정상 종료 (manual 모드 또는 agent의 finishReason='stop').
-        agentTurnDepthRef.current = 0;
-        agentToolUsesRef.current = [];
-        agentVerifiedExcerptsRef.current = [];
-        assistantBufferRef.current = '';
-        setStreaming(false);
-        handleRef.current = null;
-        assistantIdRef.current = null;
-      },
-      [maybeAutoTitle],
-    );
-
-    /**
-     * Append a fresh assistant bubble to `history` and start streaming the
-     * provider's response into it. `history` should already end in the user
-     * message that the assistant is replying to. The optional
-     * `verifiedExcerpts` arg is the chip list after `send`'s stale check;
-     * passed in so we serialize exactly what the user is committing to,
-     * not whatever excerpts state happens to be by the time React has
-     * batched updates through.
-     */
-    const fireChat = useCallback(
-      (history: UiMessage[], verifiedExcerpts: ExcerptAttachment[] = []) => {
-        setError(null);
-        const assistantMsg: UiMessage = {
-          id: newId(),
-          role: 'assistant',
-          content: '',
-        };
-        assistantIdRef.current = assistantMsg.id;
-        setMessages([...history, assistantMsg]);
-        setStreaming(true);
-
-        // Build provider-bound message list. The system message
-        // composition picks one of three context strategies for the
-        // *target* doc (the active tab):
-        //   (1) excerpts present  → `[발췌]:` block, narrowly anchored
-        //   (2) attach toggle on  → `[현재 문서]:` whole-doc HTML
-        //   (3) neither           → no target body in prompt (just refs)
-        // Excerpts win over the toggle when both are set, per
-        // memory/project_chat_context_pipeline.md priority rule.
-        //
-        // Reference docs (chunk 21) are appended as an additional
-        // `[참조 문서]:` block when the user has opted any in. They are
-        // read-only — write tools (chunk 19) still target the active doc
-        // by construction since the dispatcher hands them to the active
-        // viewer's IR.
-        // Phase 3 — Agent 모드는 toolUses / toolResult 도 같이 직렬화.
-        // OpenAI 어댑터가 native (tool_calls / role='tool') 로 변환한다.
-        const messages: ChatMessage[] = history.map((m) => ({
-          role: m.role,
-          content: m.content,
-          toolUses: m.toolUses,
-          toolResult: m.toolResult,
-        }));
-
-        const refOutlines = collectReferenceOutlines(
-          referencePaths,
-          getOpenDocs,
-          getDocOutline,
-        );
-
-        let systemContent: string | null = null;
-        if (verifiedExcerpts.length > 0) {
-          systemContent = buildExcerptSystemPrompt(verifiedExcerpts);
-        } else if (attachDoc && getDocHtml) {
-          const docHtml = getDocHtml();
-          if (docHtml.length > 0) {
-            systemContent = `${SYSTEM_PROMPT_DOC_CONTEXT}\n\n[현재 문서]:\n${docHtml}`;
-          }
-        }
-        if (refOutlines.length > 0) {
-          const refBlock = buildReferenceSystemBlock(refOutlines);
-          systemContent =
-            systemContent === null
-              ? `${SYSTEM_PROMPT_DOC_CONTEXT}\n\n${refBlock}`
-              : `${systemContent}\n\n${refBlock}`;
-        }
-        if (systemContent !== null) {
-          messages.unshift({ role: 'system', content: systemContent });
-        }
-        // Phase 3 chunk 51 — Agent 모드면 양식 매칭 워크플로우 가이드 추가.
-        // 기존 SYSTEM_PROMPT_DOC_CONTEXT (Manual 모드용 코드 블록 가이드)
-        // 와 별개로 inject — Agent 는 코드 블록 안 쓰고 도구 직접 호출.
-        if (chatModeRef.current === 'agent') {
-          messages.unshift({
-            role: 'system',
-            content: SYSTEM_PROMPT_AGENT_GUIDE,
-          });
-        }
-
-        const request: ChatRequest = { provider, model, messages };
-        // Phase 3 — Agent 모드 활성 시 tool 카탈로그 주입. provider 어댑터
-        // 가 native 형식(OpenAI tool_calls 등)으로 변환.
-        if (chatModeRef.current === 'agent') {
-          request.tools = getAhwpToolCatalog().map((d) => ({
-            name: d.name,
-            description: d.description,
-            inputSchema: d.inputSchema,
-          }));
-          request.toolChoice = 'auto';
-          // Agent 루프 재진입에서도 verifiedExcerpts를 유지하려면 ref 에
-          // stash. 첫 turn 만 진짜 "사용자 의도"라 다음 turn 부터는 보통
-          // [] 로 진행해도 OK 지만 일관성을 위해 같은 칩을 그대로 유지.
-          agentVerifiedExcerptsRef.current = verifiedExcerpts;
-        }
-        handleRef.current = window.api.ai.chat(request, { onEvent });
-      },
-      [
-        attachDoc,
-        getDocHtml,
-        getDocOutline,
-        getOpenDocs,
-        model,
-        onEvent,
-        provider,
-        referencePaths,
-      ],
-    );
-    // Phase 3 — Agent 루프 재진입을 위한 ref. onEvent → microtask →
-    // fireChatRef.current(...) 로 새 turn 시작.
-    useEffect(() => {
-      fireChatRef.current = fireChat;
-    }, [fireChat]);
-
-    // chunk 20 — capture the active viewer selection as a chip. The
-    // button is disabled when nothing's selectable, so the null-return
-    // path is only hit during a race (selection cleared between hover
-    // and click). Drag-and-drop wiring is a follow-up; this gives us
-    // the data model NOW.
     // R2.2 — chunk 20 (excerpt 첨부) + chunk 22 (drag/drop) →
     // useExcerptAttachments hook.
     const {
@@ -1082,118 +495,59 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       refreshHistoryRef,
     });
 
-    const send = useCallback(async () => {
-      const text = input.trim();
-      if (text.length === 0 || streaming) return;
-
-      // Per-chip stale verification — chunk 20. Each chip's anchor is
-      // re-read from the IR. Fresh = pass through. Relocated = update
-      // anchor in place (silent). Missing = block send and surface a
-      // toast so the user can re-select. We reset to fresh chips so
-      // subsequent turns don't keep re-checking the same anchors.
-      const verified: ExcerptAttachment[] = [];
-      const stillMissing: string[] = [];
-      if (excerpts.length > 0 && verifyExcerpt) {
-        for (const ex of excerpts) {
-          const r = verifyExcerpt(ex.anchor, ex.text);
-          if (!r) {
-            stillMissing.push(ex.docLabel);
-            continue;
-          }
-          if (r.status === 'fresh') {
-            verified.push({ ...ex, status: 'fresh' });
-          } else if (r.status === 'stale-relocated' && r.newAnchor) {
-            verified.push({
-              ...ex,
-              anchor: r.newAnchor,
-              status: 'stale-relocated',
-            });
-          } else {
-            stillMissing.push(ex.docLabel);
-          }
-        }
-        if (stillMissing.length > 0) {
-          setExcerptError(
-            `발췌 위치를 찾을 수 없습니다 (${stillMissing.join(', ')}). 다시 선택해 주세요.`,
-          );
-          return;
-        }
-        setExcerpts(verified);
-        setExcerptError(null);
-      }
-
-      const userMsg: UiMessage = { id: newId(), role: 'user', content: text };
-      setInput('');
-
-      // chunk 26 — ensure the conversation exists BEFORE starting the
-      // stream so onEvent's terminator (which persists the assistant
-      // turn) sees a non-null conversationIdRef. We await the create +
-      // user-append so persistence is in lockstep with the visual turn.
-      try {
-        if (conversationIdRef.current === null) {
-          const docPath = activeDocPath?.() ?? null;
-          const title = text.slice(0, 60);
-          const r = await window.api.chatHistory.create(docPath, title);
-          conversationIdRef.current = r.id;
-          setConversationId(r.id);
-        }
-        await window.api.chatHistory.append(
-          conversationIdRef.current,
-          'user',
-          text,
-        );
-      } catch (err) {
-        console.warn('[chat] history.append user failed', err);
-        // Persistence failure shouldn't block the chat — proceed even if
-        // the DB write threw.
-      }
-
-      fireChat([...messages, userMsg], verified);
-    }, [
-      activeDocPath,
-      excerpts,
-      fireChat,
-      input,
+    // R2.3 — streaming + agent loop → useChatStreaming hook.
+    const {
+      sendDirect,
+      regenerate,
+      deleteMessage,
+      copyMessage,
+      onSubmit,
+      onKeyDown,
+      stop,
+    } = useChatStreaming({
+      conversationIdRef,
+      autoTitledConvIdsRef,
+      providerRef,
+      modelRef,
+      chatModeRef,
+      handleRef,
+      scrollerRef,
+      assistantIdRef,
+      refreshHistoryRef,
       messages,
+      setMessages,
+      input,
+      setInput,
       streaming,
+      setStreaming,
+      setError,
+      hasKey,
+      provider,
+      model,
+      chatMode,
+      modelList,
+      attachDoc,
+      excerpts,
+      excerptError,
+      setExcerptError,
+      setExcerpts,
+      conversationId,
+      setConversationId,
+      referencePaths,
+      onOpenSettings,
+      getDocHtml,
+      applyHtml,
+      runTools,
+      captureExcerpt,
+      activeDocPath,
       verifyExcerpt,
-    ]);
+      getOpenDocs,
+      getDocOutline,
+      undoLastApply,
+    });
 
-    // chunk 56 — AI selection menu trigger. Builds and fires a chat turn
-    // directly from `text` (the menu wraps the user's selection in a
-    // template prompt before calling), bypassing the input field. We
-    // skip the excerpt-chip verification path because the caller has
-    // already inlined the relevant text.
-    const sendDirect = useCallback(
-      async (text: string): Promise<void> => {
-        const trimmed = text.trim();
-        if (trimmed.length === 0 || streaming) return;
-        const userMsg: UiMessage = {
-          id: newId(),
-          role: 'user',
-          content: trimmed,
-        };
-        try {
-          if (conversationIdRef.current === null) {
-            const docPath = activeDocPath?.() ?? null;
-            const title = trimmed.slice(0, 60);
-            const r = await window.api.chatHistory.create(docPath, title);
-            conversationIdRef.current = r.id;
-            setConversationId(r.id);
-          }
-          await window.api.chatHistory.append(
-            conversationIdRef.current,
-            'user',
-            trimmed,
-          );
-        } catch (err) {
-          console.warn('[chat] history.append user (direct) failed', err);
-        }
-        fireChat([...messages, userMsg], []);
-      },
-      [activeDocPath, fireChat, messages, streaming],
-    );
-
+    // The ChatPanelHandle imperative — chunk 56. Provides prefillAndSend
+    // for cross-pane triggers (Studio AI command menu).
     useImperativeHandle(
       ref,
       () => ({
@@ -1203,67 +557,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       }),
       [sendDirect],
     );
-
-    const regenerate = useCallback(
-      (assistantId: string) => {
-        if (streaming) return;
-        const idx = messages.findIndex((m) => m.id === assistantId);
-        if (idx === -1) return;
-        const history = messages.slice(0, idx);
-        // Need a preceding user turn to regenerate from.
-        if (history.length === 0 || history[history.length - 1].role !== 'user')
-          return;
-        fireChat(history);
-      },
-      [fireChat, messages, streaming],
-    );
-
-    const deleteMessage = useCallback(
-      (id: string) => {
-        if (streaming) return;
-        setMessages((prev) => prev.filter((m) => m.id !== id));
-      },
-      [streaming],
-    );
-
-    const copyMessage = useCallback(
-      async (id: string): Promise<boolean> => {
-        const m = messages.find((x) => x.id === id);
-        if (!m) return false;
-        try {
-          await window.api.clipboard.writeText(m.content);
-          return true;
-        } catch {
-          return false;
-        }
-      },
-      [messages],
-    );
-
-    const onSubmit = useCallback(
-      (e: FormEvent<HTMLFormElement>) => {
-        e.preventDefault();
-        void send();
-      },
-      [send],
-    );
-
-    const onKeyDown = useCallback(
-      (e: KeyboardEvent<HTMLTextAreaElement>) => {
-        if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-          e.preventDefault();
-          void send();
-        }
-      },
-      [send],
-    );
-
-    const stop = useCallback(() => {
-      handleRef.current?.abort();
-      handleRef.current = null;
-      setStreaming(false);
-      assistantIdRef.current = null;
-    }, []);
 
     const providerLabel = useMemo(
       () => PROVIDER_OPTIONS.find((p) => p.id === provider)?.label ?? provider,
