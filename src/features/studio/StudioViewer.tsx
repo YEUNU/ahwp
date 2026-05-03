@@ -992,24 +992,14 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         const c = caretRef.current;
         let rectJson: string;
         if (c.cell) {
-          // Phase E — nested table 지원. path > 1이면 ByPath variant.
-          if (c.cell.path && c.cell.path.length > 1) {
-            rectJson = doc.getCursorRectByPath(
-              c.sectionIndex,
-              c.cell.parentParaIndex,
-              JSON.stringify(c.cell.path),
-              c.charOffset,
-            );
-          } else {
-            rectJson = doc.getCursorRectInCell(
-              c.sectionIndex,
-              c.cell.parentParaIndex,
-              c.cell.controlIndex,
-              c.cell.cellIndex,
-              c.cell.cellParaIndex,
-              c.charOffset,
-            );
-          }
+          // R6 — Phase E nested table 분기 callCellOp 통합.
+          rectJson = callCellOp(
+            c.cell,
+            c.sectionIndex,
+            doc.getCursorRectInCell.bind(doc),
+            doc.getCursorRectByPath.bind(doc),
+            c.charOffset,
+          );
         } else {
           rectJson = doc.getCursorRect(
             c.sectionIndex,
