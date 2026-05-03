@@ -249,7 +249,7 @@
 - [ ] Crash reporter (Sentry 또는 자체)
 - [x] E2E 인프라 (Playwright Electron, Phase 1-C에 앞당겨 도입) — 7개 케이스 통과
 - [x] E2E 확장 — studio 청크 1~12 + 표/이미지/폴더 ops/탭 (134/134 케이스)
-- [ ] E2E 추가 — file:open dialog 모킹, save-as 다이얼로그, 다국어 입력, 표 셀 selection v4
+- [x] E2E 추가 — `tests/e2e/file-dialog-mock.spec.ts` 3 케이스 ✅ (chunk 60, 0.3.12): `app.evaluate` 로 main 의 `showOpenDialog`/`showSaveDialog` monkey-patch + `'menu:action'` IPC 직접 emit. open dialog 모킹 / save-as 신규 path / save-as overwrite (.bak 사이드카). IME/다국어 입력은 Playwright 한계로 보류 (composition event 를 emit 못 함). 표 셀 selection v4 는 chunk 32 에서 이미 진행 (chat-multidoc/cell-block 회귀 가드)
 - [ ] 접근성 점검 (radix 기본 + 키보드 탐색)
 - [ ] 사용자 가이드 문서 (`docs/USER_GUIDE.md`)
 - [ ] 베타 사용자 피드백 채널 (GitHub Discussions)

@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+### Tests — Phase 5 chunk 60: 파일 다이얼로그 모킹 e2e (0.3.12)
+
+- **`tests/e2e/file-dialog-mock.spec.ts` 3 케이스 신규** — Playwright Electron 의 `app.evaluate(({ dialog }) => ...)` 로 main 의 `showOpenDialog` / `showSaveDialog` 를 monkey-patch. 그 후 `'menu:action'` IPC 를 직접 emit 해서 메뉴 액션 흐름을 트리거 (네이티브 OS 다이얼로그 우회).
+- **케이스 분류** — (1) `file:open` 모킹 → 탭 열림 검증; (2) `file:save-as` 신규 path → atomic write + HWP 매직 바이트 (`d0 cf 11 e0`) 검증 + 새 path 라 `.bak` 미생성 invariant; (3) `file:save-as` 기존 path overwrite → `.bak` 사이드카 1회 생성 + 사이드카 크기 = 원본 크기.
+- **IME/다국어 입력은 보류** — Playwright 의 `keyboard.insertText` 는 단일 `InputEvent` 라 composition cycle (`compositionstart` → `compositionupdate` → `compositionend`) 을 emit 하지 않음. 합성 CompositionEvent 를 `page.evaluate` 로 디스패치하는 건 우리 핸들러를 가짜 입력에 대해 테스트하는 꼴이라 회귀 가드로 가치가 낮다. 실제 IME 회귀는 manual 검증 + Phase 1 의 `studio-ux-fixes.spec.ts` 의 ⌘A / drag 과 같은 결정적 case 로 갈음.
+
 ### Changed — Phase 3 chunk 59: docId-aware Agent dispatch (0.3.11)
 
 - **`runTools(items, targetPath)` — turn 시작 시점의 target doc 으로 dispatch 핀** — 사용자가 Agent turn 중간에 탭을 전환해도 write tool 은 원본 target doc 으로 라우팅. `useChatStreaming` 의 `turnTargetPathRef` 가 `send` / `sendDirect` 에서 `activeDocPath()` 를 캡처, Agent 루프 안 dispatch 사이트가 ref 를 두 번째 인자로 전달. `legacy null` 은 active viewer fallback (Manual "도구 실행" 버튼 호환).
