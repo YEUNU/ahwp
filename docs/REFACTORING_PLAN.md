@@ -7,7 +7,12 @@ ahwp 0.3.6 시점 codebase 리팩토링 청사진. **목표는 동작 변경 0**
 - ✅ **R1.0** (commit `8fa0a67`, 2026-05-03) — pure utils 추출.
   `parsePageDimensions` + `relocateExcerpt` → `utils/`. 단위 테스트 12개
   추가 (3 → 15). StudioViewer.tsx -72 라인 (9610 → 9538). 회귀 0.
-- ⏳ **R1.1** — `useDocumentLifecycle` 추출. 다음 세션 시작점.
+- ✅ **R1.1** (2026-05-03) — `useDocumentLifecycle` 추출.
+  doc-load effect (~150 라인) → `hooks/useDocumentLifecycle.ts` (312 라인,
+  타입 인터페이스 포함). caller 가 ref + setter 를 opts 로 명시 주입 —
+  closure 캡처 0. StudioViewer.tsx -140 라인 (9538 → 9398). lint /
+  typecheck clean, unit 15/15, studio e2e 11/11 회귀 0.
+- ⏳ **R1.2** — `useUndoHistory` 추출. 다음 세션 시작점.
 
 ---
 

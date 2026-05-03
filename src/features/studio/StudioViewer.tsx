@@ -39,12 +39,11 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react';
 import { Button } from '@/components/ui/button';
-import { ensureRhwpCore, HwpDocument } from '@/lib/rhwp-core';
-import {
-  parsePageDimensions,
-  type PageDims,
-} from '@/features/studio/utils/page-dims';
+// `ensureRhwpCore` 는 R1.1 에서 useDocumentLifecycle 로 이동.
+import { HwpDocument } from '@/lib/rhwp-core';
+import { type PageDims } from '@/features/studio/utils/page-dims';
 import { relocateExcerpt } from '@/features/studio/utils/relocate-excerpt';
+import { useDocumentLifecycle } from '@/features/studio/hooks/useDocumentLifecycle';
 import { primaryModifier } from '@/lib/platform';
 import { SlashMenu } from './SlashMenu';
 import type { CharFormatKey, ViewerHandle } from './types';
@@ -959,168 +958,29 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       alignment: 'left',
     });
 
-    // Effect 1: load doc, render page 0 to learn dimensions, prime cache.
-    useEffect(() => {
-      let cancelled = false;
-      let localDoc: RhwpDoc | null = null;
-
-      // Capture refs for cleanup — react-hooks/exhaustive-deps wants explicit
-      // capture even though these are non-DOM refs (Map / array).
-      const cache = cacheRef.current;
-      const pageRefs = pageRefsRef;
-
-      // Reset everything for a fresh path. Refs reset synchronously
-      // (no React tear-related lint), but the React state setters are
-      // moved into the async IIFE below so we avoid the
-      // react-hooks/set-state-in-effect cascade warning.
-      cache.clear();
-      pageRefs.current = [];
-      dirtyRef.current = false;
-      historyRef.current = { entries: [], index: -1 };
-      findTextCacheRef.current = null;
-
-      (async () => {
-        try {
-          setDirty(false);
-          setCanUndo(false);
-          setCanRedo(false);
-          setError(null);
-          setPhase('mounting');
-          await ensureRhwpCore();
-          if (cancelled) return;
-
-          setPhase('reading');
-          const tRead = performance.now();
-          const buffer = await window.api.file.read(path);
-          if (cancelled) return;
-          console.info(
-            `[studio] read ${(buffer.byteLength / 1024 / 1024).toFixed(2)} MB in ${(performance.now() - tRead).toFixed(0)} ms`,
-          );
-
-          setPhase('rendering');
-          const tParse = performance.now();
-          // We use HwpDocument's render/page-count methods directly. We don't
-          // construct HwpViewer — its constructor consumes the HwpDocument
-          // (`document.__destroy_into_raw()`), zeroing the doc's internal
-          // pointer and breaking subsequent exportHwpx() / insertText() calls.
-          // The doc itself exposes everything we need (pageCount,
-          // renderPageSvg, renderPageHtml).
-          localDoc = new HwpDocument(new Uint8Array(buffer));
-          const total = localDoc.pageCount();
-          const svg0 = localDoc.renderPageSvg(0);
-          const dims = parsePageDimensions(svg0);
-          if (!dims) throw new Error('Could not parse page-0 dimensions');
-          console.info(
-            `[studio] parse ${total} pages, page-0 ${dims.w}×${dims.h} in ${(performance.now() - tParse).toFixed(0)} ms`,
-          );
-
-          if (cancelled) {
-            localDoc.free();
-            return;
-          }
-
-          docRef.current = localDoc;
-          cacheRef.current.set(0, svg0);
-          // Sync initial caret state from the doc.
-          try {
-            caretRef.current = JSON.parse(
-              localDoc.getCaretPosition(),
-            ) as typeof caretRef.current;
-          } catch {
-            /* keep default 0,0,0 */
-          }
-          // Compute initial cursor rect for the visual cursor.
-          try {
-            const c = caretRef.current;
-            setCursorRect(
-              JSON.parse(
-                localDoc.getCursorRect(
-                  c.sectionIndex,
-                  c.paragraphIndex,
-                  c.charOffset,
-                ),
-              ),
-            );
-          } catch {
-            /* keep null */
-          }
-          // Load style list (paragraph styles) for toolbar dropdown +
-          // initial active format from caret's paragraph CharShape.
-          try {
-            const list = JSON.parse(localDoc.getStyleList()) as StyleListItem[];
-            // Only show 본문 styles (type=0) — type=1 is system styles
-            // like 쪽 번호 which aren't user-applicable to body paragraphs.
-            setStyleList(list.filter((s) => s.type === 0));
-          } catch {
-            setStyleList([]);
-          }
-          try {
-            const c = caretRef.current;
-            const cp = JSON.parse(
-              localDoc.getCharPropertiesAt(
-                c.sectionIndex,
-                c.paragraphIndex,
-                c.charOffset,
-              ),
-            ) as CharProps;
-            const at = JSON.parse(
-              localDoc.getStyleAt(c.sectionIndex, c.paragraphIndex),
-            ) as { id: number };
-            let alignment: ParaAlignment = 'left';
-            try {
-              const pp = JSON.parse(
-                localDoc.getParaPropertiesAt(c.sectionIndex, c.paragraphIndex),
-              ) as ParaProps;
-              if (pp.alignment && PARA_ALIGNMENTS.includes(pp.alignment)) {
-                alignment = pp.alignment;
-              }
-            } catch {
-              /* keep default */
-            }
-            setActiveFormat({
-              bold: !!cp.bold,
-              italic: !!cp.italic,
-              underline: !!cp.underline,
-              styleId: at.id,
-              fontSize: typeof cp.fontSize === 'number' ? cp.fontSize : 1000,
-              textColor:
-                typeof cp.textColor === 'string' ? cp.textColor : '#000000',
-              alignment,
-            });
-          } catch {
-            /* keep defaults */
-          }
-          setPageCount(total);
-          setPageDims(dims);
-          setPhase('ready');
-          // Reset history and push baseline snapshot. Inline rather than
-          // calling pushHistory() because that closure references docRef,
-          // which has just been swapped — the safe ordering is to seed
-          // historyRef directly here.
-          try {
-            const baseId = localDoc.saveSnapshot();
-            historyRef.current = { entries: [baseId], index: 0 };
-            setCanUndo(false);
-            setCanRedo(false);
-          } catch (err) {
-            console.warn('[studio] baseline snapshot failed:', err);
-          }
-        } catch (err) {
-          if (!cancelled) {
-            setError(err instanceof Error ? err.message : String(err));
-          }
-          localDoc?.free();
-        }
-      })();
-
-      return () => {
-        cancelled = true;
-        docRef.current?.free();
-        docRef.current = null;
-        cache.clear();
-        pageRefs.current = [];
-      };
-    }, [path]);
+    // Effect 1: load doc, render page 0, prime cache, seed UI state.
+    // 본 effect 의 ~150 라인 본체는 R1.1 refactor 에서 useDocumentLifecycle
+    // 로 분해 (utils 가 아닌 hook — useEffect + 의존 ref/setter 조합).
+    useDocumentLifecycle({
+      path,
+      docRef,
+      caretRef,
+      cacheRef,
+      pageRefsRef,
+      dirtyRef,
+      historyRef,
+      findTextCacheRef,
+      setDirty,
+      setCanUndo,
+      setCanRedo,
+      setError,
+      setPhase,
+      setCursorRect,
+      setStyleList,
+      setActiveFormat,
+      setPageCount,
+      setPageDims,
+    });
 
     // Mount or fetch SVG for a page (uses cache).
     const renderPageInto = useCallback((idx: number): void => {
