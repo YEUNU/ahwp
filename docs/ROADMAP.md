@@ -193,18 +193,24 @@
 
 ## Phase 3 — Agent 모드 (Tool Use) (3~4주)
 
-목표: 사용자가 Agent 모드를 켜면, AI가 hwpctl 도구를 직접 호출해 문서를 자동 수정한다. 모든 변경은 묶음 undo 가능.
+목표: 사용자가 Agent 모드를 켜면, AI가 hwpctl 도구를 직접 호출해 문서를 자동 수정한다. 모든 변경은 묶음 undo 가능. 청사진은 [PHASE3_PLAN.md](PHASE3_PLAN.md).
 
-- [ ] hwpctl 호환 액션을 tool schema로 노출 (insertText, deleteRange, applyParagraphStyle, insertTable, ...)
-- [ ] tool 화이트리스트 정의 (위험한 액션 제외)
-- [ ] OpenAI tool use 스트리밍 처리
-- [ ] Anthropic tool use 처리
-- [ ] Google function calling 처리
-- [ ] Custom (OpenAI-compatible): 모델 능력에 따라 분기 — `tools` 지원 모델만 Agent 활성. self-hosted Ollama 등 baseUrl 기반 엔드포인트 포함
-- [ ] tool 실행 결과 → 다시 모델에 피드백 → 다음 tool 또는 종료
-- [ ] 변경 그룹 undo (한 turn = 한 묶음)
-- [ ] Agent 진행 상황 UI (단계별 표시)
-- [ ] 사용자가 중간에 "중단" 버튼 → 진행중 tool stream 취소
+### Phase 3 MVP — 0.3.0 ✅ 완료 (chunks 37~41)
+
+- [x] **chunk 37** — `shared/ai.ts` tool-use 타입 확장. `ChatStreamEvent` 에 `tool-use` + `done.finishReason`, `ChatRequest.tools/toolChoice`, `ChatMessage.toolUses/toolResult`, `getAhwpToolCatalog()` (chunk 19 의 12 tool 을 JSON Schema 로 노출)
+- [x] **chunk 38** — OpenAI 어댑터 tool calling. `tools` 파라미터 native 변환, stream 의 `delta.tool_calls` index 별 누적, assistant + role='tool' 메시지 변환, `finish_reason` 매핑, fake provider `TOOL:` / `TOOL_DONE:` 모드
+- [x] **chunk 39** — Manual / Agent 모드 토글 + Agent 루프. localStorage 영속, `tool-use` 누적 → dispatch → tool result 메시지 → fireChat 재귀, turn cap 10
+- [x] **chunk 40** — Agent 진행 UI. assistant 메시지 안 inline tool entry row (`🔧 name | args | ⏳/✓/✗`), role='tool' 메시지는 화면에 숨김
+- [x] **chunk 41** — Agent 묶음 undo. `runTools` 가 이미 `beginUndoGroup`/`endUndoGroup` 로 collapse — ⌘Z 1회로 turn 롤백
+
+### Phase 3 잔여 (외부 의존 / 후속)
+
+- [ ] **chunk 42** — Anthropic 어댑터 tool_use — API 키 결정 대기
+- [ ] **chunk 43** — Google function calling — API 키 결정 대기
+- [ ] **chunk 44** — Custom (OpenAI-compatible): 모델별 capability flag (Settings 토글) — 자체 호스팅 Ollama / vLLM / LM Studio baseUrl 기반 엔드포인트 모델만 Agent 활성
+- [ ] **chunk 45** — 추가 본문 편집 tool (`insertTextAtCaret` / `deleteRange` / `applyParagraphStyle`) — 사용자 피드백 받아 추가
+- [ ] **chunk 46** — 추가 표 구조 tool (`insertTable` / `mergeCells` / `splitCells` / `runFormula`) — 사용자 피드백 받아 추가
+- [ ] **chunk 47** — docId-aware 라우팅 — `runTools(docId, items)` 다중 문서 write
 
 검증: "이 표의 합계 행을 추가하고 모든 셀을 가운데 정렬해줘" 한 줄로 처리.
 

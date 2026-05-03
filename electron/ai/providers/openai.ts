@@ -1,4 +1,6 @@
 import type {
+  ChatFinishReason,
+  ChatMessage,
   ChatStreamEvent,
   ChatUsage,
   Provider,
@@ -8,8 +10,15 @@ import { getProviderMeta } from '../../../shared/ai';
 
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 
+interface OpenAIToolCallDelta {
+  index?: number;
+  id?: string;
+  function?: { name?: string; arguments?: string };
+}
+
 interface OpenAIDelta {
   content?: string;
+  tool_calls?: OpenAIToolCallDelta[];
 }
 
 interface OpenAIChoice {
@@ -25,6 +34,40 @@ interface OpenAIUsage {
 interface OpenAIChunk {
   choices?: OpenAIChoice[];
   usage?: OpenAIUsage | null;
+}
+
+/**
+ * OpenAI native message 형식 변환 — Phase 3 tool-use 지원.
+ * - assistant + tool_calls: assistant 메시지에 tool_calls 배열
+ * - tool result: role='tool' + tool_call_id (직전 호출 id)
+ */
+function toOpenAIMessage(m: ChatMessage): Record<string, unknown> {
+  if (m.role === 'tool' && m.toolResult) {
+    return {
+      role: 'tool',
+      tool_call_id: m.toolResult.id,
+      content: m.toolResult.content,
+    };
+  }
+  if (m.role === 'assistant' && m.toolUses && m.toolUses.length > 0) {
+    return {
+      role: 'assistant',
+      content: m.content || null,
+      tool_calls: m.toolUses.map((u) => ({
+        id: u.id,
+        type: 'function',
+        function: { name: u.name, arguments: JSON.stringify(u.args ?? {}) },
+      })),
+    };
+  }
+  return { role: m.role, content: m.content };
+}
+
+function mapFinishReason(s: string | null | undefined): ChatFinishReason {
+  if (s === 'tool_calls' || s === 'function_call') return 'tool_calls';
+  if (s === 'length') return 'length';
+  if (s === 'content_filter') return 'content_filter';
+  return 'stop';
 }
 
 function trimBaseUrl(url: string | undefined): string {
@@ -63,15 +106,32 @@ export const openaiProvider: Provider = {
     opts: ProviderRuntimeOptions,
   ): AsyncIterable<ChatStreamEvent> {
     const url = `${trimBaseUrl(opts.baseUrl)}/chat/completions`;
-    const body = {
+    const body: Record<string, unknown> = {
       model: req.model,
-      messages: req.messages.map((m) => ({ role: m.role, content: m.content })),
+      messages: req.messages.map(toOpenAIMessage),
       stream: true,
       stream_options: { include_usage: true },
       ...(typeof req.temperature === 'number'
         ? { temperature: req.temperature }
         : {}),
     };
+    // Phase 3 — tool calling. ChatTool[] → OpenAI native format.
+    if (req.tools && req.tools.length > 0) {
+      body.tools = req.tools.map((t) => ({
+        type: 'function',
+        function: {
+          name: t.name,
+          description: t.description,
+          parameters: t.inputSchema,
+        },
+      }));
+      const tc = req.toolChoice;
+      if (tc === 'none') body.tool_choice = 'none';
+      else if (tc === 'auto') body.tool_choice = 'auto';
+      else if (tc && typeof tc === 'object' && 'name' in tc) {
+        body.tool_choice = { type: 'function', function: { name: tc.name } };
+      }
+    }
 
     let res: Response;
     try {
@@ -102,11 +162,18 @@ export const openaiProvider: Provider = {
     }
 
     let usage: ChatUsage | undefined;
+    let finishReason: ChatFinishReason = 'stop';
+    // Phase 3 — tool_calls 누적. OpenAI stream은 한 호출의 id/name/arguments
+    // 를 여러 chunk에 나눠 흘려서 보낸다 (특히 arguments JSON). index 별
+    // 슬롯에 append 하다가 finish_reason 받으면 yield.
+    const pendingToolCalls = new Map<
+      number,
+      { id: string; name: string; argsJson: string }
+    >();
     try {
       for await (const data of parseSseStream(res.body)) {
         if (data === '[DONE]') {
-          yield { type: 'done', usage };
-          return;
+          break;
         }
         let chunk: OpenAIChunk;
         try {
@@ -114,9 +181,30 @@ export const openaiProvider: Provider = {
         } catch {
           continue;
         }
-        const delta = chunk.choices?.[0]?.delta?.content;
+        const choice = chunk.choices?.[0];
+        const delta = choice?.delta?.content;
         if (typeof delta === 'string' && delta.length > 0) {
           yield { type: 'text-delta', text: delta };
+        }
+        const tcDeltas = choice?.delta?.tool_calls;
+        if (Array.isArray(tcDeltas)) {
+          for (const tc of tcDeltas) {
+            if (typeof tc.index !== 'number') continue;
+            const slot = pendingToolCalls.get(tc.index) ?? {
+              id: '',
+              name: '',
+              argsJson: '',
+            };
+            if (typeof tc.id === 'string') slot.id = tc.id;
+            if (typeof tc.function?.name === 'string')
+              slot.name = tc.function.name;
+            if (typeof tc.function?.arguments === 'string')
+              slot.argsJson += tc.function.arguments;
+            pendingToolCalls.set(tc.index, slot);
+          }
+        }
+        if (choice?.finish_reason) {
+          finishReason = mapFinishReason(choice.finish_reason);
         }
         if (chunk.usage) {
           usage = {
@@ -125,7 +213,27 @@ export const openaiProvider: Provider = {
           };
         }
       }
-      yield { type: 'done', usage };
+      // Stream 종료 — 누적된 tool_calls 를 한꺼번에 emit. arguments 는
+      // JSON 문자열로 들어오므로 parse 시도 (실패하면 raw 문자열 그대로).
+      const indices = Array.from(pendingToolCalls.keys()).sort((a, b) => a - b);
+      for (const idx of indices) {
+        const slot = pendingToolCalls.get(idx);
+        if (!slot || slot.name.length === 0) continue;
+        let parsedArgs: unknown = {};
+        try {
+          parsedArgs =
+            slot.argsJson.length > 0 ? JSON.parse(slot.argsJson) : {};
+        } catch {
+          parsedArgs = { __rawArguments: slot.argsJson };
+        }
+        yield {
+          type: 'tool-use',
+          id: slot.id || `call_${idx}`,
+          name: slot.name,
+          args: parsedArgs,
+        };
+      }
+      yield { type: 'done', usage, finishReason };
     } catch (err) {
       yield {
         type: 'error',

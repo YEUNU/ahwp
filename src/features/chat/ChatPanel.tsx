@@ -25,7 +25,9 @@ import type {
   ProviderId,
 } from '@shared/ai';
 import {
+  getAhwpToolCatalog,
   parseToolBlock,
+  validateToolCall,
   type AhwpPreflightItem,
   type AhwpToolResult,
 } from '@shared/ai-tools';
@@ -57,9 +59,25 @@ const DEFAULT_MODELS: Record<ChatProviderId, string> = {
 
 const STORAGE_PROVIDER = 'ahwp:chat:provider';
 const STORAGE_MODELS = 'ahwp:chat:models';
+const STORAGE_CHAT_MODE = 'ahwp:chat:mode';
+
+export type ChatMode = 'manual' | 'agent';
+
+/** Phase 3 — Agent 한 turn당 tool 호출 cap. 무한 루프 방어. */
+const AGENT_MAX_TOOLS_PER_TURN = 10;
 
 interface UiMessage extends ChatMessage {
   id: string;
+  /** Phase 3 — tool 호출/결과 inline 표시 (assistant 메시지 안). */
+  toolEntries?: UiToolEntry[];
+}
+
+interface UiToolEntry {
+  id: string;
+  name: string;
+  argsPreview: string;
+  status: 'running' | 'ok' | 'failed';
+  reason?: string;
 }
 
 function newId(): string {
@@ -74,6 +92,16 @@ function loadProvider(): ChatProviderId {
     /* no-op */
   }
   return 'openai';
+}
+
+function loadChatMode(): ChatMode {
+  try {
+    const raw = localStorage.getItem(STORAGE_CHAT_MODE);
+    if (raw === 'agent') return 'agent';
+  } catch {
+    /* no-op */
+  }
+  return 'manual';
 }
 
 function loadModels(): Record<ChatProviderId, string> {
@@ -316,6 +344,22 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [provider, setProvider] = useState<ChatProviderId>(() =>
       loadProvider(),
     );
+    // Phase 3 — Manual / Agent 모드. Manual 은 기존 chunk 18+19 (HTML/
+    // ahwp-tools 텍스트 dispatcher) — 사용자가 "도구 실행" 버튼을 눌러야
+    // 변경 적용. Agent 는 provider native tool-use API 로 자동 루프 +
+    // 묶음 undo. 기본 manual.
+    const [chatMode, setChatMode] = useState<ChatMode>(() => loadChatMode());
+    useEffect(() => {
+      try {
+        localStorage.setItem(STORAGE_CHAT_MODE, chatMode);
+      } catch {
+        /* no-op */
+      }
+    }, [chatMode]);
+    const chatModeRef = useRef(chatMode);
+    useEffect(() => {
+      chatModeRef.current = chatMode;
+    }, [chatMode]);
     const [models, setModels] = useState<Record<ChatProviderId, string>>(() =>
       loadModels(),
     );
@@ -502,6 +546,25 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
      */
     const assistantBufferRef = useRef('');
 
+    // Phase 3 — Agent 한 turn 내 누적 상태. fireChat → onEvent → fireChat
+    // 재귀 호출 사이를 잇는다. chatMode='agent' 진입 시 reset.
+    const agentToolUsesRef = useRef<
+      { id: string; name: string; args: unknown }[]
+    >([]);
+    const agentTurnDepthRef = useRef(0);
+    const agentVerifiedExcerptsRef = useRef<ExcerptAttachment[]>([]);
+    // fireChat 자체가 useCallback이라 onEvent에서 직접 호출하면 stale
+    // closure. ref hop으로 회피.
+    const fireChatRef = useRef<
+      | ((history: UiMessage[], verifiedExcerpts?: ExcerptAttachment[]) => void)
+      | null
+    >(null);
+    // runTools prop을 ref로 mirror — onEvent 안에서 stale 없이 접근.
+    const runToolsPropRef = useRef(runTools);
+    useEffect(() => {
+      runToolsPropRef.current = runTools;
+    }, [runTools]);
+
     /**
      * chunk 31 — 자동 제목 요약. 대화의 메시지 4개 이상 누적 후 1회만
      * 호출. 대화의 user/assistant 메시지를 모아 짧은 system prompt와
@@ -589,6 +652,41 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           );
           return;
         }
+        // Phase 3 — tool-use 이벤트. assistant 메시지 안에 inline tool
+        // 호출 row 표시. dispatch는 done 까지 누적했다가 한 번에 (provider
+        // 가 한 turn 안 여러 호출을 모두 emit 한 후 finishReason).
+        if (evt.type === 'tool-use') {
+          const id = assistantIdRef.current;
+          agentToolUsesRef.current.push({
+            id: evt.id,
+            name: evt.name,
+            args: evt.args,
+          });
+          if (id) {
+            const argsPreview = (() => {
+              try {
+                const json = JSON.stringify(evt.args);
+                return json.length > 80 ? `${json.slice(0, 80)}…` : json;
+              } catch {
+                return '<unserializable>';
+              }
+            })();
+            const entry: UiToolEntry = {
+              id: evt.id,
+              name: evt.name,
+              argsPreview,
+              status: 'running',
+            };
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === id
+                  ? { ...m, toolEntries: [...(m.toolEntries ?? []), entry] }
+                  : m,
+              ),
+            );
+          }
+          return;
+        }
         if (evt.type === 'error') {
           setError(evt.message);
         }
@@ -610,6 +708,143 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             return prev;
           });
         }
+
+        // Phase 3 — Agent 루프. done 시점에 finishReason='tool_calls' 면
+        // 누적된 tool-use 들을 dispatch 하고 결과를 새 메시지로 추가한 뒤
+        // fireChat 재귀. cap 도달 시 강제 종료.
+        const isAgentTurn =
+          chatModeRef.current === 'agent' &&
+          evt.type === 'done' &&
+          (evt.finishReason === 'tool_calls' ||
+            agentToolUsesRef.current.length > 0);
+        if (isAgentTurn && agentToolUsesRef.current.length > 0) {
+          const toolUses = agentToolUsesRef.current;
+          agentToolUsesRef.current = [];
+          const assistantId = assistantIdRef.current;
+          // assistant 메시지 finalize — toolUses 채움.
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId
+                ? {
+                    ...m,
+                    toolUses: toolUses.map((t) => ({
+                      id: t.id,
+                      name: t.name,
+                      args: t.args,
+                    })),
+                  }
+                : m,
+            ),
+          );
+          // dispatch 각 tool — validate + runTools (단일 op group).
+          const dispatcher = runToolsPropRef.current;
+          const toolResults: {
+            id: string;
+            name: string;
+            ok: boolean;
+            reason?: string;
+          }[] = [];
+          for (const tu of toolUses) {
+            const v = validateToolCall({ tool: tu.name, args: tu.args });
+            if (!v.ok) {
+              toolResults.push({
+                id: tu.id,
+                name: tu.name,
+                ok: false,
+                reason: v.reason,
+              });
+              continue;
+            }
+            if (!dispatcher) {
+              toolResults.push({
+                id: tu.id,
+                name: tu.name,
+                ok: false,
+                reason: 'dispatcher-unavailable',
+              });
+              continue;
+            }
+            const out = dispatcher([{ ok: true, call: v.value }]);
+            const first = out[0];
+            if (first && first.ok) {
+              toolResults.push({ id: tu.id, name: tu.name, ok: true });
+            } else {
+              toolResults.push({
+                id: tu.id,
+                name: tu.name,
+                ok: false,
+                reason: first?.ok === false ? first.reason : 'unknown',
+              });
+            }
+          }
+          // UI tool-entry 상태 업데이트.
+          if (assistantId) {
+            setMessages((prev) =>
+              prev.map((m) => {
+                if (m.id !== assistantId || !m.toolEntries) return m;
+                return {
+                  ...m,
+                  toolEntries: m.toolEntries.map((te) => {
+                    const r = toolResults.find((x) => x.id === te.id);
+                    if (!r) return te;
+                    return {
+                      ...te,
+                      status: r.ok ? 'ok' : 'failed',
+                      reason: r.reason,
+                    };
+                  }),
+                };
+              }),
+            );
+          }
+          // 다음 turn 호출 — cap 검사.
+          agentTurnDepthRef.current += 1;
+          if (agentTurnDepthRef.current >= AGENT_MAX_TOOLS_PER_TURN) {
+            setError(
+              `Agent: 한 턴 도구 호출 한계 (${AGENT_MAX_TOOLS_PER_TURN}) 도달.`,
+            );
+            agentTurnDepthRef.current = 0;
+            agentVerifiedExcerptsRef.current = [];
+            assistantBufferRef.current = '';
+            setStreaming(false);
+            handleRef.current = null;
+            assistantIdRef.current = null;
+            return;
+          }
+          // 새 history — 현재 메시지 (위 setMessages가 반영됐다고 가정)
+          // + tool result 메시지들. setMessages prev로 안전하게 접근.
+          setMessages((prev) => {
+            const toolMsgs: UiMessage[] = toolResults.map((r) => ({
+              id: newId(),
+              role: 'tool' as const,
+              content: r.ok ? `ok: ${r.name}` : `error: ${r.reason ?? '?'}`,
+              toolResult: {
+                id: r.id,
+                content: r.ok ? `ok: ${r.name}` : `error: ${r.reason ?? '?'}`,
+                isError: !r.ok,
+              },
+            }));
+            const next = [...prev, ...toolMsgs];
+            // Recurse — setMessages 반환 후 fireChat이 새 assistant 메시지
+            // 를 더 추가. agentToolUsesRef는 이미 비웠으니 다음 stream에서
+            // 재누적.
+            queueMicrotask(() => {
+              fireChatRef.current?.(next, agentVerifiedExcerptsRef.current);
+            });
+            return next;
+          });
+          // streaming flag는 keep on — 다음 fireChat이 다시 set true.
+          // assistantIdRef는 다음 fireChat이 새 id 발급.
+          assistantBufferRef.current = '';
+          handleRef.current = null;
+          assistantIdRef.current = null;
+          return;
+        }
+
+        // 정상 종료 (manual 모드 또는 agent의 finishReason='stop').
+        agentTurnDepthRef.current = 0;
+        agentToolUsesRef.current = [];
+        agentVerifiedExcerptsRef.current = [];
         assistantBufferRef.current = '';
         setStreaming(false);
         handleRef.current = null;
@@ -653,10 +888,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         // read-only — write tools (chunk 19) still target the active doc
         // by construction since the dispatcher hands them to the active
         // viewer's IR.
-        const messages: {
-          role: 'system' | 'user' | 'assistant';
-          content: string;
-        }[] = history.map(({ role, content }) => ({ role, content }));
+        // Phase 3 — Agent 모드는 toolUses / toolResult 도 같이 직렬화.
+        // OpenAI 어댑터가 native (tool_calls / role='tool') 로 변환한다.
+        const messages: ChatMessage[] = history.map((m) => ({
+          role: m.role,
+          content: m.content,
+          toolUses: m.toolUses,
+          toolResult: m.toolResult,
+        }));
 
         const refOutlines = collectReferenceOutlines(
           referencePaths,
@@ -685,6 +924,20 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         }
 
         const request: ChatRequest = { provider, model, messages };
+        // Phase 3 — Agent 모드 활성 시 tool 카탈로그 주입. provider 어댑터
+        // 가 native 형식(OpenAI tool_calls 등)으로 변환.
+        if (chatModeRef.current === 'agent') {
+          request.tools = getAhwpToolCatalog().map((d) => ({
+            name: d.name,
+            description: d.description,
+            inputSchema: d.inputSchema,
+          }));
+          request.toolChoice = 'auto';
+          // Agent 루프 재진입에서도 verifiedExcerpts를 유지하려면 ref 에
+          // stash. 첫 turn 만 진짜 "사용자 의도"라 다음 turn 부터는 보통
+          // [] 로 진행해도 OK 지만 일관성을 위해 같은 칩을 그대로 유지.
+          agentVerifiedExcerptsRef.current = verifiedExcerpts;
+        }
         handleRef.current = window.api.ai.chat(request, { onEvent });
       },
       [
@@ -698,6 +951,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         referencePaths,
       ],
     );
+    // Phase 3 — Agent 루프 재진입을 위한 ref. onEvent → microtask →
+    // fireChatRef.current(...) 로 새 turn 시작.
+    useEffect(() => {
+      fireChatRef.current = fireChat;
+    }, [fireChat]);
 
     // chunk 20 — capture the active viewer selection as a chip. The
     // button is disabled when nothing's selectable, so the null-return
@@ -1244,6 +1502,47 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             +
           </button>
         </div>
+        {/* Phase 3 — Manual / Agent 모드 토글. Manual: 기존 응답-텍스트
+          dispatcher (사용자가 "도구 실행" 버튼 클릭). Agent: provider
+          native tool-use API + 자동 루프 + 묶음 undo. */}
+        <div
+          className="flex items-center gap-1 border-b border-border px-2 py-1 text-[11px]"
+          data-testid="chat-mode-bar"
+        >
+          <span className="text-muted-foreground">모드</span>
+          <button
+            type="button"
+            disabled={streaming}
+            onClick={() => setChatMode('manual')}
+            className={cn(
+              'rounded-md border px-2 py-0.5 transition',
+              chatMode === 'manual'
+                ? 'border-primary bg-primary/10 text-foreground'
+                : 'border-input text-muted-foreground hover:bg-muted',
+              'disabled:opacity-50',
+            )}
+            data-testid="chat-mode-manual"
+            title="Manual: AI 응답에 도구 블록이 있으면 사용자가 버튼 눌러 적용"
+          >
+            Manual
+          </button>
+          <button
+            type="button"
+            disabled={streaming}
+            onClick={() => setChatMode('agent')}
+            className={cn(
+              'rounded-md border px-2 py-0.5 transition',
+              chatMode === 'agent'
+                ? 'border-primary bg-primary/10 text-foreground'
+                : 'border-input text-muted-foreground hover:bg-muted',
+              'disabled:opacity-50',
+            )}
+            data-testid="chat-mode-agent"
+            title="Agent (실험적): AI가 도구를 직접 호출해 자동으로 적용. 한 turn 내 묶음 undo."
+          >
+            Agent <span className="opacity-60">⚡</span>
+          </button>
+        </div>
         {historyOpen ? (
           <div
             className="border-b border-border bg-card px-3 py-2"
@@ -1357,19 +1656,21 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               )}
             </div>
           ) : (
-            messages.map((m) => (
-              <Message
-                key={m.id}
-                message={m}
-                streaming={streaming}
-                onCopy={copyMessage}
-                onRegenerate={regenerate}
-                onDelete={deleteMessage}
-                onApplyHtml={applyHtml}
-                onRunTools={runTools}
-                onUndoApply={undoLastApply}
-              />
-            ))
+            messages
+              .filter((m) => m.role !== 'tool')
+              .map((m) => (
+                <Message
+                  key={m.id}
+                  message={m}
+                  streaming={streaming}
+                  onCopy={copyMessage}
+                  onRegenerate={regenerate}
+                  onDelete={deleteMessage}
+                  onApplyHtml={applyHtml}
+                  onRunTools={runTools}
+                  onUndoApply={undoLastApply}
+                />
+              ))
           )}
           {error ? (
             <div
@@ -1804,6 +2105,40 @@ function Message({
         ) : (
           <MessageContent content={message.content} />
         )}
+        {/* Phase 3 — Agent 모드 tool 호출 inline 표시. running=spinner,
+          ok=✓, failed=✗ + reason 툴팁. */}
+        {!isUser && message.toolEntries && message.toolEntries.length > 0 ? (
+          <div
+            className="mt-2 flex flex-col gap-1 border-t border-border/50 pt-2 text-xs"
+            data-testid="chat-tool-entries"
+          >
+            {message.toolEntries.map((te) => (
+              <div
+                key={te.id}
+                className="flex items-center gap-2 font-mono"
+                data-testid="chat-tool-entry"
+                data-tool-name={te.name}
+                data-tool-status={te.status}
+                title={te.reason ?? ''}
+              >
+                <span className="text-muted-foreground">
+                  {te.status === 'running'
+                    ? '⏳'
+                    : te.status === 'ok'
+                      ? '✓'
+                      : '✗'}
+                </span>
+                <span className="font-semibold">🔧 {te.name}</span>
+                <span className="truncate text-muted-foreground">
+                  {te.argsPreview}
+                </span>
+                {te.status === 'failed' && te.reason ? (
+                  <span className="text-destructive">{te.reason}</span>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
         {htmlPayload ? (
           <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2">
             <Button

@@ -6,6 +6,81 @@
 
 ## [Unreleased]
 
+### Added — Phase 3 MVP: Agent 모드 (chunks 37~41, 0.3.0)
+
+provider native tool-use API 정식 통합. 사용자가 ChatPanel 상단의
+**Agent 모드** 토글을 켜면 AI가 ahwp 도구를 직접 호출 → 자동 적용.
+한 turn 내 모든 변경은 묶음 undo (⌘Z 1회로 일괄 롤백).
+
+#### chunk 37 — `shared/ai.ts` tool-use 타입 확장
+
+- `ChatStreamEvent` 에 `tool-use` 이벤트 + `done.finishReason` 추가.
+- `ChatRequest.tools` (`ChatTool[]` JSON Schema) + `toolChoice`.
+- `ChatMessage.toolUses` / `toolResult` (assistant + role='tool' 메시지).
+- `shared/ai-tools.ts` 에 `getAhwpToolCatalog()` — chunk 19 의 12 tool
+  을 provider 어댑터에 주입 가능한 `AhwpToolDescriptor[]` 로 변환.
+
+#### chunk 38 — OpenAI 어댑터 tool calling
+
+- `tools` 파라미터를 `[{type:'function', function:{name, description,
+parameters}}]` 로 변환. `tool_choice` 도 native 변환.
+- stream 의 `delta.tool_calls` 를 index 별 슬롯에 누적 (id / name /
+  arguments JSON 분할 chunk) → 종료 시 한꺼번에 `tool-use` emit.
+- assistant + tool 메시지 변환 — `tool_calls` 배열, role='tool' +
+  `tool_call_id`.
+- `finish_reason` 매핑: `tool_calls` / `length` / `content_filter` /
+  `stop`.
+- fake provider 에 `TOOL:<name>:<json>` / `TOOL_DONE:` 모드 추가
+  (e2e deterministic).
+
+#### chunk 39 — Manual / Agent 모드 토글 + Agent 루프
+
+- ChatPanel 상단 라디오 — Manual (기본, 기존 chunk 18+19) / Agent
+  (실험적). localStorage `ahwp:chat:mode` 영속.
+- Agent 모드 fireChat: `ChatRequest.tools` 자동 주입, `toolChoice='auto'`.
+- onEvent 에서 `tool-use` 누적 → `done.finishReason='tool_calls'` 면
+  per-tool dispatch (`validateToolCall` + `runTools` props) → tool
+  result 메시지 추가 → fireChat 재귀.
+- 한 turn 호출 cap 10 (`AGENT_MAX_TOOLS_PER_TURN`). 초과 시 강제 종료.
+- `fireChatRef` + `agentToolUsesRef` + `agentTurnDepthRef` 로 루프
+  상태 잇기.
+
+#### chunk 40 — Agent 진행 UI
+
+- assistant 메시지 안 inline tool entry row — `🔧 toolName | argsPreview
+| 상태 (⏳/✓/✗)`. `data-testid="chat-tool-entry"` + `data-tool-name`
+  - `data-tool-status`.
+- role='tool' 메시지는 chat 화면에서 숨김 (tool entry 가 같은 정보를
+  더 좋게 표시).
+- 중단 버튼은 기존 abort 재사용 — Agent 루프 중에도 즉시 stream stop.
+
+#### chunk 41 — Agent 묶음 undo
+
+- `runTools` (chat/tools.ts) 가 이미 `beginUndoGroup` / `endUndoGroup`
+  으로 N op 를 1 entry 로 collapse — Agent dispatch 도 op 당 단일
+  call 이라 자연히 묶음. ⌘Z 한 번으로 turn 전체 롤백.
+- finally 블록 보장 — 중간 op throw 시에도 group 누설 안 함.
+
+#### 검증
+
+- 신규 회귀 가드 spec — `chat-agent.spec.ts` (3 케이스): 모드 토글,
+  tool-use 응답 → entry 표시, unknown tool failed 표시.
+- 전체 e2e: studio 213 + chat 54 = 267 통과 / 1 skipped.
+
+#### Phase 3 잔여 (외부 의존)
+
+| 청크 | 항목                                           | 차단                           |
+| ---- | ---------------------------------------------- | ------------------------------ |
+| 42   | Anthropic 어댑터 tool_use                      | API 키 결정 대기               |
+| 43   | Google function calling                        | API 키 결정 대기               |
+| 44   | Custom (OpenAI-호환) capability flag           | optional, 모델별 hardcode 필요 |
+| 45   | 추가 본문 편집 tool (insertTextAtCaret 등)     | 후속                           |
+| 46   | 추가 표 구조 tool (insertTable, mergeCells 등) | 후속                           |
+| 47   | docId-aware 라우팅 (다중 문서 write)           | 후속                           |
+
+MVP (37~41) 완료 — OpenAI 모델로 검증 가능. 키 결정 후 42/43/44 잠금
+해제, 후속 청크는 사용자 피드백 받아가며 점진 추가.
+
 ### Added — Phase 2 마무리: chunks 31, 32 (0.2.94)
 
 Phase 2 잔여 청크 일괄 마감.

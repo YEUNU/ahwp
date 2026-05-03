@@ -30,6 +30,181 @@ export const AHWP_TOOL_NAMES = [
 
 export type AhwpToolName = (typeof AHWP_TOOL_NAMES)[number];
 
+/**
+ * Phase 3 — provider tool-use API 용 카탈로그. `getAhwpToolCatalog()` 가
+ * 반환하는 `ChatTool[]` 을 `ChatRequest.tools` 에 주입. JSON Schema (draft-07
+ * 호환) 는 각 tool 의 `validateArgs` switch 분기와 lockstep이라 변경 시
+ * 양쪽 같이 갱신.
+ *
+ * description 은 모델이 보는 문자열 — 실제 IR 호출의 의도/제약 (한글 OK).
+ * 현재는 chunk 19의 system prompt에 박힌 가이드와 동일한 톤으로 간결하게.
+ */
+export interface AhwpToolDescriptor {
+  name: AhwpToolName;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}
+
+const TOOL_DESCRIPTORS: AhwpToolDescriptor[] = [
+  {
+    name: 'applyHtml',
+    description:
+      '활성 문서 caret 위치에 HTML 조각을 적용. 정렬·줄간격·들여쓰기·문단간격·글자 서식·표 round-trip 가능. <p>, <table>, 인라인 스타일 일부 인식.',
+    inputSchema: {
+      type: 'object',
+      properties: { html: { type: 'string', maxLength: 65536 } },
+      required: ['html'],
+    },
+  },
+  {
+    name: 'applyAlignment',
+    description: '활성 selection / caret 단락의 정렬을 변경.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        align: { enum: ['left', 'center', 'right', 'justify'] },
+      },
+      required: ['align'],
+    },
+  },
+  {
+    name: 'applyFontSize',
+    description: '활성 selection / caret 의 글자 크기 (pt) 변경. 1~999.',
+    inputSchema: {
+      type: 'object',
+      properties: { pt: { type: 'number', minimum: 1, maximum: 999 } },
+      required: ['pt'],
+    },
+  },
+  {
+    name: 'applyTextColor',
+    description: '활성 selection / caret 의 글자 색을 #RRGGBB hex 로 변경.',
+    inputSchema: {
+      type: 'object',
+      properties: { hex: { type: 'string', pattern: '^#[0-9a-fA-F]{6}$' } },
+      required: ['hex'],
+    },
+  },
+  {
+    name: 'toggleCharFormat',
+    description: '활성 selection / caret 의 진하게/기울임/밑줄 토글.',
+    inputSchema: {
+      type: 'object',
+      properties: { key: { enum: ['bold', 'italic', 'underline'] } },
+      required: ['key'],
+    },
+  },
+  {
+    name: 'insertFootnote',
+    description: '현재 caret 위치에 각주 삽입 + 본문 텍스트 채움.',
+    inputSchema: {
+      type: 'object',
+      properties: { text: { type: 'string', maxLength: 4096 } },
+      required: ['text'],
+    },
+  },
+  {
+    name: 'addBookmark',
+    description: '현재 caret 위치에 책갈피 추가. 이름 256B 이하.',
+    inputSchema: {
+      type: 'object',
+      properties: { name: { type: 'string', minLength: 1, maxLength: 256 } },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'setHeaderFooterText',
+    description:
+      '특정 section 의 머리말/꼬리말 텍스트 설정. applyTo: 0=both / 1=odd / 2=even.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sectionIdx: { type: 'integer', minimum: 0 },
+        isHeader: { type: 'boolean' },
+        applyTo: { type: 'integer', minimum: 0, maximum: 2 },
+        text: { type: 'string', maxLength: 4096 },
+      },
+      required: ['sectionIdx', 'isHeader', 'applyTo', 'text'],
+    },
+  },
+  {
+    name: 'applyPageDef',
+    description:
+      '페이지 설정 (margin/orientation/size 등) 적용. props 는 lib pageDef JSON.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        props: { type: 'object' },
+        sectionIdx: { type: 'integer', minimum: 0 },
+      },
+      required: ['props'],
+    },
+  },
+  {
+    name: 'createNamedStyle',
+    description: '문서 styleList 에 빈 사용자 스타일 셸 추가 (이름만).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', minLength: 1, maxLength: 256 },
+        englishName: { type: 'string' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'createRectShape',
+    description:
+      '현재 caret 위치에 직사각형 도형 컨트롤 삽입. width/height 단위 HWPUNIT (1mm ≈ 28.35 HWPUNIT).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        widthHwpunit: { type: 'number', exclusiveMinimum: 0, maximum: 283500 },
+        heightHwpunit: { type: 'number', exclusiveMinimum: 0, maximum: 283500 },
+        opts: {
+          type: 'object',
+          properties: { treatAsChar: { type: 'boolean' } },
+        },
+      },
+      required: ['widthHwpunit', 'heightHwpunit'],
+    },
+  },
+  {
+    name: 'applyCellStyle',
+    description:
+      '특정 셀에 기 등록된 named style 적용. lib 한계로 셀 배경색 직접 설정 불가 — 스타일 경유 필수 (KNOWN_ISSUES L-006).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sectionIdx: { type: 'integer', minimum: 0 },
+        parentParaIdx: { type: 'integer', minimum: 0 },
+        controlIdx: { type: 'integer', minimum: 0 },
+        cellIdx: { type: 'integer', minimum: 0 },
+        cellParaIdx: { type: 'integer', minimum: 0 },
+        styleId: { type: 'integer', minimum: 0 },
+      },
+      required: [
+        'sectionIdx',
+        'parentParaIdx',
+        'controlIdx',
+        'cellIdx',
+        'cellParaIdx',
+        'styleId',
+      ],
+    },
+  },
+];
+
+/**
+ * Phase 3 진입 — `ChatRequest.tools` 에 주입할 카탈로그를 한 번에
+ * 가져오기. provider 어댑터에서 native 형식으로 변환 (OpenAI:
+ * `{type:'function', function:{...}}`, Anthropic: `{name, description,
+ * input_schema}`, Google: `{functionDeclarations:[...]}`).
+ */
+export function getAhwpToolCatalog(): AhwpToolDescriptor[] {
+  return TOOL_DESCRIPTORS;
+}
+
 /** Per-tool args. Keep narrow — extra unknown keys are tolerated by the
  * validators but the dispatcher only reads the fields it knows. */
 export interface AhwpToolArgs {
