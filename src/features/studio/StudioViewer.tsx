@@ -3167,6 +3167,116 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       const doc = docRef.current;
       const sel = selectionRef.current;
       if (!doc || !sel) return false;
+      // chunk 32 — cell-block selection (anchor.cell ≠ focus.cell, 같은 표
+      // 안)이면 TSV로 직렬화 (cells \t, rows \n) — Excel/Word/한컴
+      // 스프레드시트 호환 paste 형식.
+      const ac = sel.anchor.cell;
+      const fc = sel.focus.cell;
+      const cellBlockActive =
+        ac &&
+        fc &&
+        ac.parentParaIndex === fc.parentParaIndex &&
+        ac.controlIndex === fc.controlIndex &&
+        (ac.cellIndex !== fc.cellIndex ||
+          ac.cellParaIndex !== fc.cellParaIndex);
+      if (cellBlockActive) {
+        try {
+          const isNested = !!ac.path && ac.path.length > 1;
+          const cellsJson = isNested
+            ? doc.getTableCellBboxesByPath(
+                sel.anchor.sectionIndex,
+                ac.parentParaIndex,
+                JSON.stringify(ac.path!.slice(0, -1)),
+              )
+            : doc.getTableCellBboxes(
+                sel.anchor.sectionIndex,
+                ac.parentParaIndex,
+                ac.controlIndex,
+              );
+          const cells = JSON.parse(cellsJson) as {
+            cellIdx: number;
+            row: number;
+            col: number;
+            rowSpan: number;
+            colSpan: number;
+          }[];
+          const anchorCell = cells.find((c) => c.cellIdx === ac.cellIndex);
+          const focusCell = cells.find((c) => c.cellIdx === fc.cellIndex);
+          if (!anchorCell || !focusCell) return false;
+          const minRow = Math.min(anchorCell.row, focusCell.row);
+          const maxRow = Math.max(
+            anchorCell.row + anchorCell.rowSpan - 1,
+            focusCell.row + focusCell.rowSpan - 1,
+          );
+          const minCol = Math.min(anchorCell.col, focusCell.col);
+          const maxCol = Math.max(
+            anchorCell.col + anchorCell.colSpan - 1,
+            focusCell.col + focusCell.colSpan - 1,
+          );
+          const rows: string[] = [];
+          for (let r = minRow; r <= maxRow; r++) {
+            const cols: string[] = [];
+            for (let c = minCol; c <= maxCol; c++) {
+              // Find cell at (r, c) — match by row & col (handle merged cells:
+              // pick the cell whose row-range and col-range cover (r, c)).
+              const target = cells.find(
+                (cell) =>
+                  cell.row <= r &&
+                  cell.row + cell.rowSpan - 1 >= r &&
+                  cell.col <= c &&
+                  cell.col + cell.colSpan - 1 >= c,
+              );
+              if (!target) {
+                cols.push('');
+                continue;
+              }
+              // Build full cell text: paragraphs joined by \n.
+              try {
+                const paraCount = doc.getCellParagraphCount(
+                  sel.anchor.sectionIndex,
+                  ac.parentParaIndex,
+                  ac.controlIndex,
+                  target.cellIdx,
+                );
+                const paras: string[] = [];
+                for (let cp = 0; cp < paraCount; cp++) {
+                  const len = doc.getCellParagraphLength(
+                    sel.anchor.sectionIndex,
+                    ac.parentParaIndex,
+                    ac.controlIndex,
+                    target.cellIdx,
+                    cp,
+                  );
+                  if (len === 0) {
+                    paras.push('');
+                    continue;
+                  }
+                  const txt = doc.getTextInCell(
+                    sel.anchor.sectionIndex,
+                    ac.parentParaIndex,
+                    ac.controlIndex,
+                    target.cellIdx,
+                    cp,
+                    0,
+                    len,
+                  );
+                  paras.push(txt);
+                }
+                cols.push(paras.join('\n'));
+              } catch {
+                cols.push('');
+              }
+            }
+            rows.push(cols.join('\t'));
+          }
+          const tsv = rows.join('\n');
+          await window.api.clipboard.writeText(tsv);
+          return true;
+        } catch (err) {
+          console.warn('[studio] cell-block copy failed:', err);
+          return false;
+        }
+      }
       const r = sortRange(sel.anchor, sel.focus);
       if (r.empty) return false;
       try {
@@ -3533,6 +3643,108 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         }
         const c = caretRef.current;
         const systemText = await window.api.clipboard.readText();
+        // chunk 32 — TSV(셀 \t / 행 \n) cell-block paste. caret이 셀 안 +
+        // clipboard text가 multi-cell (\t 포함 또는 multi-line) 형태면
+        // 시작 셀(caret 위치) 부터 row/col 격자에 분배해서 채움. 표 경계
+        // 밖은 무시.
+        const isMultiCell =
+          (systemText.includes('\t') || systemText.includes('\n')) &&
+          c.cell !== undefined;
+        if (isMultiCell && c.cell) {
+          const cell = c.cell;
+          try {
+            const isNested = !!cell.path && cell.path.length > 1;
+            const cellsJson = isNested
+              ? doc.getTableCellBboxesByPath(
+                  c.sectionIndex,
+                  cell.parentParaIndex,
+                  JSON.stringify(cell.path!.slice(0, -1)),
+                )
+              : doc.getTableCellBboxes(
+                  c.sectionIndex,
+                  cell.parentParaIndex,
+                  cell.controlIndex,
+                );
+            const cells = JSON.parse(cellsJson) as {
+              cellIdx: number;
+              row: number;
+              col: number;
+              rowSpan: number;
+              colSpan: number;
+            }[];
+            const startCell = cells.find((x) => x.cellIdx === cell.cellIndex);
+            if (startCell) {
+              const rows = systemText.split('\n');
+              let didPaste = false;
+              for (let dr = 0; dr < rows.length; dr++) {
+                const cols = rows[dr].split('\t');
+                for (let dc = 0; dc < cols.length; dc++) {
+                  const targetRow = startCell.row + dr;
+                  const targetCol = startCell.col + dc;
+                  const target = cells.find(
+                    (x) =>
+                      x.row <= targetRow &&
+                      x.row + x.rowSpan - 1 >= targetRow &&
+                      x.col <= targetCol &&
+                      x.col + x.colSpan - 1 >= targetCol,
+                  );
+                  if (!target) continue; // out of bounds
+                  // Clear existing text + insert new.
+                  try {
+                    const paraCount = doc.getCellParagraphCount(
+                      c.sectionIndex,
+                      cell.parentParaIndex,
+                      cell.controlIndex,
+                      target.cellIdx,
+                    );
+                    // Delete existing content in cell para 0.
+                    const len0 = doc.getCellParagraphLength(
+                      c.sectionIndex,
+                      cell.parentParaIndex,
+                      cell.controlIndex,
+                      target.cellIdx,
+                      0,
+                    );
+                    if (len0 > 0) {
+                      doc.deleteTextInCell(
+                        c.sectionIndex,
+                        cell.parentParaIndex,
+                        cell.controlIndex,
+                        target.cellIdx,
+                        0,
+                        0,
+                        len0,
+                      );
+                    }
+                    // Drop extra paragraphs beyond para 0 (ignore best-effort).
+                    void paraCount;
+                    if (cols[dc].length > 0) {
+                      doc.insertTextInCell(
+                        c.sectionIndex,
+                        cell.parentParaIndex,
+                        cell.controlIndex,
+                        target.cellIdx,
+                        0,
+                        0,
+                        cols[dc],
+                      );
+                    }
+                    didPaste = true;
+                  } catch {
+                    /* per-cell failure ignored */
+                  }
+                }
+              }
+              if (didPaste) {
+                refreshAfterMutation();
+                return true;
+              }
+            }
+          } catch (err) {
+            console.warn('[studio] cell-block paste failed:', err);
+            // Fall through to text paste.
+          }
+        }
         const hasInternal = doc.hasInternalClipboard();
         const internalText = hasInternal ? doc.getClipboardText() : '';
         const useInternal = hasInternal && systemText === internalText;
@@ -6878,22 +7090,53 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           anchorOff: number,
           focusPara: number,
           focusOff: number,
+          opts?: {
+            anchorCell?: {
+              parentParaIndex: number;
+              controlIndex: number;
+              cellIndex: number;
+              cellParaIndex: number;
+            };
+            focusCell?: {
+              parentParaIndex: number;
+              controlIndex: number;
+              cellIndex: number;
+              cellParaIndex: number;
+            };
+          },
         ): void => {
           const sel = {
             anchor: {
               sectionIndex: 0,
               paragraphIndex: anchorPara,
               charOffset: anchorOff,
+              cell: opts?.anchorCell,
             },
             focus: {
               sectionIndex: 0,
               paragraphIndex: focusPara,
               charOffset: focusOff,
+              cell: opts?.focusCell,
             },
           };
           caretRef.current = sel.focus;
           setSelection(sel);
-          refreshSelectionRects(sel);
+          // chunk 32 — cell-block selection이면 char-level rect 대신
+          // per-cell highlight 표시.
+          const ac = sel.anchor.cell;
+          const fc = sel.focus.cell;
+          if (
+            ac &&
+            fc &&
+            ac.parentParaIndex === fc.parentParaIndex &&
+            ac.controlIndex === fc.controlIndex &&
+            (ac.cellIndex !== fc.cellIndex ||
+              ac.cellParaIndex !== fc.cellParaIndex)
+          ) {
+            refreshCellBlockHighlights(sel);
+          } else {
+            refreshSelectionRects(sel);
+          }
           refreshCursorRect();
           refreshActiveFormat();
         },

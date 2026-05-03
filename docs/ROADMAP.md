@@ -157,7 +157,7 @@
 - [x] 대화 클릭 → Chat 탭으로 로드 ✅ chunk 26
 - [x] 새 대화 시작 / 삭제 ✅ chunk 26 (➕ 버튼 + × 삭제)
 - [x] **대화 이름 변경 (인라인 UI)** ✅ chunk 30: 📚 popover의 conversation 행에 ✎ 버튼 + 더블클릭. input swap → Enter 저장 / Esc 취소 / blur 자동 커밋. 낙관적 갱신 + IPC 실패 시 SQLite 재조회로 롤백
-- [ ] **자동 제목 요약** — chunk 31 예정. 현재 첫 user 메시지 60자. 5턴 이상 대화에서 AI 호출로 짧은 제목 생성. (deferred — AI call 복잡)
+- [x] **자동 제목 요약** ✅ chunk 31 (0.2.94): 4 메시지 (2 user + 2 assistant turns) 후 1회 한정 background ai chat → 한국어 5단어 이내 명사구 → `chatHistory.rename`. `autoTitledConvIdsRef`로 conv id 단위 dedup. 실패는 모두 silent
 
 ### 2-E. Manual 편집 흐름
 
@@ -175,7 +175,7 @@
 
 이미 12개 청크가 완료됨. 남은 라이브러리 활용 후보:
 
-- [ ] **셀 selection 모델 v4 (chunk 32)** — 드래그 셀 selection / 셀 레벨 paste / merge·split 우클릭 통합. `mergeTableCells` / `splitTableCell` IR은 이미 노출 (chunk 9). UX 통합만 남음. (deferred — 대형 작업)
+- [x] **셀 selection 모델 v4 (chunk 32)** ✅ (0.2.94): cell-block selection 시 `copySelection` TSV (cells `\t`/rows `\n`) 작성, `pasteAtCaret`이 cell caret + multi-cell TSV → row/col 격자 분배. 병합/중첩 셀 처리. drag cell selection은 Phase A (0.2.67~) / merge·split 우클릭은 chunk 5+9에서 이미 통합
 - [ ] **도형 라인 / 곡선 / 화살표 / 그룹 (chunk 33)** — `groupShapes` 외 8개. **rhwp 0.8 대기** — 현재 `createShapeControl` JSON에 shape-type 미노출
 - [x] **표 수식 평가 (chunk 34)** ✅ — `evaluateTableFormula` IR + 셀 우클릭 메뉴 "수식 다시 계산…" + `TableFormulaDialog` (수식 입력 → 미리 보기 → 셀에 적용). 라이브러리 한계로 `getCellFormula`는 없음 (per-cell live recalc 불가능)
 - [x] **머리말/꼬리말 다중 라인 + 페이지 템플릿 (chunk 35)** ✅ — `HeaderFooterDialog`의 Input → 4행 textarea, applyTo 토글(양쪽/홀수/짝수) 추가. `setHeaderFooterText` 내부에서 `\n` 감지 시 `splitParagraphInHeaderFooter`로 라인별 단락 분리

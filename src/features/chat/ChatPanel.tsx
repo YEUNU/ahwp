@@ -353,6 +353,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     useEffect(() => {
       conversationIdRef.current = conversationId;
     }, [conversationId]);
+    // chunk 31 — 자동 제목 요약. assistant turn 종료 시 messages.length가
+    // 4 이상이면 1회 한정 background AI 호출로 짧은 한국어 제목 생성 →
+    // chatHistory.rename. 이미 처리된 conversationId는 set에 등록해
+    // 같은 대화 내 중복 호출 방지. 실패는 silent — 첫 user 메시지 60자
+    // truncated title이 그대로 유지됨.
+    const autoTitledConvIdsRef = useRef<Set<number>>(new Set());
     // chunk 26 — history list for the popover. Loaded on demand when
     // the user opens the dropdown; refreshed after rename/delete.
     const [historyList, setHistoryList] = useState<
@@ -373,6 +379,17 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const assistantIdRef = useRef<string | null>(null);
 
     const model = models[provider];
+
+    // chunk 31 — provider/model을 onEvent에서 stale-closure 없이 읽기 위해
+    // ref로 mirror. setProvider/setModels가 트리거되는 useEffect에서 동기화.
+    const providerRef = useRef(provider);
+    const modelRef = useRef(model);
+    useEffect(() => {
+      providerRef.current = provider;
+    }, [provider]);
+    useEffect(() => {
+      modelRef.current = model;
+    }, [model]);
 
     useEffect(() => {
       try {
@@ -485,41 +502,121 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
      */
     const assistantBufferRef = useRef('');
 
-    const onEvent = useCallback((evt: ChatStreamEvent) => {
-      if (evt.type === 'text-delta') {
-        // Capture the id eagerly: the setMessages updater may run later in a
-        // React batch, by which point a terminal event might have cleared
-        // assistantIdRef. Reading it inside the updater drops late deltas.
-        const id = assistantIdRef.current;
-        if (!id) return;
-        assistantBufferRef.current += evt.text;
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === id ? { ...m, content: m.content + evt.text } : m,
-          ),
-        );
-        return;
-      }
-      if (evt.type === 'error') {
-        setError(evt.message);
-      }
-      // chunk 26 — persist the assistant turn (best-effort). Errors here
-      // are logged but don't surface to the user; a chat history blip
-      // shouldn't block the conversation flow.
-      const convId = conversationIdRef.current;
-      const buf = assistantBufferRef.current;
-      if (convId !== null && buf.length > 0) {
-        void window.api.chatHistory
-          .append(convId, 'assistant', buf)
-          .catch((err: unknown) =>
-            console.warn('[chat] history.append assistant failed', err),
+    /**
+     * chunk 31 — 자동 제목 요약. 대화의 메시지 4개 이상 누적 후 1회만
+     * 호출. 대화의 user/assistant 메시지를 모아 짧은 system prompt와
+     * 함께 보내고 응답 텍스트 첫 줄을 30자 이내 trim → renameConversation.
+     *
+     * - 같은 conversationId에 대해 한 번만 (autoTitledConvIdsRef로 dedup).
+     * - 모든 실패는 silent — 첫 user 메시지 60자 truncated title이 유지.
+     * - 사용자 진행 중인 chat과 별도 IPC 호출 (window.api.ai.chat) — abort
+     *   handle은 잡지 않음 (5단어 응답이라 곧 끝남).
+     */
+    const refreshHistoryRef = useRef<(() => Promise<void>) | null>(null);
+    const maybeAutoTitle = useCallback(
+      (convId: number, finalMessages: UiMessage[]): void => {
+        if (autoTitledConvIdsRef.current.has(convId)) return;
+        if (finalMessages.length < 4) return;
+        autoTitledConvIdsRef.current.add(convId);
+        const provNow = providerRef.current;
+        const modelNow = modelRef.current;
+        if (!modelNow || modelNow.length === 0) return;
+        const transcript = finalMessages
+          .map(
+            (m) =>
+              `${m.role === 'user' ? '사용자' : '어시스턴트'}: ${m.content}`,
+          )
+          .join('\n')
+          .slice(0, 4000);
+        const req: ChatRequest = {
+          provider: provNow,
+          model: modelNow,
+          temperature: 0.2,
+          messages: [
+            {
+              role: 'system',
+              content:
+                '다음은 사용자와 AI의 대화 일부야. 이 대화의 핵심 주제를 한국어 5단어 이내의 명사구로 요약해줘. 따옴표나 마침표 없이 본문만 출력. 예: "표 합계 행 추가", "이미지 정렬 문의".',
+            },
+            { role: 'user', content: transcript },
+          ],
+        };
+        let buf = '';
+        try {
+          window.api.ai.chat(req, {
+            onEvent: (evt) => {
+              if (evt.type === 'text-delta') {
+                buf += evt.text;
+                return;
+              }
+              if (evt.type === 'done') {
+                const title = buf
+                  .split('\n')[0]
+                  .replace(/^["'`「『\s]+|["'`」』.\s]+$/g, '')
+                  .slice(0, 30);
+                if (title.length === 0) return;
+                void window.api.chatHistory
+                  .rename(convId, title)
+                  .then(() => refreshHistoryRef.current?.())
+                  .catch((err: unknown) =>
+                    console.warn('[chat] auto-title rename failed', err),
+                  );
+              } else if (evt.type === 'error') {
+                console.warn('[chat] auto-title stream error', evt.message);
+              }
+            },
+          });
+        } catch (err) {
+          console.warn('[chat] auto-title chat failed', err);
+        }
+      },
+      [],
+    );
+
+    const onEvent = useCallback(
+      (evt: ChatStreamEvent) => {
+        if (evt.type === 'text-delta') {
+          // Capture the id eagerly: the setMessages updater may run later in a
+          // React batch, by which point a terminal event might have cleared
+          // assistantIdRef. Reading it inside the updater drops late deltas.
+          const id = assistantIdRef.current;
+          if (!id) return;
+          assistantBufferRef.current += evt.text;
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === id ? { ...m, content: m.content + evt.text } : m,
+            ),
           );
-      }
-      assistantBufferRef.current = '';
-      setStreaming(false);
-      handleRef.current = null;
-      assistantIdRef.current = null;
-    }, []);
+          return;
+        }
+        if (evt.type === 'error') {
+          setError(evt.message);
+        }
+        // chunk 26 — persist the assistant turn (best-effort). Errors here
+        // are logged but don't surface to the user; a chat history blip
+        // shouldn't block the conversation flow.
+        const convId = conversationIdRef.current;
+        const buf = assistantBufferRef.current;
+        if (convId !== null && buf.length > 0) {
+          void window.api.chatHistory
+            .append(convId, 'assistant', buf)
+            .catch((err: unknown) =>
+              console.warn('[chat] history.append assistant failed', err),
+            );
+          // chunk 31 — auto-title trigger. setMessages updater로 prev (현재
+          // assistant turn 이 들어간 messages) 길이를 보고 4 이상이면 1회.
+          setMessages((prev) => {
+            maybeAutoTitle(convId, prev);
+            return prev;
+          });
+        }
+        assistantBufferRef.current = '';
+        setStreaming(false);
+        handleRef.current = null;
+        assistantIdRef.current = null;
+      },
+      [maybeAutoTitle],
+    );
 
     /**
      * Append a fresh assistant bubble to `history` and start streaming the
@@ -728,6 +825,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         console.warn('[chat] history.list failed', err);
       }
     }, [activeDocPath]);
+    useEffect(() => {
+      refreshHistoryRef.current = refreshHistory;
+    }, [refreshHistory]);
 
     const newConversation = useCallback(() => {
       if (streaming) return;
@@ -738,6 +838,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       setExcerpts([]);
       setExcerptError(null);
       setHistoryOpen(false);
+      // chunk 31 — 새 대화 시작 시 auto-title 마킹은 conversation id 단위
+      // 라 따로 clear할 필요 없음 (id가 새로 발급될 때 자연히 미마킹 상태).
     }, [streaming]);
 
     const loadConversation = useCallback(async (id: number) => {

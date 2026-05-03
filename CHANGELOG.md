@@ -6,6 +6,38 @@
 
 ## [Unreleased]
 
+### Added — Phase 2 마무리: chunks 31, 32 (0.2.94)
+
+Phase 2 잔여 청크 일괄 마감.
+
+#### chunk 31 — 자동 제목 요약
+
+- 4 메시지 (= 2 user + 2 assistant turns) 누적 후 1회 한정으로
+  background ai chat 호출 → 한국어 5단어 이내 짧은 제목 생성 →
+  `chatHistory.rename`.
+- `autoTitledConvIdsRef`로 conv id 단위 dedup. failure 모두 silent
+  (원래 60자 truncated title 유지).
+- 회귀 가드 spec — `chat-auto-title.spec.ts` (2 케이스).
+
+#### chunk 32 — 셀 selection v4 (cell-block copy/paste)
+
+- `copySelection`이 cell-block selection (anchor.cell ≠ focus.cell
+  같은 표) 감지 시 TSV 포맷 (cells `\t` / rows `\n`)으로 clipboard
+  작성. 병합 셀, 중첩 표 모두 처리.
+- `pasteAtCaret`이 caret이 셀 안 + clipboard text가 multi-cell
+  형태면 시작 셀부터 row/col 격자에 분배. 표 경계 밖은 무시.
+- merge·split 우클릭 통합은 chunk 9 + cell-context-menu (chunk 5)
+  에서 이미 통합. drag cell selection은 Phase A (0.2.67~) 완료.
+- 회귀 가드 spec — `studio-cell-block-clipboard.spec.ts` (2 케이스).
+
+#### Phase 2 종료 정리
+
+- 잔여 (외부 의존):
+  - chunk 33 (도형 라인/곡선/그룹) — `@rhwp/core` 0.8 대기
+  - chunk 36 (스타일 char/para shape 캡처) — `@rhwp/core` 0.8 대기
+  - Anthropic / Google 어댑터 — API 키 결정 대기
+- e2e 통과: studio 213 + chat 51 = 264 / 1 skipped.
+
 ### Changed — 텍스트 caret hard-blink 애니메이션 (0.2.93)
 
 사용자 요청 "커서 깜빡거리는거 넣어줘". 기존 `animate-pulse` 는
