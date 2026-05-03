@@ -1321,35 +1321,35 @@ function Message({
     if (!patchesMatch) return null;
     return parsePatchBlock(patchesMatch[1].trim());
   }, [patchesMatch]);
-  // Per-patch status (parallel to patchesParsed.items). Initialized
-  // lazily from patchCount on first read — `useState` initializer runs
-  // only on mount, so re-renders don't re-trigger and no setState-in-
-  // effect is needed.
+  // Per-patch status. The patches block becomes visible only after
+  // streaming completes (patchesMatch gates on !streaming), so on first
+  // mount patchCount may be 0 → patchStatuses=[]. Once streaming flips,
+  // patchCount becomes N. We compute *displayed* statuses by aligning
+  // length with patchCount each render — falling back to 'pending'
+  // for missing slots — so the UI is always coherent without a
+  // setState-in-effect cascade.
   const patchCount =
     patchesParsed && patchesParsed.ok ? patchesParsed.items.length : 0;
-  const [patchStatuses, setPatchStatuses] = useState<PatchStatus[]>(() =>
-    patchCount > 0 ? Array<PatchStatus>(patchCount).fill('pending') : [],
+  const [patchStatusOverrides, setPatchStatusOverrides] = useState<
+    Record<number, PatchStatus>
+  >({});
+  const patchStatuses: PatchStatus[] = Array.from(
+    { length: patchCount },
+    (_, i) => patchStatusOverrides[i] ?? 'pending',
   );
+  const setPatchStatusAt = (idx: number, status: PatchStatus): void => {
+    setPatchStatusOverrides((prev) => ({ ...prev, [idx]: status }));
+  };
 
   const handlePatchAcceptIdx = (idx: number): void => {
     if (!patchesParsed?.ok || !onApplyPatches) return;
     const item = patchesParsed.items[idx];
     if (!item.ok) return;
     const results = onApplyPatches([item.patch]);
-    if (results[0]) {
-      setPatchStatuses((prev) => {
-        const next = [...prev];
-        next[idx] = 'accepted';
-        return next;
-      });
-    }
+    if (results[0]) setPatchStatusAt(idx, 'accepted');
   };
   const handlePatchRejectIdx = (idx: number): void => {
-    setPatchStatuses((prev) => {
-      const next = [...prev];
-      next[idx] = 'rejected';
-      return next;
-    });
+    setPatchStatusAt(idx, 'rejected');
   };
   const handlePatchAcceptAll = (): void => {
     if (!patchesParsed?.ok || !onApplyPatches) return;
@@ -1361,8 +1361,8 @@ function Message({
     });
     if (pendingItems.length === 0) return;
     const results = onApplyPatches(pendingItems.map((x) => x.patch));
-    setPatchStatuses((prev) => {
-      const next = [...prev];
+    setPatchStatusOverrides((prev) => {
+      const next = { ...prev };
       pendingItems.forEach((it, k) => {
         next[it.idx] = results[k] ? 'accepted' : 'rejected';
       });

@@ -125,21 +125,27 @@ test.describe('round 1 UX — chunks 50/51/52/53/54/55', () => {
       await window.api.file.saveDraft({ path: p, bytes });
     }, target);
 
-    // hasDraft now true; on-disk sibling exists.
+    // hasDraft now true. (실제 저장 위치는 main 의 os.tmpdir()/ahwp-drafts/
+    // <sha1(origPath)>.ahwp-draft — sibling 이 아니라 hashed central
+    // store. existsSync 검증은 IPC 응답으로 갈음.)
     expect(
       await page.evaluate(
         async (p) => await window.api.file.hasDraft(p),
         target,
       ),
     ).toBe(true);
-    expect(existsSync(`${target}.ahwp-draft`)).toBe(true);
 
-    // Clear and verify.
+    // Clear and verify via IPC.
     await page.evaluate(
       async (p) => await window.api.file.clearDraft(p),
       target,
     );
-    expect(existsSync(`${target}.ahwp-draft`)).toBe(false);
+    expect(
+      await page.evaluate(
+        async (p) => await window.api.file.hasDraft(p),
+        target,
+      ),
+    ).toBe(false);
   });
 
   test('chunk 53 — ⌘/ opens the shortcuts cheatsheet', async () => {
