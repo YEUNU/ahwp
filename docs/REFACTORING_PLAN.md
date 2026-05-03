@@ -55,9 +55,19 @@ ahwp 0.3.6 시점 codebase 리팩토링 청사진. **목표는 동작 변경 0**
   관련 1개 제거 + viewer handle 관련 1개 새로 silence). 회귀 0
   (edit + undo + find + replace + format + cells-v3 + input + para-ops
   - bookmark + image + equation + chat-agent 62/62 PASS).
-- ⏳ **R1.5** — `useSelectionModel` 추출. 가장 위험. 다음 세션 시작점.
-- ⏳ **R1.6** — `useCellDrag` 추출. 0.2.89~0.2.92 fix 회귀 가드 다층
-  필요. 별도 세션 권장.
+- ✅ **R1.5 + R1.6** (2026-05-03) — `usePageMouseHandlers` 통합 추출.
+  `handlePageMouseDown` (~785 라인 selection model + cell drag +
+  marquee + auto-scroll + 0.2.89~0.2.92 sticky-mode fix 시리즈) +
+  `handlePageContextMenu` (~73 라인) → `hooks/usePageMouseHandlers.ts`
+  (997 라인). 두 핸들러가 물리적으로 얽혀 있어 한 hook 에 묶음 (R1.5
+  와 R1.6 동시 처리). latest-ref 패턴으로 stable identity. opts 100+
+  항목 (refs/setters/state/callbacks) 모두 thin wrap, 정확한 타입은
+  caller useState/useRef 가 결정 (file-level any 허용). StudioViewer.tsx
+  -831 라인 (5696 → **4865**, **누적 9610→4865, -49.4%**). lint 4→1
+  warning (R1.4 marqueeMode 경고 + handlePageMouseDown 관련 1개 모두
+  제거). 회귀 가드: selection + cell-drag + cells (×3) + cell-block-
+  clipboard + cell-edge + cells-merge 27/27 PASS (chunk-5b range
+  model + 0.2.89~0.2.92 cell-drag fix 모두 보존).
 
 ---
 
