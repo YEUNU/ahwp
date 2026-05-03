@@ -75,6 +75,25 @@ import { WelcomePane } from './WelcomePane';
 
 // `TabState` / `makeTabKey` 는 R3 (2차) 에서 useTabManagement 로 이동.
 
+/**
+ * chunk 66 — true when focus is inside an editable element (chat
+ * input / rename input / dialog text fields). Used to suppress global
+ * ⌘W / ⌘K / ⌘/ / ⌘⇧F / ⌘⇧O / F6 / Alt+L|T|P bindings so they don't
+ * hijack keystrokes the user actually wants delivered to the field
+ * (e.g. ⌘W = "delete word backward" in macOS text inputs).
+ *
+ * StudioViewer doesn't use contentEditable — it's a custom viewer
+ * with synthesized caret + IME composition handlers. So a plain
+ * INPUT/TEXTAREA check is sufficient; we add `isContentEditable` as
+ * defense in depth.
+ */
+function isEditableFocused(): boolean {
+  const el = document.activeElement as HTMLElement | null;
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable;
+}
+
 export default function AppShell() {
   const [pingResult, setPingResult] = useState<PingResponse | null>(null);
   const [pingError, setPingError] = useState<string | null>(null);
@@ -345,8 +364,20 @@ export default function AppShell() {
   // user's focus is outside the scroll container (e.g. on a tab button).
   // ⌘K / Ctrl+K toggles the command palette (chunk 50) — same reason
   // it lives at document level: we want to open it from anywhere.
+  //
+  // chunk 66 — guard against editable focus. The chat input / rename
+  // inputs / dialog form fields all sit inside the same window event
+  // bubble, and a global ⌘W there used to close the active tab while
+  // the user was typing (browser native ⌘W = close tab). Same for
+  // ⌘K, ⌘/, ⌘⇧F, ⌘⇧O, F6, Alt+L/T/P. Studio shortcuts (⌘B/I/U/A/F/H/Z)
+  // already short-circuit inside StudioViewer's own onKeyDown — those
+  // never bubbled to window. The viewer textarea/input is **not**
+  // guarded out of bounds here because the user always wants ⌘W to
+  // close the tab from the toolbar / page background; only editable
+  // focus zones are excluded.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
+      if (isEditableFocused()) return;
       if (primaryModifier(e) && !e.altKey && !e.shiftKey) {
         if (e.key.toLowerCase() === 'w') {
           if (activeIndex >= 0) {

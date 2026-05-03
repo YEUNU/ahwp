@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+### Fixed — UX 보강 chunks 65~67 (0.3.17)
+
+- **chunk 65 — 모델 선택 selector 화** — 기존 `<input list>` + `<datalist>` (자유 입력 + 자동완성) → 순수 `<select>` dropdown. provider `/v1/models` 가 노출하지 않는 모델을 직접 입력하는 일이 드물고 오타 위험만 컸다. 현재 `model` 이 fetched 목록에 없으면 "(저장됨)" sticky 옵션으로 보존 — provider 전환 / fetch 실패 시에도 마지막 선택을 잃지 않음. 빈 목록 + 저장 모델 없음 → "모델 없음" disabled placeholder.
+- **chunk 66 — 단축키 하이재킹 fix** — AppShell 의 window-level keydown 리스너가 input/textarea/contentEditable focus 일 때도 작동해서 ⌘W (탭 닫기), ⌘K (팔레트), ⌘/ (Settings), ⌘⇧F (검색), ⌘⇧O (아웃라인), F6/Alt+L/T/P 가 사용자 입력을 가로챘다. `isEditableFocused()` 헬퍼로 editable focus 일 때 short-circuit. macOS 의 ⌘W = "단어 단위 삭제" 같은 native input 단축키가 정상 전달됨. Studio shortcuts 는 자체 onKeyDown 으로 이미 분리되어 있어 영향 없음.
+- **chunk 67 — 채팅 입력칸 auto-grow + scrollbar** — `rows={2}` 고정 높이라 긴 프롬프트 작성 시 textarea 안에서만 스크롤됐다. `useLayoutEffect` 로 `scrollHeight` 추적해서 max-h-48 (≈ 8줄) 까지 자동 확장 + `overflow-y-auto` 로 ceiling 도달 시 외부 스크롤바 자연스럽게 노출.
+
 ### Tests — Phase 5 chunk 64: 큰 파일 성능 smoke (0.3.16)
 
 - **`tests/e2e/studio-perf.spec.ts` 3 케이스** — `examples/` 의 50p+ doc 으로 (1) 초기 로드 (file:read → @rhwp/core parse → `__studioDebug` ready), (2) `Cmd+End` 점프 + 스크롤, (3) 10× PageDown 시퀀스 의 wall-clock 측정 + telemetry print + 느슨한 ceiling assertion (15s / 10s / 15s).

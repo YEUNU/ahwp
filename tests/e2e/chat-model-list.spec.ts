@@ -119,15 +119,20 @@ test.describe('chat — chunk 48 model list (cache + datalist)', () => {
       timeout: 5000,
     });
 
-    // The datalist exists and carries the fake catalog as <option> elements.
+    // chunk 65 — model is a <select>, not <input list=...> + <datalist>.
+    // Inspect the option values directly.
     const optionValues = await page.evaluate(() => {
-      const dl = document.querySelector(
-        '[data-testid="chat-model-datalist"]',
-      ) as HTMLDataListElement | null;
-      if (!dl) return [];
-      return Array.from(dl.querySelectorAll('option')).map((o) => o.value);
+      const sel = document.querySelector(
+        '[data-testid="chat-model-input"]',
+      ) as HTMLSelectElement | null;
+      if (!sel) return [];
+      return Array.from(sel.querySelectorAll('option')).map((o) => o.value);
     });
-    expect(optionValues).toEqual(['fake/echo-1', 'fake/echo-2', 'fake/slow-1']);
+    // Fetched list is sorted/passed through. Saved model may also appear
+    // as a "(저장됨)" sticky entry if the default differs from the catalog.
+    expect(optionValues).toEqual(
+      expect.arrayContaining(['fake/echo-1', 'fake/echo-2', 'fake/slow-1']),
+    );
   });
 
   test('ChatPanel refresh button switches to ⚠ when listModels fails', async () => {
@@ -147,16 +152,18 @@ test.describe('chat — chunk 48 model list (cache + datalist)', () => {
     const title = await btn.getAttribute('title');
     expect(title).toMatch(/확인 불가|오래된 캐시/);
 
-    // The datalist is empty (no <option>) — free-text input still works
-    // because the input itself isn't disabled.
+    // chunk 65 — fetch failed but the saved (default) model still
+    // appears as a sticky "(저장됨)" option, so the select stays
+    // populated with exactly 1 entry. Not disabled — the user can
+    // refresh manually or pick another later.
     const optionCount = await page.evaluate(() => {
-      const dl = document.querySelector(
-        '[data-testid="chat-model-datalist"]',
-      ) as HTMLDataListElement | null;
-      if (!dl) return 0;
-      return dl.querySelectorAll('option').length;
+      const sel = document.querySelector(
+        '[data-testid="chat-model-input"]',
+      ) as HTMLSelectElement | null;
+      if (!sel) return 0;
+      return sel.querySelectorAll('option').length;
     });
-    expect(optionCount).toBe(0);
+    expect(optionCount).toBeGreaterThanOrEqual(1);
     await expect(page.getByTestId('chat-model-input')).not.toBeDisabled();
   });
 });

@@ -12,6 +12,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -355,8 +356,25 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const handleRef = useRef<AiChatHandle | null>(null);
     const scrollerRef = useRef<HTMLDivElement>(null);
     const assistantIdRef = useRef<string | null>(null);
+    // chunk 67 — auto-grow textarea. Height tracks content up to a
+    // ceiling, then overflow-y kicks in. Without this the user typing
+    // a long prompt either gets a 2-row letterbox (rows={2}) with
+    // hidden content or — worse — a fixed huge area cropping the
+    // chat scroller above.
+    const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
     const model = models[provider];
+
+    // chunk 67 — auto-grow textarea on input change. Height = max
+    // (scrollHeight, baseline). Tailwind's max-h-48 is the upper
+    // bound; once content exceeds it the browser shows a scrollbar
+    // because of overflow-y-auto.
+    useLayoutEffect(() => {
+      const ta = inputRef.current;
+      if (!ta) return;
+      ta.style.height = 'auto';
+      ta.style.height = `${ta.scrollHeight}px`;
+    }, [input]);
 
     // chunk 31 — provider/model을 onEvent에서 stale-closure 없이 읽기 위해
     // ref로 mirror. setProvider/setModels가 트리거되는 useEffect에서 동기화.
@@ -619,33 +637,45 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               </option>
             ))}
           </select>
-          <input
-            value={model}
-            onChange={(e) => onModelChange(e.target.value)}
-            className="flex-1 rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
-            data-testid="chat-model-input"
-            aria-label="Model"
-            disabled={streaming}
-            spellCheck={false}
-            list={`chat-model-list-${provider}`}
-          />
-          {/* chunk 48 — datalist autocomplete. Free-text input still wins
-            (user can type any model id), but a list of fetched ids
-            appears as suggestions on focus. Empty list (error / idle)
-            silently degrades to plain free-text. */}
+          {/* chunk 65 — model selector. 기존 free-text input + datalist
+            는 사용자 자유 입력을 허용했지만, provider 가 노출하지 않는
+            모델 id 를 직접 입력하는 경우는 드물고 오타 위험만 컸다.
+            이제 fetched 목록의 dropdown 만 사용. 현재 model 이 목록에
+            없으면 "(저장됨)" 마커와 함께 sticky 옵션으로 보존 — provider
+            전환 / fetch 실패 시에도 마지막 선택을 잃지 않는다. */}
           {(() => {
             const state = modelList[provider];
-            const list =
+            const fetched =
               state.kind === 'ok' || state.kind === 'stale' ? state.models : [];
+            const inFetched = fetched.includes(model);
+            const empty = fetched.length === 0 && !model;
             return (
-              <datalist
-                id={`chat-model-list-${provider}`}
-                data-testid="chat-model-datalist"
+              <select
+                value={model}
+                onChange={(e) => onModelChange(e.target.value)}
+                className="flex-1 truncate rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+                data-testid="chat-model-input"
+                aria-label="Model"
+                disabled={streaming || state.kind === 'loading' || empty}
               >
-                {list.map((id) => (
-                  <option key={id} value={id} />
+                {empty ? (
+                  <option value="">
+                    {state.kind === 'loading'
+                      ? '모델 목록 가져오는 중…'
+                      : state.kind === 'error'
+                        ? '모델 목록 확인 불가 — 새로고침'
+                        : '모델 없음'}
+                  </option>
+                ) : null}
+                {!inFetched && model ? (
+                  <option value={model}>{model} (저장됨)</option>
+                ) : null}
+                {fetched.map((id) => (
+                  <option key={id} value={id}>
+                    {id}
+                  </option>
                 ))}
-              </datalist>
+              </select>
             );
           })()}
           {/* chunk 48 — refresh button + status badge. Click forces a
@@ -1049,6 +1079,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           ) : null}
           <div className="flex items-end gap-2">
             <textarea
+              ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKeyDown}
@@ -1056,6 +1087,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               rows={2}
               className={cn(
                 'flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm',
+                // chunk 67 — max-h ≈ 8 rows worth of text-sm leading.
+                // overflow-y-auto so the scrollbar shows once the
+                // auto-grow useLayoutEffect hits the ceiling.
+                'max-h-48 overflow-y-auto',
                 'placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring',
                 'disabled:opacity-50',
               )}
