@@ -246,7 +246,7 @@
 
 ## Phase 5 — 안정화·베타 (지속)
 
-- [ ] Crash reporter (Sentry 또는 자체)
+- [x] Crash reporter ✅ (chunk 63, 0.3.15): 자체 호스팅. 3 layer — (1) Electron `crashReporter.start({ uploadToServer: false })` native minidump, (2) main `uncaughtException`/`unhandledRejection` → `userData/error.log`, (3) 렌더러 `window.onerror`/`unhandledrejection` → IPC `app:log-error` → 같은 파일. Sentry 미채택 (외부 origin 의존 0 모델 유지). `AHWP_DISABLE_CRASH_REPORTER=1` 로 비활성화. e2e 2 케이스 회귀 가드
 - [x] E2E 인프라 (Playwright Electron, Phase 1-C에 앞당겨 도입) — 7개 케이스 통과
 - [x] E2E 확장 — studio 청크 1~12 + 표/이미지/폴더 ops/탭 (134/134 케이스)
 - [x] E2E 추가 — `tests/e2e/file-dialog-mock.spec.ts` 3 케이스 ✅ (chunk 60, 0.3.12): `app.evaluate` 로 main 의 `showOpenDialog`/`showSaveDialog` monkey-patch + `'menu:action'` IPC 직접 emit. open dialog 모킹 / save-as 신규 path / save-as overwrite (.bak 사이드카). IME/다국어 입력은 Playwright 한계로 보류 (composition event 를 emit 못 함). 표 셀 selection v4 는 chunk 32 에서 이미 진행 (chat-multidoc/cell-block 회귀 가드)

@@ -6,6 +6,30 @@
 
 ## [Unreleased]
 
+### Added — Phase 5 chunk 63: 자체 호스팅 Crash reporter (0.3.15)
+
+- **`electron/crash-reporter.ts`** — 외부 collector (Sentry 등) 없이
+  로컬 only sink. 3 layer:
+  1. **Native crashReporter** — `crashReporter.start({ uploadToServer:
+false, productName: 'ahwp' })`. GPU / renderer / utility 프로세스
+     의 native crash 를 `userData/Crashpad/` (mac/win) 또는
+     `userData/Crashes/` (linux) 에 minidump 으로 캡처.
+  2. **Main 프로세스 JS error** — `process.on('uncaughtException')`
+     - `unhandledRejection` → `userData/error.log` 에 ISO 타임스탬프
+     - origin + stack 추가.
+  3. **Renderer JS error** — `window.onerror` / `unhandledrejection`
+     → `app:log-error` IPC → 같은 `error.log` 파일.
+- **외부 origin 의존 0 모델 유지** — 베타 사용자가 GitHub Issue 에
+  log 직접 첨부하는 흐름. Sentry / 자체 collector 도입은 사용자
+  로그 외부 송신이라 ahwp 보안 모델과 충돌해 미채택.
+- **disable hatch** — `AHWP_DISABLE_CRASH_REPORTER=1` env (테스트 /
+  디버그 시나리오에서 비활성화).
+- **회귀 가드** — `tests/e2e/crash-reporter.spec.ts` 2 케이스: (a)
+  IPC 통과 → `error.log` append (sentinel 텍스트 + ISO 타임스탬프
+  prefix 검증), (b) `crashReporter.getUploadToServer()` === false 확인.
+- **USER_GUIDE 갱신** — 데이터 위치 섹션에 `error.log` + `Crashpad/`
+  안내 추가.
+
 ### Documentation — Phase 5 chunk 62: 사용자 가이드 (0.3.14)
 
 - **`docs/USER_GUIDE.md` 신설** — 베타 사용자 대상의 흐름 위주 가이드. (1) 시작하기 (설치 / 첫 실행 / 폴더), (2) 편집 기본 (탭 / 저장 / .bak / 자동 초안 / 버전 히스토리), (3) AI 챗봇 (BYOK / Manual vs Agent / 발췌 첨부 / 멀티 문서 / Diff Viewer / 히스토리), (4) 단축키 요약 표, (5) 데이터 위치 (`userData/...`), (6) 알려진 한계, (7) 피드백 채널. 기능 카탈로그가 아니라 자주 막히는 지점 + 사용 흐름 권장안 위주.

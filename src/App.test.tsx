@@ -14,6 +14,7 @@ describe('App', () => {
       }),
       onMenuAction: vi.fn().mockReturnValue(() => {}),
       newWindow: vi.fn().mockResolvedValue(undefined),
+      logError: vi.fn().mockResolvedValue(undefined),
       getVersions: vi.fn().mockResolvedValue({
         app: '0.0.0-test',
         electron: '33.0.0',

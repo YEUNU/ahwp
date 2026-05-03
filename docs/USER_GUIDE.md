@@ -199,6 +199,10 @@ OS 별 `userData` 경로:
 - `recent.json` — 최근 파일 목록 (현재 UI 미노출).
 - `ahwp-drafts/<sha1>.ahwp-draft` — 60초 자동 초안.
 - `versions/<hash>/<ISO>.hwp` — 명시적 저장 스냅샷 (per-file 50개).
+- `error.log` — main / renderer JS 에러 로그 (chunk 63). 로컬 only,
+  외부 업로드 없음. 버그 리포트 시 GitHub Issue 에 첨부 권장.
+- `Crashpad/` (mac/win) 또는 `Crashes/` (linux) — Electron 의 native
+  minidump (GPU / renderer 프로세스 native crash).
 
 전체 초기화는 ahwp 종료 후 위 폴더를 삭제 — 키 / 히스토리 / 세션 모두
 사라집니다.

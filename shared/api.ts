@@ -459,6 +459,9 @@ export interface AhwpApi {
   /** chunk 52 — About 창에서 사용. app/electron/chrome/node 버전 +
    * platform/arch 일괄 조회. package.json version 은 app.getVersion(). */
   getVersions: () => Promise<AppVersions>;
+  /** chunk 63 — renderer-side global error bridge. Append to
+   * `userData/error.log` (local-only sink — no upload). */
+  logError: (req: { origin?: string; message: string }) => Promise<void>;
   file: FileApi;
   session: SessionApi;
   clipboard: ClipboardApi;

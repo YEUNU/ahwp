@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, Menu } from 'electron';
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { PingRequest, PingResponse } from '../shared/api';
+import { appendErrorLog, initCrashReporter } from './crash-reporter';
 import { registerAiIpc } from './ipc/ai';
 import { registerChatHistoryIpc } from './ipc/chat-history';
 import { registerClipboardIpc } from './ipc/clipboard';
@@ -10,6 +11,11 @@ import { registerFolderIpc, shutdownFolderIpc } from './ipc/folder';
 import { registerSecretsIpc } from './ipc/secrets';
 import { registerSessionIpc } from './ipc/session';
 import { buildAppMenu } from './menu';
+
+// chunk 63 — initialize crash reporter as early as possible. Native
+// minidumps are wired before any window opens; the JS handlers catch
+// errors that fire during startup.
+initCrashReporter();
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
 
@@ -94,6 +100,20 @@ function registerIpcHandlers(): void {
       platform: process.platform,
       arch: process.arch,
     }),
+  );
+  // chunk 63 — renderer-side error bridge. window.onerror /
+  // onunhandledrejection in the renderer call this IPC so JS errors
+  // land in `userData/error.log` alongside main-process errors.
+  ipcMain.handle(
+    'app:log-error',
+    async (
+      _event,
+      req: { origin?: string; message: string },
+    ): Promise<void> => {
+      if (!req || typeof req.message !== 'string') return;
+      const origin = typeof req.origin === 'string' ? req.origin : 'renderer';
+      await appendErrorLog(origin, req.message);
+    },
   );
   registerFileIpc();
   registerSessionIpc();
