@@ -12,7 +12,17 @@ ahwp 0.3.6 시점 codebase 리팩토링 청사진. **목표는 동작 변경 0**
   타입 인터페이스 포함). caller 가 ref + setter 를 opts 로 명시 주입 —
   closure 캡처 0. StudioViewer.tsx -140 라인 (9538 → 9398). lint /
   typecheck clean, unit 15/15, studio e2e 11/11 회귀 0.
-- ⏳ **R1.2** — `useUndoHistory` 추출. 다음 세션 시작점.
+- ✅ **R1.2** (2026-05-03) — `useUndoHistory` 추출. chunk 7 undo/redo
+  스택 + chunk 27 grouping bracket → `hooks/useUndoHistory.ts` (194
+  라인). pushHistory / restoreToIndex / undo / redo / beginUndoGroup
+  / endUndoGroup 6개 callback. latest-ref 패턴 (`useLayoutEffect` 로
+  opts 갱신) 으로 returned callback 들이 stable identity — 호출자
+  side useImperativeHandle / useEffect 에서 안전하게 dep 등록. 두 곳
+  (3875, 7901) 의 inline begin/endUndoGroup 도 destructure 단축형으로
+  교체 — single source of truth. StudioViewer.tsx -99 라인 (9398 →
+  9299). lint clean, unit 15/15, studio undo/edit/smoke 11/11 +
+  agent/html-apply/cells-v3 14/14 회귀 0.
+- ⏳ **R1.3** — `useFindReplace` 추출. 다음 세션 시작점.
 
 ---
 

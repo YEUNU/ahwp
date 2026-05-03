@@ -44,6 +44,7 @@ import { HwpDocument } from '@/lib/rhwp-core';
 import { type PageDims } from '@/features/studio/utils/page-dims';
 import { relocateExcerpt } from '@/features/studio/utils/relocate-excerpt';
 import { useDocumentLifecycle } from '@/features/studio/hooks/useDocumentLifecycle';
+import { useUndoHistory } from '@/features/studio/hooks/useUndoHistory';
 import { primaryModifier } from '@/lib/platform';
 import { SlashMenu } from './SlashMenu';
 import type { CharFormatKey, ViewerHandle } from './types';
@@ -834,8 +835,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     // bidirectional stack: each saveSnapshot returns an integer id; we
     // record IDs in chronological order along with an index pointer to
     // the "current" entry. New mutations after an undo discard the redo
-    // tail. We cap the stack depth so ancient snapshots can be released.
-    const HISTORY_CAP = 100;
+    // tail. R1.2 — bookkeeping moved to useUndoHistory; the ref + state
+    // stay here because the doc-load effect / __studioDebug also read
+    // them, and React state setters live with their useState anyway.
     const historyRef = useRef<{
       entries: number[];
       // index of the current (latest applied) snapshot in `entries`
@@ -1516,115 +1518,34 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       }
     }, [sortRange]);
 
-    /**
-     * Push a snapshot of the current doc state onto the undo stack. Called
-     * from the doc-load effect (baseline) and after every mutation. Discards
-     * the redo tail (snapshots after the current index) so a fresh edit
-     * can't be "redone past". Caps stack depth and discards oldest.
-     */
-    const pushHistory = useCallback((): void => {
-      const doc = docRef.current;
-      if (!doc) return;
-      // chunk 27 — when an undo group is active, swallow intermediate
-      // snapshots. endUndoGroup() will push a single one.
-      if (undoGroupDepthRef.current > 0) return;
-      try {
-        const id = doc.saveSnapshot();
-        const h = historyRef.current;
-        // Drop redo tail (snapshots beyond current index) — they are now
-        // obsolete branches.
-        for (let i = h.index + 1; i < h.entries.length; i++) {
-          try {
-            doc.discardSnapshot(h.entries[i]);
-          } catch {
-            /* ignore */
-          }
-        }
-        h.entries.length = h.index + 1;
-        h.entries.push(id);
-        h.index = h.entries.length - 1;
-        // Cap depth — drop oldest entries (and their snapshot IDs).
-        while (h.entries.length > HISTORY_CAP) {
-          const oldId = h.entries.shift()!;
-          try {
-            doc.discardSnapshot(oldId);
-          } catch {
-            /* ignore */
-          }
-          h.index--;
-        }
-        setCanUndo(h.index > 0);
-        setCanRedo(h.index < h.entries.length - 1);
-      } catch (err) {
-        console.warn('[studio] saveSnapshot failed:', err);
-      }
-    }, []);
+    // R1.2 — undo/redo 스택 + grouping bracket → useUndoHistory hook.
+    // The hook owns saveSnapshot/restoreSnapshot/discardSnapshot calls,
+    // history index bookkeeping, redo-tail discard, depth-cap, dirty/
+    // canUndo/canRedo flag updates, and group depth counting. Caller-side
+    // post-restore cleanup (selection drop + cursor / format refresh) is
+    // passed in via `afterRestore`.
+    const afterRestore = useCallback((): void => {
+      setSelection(null);
+      setSelectionRectsByPage({});
+      refreshCursorRect();
+      refreshActiveFormat();
+    }, [setSelection, refreshCursorRect, refreshActiveFormat]);
 
-    /**
-     * Restore to the entry at index `targetIndex` and refresh layout/UI.
-     * Bypasses pushHistory (we don't snapshot the restore itself).
-     */
-    const restoreToIndex = useCallback(
-      (targetIndex: number): void => {
-        const doc = docRef.current;
-        const h = historyRef.current;
-        if (
-          !doc ||
-          targetIndex < 0 ||
-          targetIndex >= h.entries.length ||
-          targetIndex === h.index
-        )
-          return;
-        try {
-          doc.restoreSnapshot(h.entries[targetIndex]);
-          h.index = targetIndex;
-          try {
-            doc.reflowLinesegs();
-          } catch {
-            /* ignore — older lib */
-          }
-          cacheRef.current.clear();
-          pageRefsRef.current.forEach((el, idx) => {
-            if (el?.firstElementChild?.tagName.toLowerCase() === 'svg') {
-              el.innerHTML = '';
-              renderPageInto(idx);
-            }
-          });
-          try {
-            caretRef.current = JSON.parse(
-              doc.getCaretPosition(),
-            ) as typeof caretRef.current;
-          } catch {
-            /* keep previous */
-          }
-          // Selection is renderer-side state (not in the doc IR snapshot).
-          // Drop it — restoring to a different point shouldn't carry over a
-          // possibly-now-invalid range.
-          setSelection(null);
-          setSelectionRectsByPage({});
-          refreshCursorRect();
-          refreshActiveFormat();
-          // Dirty: the *baseline* (index 0) is the loaded-from-disk state,
-          // so being there means clean. Anything else is dirty.
-          const dirty = h.index !== 0;
-          dirtyRef.current = dirty;
-          setDirty(dirty);
-          setCanUndo(h.index > 0);
-          setCanRedo(h.index < h.entries.length - 1);
-        } catch (err) {
-          console.warn('[studio] restoreSnapshot failed:', err);
-        }
-      },
-      [renderPageInto, refreshCursorRect, refreshActiveFormat, setSelection],
-    );
-
-    const undo = useCallback((): void => {
-      restoreToIndex(historyRef.current.index - 1);
-    }, [restoreToIndex]);
-
-    const redo = useCallback((): void => {
-      restoreToIndex(historyRef.current.index + 1);
-    }, [restoreToIndex]);
+    const { pushHistory, undo, redo, beginUndoGroup, endUndoGroup } =
+      useUndoHistory({
+        docRef,
+        historyRef,
+        undoGroupDepthRef,
+        cacheRef,
+        pageRefsRef,
+        caretRef,
+        dirtyRef,
+        setCanUndo,
+        setCanRedo,
+        setDirty,
+        renderPageInto,
+        afterRestore,
+      });
 
     const refreshAfterMutation = useCallback(
       (opts?: { syncCaret?: boolean }): void => {
@@ -3945,22 +3866,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             return false;
           }
         },
-        beginUndoGroup: () => {
-          undoGroupDepthRef.current += 1;
-        },
-        endUndoGroup: () => {
-          undoGroupDepthRef.current = Math.max(
-            0,
-            undoGroupDepthRef.current - 1,
-          );
-          // Only push a snapshot when we exit the outermost group AND
-          // some mutation actually ran (dirty flag flipped or layout
-          // changed — pushHistory's saveSnapshot is cheap so we always
-          // push at end-of-group).
-          if (undoGroupDepthRef.current === 0) {
-            pushHistory();
-          }
-        },
+        // R1.2 — depth-counted bracket lives in useUndoHistory.
+        beginUndoGroup,
+        endUndoGroup,
         copyControl: (sec, para, ctrl) => {
           const doc = docRef.current;
           if (!doc) return false;
@@ -4811,13 +4719,14 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         captureExcerpt,
         getCellProps,
         getTableProps,
-        pushHistory,
         refreshAfterMutation,
         setCellProps,
         setTableProps,
         toggleCharFormat,
         undo,
         redo,
+        beginUndoGroup,
+        endUndoGroup,
         copySelection,
         cutSelection,
         pasteAtCaret,
@@ -7983,19 +7892,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             return false;
           }
         },
-        // Bundled undo — chunk 27.
-        beginUndoGroup: (): void => {
-          undoGroupDepthRef.current += 1;
-        },
-        endUndoGroup: (): void => {
-          undoGroupDepthRef.current = Math.max(
-            0,
-            undoGroupDepthRef.current - 1,
-          );
-          if (undoGroupDepthRef.current === 0) {
-            pushHistory();
-          }
-        },
+        // Bundled undo — chunk 27. R1.2: hook-provided.
+        beginUndoGroup,
+        endUndoGroup,
         // Equation preview — chunk 16.
         renderEquationSvg: (
           script: string,
@@ -8184,6 +8083,8 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       setSelection,
       undo,
       redo,
+      beginUndoGroup,
+      endUndoGroup,
       copySelection,
       cutSelection,
       pasteAtCaret,
