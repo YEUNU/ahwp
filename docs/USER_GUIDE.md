@@ -65,7 +65,8 @@ ahwp 는 **단일 워크스페이스 폴더** 모델입니다. 첫 실행에서 
 - **60초 자동 초안** — 모든 dirty 탭이 `userData/ahwp-drafts/<sha1>
 .ahwp-draft` 에 60초마다 백업. 앱이 비정상 종료되면 다음 실행에서
   복원 옵션 제공.
-- **버전 히스토리** (`⌘⇧H` 또는 메뉴 → 파일 → "버전 히스토리") —
+- **버전 히스토리** (메뉴 → 보기 → "버전 히스토리…" 또는 `⌘K` 명령
+  팔레트) —
   명시적 저장 시마다 `userData/versions/<hash>/<ISO>.hwp` 에 50개
   스냅샷 보관. 다이얼로그에서 "복원" 클릭 → 현재 본문은 `.bak` 로
   내려간 뒤 선택 버전이 복원됩니다.
@@ -182,8 +183,7 @@ Manual 모드에서 모델이 위치 한정 미세 수정 (오타 / 톤 / 표현
 
 ## 5. 데이터 위치
 
-OS 별 `userData` 경로 (메뉴 → ahwp 정보 → "설정 폴더 열기" 로 바로
-이동):
+OS 별 `userData` 경로:
 
 - **macOS**: `~/Library/Application Support/ahwp/`
 - **Windows**: `%APPDATA%\ahwp\`
