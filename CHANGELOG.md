@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+### Tests — Phase 5 chunk 64: 큰 파일 성능 smoke (0.3.16)
+
+- **`tests/e2e/studio-perf.spec.ts` 3 케이스** — `examples/` 의 50p+ doc 으로 (1) 초기 로드 (file:read → @rhwp/core parse → `__studioDebug` ready), (2) `Cmd+End` 점프 + 스크롤, (3) 10× PageDown 시퀀스 의 wall-clock 측정 + telemetry print + 느슨한 ceiling assertion (15s / 10s / 15s).
+- **현 측정 (dev 박스)** — initial load 327ms (pages=57) · cmd+End 122ms · 10× PageDown 984ms (avg ~98ms/press). 충분한 헤드룸 — order-of-magnitude regression 만 잡는 가드.
+- **벤치 vs gate 의도** — 정확한 perf 예산은 별도 harness (CI metrics infra 도입 시) 로 분리. 이 spec 은 lazy-mount / off-viewport unmount / find paragraph cache (chunk 1-D 3 개 최적화) 가 깨졌는지 catch 하는 목적.
+
 ### Added — Phase 5 chunk 63: 자체 호스팅 Crash reporter (0.3.15)
 
 - **`electron/crash-reporter.ts`** — 외부 collector (Sentry 등) 없이

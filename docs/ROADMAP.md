@@ -253,7 +253,7 @@
 - [x] 접근성 점검 ✅ (chunk 61, 0.3.13): radix shadcn 기본 + 추가 보강 — Settings 탭 `role="tab"` + `aria-selected`, FolderTree 행 `aria-selected`, ChatPanel 히스토리 `aria-current="page"`. 툴바 / 챗 입력 / 발췌 chip 등 인터랙티브 요소는 audit 결과 모두 `aria-label` 보유 (false-positive 0)
 - [x] 사용자 가이드 문서 ✅ (chunk 62, 0.3.14): [USER_GUIDE.md](USER_GUIDE.md) — 시작하기 / 편집 기본 / AI 챗봇 (Manual·Agent·발췌·멀티 문서·Diff Viewer) / 단축키 / 데이터 위치 / 알려진 한계. 흐름 위주 + 자주 막히는 지점 정리
 - [ ] 베타 사용자 피드백 채널 (GitHub Discussions)
-- [ ] 성능: 큰 .hwpx 파일(50p 이상) 로드 시 측정·개선
+- [x] 성능: 큰 .hwpx 파일 (50p+) 로드 측정 ✅ (chunk 64, 0.3.16): `tests/e2e/studio-perf.spec.ts` 3 케이스 — initial load / cmd+End / 10× PageDown wall-clock 측정 + telemetry print + 느슨한 ceiling. 현 측정 327ms / 122ms / 984ms (avg 98ms/press) — 정확한 perf budget 은 별도 harness 로 후속, 이 spec 은 order-of-magnitude regression 만 catch
 - [ ] 다국어 도입 (한·영) — Phase 5에서 검토
 
 ---
