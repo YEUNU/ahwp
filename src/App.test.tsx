@@ -76,6 +76,7 @@ describe('App', () => {
         delete: vi.fn().mockResolvedValue(undefined),
         has: vi.fn().mockResolvedValue(false),
         list: vi.fn().mockResolvedValue([]),
+        onChanged: vi.fn().mockReturnValue(() => {}),
       },
       ai: {
         chat: vi.fn().mockReturnValue({ abort: vi.fn() }),

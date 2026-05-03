@@ -94,6 +94,13 @@ const api: AhwpApi = {
     delete: (providerId) => ipcRenderer.invoke('secrets:delete', providerId),
     has: (providerId) => ipcRenderer.invoke('secrets:has', providerId),
     list: () => ipcRenderer.invoke('secrets:list'),
+    onChanged: (handler) => {
+      const listener = () => handler();
+      ipcRenderer.on('secrets:changed', listener);
+      return () => {
+        ipcRenderer.off('secrets:changed', listener);
+      };
+    },
   },
   ai: {
     chat: (request, callbacks) => {

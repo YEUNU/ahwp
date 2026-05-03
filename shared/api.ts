@@ -337,6 +337,10 @@ export interface SecretsApi {
   has: (providerId: ProviderId) => Promise<boolean>;
   /** Providers with stored keys, in insertion order. */
   list: () => Promise<ProviderId[]>;
+  /** chunk 70 — subscribe to set/delete broadcasts so the renderer can
+   *  re-warm the model-list cache when keys change. Returns an
+   *  unsubscribe fn. */
+  onChanged: (handler: () => void) => () => void;
 }
 
 export interface AiChatHandle {

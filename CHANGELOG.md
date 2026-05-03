@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+### Fixed — UX 보강 chunks 70~71 (0.3.19)
+
+- **chunk 70 — secrets 변경 broadcast → ChatPanel re-fetch** — chunk 69 의 mount-only effect 는 앱 시작 시 키가 없으면 모든 provider 의 fetch 가 skipped 되고 다시 안 돌았다. main 의 `secrets:set` / `secrets:delete` 가 모든 BrowserWindow 에 `secrets:changed` 이벤트 broadcast → preload 가 `secrets.onChanged()` subscriber 로 노출 → ChatPanel 이 listen 해서 키 등록 직후 모든 provider 의 모델 리스트 pre-fetch 재실행. 이제 비-active provider 키를 등록해도 즉시 selector 가 채워짐.
+- **chunk 71 — 메뉴 cut/copy/paste 를 `role` 로 교체** — Settings 의 API 키 입력 (`type="password"`) 등에서 ⌘C/V 가 안 됐다. 기존 menu 의 custom click handler 가 `edit:copy` IPC 로 라우팅 → 렌더러가 `document.execCommand('copy')` 폴백했는데, password input 은 보안상 `execCommand` 가 silently no-op 한다. 메뉴 아이템을 `role: 'cut' | 'copy' | 'paste'` 로 교체 — Chromium clipboard 파이프라인이 password input + 일반 input + DevTools focus 모두 정상 처리. 뷰어의 IR copy 는 viewer 자체 onKeyDown 이 ⌘C/X/V 를 잡아 `navigator.clipboard.writeText` 로 덮어쓰기 때문에 viewer focus 일 때도 IR 데이터가 클립보드에 들어간다. 이제 사용된 적 없는 `devOrEdit` 헬퍼 제거.
+- **회귀 가드** — `tests/e2e/chat-prefetch.spec.ts` 2 케이스 (비-active provider 키 등록 → 즉시 catalog populate / delete 후에도 sticky 옵션 유지). 기존 chat / chat-model-list / settings (23 케이스) 회귀 없음.
+
 ### Fixed — UX 보강 chunks 68~69 (0.3.18)
 
 - **chunk 68 — 모달 스크롤바** — Dialog primitive 의 `DialogContent` 베이스에 `max-h-[calc(100vh-4rem)] overflow-y-auto` 추가. 그 동안 다이얼로그 내용이 viewport 보다 길어지면 화면 밖으로 잘려 form 끝부분 / Apply 버튼 등이 안 보였다. 자체 height + `overflow-hidden` 을 갖는 SettingsDialog 처럼 커스텀 레이아웃 다이얼로그는 twMerge 가 자동 우선이라 영향 없음.
