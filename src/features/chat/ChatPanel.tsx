@@ -32,6 +32,7 @@ import {
 } from '@shared/ai-tools';
 import { parsePatchBlock, type AhwpPatch } from '@shared/ai-patches';
 import { MultiPatchStack, type PatchStatus } from './DiffCard';
+import { markdownToHtml } from './markdownToHtml';
 import {
   EXCERPT_SOFT_CHAR_LIMIT,
   type ExcerptAttachment,
@@ -1450,7 +1451,22 @@ function Message({
     !isUser && !streaming && onApplyHtml
       ? HTML_BLOCK_RE.exec(message.content)
       : null;
-  const htmlPayload = htmlMatch ? htmlMatch[1].trim() : null;
+  let htmlPayload = htmlMatch ? htmlMatch[1].trim() : null;
+  // chunk 99 fallback — 모델이 도구 호출 / ```html``` 블록 둘 다 안 쓰고
+  // 자유 markdown 으로 응답한 경우 (gpt-5.4-mini 의 한국어 conversational
+  // 응답 패턴). 마크다운 → HTML 변환해서 같은 적용 버튼으로 라우팅.
+  let markdownFallback = false;
+  if (!htmlPayload && !isUser && !streaming && onApplyHtml) {
+    const hasToolEntries =
+      message.toolEntries && message.toolEntries.length > 0;
+    if (!hasToolEntries) {
+      const md = markdownToHtml(message.content);
+      if (md) {
+        htmlPayload = md.html;
+        markdownFallback = true;
+      }
+    }
+  }
   // chunk 29 — applied/toolsRun feedback persists ~15s instead of ~2s
   // so the user has time to click "되돌리기" before the affordance hides.
   // The badge collapses back to its original state once `undone` flips
@@ -1778,9 +1794,21 @@ function Message({
               variant={applied ? 'secondary' : 'default'}
               onClick={handleApply}
               data-testid="chat-action-apply-html"
+              data-markdown-fallback={markdownFallback ? 'true' : 'false'}
               className="text-xs"
+              title={
+                markdownFallback
+                  ? '응답의 마크다운 형식을 HTML 로 변환해서 활성 문서에 적용합니다.'
+                  : '응답에 포함된 HTML 블록을 활성 문서에 적용합니다.'
+              }
             >
-              {applied ? (undone ? '✓ 되돌림' : '✓ 적용됨') : '문서에 적용'}
+              {applied
+                ? undone
+                  ? '✓ 되돌림'
+                  : '✓ 적용됨'
+                : markdownFallback
+                  ? '마크다운 적용'
+                  : '문서에 적용'}
             </Button>
             {applied && !undone && onUndoApply ? (
               <Button
