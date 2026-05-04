@@ -30,6 +30,12 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { localizeShortcutPublic } from '@/lib/hancom-tooltips';
+import {
+  AGENT_MAX_TURNS_DEFAULT,
+  AGENT_MAX_TURNS_HARD_CAP,
+  loadAgentMaxTurns,
+  saveAgentMaxTurns,
+} from '@/features/chat/hooks/useChatStreaming';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/app/use-theme';
 
@@ -355,9 +361,63 @@ function AiProvidersPane(): JSX.Element {
             <ProviderCard key={meta.id} meta={meta} />
           ))}
         </div>
+        <div className="mt-5 border-t border-border pt-4">
+          <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Agent 동작
+          </h3>
+          <AgentSettingsRow />
+        </div>
       </PaneBody>
       <PaneFooter hint="변경사항은 저장 버튼으로 반영됩니다. 키를 변경하려면 새 값을 입력하세요." />
     </>
+  );
+}
+
+/**
+ * Agent turn 한계 설정 — chunk 99 follow-up. 한 작업당 최대 read +
+ * write tool 호출 횟수. 사업계획서 같은 long-form 은 30~50 권장. 너무
+ * 작으면 모델이 작업 중간에 막힘. 너무 크면 무한 루프 가능 (안전망).
+ */
+function AgentSettingsRow(): JSX.Element {
+  const [maxTurns, setMaxTurns] = useState<number>(() => loadAgentMaxTurns());
+  const onChange = (n: number) => {
+    const clamped = Math.max(
+      1,
+      Math.min(AGENT_MAX_TURNS_HARD_CAP, Math.round(n)),
+    );
+    setMaxTurns(clamped);
+    saveAgentMaxTurns(clamped);
+  };
+  return (
+    <div
+      className="flex items-center gap-3 text-xs"
+      data-testid="settings-agent-max-turns-row"
+    >
+      <label
+        htmlFor="settings-agent-max-turns"
+        className="flex flex-col gap-0.5"
+      >
+        <span className="font-medium">Agent turn 한계</span>
+        <span className="text-[10px] text-muted-foreground">
+          한 작업당 최대 도구 호출 횟수. 기본 {AGENT_MAX_TURNS_DEFAULT}, 최대{' '}
+          {AGENT_MAX_TURNS_HARD_CAP}. 사업계획서 같은 long-form 은 30~50 권장.
+        </span>
+      </label>
+      <input
+        id="settings-agent-max-turns"
+        data-testid="settings-agent-max-turns-input"
+        type="number"
+        min={1}
+        max={AGENT_MAX_TURNS_HARD_CAP}
+        value={maxTurns}
+        onChange={(e) => {
+          const v = Number(e.target.value);
+          if (!Number.isFinite(v)) return;
+          onChange(v);
+        }}
+        className="w-20 rounded border border-input bg-background px-2 py-1 text-right tabular-nums focus:outline-hidden focus:ring-2 focus:ring-ring"
+      />
+    </div>
   );
 }
 

@@ -45,7 +45,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { MessageContent } from './MessageContent';
 import { useChatHistory } from './hooks/useChatHistory';
-import { useChatStreaming } from './hooks/useChatStreaming';
+import { useChatStreaming, loadAgentMaxTurns } from './hooks/useChatStreaming';
 import { useExcerptAttachments } from './hooks/useExcerptAttachments';
 import { previewArgs } from './tools';
 
@@ -349,6 +349,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [messages, setMessages] = useState<UiMessage[]>([]);
     const [input, setInput] = useState('');
     const [streaming, setStreaming] = useState(false);
+    // chunk 99 follow-up — agent turn step counter for "Turn N/M" UI.
+    // Hook bumps via setAgentTurn callback on each turn entry.
+    const [agentTurn, setAgentTurn] = useState(0);
     const [error, setError] = useState<string | null>(null);
     const [hasKey, setHasKey] = useState<boolean | null>(null);
     const [provider, setProvider] = useState<ChatProviderId>(() =>
@@ -692,6 +695,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       streaming,
       setStreaming,
       setError,
+      setAgentTurn,
       hasKey,
       provider,
       model,
@@ -1186,17 +1190,28 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               data-testid="chat-input"
             />
             {streaming ? (
-              <Button
-                type="button"
-                variant="secondary"
-                size="icon"
-                onClick={stop}
-                aria-label="전송 중단"
-                title="전송 중단 (응답 스트리밍 취소)"
-                data-testid="chat-stop"
-              >
-                <Square className="h-4 w-4" />
-              </Button>
+              <div className="flex items-center gap-1.5">
+                {agentTurn > 0 ? (
+                  <span
+                    className="text-[10px] tabular-nums text-muted-foreground"
+                    data-testid="chat-agent-turn-counter"
+                    title={`Agent 작업 진행: ${agentTurn} / ${loadAgentMaxTurns()} 턴 (Settings 에서 한계 조절)`}
+                  >
+                    Turn {agentTurn}/{loadAgentMaxTurns()}
+                  </span>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="icon"
+                  onClick={stop}
+                  aria-label="전송 중단"
+                  title="전송 중단 (응답 스트리밍 + Agent 루프 취소)"
+                  data-testid="chat-stop"
+                >
+                  <Square className="h-4 w-4" />
+                </Button>
+              </div>
             ) : (
               <Button
                 type="submit"

@@ -55,7 +55,43 @@ function newId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-const AGENT_MAX_TOOLS_PER_TURN = 10;
+/**
+ * Agent 한 turn (= LLM 응답 한 사이클) 안의 fireChat 재귀 깊이 한계.
+ *
+ * Phase 3 chunk 39 에선 10 으로 핀했으나 Claude Code 식 agentic 흐름
+ * 에선 read → reason → write → verify 시퀀스가 한 작업당 20~40 회 사이.
+ * 사업계획서 전체 작성 같은 long-form 은 더 필요. 디폴트 50 + 사용자
+ * Settings 조절 (max 200) 로 변경.
+ *
+ * localStorage `ahwp:chat:max-turns` (정수, 1~200 clamp). 비어있으면 50.
+ */
+export const AGENT_MAX_TURNS_DEFAULT = 50;
+export const AGENT_MAX_TURNS_HARD_CAP = 200;
+const AGENT_MAX_TURNS_KEY = 'ahwp:chat:max-turns';
+
+export function loadAgentMaxTurns(): number {
+  try {
+    const raw = localStorage.getItem(AGENT_MAX_TURNS_KEY);
+    if (!raw) return AGENT_MAX_TURNS_DEFAULT;
+    const n = parseInt(raw, 10);
+    if (!Number.isFinite(n) || n < 1) return AGENT_MAX_TURNS_DEFAULT;
+    return Math.min(AGENT_MAX_TURNS_HARD_CAP, n);
+  } catch {
+    return AGENT_MAX_TURNS_DEFAULT;
+  }
+}
+
+export function saveAgentMaxTurns(n: number): void {
+  try {
+    const clamped = Math.max(
+      1,
+      Math.min(AGENT_MAX_TURNS_HARD_CAP, Math.round(n)),
+    );
+    localStorage.setItem(AGENT_MAX_TURNS_KEY, String(clamped));
+  } catch {
+    /* localStorage unavailable — silent */
+  }
+}
 
 export interface UseChatStreamingOptions {
   // refs (from caller)
@@ -80,6 +116,10 @@ export interface UseChatStreamingOptions {
   streaming: boolean;
   setStreaming: any;
   setError: any;
+  /** chunk 99 follow-up — agent turn depth state mirror for UI step
+   *  counter ("Turn 3/50"). Hook bumps on each turn entry, resets on
+   *  finalize / abort / cap. Optional — when omitted, counter UI hides. */
+  setAgentTurn?: (n: number) => void;
   hasKey: any;
   provider: any;
   model: any;
@@ -147,6 +187,7 @@ export function useChatStreaming(
     streaming,
     setStreaming,
     setError,
+    setAgentTurn,
     provider,
     model,
     attachDoc,
@@ -183,6 +224,11 @@ export function useChatStreaming(
   >([]);
   const agentTurnDepthRef = useRef(0);
   const agentVerifiedExcerptsRef = useRef<ExcerptAttachment[]>([]);
+  // chunk 99 follow-up — stop 버튼이 turn loop 도 강제 종료. flag 가
+  // true 이면 advanceAgentLoop 가 다음 turn 진입 직전 short-circuit.
+  // 매 send / sendDirect / regenerate / acceptDirect 시작 시 false 로
+  // reset.
+  const agentStoppedRef = useRef(false);
 
   // Phase 5 chunk 97 — Manual/Agent 통합. autoApprove=false 일 때 write
   // tool 호출은 즉시 dispatch 하지 않고 사용자 Accept/Reject 를 기다린다.
@@ -495,6 +541,7 @@ export function useChatStreaming(
 
       // 정상 종료 (manual 모드 또는 agent의 finishReason='stop').
       agentTurnDepthRef.current = 0;
+      setAgentTurn?.(0);
       agentToolUsesRef.current = [];
       agentVerifiedExcerptsRef.current = [];
       assistantBufferRef.current = '';
@@ -640,6 +687,8 @@ export function useChatStreaming(
   const send = useCallback(async () => {
     const text = input.trim();
     if (text.length === 0 || streaming) return;
+    // chunk 99 follow-up — 매 턴 시작 시 stop flag clear.
+    agentStoppedRef.current = false;
 
     // Per-chip stale verification — chunk 20. Each chip's anchor is
     // re-read from the IR. Fresh = pass through. Relocated = update
@@ -734,6 +783,7 @@ export function useChatStreaming(
     async (text: string): Promise<void> => {
       const trimmed = text.trim();
       if (trimmed.length === 0 || streaming) return;
+      agentStoppedRef.current = false;
       const userMsg: UiMessage = {
         id: newId(),
         role: 'user',
@@ -774,6 +824,7 @@ export function useChatStreaming(
   const regenerate = useCallback(
     (assistantId: string) => {
       if (streaming) return;
+      agentStoppedRef.current = false;
       const idx = messages.findIndex((m: any) => m.id === assistantId);
       if (idx === -1) return;
       const history = messages.slice(0, idx);
@@ -828,6 +879,15 @@ export function useChatStreaming(
   const stop = useCallback(() => {
     handleRef.current?.abort();
     handleRef.current = null;
+    // chunk 99 follow-up — Agent loop 도 강제 종료. abort 만으로는
+    // (a) 이미 dispatch 된 tool 의 결과 메시지가 들어가고
+    // (b) queueMicrotask 로 예약된 fireChat 재귀가 순서대로 실행돼
+    // 다음 turn 이 시작될 수 있음. agentStoppedRef 를 set 하면
+    // advanceAgentLoop 가 next turn 진입 전에 short-circuit.
+    agentStoppedRef.current = true;
+    agentTurnDepthRef.current = 0;
+    agentVerifiedExcerptsRef.current = [];
+    assistantBufferRef.current = '';
     setStreaming(false);
     assistantIdRef.current = null;
   }, []);
@@ -874,11 +934,14 @@ export function useChatStreaming(
       );
     }
     agentTurnDepthRef.current += 1;
-    if (agentTurnDepthRef.current >= AGENT_MAX_TOOLS_PER_TURN) {
+    setAgentTurn?.(agentTurnDepthRef.current);
+    const maxTurns = loadAgentMaxTurns();
+    if (agentTurnDepthRef.current >= maxTurns) {
       setError(
-        `Agent: 한 턴 도구 호출 한계 (${AGENT_MAX_TOOLS_PER_TURN}) 도달.`,
+        `Agent: 한 작업 turn 한계 (${maxTurns}) 도달. Settings → AI 공급자 → "Agent turn 한계" 에서 조절 가능.`,
       );
       agentTurnDepthRef.current = 0;
+      setAgentTurn?.(0);
       agentVerifiedExcerptsRef.current = [];
       assistantBufferRef.current = '';
       setStreaming(false);
@@ -897,13 +960,24 @@ export function useChatStreaming(
             } catch {
               json = String(r.data);
             }
-            if (json.length > 4096) json = json.slice(0, 4096) + '…';
+            // Read tools (outline, find, style list, search workspace 등)
+            // 의 결과는 모델의 reasoning 입력. 잘리면 양식 매칭 / 좌표
+            // 결정 부정확. 16k 까지 허용. write tools 는 ok/error
+            // 정도면 충분 — 4k 유지.
+            const cap = isReadOnlyTool(r.name) ? 16384 : 4096;
+            if (json.length > cap) json = json.slice(0, cap) + '…';
             content = json;
           } else {
+            // chunk 99 follow-up — write 성공 시 상태 hint 를 모델에
+            // 알려서 retry / verification 판단 도움. e.g. "ok: insertText
+            // (14자 추가)" 같은 메타. 현재는 인자 메타 없으니 단순 ok.
             content = `ok: ${r.name}`;
           }
         } else {
-          content = `error: ${r.reason ?? '?'}`;
+          // chunk 99 follow-up — 실패 사유에 retry hint 추가. agent loop
+          // 가 다음 turn 에 같은 도구를 그대로 재호출하지 않도록.
+          const reason = r.reason ?? '?';
+          content = `error: ${reason}. 재호출 전에 인자를 점검하거나 다른 접근을 검토해.`;
         }
         return {
           id: newId(),
@@ -914,6 +988,9 @@ export function useChatStreaming(
       });
       const next = [...prev, ...toolMsgs];
       queueMicrotask(() => {
+        // chunk 99 follow-up — stop 버튼이 mid-loop 에 눌리면 다음
+        // turn 진입을 차단. tool 결과 메시지는 그대로 history 에 남음.
+        if (agentStoppedRef.current) return;
         fireChatRef.current?.(next, agentVerifiedExcerptsRef.current);
       });
       return next;

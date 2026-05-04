@@ -165,6 +165,30 @@ test.describe('settings dialog — flow', () => {
     expect(fs.readFileSync(sentinelFile, 'utf8')).toContain('keep');
   });
 
+  test('AI 공급자 — Agent turn 한계 입력이 localStorage 에 저장됨 (chunk 99 follow-up)', async () => {
+    const { page } = launched;
+    await page.getByTestId('chat-open-settings').click();
+    // AI tab is the default — assert the input exists.
+    const input = page.getByTestId('settings-agent-max-turns-input');
+    await expect(input).toBeVisible();
+    // 기본값 50 (AGENT_MAX_TURNS_DEFAULT).
+    await expect(input).toHaveValue('50');
+    // 변경 → localStorage 반영 (debounce 없이 onChange 즉시 save).
+    await input.fill('120');
+    await input.dispatchEvent('change');
+    const stored = await page.evaluate(() =>
+      localStorage.getItem('ahwp:chat:max-turns'),
+    );
+    expect(stored).toBe('120');
+    // 한계 초과 → clamp.
+    await input.fill('999');
+    await input.dispatchEvent('change');
+    const clamped = await page.evaluate(() =>
+      localStorage.getItem('ahwp:chat:max-turns'),
+    );
+    expect(clamped).toBe('200'); // AGENT_MAX_TURNS_HARD_CAP
+  });
+
   test('캐시 비우기 — 캐시 파일 없어도 silent 성공', async () => {
     const { app, page } = launched;
     const userDataDir = await app.evaluate(({ app: a }) =>
