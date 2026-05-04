@@ -258,7 +258,7 @@ export function useChatStreaming(
   );
 
   const onEvent = useCallback(
-    (evt: ChatStreamEvent) => {
+    async (evt: ChatStreamEvent) => {
       if (evt.type === 'text-delta') {
         // Capture the id eagerly: the setMessages updater may run later in a
         // React batch, by which point a terminal event might have cleared
@@ -391,7 +391,7 @@ export function useChatStreaming(
           // Phase 3 chunk 50 — Agent 루프 안에서는 turn 시작 시점의
           // target path 로 고정 dispatch. 사용자가 mid-turn 에 탭을
           // 전환해도 원본 doc 에 적용된다.
-          const out = dispatcher(
+          const out = await dispatcher(
             [{ ok: true, call: v.value }],
             turnTargetPathRef.current,
           );

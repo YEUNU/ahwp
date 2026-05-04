@@ -184,7 +184,7 @@ export interface ChatPanelProps {
   runTools?: (
     items: AhwpPreflightItem[],
     targetPath?: string | null,
-  ) => AhwpToolResult[];
+  ) => Promise<AhwpToolResult[]> | AhwpToolResult[];
   /**
    * Capture the active StudioViewer selection as a portable excerpt — chunk 20.
    * `null` when no selection is active or the selection spans paragraphs.
@@ -1318,7 +1318,9 @@ interface MessageProps {
   /** Apply an HTML fragment to the active document (chunk 18). */
   onApplyHtml?: (html: string) => void;
   /** Run an `ahwp-tools` op list against the active document (chunk 19). */
-  onRunTools?: (items: AhwpPreflightItem[]) => AhwpToolResult[];
+  onRunTools?: (
+    items: AhwpPreflightItem[],
+  ) => Promise<AhwpToolResult[]> | AhwpToolResult[];
   /**
    * Roll back the last AI-applied change — chunk 29. Routes through the
    * active viewer's undo stack which is grouped per AI turn (chunk 27),
@@ -1666,9 +1668,9 @@ function Message({
       if (toolsTimerRef.current) clearTimeout(toolsTimerRef.current);
     };
   }, []);
-  const handleRunTools = () => {
+  const handleRunTools = async () => {
     if (!toolsParsed || !toolsParsed.ok || !onRunTools) return;
-    const results = onRunTools(toolsParsed.items);
+    const results = await onRunTools(toolsParsed.items);
     let ok = 0;
     for (const r of results) if (r.ok) ok += 1;
     setToolsRun({ ok, total: results.length });

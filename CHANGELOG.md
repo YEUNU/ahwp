@@ -6,6 +6,15 @@
 
 ## [Unreleased]
 
+### Added — chunk 96: outline-as-router 워크스페이스 검색 (0.3.32)
+
+- **`searchWorkspaceOutlines` / `readParagraphByPath` 신규 read tool** — 사용자가 첨부 / 발췌 없이 개념적 질의 ("사업계획서의 매출 항목 기준으로 ~~ 수정해줘") 만 했을 때 Agent 가 워크스페이스 (`session.lastFolderPath`) 를 직접 검색하도록 지원. (a) `searchWorkspaceOutlines` 가 BFS (max depth 5, max docs 200) 로 폴더 안 모든 .hwp/.hwpx 의 파일명 + 제목 단락 outline 만 회수 (heading-styled paragraphs only — `제목 N` / `Heading N`). 응답은 본문 미포함 라우팅용 인벤토리. (b) `readParagraphByPath` 가 임의 path + paragraphIdx 로 단락 본문 + 주변 context (default 2개) 회수. 활성 문서 IR 변경 없음.
+- **Outline cache** — `userData/outline-cache.json`, 파일 path + mtime 키. 변경 없는 파일은 재파싱 skip → 두 번째 검색은 즉시 응답.
+- **System prompt 가이드 보강** — `SYSTEM_PROMPT_AGENT_GUIDE` 에 "워크스페이스 안의 다른 문서를 참조해야 하는 작업" 워크플로우 추가 (인벤토리 → 본문 회수 → 편집).
+- **Tool dispatcher async 화** — `runOne` / `runTools` / `onRunTools` prop 시그니처가 sync `AhwpToolResult[]` → async `Promise<AhwpToolResult[]>` 로 일반화. 기존 IR-only tool 들은 성능 영향 없음 (Promise resolve 즉시).
+- **String-encoded integer args 허용** — `nonNegInts` validator 가 `"42"` 같은 문자열 정수도 받도록 보강. NIM / qwen 류 모델이 JSON Schema 가 integer 라도 string 으로 emit 하는 일이 잦아서 모든 tool 의 dispatch 안정성 향상 (chunk 51 read tool 들도 같이 혜택).
+- **NIM live e2e** — `tests/e2e/nvidia-live.spec.ts` 에 "Agent calls searchWorkspaceOutlines on concept query" 1 케이스 추가. 임시 워크스페이스 (사업계획서 + 공고 .hwp 두 개 + blank 활성 doc) 셋업 후 NIM (qwen3.5-122b) 으로 컨셉 쿼리 → 40초 안에 tool 호출 + status=ok 확인.
+
 ### Fixed — chunk 95.1: release CI Linux deb maintainer (0.3.31)
 
 - **`build.linux.maintainer` 추가** — 0.3.30 release CI 가 Linux .deb 빌드 단계에서 `Please specify author 'email' in the application package.json` 으로 실패. `package.json` `author` 가 string ("ahwp contributors") 인데 .deb 패키지는 별도로 maintainer 필드 (이름 + 이메일) 가 필수. `build.linux.maintainer` 에 GitHub noreply 메일 (`61678329+YEUNU@users.noreply.github.com`) 로 표기. AppImage 빌드는 이전에도 성공했고 mac/win 도 무관 — Linux .deb 단일 fix.

@@ -351,4 +351,109 @@ test.describe('NVIDIA NIM — live smoke', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  // chunk 96 — outline-as-router workspace search. Sets the workspace
+  // root to a temp dir containing two distinct .hwp fixtures (each with
+  // a sentinel heading), opens the blank doc as the active target, and
+  // sends a concept-level query without naming the docs. Verifies the
+  // model called `searchWorkspaceOutlines` (the Agent had access to the
+  // inventory) — actual chained call to `readParagraphByPath` is best-
+  // effort because real LLMs may answer from outline alone.
+  test('chunk 96 — Agent calls searchWorkspaceOutlines on concept query', async () => {
+    const { page } = launched;
+    test.skip(!existsSync(FIXTURE), 'tests/e2e/fixtures/blank.hwpx missing');
+    const ALPHA = path.resolve(
+      __dirname,
+      '..',
+      '..',
+      'examples',
+      '4. [사업계획서] 제조AI특화 스마트공장 사업계획서_양식_260326_01_데이터수집검증 중복화.hwp',
+    );
+    const BETA = path.resolve(
+      __dirname,
+      '..',
+      '..',
+      'examples',
+      '2026년도 제조AI특화 스마트공장 구축지원사업 공고.hwp',
+    );
+    test.skip(
+      !existsSync(ALPHA) || !existsSync(BETA),
+      'examples/ workspace fixtures missing',
+    );
+    const workspaceDir = mkdtempSync(path.join(tmpdir(), 'ahwp-ws-96-'));
+    try {
+      // Stage two real .hwp files into a workspace folder + the active
+      // blank doc as a sibling target.
+      const targetPath = path.join(workspaceDir, 'target.hwpx');
+      copyFileSync(FIXTURE, targetPath);
+      copyFileSync(ALPHA, path.join(workspaceDir, '사업계획서_양식.hwp'));
+      copyFileSync(BETA, path.join(workspaceDir, '2026_공고.hwp'));
+
+      await page.evaluate(
+        async ({ folder, active }) => {
+          await window.api.session.set({
+            lastFolderPath: folder,
+            lastActivePath: active,
+            openTabPaths: [active],
+          });
+        },
+        { folder: workspaceDir, active: targetPath },
+      );
+      await page.reload();
+      await page.waitForLoadState('domcontentloaded');
+      await page.waitForFunction(
+        () =>
+          Boolean(
+            (window as Window & { __studioDebug?: StudioDebug }).__studioDebug,
+          ),
+        { timeout: 30_000 },
+      );
+
+      await page.getByTestId('chat-provider-select').selectOption('nvidia');
+      // Wait for the model dropdown to populate + enable (pre-fetch
+      // settles after secrets:changed broadcast). Don't pick a specific
+      // model — chunk 96 verifies tool-call behavior, not model id.
+      await expect(page.getByTestId('chat-model-input')).toBeEnabled({
+        timeout: 30_000,
+      });
+      await page.getByTestId('chat-mode-agent').click();
+      // Key-indicator UI: data-state='ok' once secrets:set settled.
+      await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
+        'data-state',
+        'ok',
+      );
+
+      // Concept-level query — no doc name, no attachment, no excerpt.
+      // The Agent guide tells the model to call searchWorkspaceOutlines
+      // first when the user references workspace context implicitly.
+      await page
+        .getByTestId('chat-input')
+        .fill(
+          '워크스페이스에 있는 사업계획서의 어떤 항목 (제목 단락) 이라도 하나 골라서 정확한 제목 텍스트를 응답에 그대로 인용해줘. 그 단락이 어느 문서의 몇 번 단락인지도 함께 표시해. 다른 설명은 짧게.',
+        );
+      await page.getByTestId('chat-send').click();
+
+      // tool-entry 가 화면에 나타날 때까지 대기 — Agent 가 검색 도구를
+      // 호출했는지 확인. real model 이라 readParagraphByPath 까지 chain
+      // 안 할 수도 있어, 일단 inventory 호출 만 검증.
+      const searchEntry = page
+        .locator(
+          '[data-testid="chat-tool-entry"][data-tool-name="searchWorkspaceOutlines"]',
+        )
+        .first();
+      await expect(searchEntry).toBeVisible({ timeout: 60_000 });
+      await expect
+        .poll(async () => searchEntry.getAttribute('data-tool-status'), {
+          timeout: 60_000,
+        })
+        .toBe('ok');
+
+      // 핵심은 tool 호출 자체 + dispatcher 응답 ok. turn 종료까지
+      // 기다리지 않음 — 실제 모델이 readParagraphByPath 까지 chain 한 뒤
+      // assistant 본문 응답을 길게 작성하면서 시간이 변동적이라, send 버튼
+      // 가시성은 변동성이 큰 신호.
+    } finally {
+      rmSync(workspaceDir, { recursive: true, force: true });
+    }
+  });
 });

@@ -1098,7 +1098,7 @@ export default function AppShell() {
                     v.applyHtmlAtCaret(html);
                     v.markChangedParagraphsSince(before);
                   }}
-                  runTools={(items, targetPath) => {
+                  runTools={async (items, targetPath) => {
                     // Phase 3 chunk 50 — docId-aware routing. If the
                     // chat turn pinned a target path, look up the
                     // matching mounted viewer (it stays mounted with
@@ -1125,7 +1125,7 @@ export default function AppShell() {
                       return [];
                     }
                     const before = v.snapshotParagraphs();
-                    const results = runTools(v, items);
+                    const results = await runTools(v, items);
                     v.markChangedParagraphsSince(before);
                     return results;
                   }}

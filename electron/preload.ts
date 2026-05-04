@@ -87,6 +87,8 @@ const api: AhwpApi = {
     trash: (path) => ipcRenderer.invoke('folder:trash', path),
     reveal: (path) => ipcRenderer.invoke('folder:reveal', path),
     copy: (src, destDir) => ipcRenderer.invoke('folder:copy', src, destDir),
+    listOutlines: (req) => ipcRenderer.invoke('folder:list-outlines', req),
+    readParagraph: (req) => ipcRenderer.invoke('folder:read-paragraph', req),
   },
   secrets: {
     set: (providerId, key) =>

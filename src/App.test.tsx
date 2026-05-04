@@ -71,6 +71,13 @@ describe('App', () => {
         trash: vi.fn().mockResolvedValue(undefined),
         reveal: vi.fn().mockResolvedValue(undefined),
         copy: vi.fn().mockResolvedValue(''),
+        listOutlines: vi.fn().mockResolvedValue({
+          status: 'ok',
+          entries: [],
+          scanned: 0,
+          skipped: 0,
+        }),
+        readParagraph: vi.fn().mockResolvedValue({ ok: false, reason: 'mock' }),
       },
       secrets: {
         set: vi.fn().mockResolvedValue(undefined),

@@ -267,6 +267,63 @@ export interface FolderSearchResult {
   skipped: number;
 }
 
+/**
+ * Workspace outline inventory — chunk 96. Cheap "table of contents" for
+ * every .hwp/.hwpx under `rootPath`, used as a routing prompt for the
+ * Agent: given the user's concept-level query, the LLM picks
+ * `(path, paragraphIndex)` candidates and follows up with
+ * `readParagraphByPath` for the body text.
+ *
+ * Per-file outline reuses `getOutline` semantics (heading-styled paras
+ * only — `제목 N` / `Heading N`). Filename + outline together gives the
+ * model enough surface area to disambiguate without seeing the bodies.
+ *
+ * Cached to `userData/outline-cache.json` keyed by `path + mtime` —
+ * unchanged files reuse prior outline; chokidar invalidates on edit.
+ */
+export interface WorkspaceOutlineEntry {
+  path: string;
+  filename: string;
+  /** ms since epoch — invalidates the cache. */
+  mtime: number;
+  /** Heading-styled paragraphs in section 0 (capped at 200). Empty array
+   *  if the doc has no recognizable heading style. */
+  outline: { paragraphIndex: number; level: number; text: string }[];
+}
+
+export type WorkspaceOutlineStatus =
+  | 'ok'
+  | 'limit-reached'
+  | 'no-root'
+  | 'partial';
+
+export interface WorkspaceOutlineResult {
+  status: WorkspaceOutlineStatus;
+  entries: WorkspaceOutlineEntry[];
+  /** Files successfully parsed this call (cache hits + cold parses). */
+  scanned: number;
+  /** Files skipped (too large / parse error). */
+  skipped: number;
+}
+
+export interface ReadParagraphRequest {
+  path: string;
+  sectionIdx: number;
+  paragraphIdx: number;
+  /** N preceding + N following paragraphs returned alongside as context.
+   *  Default 2, max 10. Caller can set 0 to read just the target. */
+  contextParagraphs?: number;
+}
+
+export interface ReadParagraphResult {
+  ok: boolean;
+  /** Reason on failure — `parse-error` / `out-of-range` / `read-failed`. */
+  reason?: string;
+  text?: string;
+  /** Surrounding paragraphs (chronological order) when contextParagraphs > 0. */
+  context?: { paragraphIdx: number; text: string }[];
+}
+
 export interface FolderApi {
   /** Native dialog → returns absolute path or null on cancel. */
   pick: () => Promise<string | null>;
@@ -317,6 +374,24 @@ export interface FolderApi {
    * resulting absolute path.
    */
   copy: (src: string, destDir: string) => Promise<string>;
+  /**
+   * Workspace outline inventory — chunk 96. BFS walks `rootPath`
+   * (max depth 5), parses each .hwp/.hwpx, extracts its heading-style
+   * outline. Cached per file by mtime to keep re-runs fast. The Agent's
+   * `searchWorkspaceOutlines` tool wraps this and ships the inventory
+   * to the LLM as a routing prompt.
+   */
+  listOutlines: (req: {
+    rootPath: string;
+    maxDocs?: number;
+  }) => Promise<WorkspaceOutlineResult>;
+  /**
+   * Read a paragraph from an arbitrary .hwp/.hwpx — chunk 96. Used after
+   * `searchWorkspaceOutlines` identifies a candidate. Returns the target
+   * paragraph + N surrounding ones for context. The active doc is
+   * unaffected (no IR mutation, no caret movement).
+   */
+  readParagraph: (req: ReadParagraphRequest) => Promise<ReadParagraphResult>;
 }
 
 export interface SessionState {

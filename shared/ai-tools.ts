@@ -77,6 +77,9 @@ export const AHWP_TOOL_NAMES = [
   'getCaretPosition',
   'findInDocument',
   'getCellInfo',
+  // Phase 5 chunk 96 — outline-as-router workspace search
+  'searchWorkspaceOutlines',
+  'readParagraphByPath',
 ] as const;
 
 export type AhwpToolName = (typeof AHWP_TOOL_NAMES)[number];
@@ -387,6 +390,14 @@ export interface AhwpToolArgs {
     parentParaIdx: number;
     controlIdx: number;
     cellIdx: number;
+  };
+  // Phase 5 chunk 96 — outline-as-router workspace search
+  searchWorkspaceOutlines: { maxDocs?: number };
+  readParagraphByPath: {
+    path: string;
+    sectionIdx: number;
+    paragraphIdx: number;
+    contextParagraphs?: number;
   };
 }
 

@@ -48,6 +48,9 @@ interface RhwpDocLike {
     startOffset: number,
     endOffset: number,
   ): string;
+  // chunk 96 — outline-as-router workspace search.
+  getStyleAt(sectionIdx: number, paraIdx: number): string;
+  getStyleList(): string;
 }
 
 interface RhwpDocCtor {

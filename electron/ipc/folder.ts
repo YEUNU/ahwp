@@ -13,8 +13,13 @@ import type {
   FolderEntry,
   FolderSearchHit,
   FolderSearchResult,
+  ReadParagraphRequest,
+  ReadParagraphResult,
+  WorkspaceOutlineEntry,
+  WorkspaceOutlineResult,
 } from '../../shared/api';
 import { loadRhwpCore } from '../hwp/converter';
+import { app } from 'electron';
 
 /**
  * Folder tree IPC.
@@ -71,6 +76,99 @@ function teardownWatcher(): Promise<void> {
   activeWatcher = null;
   watcherWindow = null;
   return w ? w.close() : Promise.resolve();
+}
+
+// chunk 96 — outline extraction (mirrors `useViewerHandle.getOutline`
+// in the renderer but operates on the main-process @rhwp/core instance).
+// `WorkspaceOutlineEntry.outline` semantically equivalent to what the
+// active-doc `getDocumentOutline` tool returns — the model can treat
+// both surfaces identically.
+type RhwpDoc = {
+  getSectionCount(): number;
+  getParagraphCount(s: number): number;
+  getStyleAt(s: number, p: number): string;
+  getStyleList(): string;
+  getParagraphLength(s: number, p: number): number;
+  getTextRange(s: number, p: number, start: number, end: number): string;
+  free(): void;
+};
+
+interface OutlineItem {
+  paragraphIndex: number;
+  level: number;
+  text: string;
+}
+
+function extractOutline(doc: RhwpDoc): OutlineItem[] {
+  let styles: { id: number; name: string; englishName?: string }[] = [];
+  try {
+    styles = JSON.parse(doc.getStyleList()) as typeof styles;
+  } catch {
+    return [];
+  }
+  const headingByStyleId = new Map<number, number>();
+  for (const s of styles) {
+    const koMatch = s.name?.match(/^제목\s*(\d+)?/);
+    const enMatch = s.englishName?.match(/^Heading\s*(\d+)?/i);
+    const m = koMatch ?? enMatch;
+    if (m) {
+      const level = m[1] ? Math.min(6, parseInt(m[1], 10)) : 1;
+      headingByStyleId.set(s.id, level);
+    }
+  }
+  if (headingByStyleId.size === 0) return [];
+  const SECTION = 0;
+  const items: OutlineItem[] = [];
+  try {
+    const paraCount = doc.getParagraphCount(SECTION);
+    const cap = Math.min(paraCount, 1000);
+    for (let p = 0; p < cap; p++) {
+      let at: { id?: number };
+      try {
+        at = JSON.parse(doc.getStyleAt(SECTION, p)) as { id?: number };
+      } catch {
+        continue;
+      }
+      if (typeof at.id !== 'number') continue;
+      const level = headingByStyleId.get(at.id);
+      if (!level) continue;
+      const len = doc.getParagraphLength(SECTION, p);
+      const text =
+        len > 0 ? doc.getTextRange(SECTION, p, 0, Math.min(len, 200)) : '';
+      items.push({
+        paragraphIndex: p,
+        level,
+        text: text.trim() || '(제목 없음)',
+      });
+      if (items.length >= 200) break;
+    }
+  } catch {
+    /* swallow — partial outline is fine */
+  }
+  return items;
+}
+
+type OutlineCache = Record<string, { mtime: number; outline: OutlineItem[] }>;
+
+function outlineCachePath(): string {
+  return path.join(app.getPath('userData'), 'outline-cache.json');
+}
+
+async function loadOutlineCache(): Promise<OutlineCache> {
+  try {
+    const txt = await fs.readFile(outlineCachePath(), 'utf8');
+    const parsed = JSON.parse(txt);
+    if (parsed && typeof parsed === 'object') return parsed as OutlineCache;
+  } catch {
+    /* missing or corrupt — start fresh */
+  }
+  return {};
+}
+
+async function saveOutlineCache(cache: OutlineCache): Promise<void> {
+  const dir = app.getPath('userData');
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(outlineCachePath(), JSON.stringify(cache), 'utf8');
 }
 
 export function registerFolderIpc(): void {
@@ -242,6 +340,232 @@ export function registerFolderIpc(): void {
           ? 'limit-reached'
           : 'ok';
       return { status, hits, scanned, skipped };
+    },
+  );
+
+  // chunk 96 — outline-as-router. The Agent's `searchWorkspaceOutlines`
+  // tool wraps this. Walks `rootPath` BFS (max depth 5, max docs 200),
+  // parses each .hwp/.hwpx with @rhwp/core, and extracts heading-styled
+  // paragraphs (`제목 N` / `Heading N`) of section 0. Cached per file by
+  // `path + mtime` in `userData/outline-cache.json` — unchanged files
+  // skip parse on subsequent calls.
+  ipcMain.handle(
+    'folder:list-outlines',
+    async (
+      _event,
+      req: { rootPath?: unknown; maxDocs?: unknown },
+    ): Promise<WorkspaceOutlineResult> => {
+      const rootPath = typeof req?.rootPath === 'string' ? req.rootPath : '';
+      const requestedMax =
+        typeof req?.maxDocs === 'number' && Number.isInteger(req.maxDocs)
+          ? Math.max(1, Math.min(200, req.maxDocs))
+          : 50;
+      if (!rootPath)
+        return { status: 'no-root', entries: [], scanned: 0, skipped: 0 };
+
+      const MAX_DEPTH = 5;
+      const MAX_FILE_BYTES = 5 * 1024 * 1024;
+
+      const queue: { dir: string; depth: number }[] = [
+        { dir: rootPath, depth: 0 },
+      ];
+      const candidates: string[] = [];
+      while (queue.length > 0 && candidates.length < requestedMax) {
+        const cur = queue.shift()!;
+        let entries: import('node:fs').Dirent[];
+        try {
+          entries = await fs.readdir(cur.dir, { withFileTypes: true });
+        } catch {
+          continue;
+        }
+        for (const e of entries) {
+          if (e.name.startsWith('.')) continue;
+          const full = path.join(cur.dir, e.name);
+          if (e.isDirectory()) {
+            if (cur.depth + 1 < MAX_DEPTH) {
+              queue.push({ dir: full, depth: cur.depth + 1 });
+            }
+          } else if (
+            e.isFile() &&
+            (e.name.toLowerCase().endsWith('.hwp') ||
+              e.name.toLowerCase().endsWith('.hwpx'))
+          ) {
+            candidates.push(full);
+            if (candidates.length >= requestedMax) break;
+          }
+        }
+      }
+
+      const cache = await loadOutlineCache();
+      const out: WorkspaceOutlineEntry[] = [];
+      let scanned = 0;
+      let skipped = 0;
+      let parseFailed = false;
+      const { HwpDocument } = await loadRhwpCore();
+
+      for (const filePath of candidates) {
+        let stat: import('node:fs').Stats;
+        try {
+          stat = await fs.stat(filePath);
+        } catch {
+          skipped += 1;
+          continue;
+        }
+        if (stat.size > MAX_FILE_BYTES) {
+          skipped += 1;
+          continue;
+        }
+        const mtime = stat.mtimeMs;
+        const cached = cache[filePath];
+        if (cached && cached.mtime === mtime) {
+          out.push({
+            path: filePath,
+            filename: path.basename(filePath),
+            mtime,
+            outline: cached.outline,
+          });
+          scanned += 1;
+          continue;
+        }
+        // Cache miss — parse + extract.
+        let bytes: Buffer;
+        try {
+          bytes = await fs.readFile(filePath);
+        } catch {
+          skipped += 1;
+          continue;
+        }
+        let doc: InstanceType<typeof HwpDocument>;
+        try {
+          doc = new HwpDocument(new Uint8Array(bytes));
+        } catch {
+          skipped += 1;
+          parseFailed = true;
+          continue;
+        }
+        try {
+          const outline = extractOutline(doc);
+          out.push({
+            path: filePath,
+            filename: path.basename(filePath),
+            mtime,
+            outline,
+          });
+          cache[filePath] = { mtime, outline };
+          scanned += 1;
+        } finally {
+          try {
+            doc.free();
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+
+      // Persist cache (best-effort, swallow errors). Drop entries for
+      // paths that no longer appeared this scan to keep the cache from
+      // growing unbounded across moved/deleted files.
+      const trimmed: OutlineCache = {};
+      for (const e of out)
+        trimmed[e.path] = { mtime: e.mtime, outline: e.outline };
+      await saveOutlineCache(trimmed).catch(() => {});
+
+      const status: WorkspaceOutlineResult['status'] =
+        candidates.length >= requestedMax
+          ? 'limit-reached'
+          : parseFailed
+            ? 'partial'
+            : 'ok';
+      return { status, entries: out, scanned, skipped };
+    },
+  );
+
+  // chunk 96 — read a paragraph (+ optional surrounding context) from
+  // an arbitrary .hwp/.hwpx without mounting it as a tab. Used by the
+  // Agent's `readParagraphByPath` tool after `searchWorkspaceOutlines`
+  // identifies a candidate. Strictly read-only — no IR mutation, no
+  // caret movement, no .bak side-effect.
+  ipcMain.handle(
+    'folder:read-paragraph',
+    async (_event, req: ReadParagraphRequest): Promise<ReadParagraphResult> => {
+      if (
+        !req ||
+        typeof req.path !== 'string' ||
+        typeof req.sectionIdx !== 'number' ||
+        typeof req.paragraphIdx !== 'number' ||
+        !Number.isInteger(req.sectionIdx) ||
+        !Number.isInteger(req.paragraphIdx) ||
+        req.sectionIdx < 0 ||
+        req.paragraphIdx < 0
+      ) {
+        return { ok: false, reason: 'invalid-args' };
+      }
+      const ctx =
+        typeof req.contextParagraphs === 'number' &&
+        Number.isInteger(req.contextParagraphs) &&
+        req.contextParagraphs >= 0
+          ? Math.min(10, req.contextParagraphs)
+          : 2;
+      const lower = req.path.toLowerCase();
+      if (!lower.endsWith('.hwp') && !lower.endsWith('.hwpx')) {
+        return { ok: false, reason: 'unsupported-extension' };
+      }
+      let bytes: Buffer;
+      try {
+        bytes = await fs.readFile(req.path);
+      } catch {
+        return { ok: false, reason: 'read-failed' };
+      }
+      const { HwpDocument } = await loadRhwpCore();
+      let doc: InstanceType<typeof HwpDocument>;
+      try {
+        doc = new HwpDocument(new Uint8Array(bytes));
+      } catch {
+        return { ok: false, reason: 'parse-error' };
+      }
+      try {
+        const sectionCount = doc.getSectionCount();
+        if (req.sectionIdx >= sectionCount) {
+          return { ok: false, reason: 'out-of-range' };
+        }
+        const paraCount = doc.getParagraphCount(req.sectionIdx);
+        if (req.paragraphIdx >= paraCount) {
+          return { ok: false, reason: 'out-of-range' };
+        }
+        const readPara = (p: number): string => {
+          if (p < 0 || p >= paraCount) return '';
+          const len = doc.getParagraphLength(req.sectionIdx, p);
+          if (len === 0) return '';
+          try {
+            const raw = doc.getTextRange(req.sectionIdx, p, 0, len);
+            // Cap each paragraph at 4KB so the model context doesn't
+            // explode on a giant single paragraph.
+            return raw.length > 4096 ? raw.slice(0, 4096) : raw;
+          } catch {
+            return '';
+          }
+        };
+        const text = readPara(req.paragraphIdx);
+        const context: { paragraphIdx: number; text: string }[] = [];
+        if (ctx > 0) {
+          for (
+            let p = req.paragraphIdx - ctx;
+            p <= req.paragraphIdx + ctx;
+            p++
+          ) {
+            if (p === req.paragraphIdx) continue;
+            if (p < 0 || p >= paraCount) continue;
+            context.push({ paragraphIdx: p, text: readPara(p) });
+          }
+        }
+        return { ok: true, text, context };
+      } finally {
+        try {
+          doc.free();
+        } catch {
+          /* ignore */
+        }
+      }
     },
   );
 
