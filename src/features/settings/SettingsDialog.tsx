@@ -244,11 +244,33 @@ function PaneFooter({
 
 function GeneralPane(): JSX.Element {
   const { theme, setTheme, resolvedTheme } = useTheme();
+  // chunk 100 — 캐시 비우기. outline-cache + model-cache 만 삭제 (사용자
+  // 데이터 / 세션 / API 키 / 채팅 히스토리는 보존).
+  type ClearState =
+    | { kind: 'idle' }
+    | { kind: 'busy' }
+    | { kind: 'ok'; removed: string[] }
+    | { kind: 'error'; reason: string };
+  const [clearState, setClearState] = useState<ClearState>({ kind: 'idle' });
+  const onClearCaches = useCallback(async () => {
+    setClearState({ kind: 'busy' });
+    try {
+      const result = await window.api.clearCaches();
+      setClearState({ kind: 'ok', removed: result.removed });
+      // ~3s 후 idle 복귀.
+      setTimeout(() => setClearState({ kind: 'idle' }), 3_000);
+    } catch (err) {
+      setClearState({
+        kind: 'error',
+        reason: (err as Error).message ?? String(err),
+      });
+    }
+  }, []);
   return (
     <>
       <PaneHeader title="일반" description="외형과 기본 동작을 설정합니다." />
       <PaneBody>
-        <section className="space-y-3" data-testid="settings-general">
+        <section className="space-y-5" data-testid="settings-general">
           <Field label="테마" help="시스템: OS의 라이트/다크 모드 자동 추적">
             <div className="flex gap-1.5">
               {(['system', 'light', 'dark'] as const).map((opt) => (
@@ -275,6 +297,44 @@ function GeneralPane(): JSX.Element {
             <p className="mt-2 text-[10.5px] text-muted-foreground/70">
               현재 적용: {resolvedTheme === 'dark' ? '다크' : '라이트'}
             </p>
+          </Field>
+          <Field
+            label="캐시 비우기"
+            help="워크스페이스 outline 캐시 + provider 모델 목록 캐시만 삭제. 채팅 히스토리 / 세션 / API 키는 보존됩니다."
+          >
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={onClearCaches}
+                disabled={clearState.kind === 'busy'}
+                data-testid="settings-clear-caches"
+                className="text-xs"
+              >
+                {clearState.kind === 'busy' ? (
+                  <>
+                    <Loader2 className="mr-1.5 size-3 animate-spin" />
+                    삭제 중...
+                  </>
+                ) : (
+                  '캐시 비우기'
+                )}
+              </Button>
+              {clearState.kind === 'ok' ? (
+                <span
+                  className="text-[10.5px] text-emerald-600 dark:text-emerald-400"
+                  data-testid="settings-clear-caches-ok"
+                >
+                  ✓ 삭제됨 ({clearState.removed.length}개 파일)
+                </span>
+              ) : null}
+              {clearState.kind === 'error' ? (
+                <span className="text-[10.5px] text-destructive">
+                  실패: {clearState.reason}
+                </span>
+              ) : null}
+            </div>
           </Field>
         </section>
       </PaneBody>

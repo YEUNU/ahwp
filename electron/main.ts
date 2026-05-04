@@ -145,6 +145,32 @@ function registerIpcHandlers(): void {
       await appendErrorLog(origin, req.message);
     },
   );
+  // chunk 100 — Settings 의 "캐시 비우기" 진입점. 사용자가 명시적으로
+  // 호출했을 때만 실행. 삭제 대상:
+  //  - userData/outline-cache.json (chunk 96 워크스페이스 outline 캐시)
+  //  - userData/model-cache.json   (chunk 48/70 provider 모델 목록 24h 캐시)
+  // 채팅 히스토리 / 세션 / API 키 / recent.json 은 사용자 데이터 / 설정
+  // 영역이라 본 IPC 가 건드리지 않는다 (실수로 날리면 손실 큰 데이터).
+  ipcMain.handle(
+    'app:clear-caches',
+    async (): Promise<{ removed: string[]; failed: string[] }> => {
+      const userData = app.getPath('userData');
+      const targets = ['outline-cache.json', 'model-cache.json'];
+      const removed: string[] = [];
+      const failed: string[] = [];
+      for (const name of targets) {
+        const full = path.join(userData, name);
+        try {
+          await rm(full, { force: true });
+          removed.push(name);
+        } catch (err) {
+          console.warn(`[clear-caches] ${name} failed:`, err);
+          failed.push(name);
+        }
+      }
+      return { removed, failed };
+    },
+  );
   registerFileIpc();
   registerSessionIpc();
   registerClipboardIpc();

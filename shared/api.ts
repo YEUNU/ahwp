@@ -559,6 +559,10 @@ export interface AhwpApi {
   /** chunk 63 — renderer-side global error bridge. Append to
    * `userData/error.log` (local-only sink — no upload). */
   logError: (req: { origin?: string; message: string }) => Promise<void>;
+  /** chunk 100 — Settings 의 "캐시 비우기" 진입점. outline-cache.json +
+   *  model-cache.json 만 삭제. 채팅 히스토리 / 세션 / API 키 / recent.json
+   *  은 건드리지 않음 (사용자 데이터). 결과는 삭제 성공 / 실패 파일명. */
+  clearCaches: () => Promise<{ removed: string[]; failed: string[] }>;
   file: FileApi;
   session: SessionApi;
   clipboard: ClipboardApi;

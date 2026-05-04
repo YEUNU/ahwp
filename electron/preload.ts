@@ -17,6 +17,7 @@ const api: AhwpApi = {
   ping: (req: PingRequest) => ipcRenderer.invoke('ipc:ping', req),
   getVersions: () => ipcRenderer.invoke('app:get-versions'),
   logError: (req) => ipcRenderer.invoke('app:log-error', req),
+  clearCaches: () => ipcRenderer.invoke('app:clear-caches'),
   onMenuAction: (handler) => {
     const listener = (_event: IpcRendererEvent, action: MenuAction) =>
       handler(action);

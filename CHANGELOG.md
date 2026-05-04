@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+### Added — chunk 100: Settings "캐시 비우기" (0.3.36)
+
+- **새 IPC `app:clear-caches`** — `userData/outline-cache.json` (chunk 96 워크스페이스 outline) + `userData/model-cache.json` (chunk 48/70 provider 모델 목록 24h 캐시) 만 삭제. 채팅 히스토리 / 세션 / API 키 / recent.json 등 사용자 데이터는 절대 건드리지 않음 (실수로 날리면 손실 큰 데이터). 결과는 `{removed: string[], failed: string[]}`.
+- **Settings "일반" 탭 — "캐시 비우기" 버튼** — `data-testid="settings-clear-caches"`. 클릭 시 IPC 호출 → idle / busy / ok / error 상태 표시. ok 표시는 3초 후 idle 복귀.
+- **e2e 2 케이스** — (a) 캐시 두 파일 + 임의 sentinel 파일 작성 → 버튼 클릭 → 캐시 두 개만 사라지고 sentinel 보존 검증, (b) 캐시 파일 없는 fresh 상태에서도 silent 성공.
+
 ### Changed — chunk 99: tool 라우터 휴리스틱 → LLM 기반 (0.3.35)
 
 - **휴리스틱 키워드 매칭 제거 → LLM 기반 라우팅** — chunk 98 의 키워드 그룹 정적 정의 (`GROUPS`) 가 사라지고, 사용자 선택 모델로 router LLM 한 번 호출해서 다음 turn 에 필요한 tool 이름 JSON 배열을 받음. 별도 small router 모델 없이 사용자 선택 모델 그대로. 휴리스틱이 미리 정의된 키워드에만 반응하던 한계 (예: 신규 표현 / 외래어 / 신조어) 해소.
