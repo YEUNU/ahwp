@@ -158,6 +158,75 @@ test.describe('studio perf — chunk 64', () => {
     recordPerf('cmd-end', elapsed);
   });
 
+  // chunk 95 보강 — End→Home roundtrip + reload stability.
+  test('cmd+End → cmd+Home roundtrip returns scrollTop to 0', async () => {
+    const { page } = launched;
+    await page.evaluate(async (p) => {
+      await window.api.session.set({ lastActivePath: p });
+    }, BIG_FIXTURE);
+    await page.reload();
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForFunction(
+      () =>
+        Boolean(
+          (window as Window & { __studioDebug?: StudioDebug }).__studioDebug,
+        ),
+      { timeout: 30_000 },
+    );
+    await page.evaluate(() => {
+      (
+        window as Window & { __studioDebug?: StudioDebug }
+      ).__studioDebug!.focusViewer();
+    });
+
+    const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
+    // Jump to End first, then back to Home, timing the round trip.
+    const t0 = Date.now();
+    await page.keyboard.press(`${mod}+End`);
+    await expect
+      .poll(() => getScrollTop(page), { timeout: 10_000 })
+      .toBeGreaterThan(1000);
+    await page.keyboard.press(`${mod}+Home`);
+    await expect.poll(() => getScrollTop(page), { timeout: 10_000 }).toBe(0);
+    const elapsed = Date.now() - t0;
+    // Loose ceiling for the full round trip.
+    expect(elapsed).toBeLessThan(15_000);
+    recordPerf('end-home-roundtrip', elapsed);
+  });
+
+  test('reload after deep scroll restores under budget (perf parity)', async () => {
+    const { page } = launched;
+    await page.evaluate(async (p) => {
+      await window.api.session.set({ lastActivePath: p });
+    }, BIG_FIXTURE);
+    await page.reload();
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForFunction(
+      () =>
+        Boolean(
+          (window as Window & { __studioDebug?: StudioDebug }).__studioDebug,
+        ),
+      { timeout: 30_000 },
+    );
+
+    // Force re-parse via reload — should land within the same budget
+    // as the initial load (no leak / cache regression that doubles
+    // second-load time).
+    const t0 = Date.now();
+    await page.reload();
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForFunction(
+      () =>
+        Boolean(
+          (window as Window & { __studioDebug?: StudioDebug }).__studioDebug,
+        ),
+      { timeout: 30_000 },
+    );
+    const elapsed = Date.now() - t0;
+    expect(elapsed).toBeLessThan(15_000);
+    recordPerf('reload-load', elapsed);
+  });
+
   test('10× PageDown sequence keeps each press under budget', async () => {
     const { page } = launched;
     await page.evaluate(async (p) => {

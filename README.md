@@ -23,10 +23,12 @@
 - **파일별 채팅 히스토리** — 문서마다 독립된 대화 컨텍스트 유지
 - **로컬 우선** — API 키는 OS keychain(`safeStorage`)에 암호화 저장. 서버 인프라 없음(BYOK)
 - **HWP / HWPX** — `@rhwp/core` (Rust+WASM) 직접 사용. 저장은 HWP/CFB로 통일 (HWPX 라운드트립 이미지 손실 회피, KNOWN_ISSUES L-001)
+- **한컴 매뉴얼 명칭 hover 툴팁 + 플랫폼별 단축키** — 모든 툴바·다이얼로그 진입점에 한글 워드프로세서 공식 명칭 + 한 줄 설명 + 단축키(macOS `⌘`/`⌥`/`⇧`/`⌃` 심볼, Win/Linux `Ctrl+`/`Alt+`/`Shift+` 텍스트 자동 분기). 30+ 항목 매핑.
+- **한·영 i18n** — `i18next` + `react-i18next`. localStorage `ahwp:locale` 영속, 첫 실행 시 `navigator.language` 감지. WelcomePane / TitleBar / ThemeToggle 등 사용자-노출 string 마이그레이션
 
 ## 빠른 시작
 
-> **Phase 1 완료** (2026-04-30) — 풀 편집 + 폴더 트리 + 탭 시스템 + 워크스페이스 복원이 모두 동작합니다. AI 챗봇은 Phase 2부터. 자세한 진행 상황은 [docs/PROGRESS.md](docs/PROGRESS.md).
+> **Phase 1 + Phase 2 + Phase 3 + 1차 UX 라운드 완료** (chunks 1~95, 0.3.30) — 풀 편집 + AI 챗봇 (Manual / Agent) + 한컴 매뉴얼 명칭 hover 툴팁 + 한·영 i18n + Diff Viewer + 다중 문서 라우팅 + 자동 업데이트 + Crash Reporter 까지 동작. 자세한 진행 상황은 [docs/PROGRESS.md](docs/PROGRESS.md).
 
 ```bash
 # 의존성 설치
@@ -76,67 +78,77 @@ npm run build:all
 
 | 계층     | 선택                                                                                            |
 | -------- | ----------------------------------------------------------------------------------------------- |
-| 셸       | Electron + electron-builder                                                                     |
-| 렌더러   | React 18 + Vite + TypeScript                                                                    |
-| UI       | shadcn/ui + Tailwind CSS                                                                        |
-| 상태     | Zustand                                                                                         |
-| HWP 코어 | `@rhwp/core` 직접 사용 (Rust+WASM, 자체 Studio viewer/editor)                                   |
-| 저장소   | better-sqlite3 (히스토리), electron-store (설정)                                                |
+| 셸       | Electron 41 + electron-builder                                                                  |
+| 렌더러   | React 19 + Vite 8 + TypeScript 6                                                                |
+| UI       | shadcn/ui + Tailwind CSS 4 (CSS-first `@import 'tailwindcss'`) + tw-animate-css                 |
+| i18n     | `i18next` + `react-i18next` (한·영, localStorage 영속)                                          |
+| 상태     | React hooks (per-feature) + 명시적 ref 핸들 (StudioViewer)                                      |
+| HWP 코어 | `@rhwp/core` 0.7.x 직접 사용 (Rust+WASM, 자체 Studio viewer/editor)                             |
+| 저장소   | better-sqlite3 (chat history), `safeStorage` 암호화 (API 키), JSON (session/recent/model-cache) |
 | AI SDK   | `openai` · `@anthropic-ai/sdk` · `@google/genai` · 직접 fetch (`custom` OpenAI 호환 엔드포인트) |
 
 상세 설계는 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/TECH_STACK.md](docs/TECH_STACK.md) 참고.
 
 ## 개발 로드맵
 
-- **Phase 0** 부트스트랩 (Electron + Vite + Tailwind 기본 셸)
-- **Phase 1** 3-Pane 레이아웃 + rhwp 임베드 + 파일 열기/저장
-- **Phase 2** AI 챗봇 (Manual 모드, BYOK, 파일별 히스토리)
-- **Phase 3** Agent 모드 (hwpctl tool use)
-- **Phase 4** 패키징·자동 업데이트
-- **Phase 5** 안정화 + 베타 배포
+- **Phase 0** ✅ 부트스트랩 (Electron + Vite + Tailwind 기본 셸)
+- **Phase 1** ✅ 3-Pane 레이아웃 + 자체 Studio viewer + 풀 편집 + 폴더 트리 + 탭 시스템
+- **Phase 2** ✅ AI 챗봇 (Manual 모드, BYOK, 파일별 히스토리, 발췌 첨부, 멀티 문서 컨텍스트)
+- **Phase 3** ✅ Agent 모드 (54 tools — write 45 + read 9, docId-aware 라우팅, 묶음 undo, Diff Viewer)
+- **Phase 4** ✅ 패키징·자동 업데이트 (electron-builder mac/win/linux + electron-updater + GitHub Releases)
+- **Phase 5** 진행 중 — 안정화: Crash Reporter / 접근성 / USER_GUIDE / 성능 측정 인프라 / 한·영 i18n / 한컴 매뉴얼 매핑 완료. 베타 피드백 채널 / macOS notarization / Windows 코드 사이닝 미정
 
 전체 체크리스트는 [docs/ROADMAP.md](docs/ROADMAP.md) 참고.
 
 ## 디렉토리 구조
 
-현재 구조 (Phase 1-C 기준). Phase 2+에서 `electron/ai/`, `src/features/chat/`, `electron/store/db.ts` 등이 추가됩니다.
+현재 구조 (chunks 1~95 기준).
 
 ```
 ahwp/
 ├── electron/              메인 프로세스 (Node)
-│   ├── main.ts            엔트리, BrowserWindow 생성, IPC 등록
+│   ├── main.ts            엔트리, BrowserWindow 생성, IPC 등록, 자동 업데이트, Crash Reporter
 │   ├── preload.ts         contextBridge로 window.api 노출
 │   ├── menu.ts            네이티브 앱 메뉴 (File / Edit / Format / View / Window / Help)
+│   ├── crash-reporter.ts  3-layer (native minidump + main uncaught + renderer logError → userData/error.log)
 │   ├── ipc/
-│   │   ├── file.ts        file:new / open / open-by-path / read / save / save-as / list-recent
-│   │   ├── folder.ts      folder:pick / list / watch / unwatch / create-file / create-folder / rename / trash / reveal (chokidar)
-│   │   ├── clipboard.ts   clipboard:read-text / write-text
-│   │   └── session.ts     session:get / set
+│   │   ├── file.ts        file:new/open/read/save/save-as/list-recent + .bak 사이드카 + 버전 스냅샷
+│   │   ├── folder.ts      folder:pick/list/watch/create/rename/trash/reveal (chokidar 외부 변경 감지)
+│   │   ├── clipboard.ts   clipboard:read-text/write-text + control clipboard
+│   │   ├── session.ts     session:get/set (lastFolderPath / lastActivePath / openTabPaths)
+│   │   ├── secrets.ts     secrets:set/has/delete/list (renderer 에 plaintext get 미노출)
+│   │   ├── ai.ts          ai:chat-start/abort + provider streaming (id-based 채널)
+│   │   └── chat-history.ts   better-sqlite3 — 파일별 대화·메시지·턴
+│   ├── ai/
+│   │   ├── providers/     openai / anthropic / gemini / nvidia / custom / fake (env-gated)
+│   │   └── registry.ts    Provider 인터페이스 + 어댑터 등록
 │   ├── hwp/
-│   │   ├── converter.ts   @rhwp/core 래퍼 — HWP→HWPX 변환 + 라운드트립 정규화 + 빈 문서 시드
-│   │   └── blank-seed.ts  base64 임베드 blank.hwpx (file:new용)
-│   └── store/
-│       ├── recent.ts      userData/recent.json — LRU max 20 (legacy, 새 UI는 folder tree)
-│       └── session.ts     userData/session.json — lastFolderPath / lastActivePath / openTabPaths
-├── src/                   렌더러 (React)
-│   ├── App.tsx
-│   ├── main.tsx
-│   ├── app/
-│   │   ├── AppShell.tsx   3-Pane 레이아웃, 탭 상태, 세션 복원, 메뉴 라우팅
-│   │   ├── theme-provider.tsx   light/dark/system, prefers-color-scheme 구독
-│   │   └── theme-toggle.tsx
+│   │   ├── converter.ts   @rhwp/core 래퍼 — HWP↔HWPX 변환 + 라운드트립 정규화
+│   │   └── blank-seed.ts  base64 임베드 blank.hwpx (file:new 용)
+│   └── store/             recent.json / session.json / secrets.json (encrypted) / model-cache.json / chat-history.db
+├── src/                   렌더러 (React 19)
+│   ├── App.tsx · main.tsx
+│   ├── app/               AppShell · TitleBar · WelcomePane · ThemeProvider · ThemeToggle · AboutDialog
 │   ├── features/
-│   │   ├── files/         FolderTree (lazy expand, chokidar 동기화, 컨텍스트 메뉴, F2/Delete, DnD 이동)
-│   │   └── studio/        StudioViewer (@rhwp/core 직접 — 페이지 SVG, 편집/선택/서식/Find/Undo/Copy) + TabBar
-│   ├── components/ui/     shadcn/ui (Button, ...)
-│   └── lib/utils.ts       cn() 헬퍼
+│   │   ├── files/         FolderTree
+│   │   ├── studio/        StudioViewer (편집/선택/서식/Find/Undo/Diff/표/이미지) + PaperPage + TabBar + 12+ Dialog
+│   │   ├── chat/          ChatPanel (Manual/Agent + 발췌 + 멀티 문서 + Diff Viewer + 히스토리) + 9 hooks
+│   │   ├── settings/      SettingsDialog (4탭 — 일반/AI/단축키/정보)
+│   │   └── cmdk/          CommandPalette (⌘K) + ShortcutsDialog (⌘/)
+│   ├── components/ui/     shadcn/ui (Button · Dialog · Input)
+│   └── lib/
+│       ├── i18n/          locales/{ko,en}.ts + setup (i18next + react-i18next)
+│       ├── hancom-tooltips.ts   30+ 한컴 매뉴얼 명칭 매핑 + 플랫폼별 단축키 표기
+│       ├── rhwp-core.ts   WASM lazy init + measureTextWidth 콜백
+│       └── utils.ts       cn() 헬퍼
 ├── shared/
-│   ├── api.ts             IPC 계약 (AhwpApi, FileApi, FolderApi, ClipboardApi, SessionApi, MenuAction, ...)
+│   ├── api.ts             IPC 계약 (AhwpApi 와 FileApi/FolderApi/ChatHistoryApi/AiApi/SecretsApi/...)
+│   ├── ai.ts · ai-tools.ts   Provider 인터페이스 + AHWP_TOOL_NAMES 단일 진실 원천 (write 45 + read 9)
+│   ├── rhwp-types.ts      narrow type (RhwpPageDef 등 — 21개 narrow type)
 │   └── format.ts          HWP/HWPX 매직바이트 sniff + 확장자 보정
-├── tests/e2e/             Playwright + Electron (smoke + 폴더트리/ops + 탭 + 스튜디오 청크 1~12 + 144페이지 부하)
-├── docs/                  ARCHITECTURE / AI_INTEGRATION / TECH_STACK / ROADMAP / PROGRESS
-├── examples/              사용자 supplied HWP fixtures (gitignore)
-└── style_example/         초기 디자인 목업 (gitignore — 빌드 무관)
+├── tests/e2e/             Playwright + Electron — 70+ spec 파일, 397+ 통과 케이스
+├── docs/                  ARCHITECTURE / AI_INTEGRATION / AGENT_TOOLS / KNOWN_ISSUES / PHASE3_PLAN / RELEASE / USER_GUIDE / ROADMAP / PROGRESS
+└── examples/              사용자 제공 HWP fixture (perf 측정용 — git tracked)
 ```
 
 ## 브랜치

@@ -77,6 +77,56 @@ export const HANCOM_TOOLTIPS = {
     description: '단락의 왼쪽 여백을 한 단계 줄입니다.',
   },
 
+  // 폰트 / 색상 / 스타일 (Studio 툴바)
+  'studio-font-size': {
+    name: '글자 크기',
+    description: '선택한 글자의 크기를 포인트 단위로 변경합니다.',
+  },
+  'studio-text-color': {
+    name: '글자 색',
+    description: '선택한 글자의 색을 변경합니다.',
+  },
+  'studio-style-select': {
+    name: '문단 스타일',
+    description:
+      '단락에 적용할 명명된 스타일을 선택합니다 (제목 / 본문 / 인용 등).',
+    shortcut: 'F6',
+  },
+  'studio-line-spacing': {
+    name: '줄 간격',
+    description: '단락 안의 줄 사이 간격을 조절합니다 (1.0 / 1.5 / 2.0 등).',
+  },
+  'studio-para-spacing': {
+    name: '문단 간격',
+    description: '단락 위·아래 간격을 조절합니다.',
+  },
+  'studio-toolbar-more': {
+    name: '더 보기',
+    description: '확장 툴바를 펼쳐 추가 도구를 표시합니다.',
+  },
+  'studio-toggle-controls': {
+    name: '조판 부호 보이기',
+    description: '단락 끝, 탭, 띄어쓰기 등 조판 부호를 표시합니다.',
+  },
+  'studio-toggle-transparent': {
+    name: '투명 테두리 보이기',
+    description: '표·셀의 투명 테두리를 점선으로 표시합니다.',
+  },
+
+  // 글자/문단 모양 다이얼로그 (Hancom reflex)
+  'studio-char-format-dialog': {
+    name: '글자 모양',
+    description:
+      '선택한 글자의 글꼴·크기·색·진하게·기울임·밑줄·취소선 등을 한 번에 설정합니다.',
+    shortcut: '⌥L',
+  },
+  'studio-para-format-dialog': {
+    name: '문단 모양',
+    description:
+      '단락의 정렬·줄 간격·여백·들여쓰기·문단 위아래 간격 등을 한 번에 설정합니다.',
+    shortcut: '⌥T',
+  },
+
   // 표 / 그림 / 도형
   'studio-insert-table': {
     name: '표 넣기',

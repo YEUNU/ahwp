@@ -6,6 +6,11 @@
 
 ## [Unreleased]
 
+### Added — chunk 95: 한컴 매핑 확장 + 이전 세션 e2e 보강 (0.3.30)
+
+- **chunk 95 — 한컴 매핑 + StudioViewer 적용** — `HANCOM_TOOLTIPS` 에 `font-size` / `text-color` / `style-select` (F6) / `line-spacing` / `para-spacing` / `toolbar-more` / `toggle-controls` / `toggle-transparent` / `char-format-dialog` (⌥L) / `para-format-dialog` (⌥T) 추가. StudioViewer 툴바 / 확장 툴바 / 보기 토글에 `title={hancomTitle(...)}` 와이어링. `tooltip-i18n-svg.spec.ts` 에 chunk 95 매핑 검증 케이스 + edge case 8건 보강 (multi-line title 구조, 단축키 없는 entry, Alt 단축키 platform 분기, post-mutation re-render, idempotent, 영어 모드 + 플랫폼 단축키 독립, setLocale reload). 18/18 통과.
+- **이전 세션 e2e edge case 보강** — (a) `crash-reporter.spec.ts` (chunk 63): multi-error append / no-origin 기본값 (`renderer`) / multi-line stack 보존 / malformed payload silently no-op (4건). (b) `chat-prefetch.spec.ts` (chunk 70): multi-provider catalog 독립 / overwrite 후 catalog 회복 (2건). (c) `file-dialog-mock.spec.ts` (chunk 60): open dialog cancel / save-as cancel / `.hwpx` 자동 라우팅 to `.hwp` (3건). (d) `chat-agent-multidoc.spec.ts` (chunk 50): 두 turn 연속 dispatch (active 가 turn 사이 변경) / 잘못된 sectionIdx graceful fail without spillover (2건). (e) `studio-perf.spec.ts` (chunks 64/88): cmd+End → cmd+Home roundtrip / reload-load 두 번째 로드 perf parity (2건).
+
 ### Added — chunks 91~94: 한컴 툴팁 / SVG title / i18n 마이그레이션 / e2e (0.3.29)
 
 - **chunk 91 — 한컴 툴팁 전체 적용** — Studio 툴바의 정렬 (left/center/right/justify), 들여쓰기/내어쓰기, undo/redo, zoom (in/out/fit/reset), find prev/next/close, insert-image 등 추가 적용. ChatPanel 의 Manual/Agent 모드 pill 도 hancomTitle 로 교체. 매핑 사용 사이트 7 → 25+ 곳.

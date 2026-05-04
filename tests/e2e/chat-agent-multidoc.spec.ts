@@ -138,4 +138,134 @@ test.describe('chat — chunk 50 docId-aware Agent dispatch', () => {
     });
     expect(refText).not.toContain('PINNED_TARGET_57');
   });
+
+  // chunk 95 보강 — 두 turn 연속 dispatch (active 가 turn 사이에 바뀜).
+  test('two sequential turns each route to the doc active at submit time', async () => {
+    const { page } = launched;
+    await openBoth(page);
+
+    const tabButtons = page
+      .getByTestId('studio-tab')
+      .locator('button:not([data-testid="studio-tab-close"])');
+
+    // Turn 1: target.hwpx active. Insert "TURN1_TARGET".
+    await page.getByTestId('chat-mode-agent').click();
+    await page
+      .getByTestId('chat-input')
+      .fill(
+        'TOOL:insertText:{"sectionIdx":0,"paragraphIdx":0,"charOffset":0,"text":"TURN1_TARGET"}',
+      );
+    await page.getByTestId('chat-send').click();
+    const entry1 = page
+      .locator('[data-testid="chat-tool-entry"][data-tool-name="insertText"]')
+      .first();
+    await expect(entry1).toBeVisible({ timeout: 5000 });
+    await expect
+      .poll(async () => entry1.getAttribute('data-tool-status'))
+      .not.toBe('running');
+
+    // Switch active to reference.hwpx BEFORE submitting turn 2.
+    await tabButtons.nth(1).click();
+    await page.waitForFunction(
+      () =>
+        Boolean(
+          (window as Window & { __studioDebug?: StudioDebug }).__studioDebug,
+        ),
+      { timeout: 10_000 },
+    );
+
+    // Turn 2: reference is now active. Insert "TURN2_REF".
+    await page
+      .getByTestId('chat-input')
+      .fill(
+        'TOOL:insertText:{"sectionIdx":0,"paragraphIdx":0,"charOffset":0,"text":"TURN2_REF"}',
+      );
+    await page.getByTestId('chat-send').click();
+    const entry2 = page
+      .locator('[data-testid="chat-tool-entry"][data-tool-name="insertText"]')
+      .nth(1);
+    await expect(entry2).toBeVisible({ timeout: 5000 });
+    await expect
+      .poll(async () => entry2.getAttribute('data-tool-status'))
+      .not.toBe('running');
+
+    // reference (current __studioDebug) has TURN2_REF, NOT TURN1_TARGET.
+    const refText = await page.evaluate(() => {
+      const dbg = (window as Window & { __studioDebug?: StudioDebug })
+        .__studioDebug!;
+      const len = dbg.getParagraphLength(0, 0);
+      return dbg.getTextRange(0, 0, 0, len);
+    });
+    expect(refText).toContain('TURN2_REF');
+    expect(refText).not.toContain('TURN1_TARGET');
+
+    // Switch back to target — it should have TURN1_TARGET, no spillover
+    // from turn 2.
+    await tabButtons.nth(0).click();
+    await page.waitForFunction(
+      () =>
+        Boolean(
+          (window as Window & { __studioDebug?: StudioDebug }).__studioDebug,
+        ),
+      { timeout: 10_000 },
+    );
+    const targetText = await page.evaluate(() => {
+      const dbg = (window as Window & { __studioDebug?: StudioDebug })
+        .__studioDebug!;
+      const len = dbg.getParagraphLength(0, 0);
+      return dbg.getTextRange(0, 0, 0, len);
+    });
+    expect(targetText).toContain('TURN1_TARGET');
+    expect(targetText).not.toContain('TURN2_REF');
+  });
+
+  test('Agent insertText with invalid sectionIdx fails gracefully without spillover', async () => {
+    const { page } = launched;
+    await openBoth(page);
+
+    await page.getByTestId('chat-mode-agent').click();
+    // sectionIdx=99 is out of range — dispatcher should mark tool as
+    // failed and NOT mutate either doc.
+    await page
+      .getByTestId('chat-input')
+      .fill(
+        'TOOL:insertText:{"sectionIdx":99,"paragraphIdx":0,"charOffset":0,"text":"BAD_SECTION_95"}',
+      );
+    await page.getByTestId('chat-send').click();
+    const entry = page
+      .locator('[data-testid="chat-tool-entry"][data-tool-name="insertText"]')
+      .first();
+    await expect(entry).toBeVisible({ timeout: 5000 });
+    await expect
+      .poll(async () => entry.getAttribute('data-tool-status'))
+      .not.toBe('running');
+
+    // Neither doc should contain the sentinel.
+    const targetText = await page.evaluate(() => {
+      const dbg = (window as Window & { __studioDebug?: StudioDebug })
+        .__studioDebug!;
+      const len = dbg.getParagraphLength(0, 0);
+      return dbg.getTextRange(0, 0, 0, len);
+    });
+    expect(targetText).not.toContain('BAD_SECTION_95');
+
+    const tabButtons = page
+      .getByTestId('studio-tab')
+      .locator('button:not([data-testid="studio-tab-close"])');
+    await tabButtons.nth(1).click();
+    await page.waitForFunction(
+      () =>
+        Boolean(
+          (window as Window & { __studioDebug?: StudioDebug }).__studioDebug,
+        ),
+      { timeout: 10_000 },
+    );
+    const refText = await page.evaluate(() => {
+      const dbg = (window as Window & { __studioDebug?: StudioDebug })
+        .__studioDebug!;
+      const len = dbg.getParagraphLength(0, 0);
+      return dbg.getTextRange(0, 0, 0, len);
+    });
+    expect(refText).not.toContain('BAD_SECTION_95');
+  });
 });

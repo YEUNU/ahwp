@@ -145,6 +145,116 @@ test.describe('file dialog mocking — chunk 60', () => {
     expect(existsSync(`${targetPath}.bak`)).toBe(false);
   });
 
+  // chunk 95 보강 — cancel + .hwpx auto-route + multi-save .bak idempotency.
+  test('file:open dialog canceled → no tab opens', async () => {
+    const { app, page } = launched;
+    // Mock cancel.
+    await app.evaluate(async ({ dialog }) => {
+      dialog.showOpenDialog = (async () => ({
+        canceled: true,
+        filePaths: [],
+      })) as typeof dialog.showOpenDialog;
+    });
+    await app.evaluate(async ({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows()[0];
+      win.webContents.send('menu:action', 'file:open');
+    });
+    // Allow the IPC round-trip to settle without forcing a load — there
+    // should be no tab to wait for.
+    await page.waitForTimeout(800);
+    const tabs = page.getByTestId('studio-tab');
+    await expect(tabs).toHaveCount(0);
+  });
+
+  test('file:save-as canceled → file is NOT written', async () => {
+    const { app, page } = launched;
+    const fixturePath = path.join(tmpDir, 'src-cancel.hwpx');
+    const targetPath = path.join(tmpDir, 'never-written.hwp');
+    copyFileSync(FIXTURE, fixturePath);
+
+    await page.evaluate(async (p) => {
+      await window.api.file.openByPath(p);
+      await window.api.session.set({ openTabPaths: [p], lastActivePath: p });
+    }, fixturePath);
+    await page.reload();
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForFunction(
+      () =>
+        Boolean(
+          (window as Window & { __studioDebug?: StudioDebug }).__studioDebug,
+        ),
+      { timeout: 30_000 },
+    );
+
+    await app.evaluate(async ({ dialog }) => {
+      dialog.showSaveDialog = (async () => ({
+        canceled: true,
+        filePath: '',
+      })) as typeof dialog.showSaveDialog;
+    });
+
+    await app.evaluate(async ({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows()[0];
+      win.webContents.send('menu:action', 'file:save-as');
+    });
+    // Wait for the IPC to settle, then verify nothing materialized.
+    await page.waitForTimeout(800);
+    expect(existsSync(targetPath)).toBe(false);
+    expect(existsSync(`${targetPath}.bak`)).toBe(false);
+  });
+
+  test('file:save-as picking .hwpx auto-routes to sibling .hwp (chunk 60 invariant)', async () => {
+    const { app, page } = launched;
+    const fixturePath = path.join(tmpDir, 'src-route.hwpx');
+    // User picks .hwpx; main rewrites to .hwp because @rhwp/core HWPX
+    // round-trip drops images (CLAUDE.md note).
+    const pickedPath = path.join(tmpDir, 'route-target.hwpx');
+    const expectedTarget = path.join(tmpDir, 'route-target.hwp');
+    copyFileSync(FIXTURE, fixturePath);
+
+    await page.evaluate(async (p) => {
+      await window.api.file.openByPath(p);
+      await window.api.session.set({ openTabPaths: [p], lastActivePath: p });
+    }, fixturePath);
+    await page.reload();
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForFunction(
+      () =>
+        Boolean(
+          (window as Window & { __studioDebug?: StudioDebug }).__studioDebug,
+        ),
+      { timeout: 30_000 },
+    );
+
+    await app.evaluate(async ({ dialog }, picked) => {
+      dialog.showSaveDialog = (async () => ({
+        canceled: false,
+        filePath: picked,
+      })) as typeof dialog.showSaveDialog;
+    }, pickedPath);
+
+    await page.evaluate(() => {
+      const dbg = (window as Window & { __studioDebug?: StudioDebug })
+        .__studioDebug!;
+      dbg.insertText(0, 0, 0, 'ROUTED');
+    });
+
+    await app.evaluate(async ({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows()[0];
+      win.webContents.send('menu:action', 'file:save-as');
+    });
+
+    // The .hwp sibling materializes; the user-picked .hwpx never exists.
+    await expect
+      .poll(() => existsSync(expectedTarget), { timeout: 10_000 })
+      .toBe(true);
+    expect(existsSync(pickedPath)).toBe(false);
+    // Bytes are CFB (HWP) magic.
+    const bytes = readFileSync(expectedTarget);
+    expect(bytes[0]).toBe(0xd0);
+    expect(bytes[1]).toBe(0xcf);
+  });
+
   test('file:save-as on existing path writes .bak sidecar once', async () => {
     const { app, page } = launched;
     const fixturePath = path.join(tmpDir, 'src2.hwpx');

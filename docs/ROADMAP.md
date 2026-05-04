@@ -238,7 +238,7 @@
       • R1: StudioViewer 9610→4843 (8 hooks + PaperPage). R2: ChatPanel 2396→1501 (3 hooks + prompts). R3: AppShell 1545→1080 (4 hooks). R4: ai-tools 1965→429 (4-way split). R5: safeIrCall helper + 33개 ir\* tool wrapper 일원화. R6: callCellOp helper + 3개 사이트 적용. 외부 contract / e2e 동작 1:1 보존. 자세한 진행은 [REFACTORING_PLAN.md](REFACTORING_PLAN.md)
 - [x] **chunk 56** — R5.A consumer narrowing 패턴 확립 ✅ (0.3.8): `shared/rhwp-types.ts` `RhwpPageDef` 필드명 정정 (`paperWidth/paperHeight` → `width/height`). `PageSetupDialog` props 를 `RhwpPageDef` 로 좁히고 AppShell 입구에서 명시 캐스트로 viewer (`Record<string, unknown>`) ↔ dialog (narrow) 연결. typeof guard 보일러플레이트 -12 라인. public `ViewerHandle` 은 그대로 (narrow type 의 index signature 부재로 ripple 크기 때문) — 패턴만 확립, 21개 narrow type 중 PageSetupDialog 1개 consume
 - [x] **chunk 57** — Q8 보강: `PicturePropsDialog` 사이드바-디테일 재구성 ✅ (0.3.9): list-detail 성격 dialog (그림 N개 + 각자 props) 를 Settings 와 동일한 220px 사이드바 + 우측 PaneHeader/Body/Footer 구조로 변환. 기존 `<select>` picker → 좌측 numbered list. 빈 문서 일관 empty state. `grid-cols-[220px_1fr] h-[min(520px,82vh)]`. e2e 4개 케이스 회귀 없음. 다른 다이얼로그 (CharFormat / ParaFormat / TableProps / CellProps / Bookmark / HeaderFooter / etc.) 는 단일-목적 form 이라 변환 보류
-- [ ] 메이저 버전 일괄 업그레이드 (React 19, Tailwind 4, Electron 41, vite 8, TS 6 등 별도 마이그레이션)
+- [x] 메이저 버전 일괄 업그레이드 ✅ (chunks 80~84, 0.3.27): vite 8 / electron 41 / react 19 / TS 6 / tailwind 4 (CSS-first @import, tw-animate-css) / RP 4 → 회귀로 v2 유지. 회귀 fix — `createRequire(undefined)` from CJS bundle (`electron/hwp/converter.ts` candidate-path resolve), tw-animate-css 마이그레이션, paraformat alignment 회귀 (fresh-read getActiveFormat). e2e 354 → 365 통과
 
 검증: 새 OS에서 설치 → 자동 업데이트 시뮬레이션.
 
@@ -254,7 +254,7 @@
 - [x] 사용자 가이드 문서 ✅ (chunk 62, 0.3.14): [USER_GUIDE.md](USER_GUIDE.md) — 시작하기 / 편집 기본 / AI 챗봇 (Manual·Agent·발췌·멀티 문서·Diff Viewer) / 단축키 / 데이터 위치 / 알려진 한계. 흐름 위주 + 자주 막히는 지점 정리
 - [ ] 베타 사용자 피드백 채널 (GitHub Discussions)
 - [x] 성능: 큰 .hwpx 파일 (50p+) 로드 측정 ✅ (chunk 64, 0.3.16): `tests/e2e/studio-perf.spec.ts` 3 케이스 — initial load / cmd+End / 10× PageDown wall-clock 측정 + telemetry print + 느슨한 ceiling. 현 측정 327ms / 122ms / 984ms (avg 98ms/press) — 정확한 perf budget 은 별도 harness 로 후속, 이 spec 은 order-of-magnitude regression 만 catch
-- [ ] 다국어 도입 (한·영) — Phase 5에서 검토
+- [x] 다국어 도입 (한·영) ✅ (chunks 89/93, 0.3.29): i18next + react-i18next 인프라. `src/lib/i18n/locales/{ko,en}.ts`, `useTranslation` 훅, localStorage `ahwp:locale` (잘못된 값은 ko fallback). WelcomePane / TitleBar / ThemeToggle 등 사용자-노출 string 마이그레이션. 한컴 매핑은 ko 만 (Phase 6 전환 검토)
 
 ---
 

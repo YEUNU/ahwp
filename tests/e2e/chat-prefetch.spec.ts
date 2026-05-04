@@ -69,4 +69,49 @@ test.describe('chat — chunk 70 secrets:changed pre-fetch', () => {
     // The select stays populated from the prior fetch.
     await expect.poll(() => getOptions(page)).toContain('fake/echo-2');
   });
+
+  // chunk 95 보강 — multi-provider race + provider-switch fast path.
+  test('saving keys for multiple providers populates each catalog independently', async () => {
+    const { page } = launched;
+    // Save keys for two non-active providers in succession.
+    await page.evaluate(async () => {
+      await window.api.secrets.set('nvidia', 'nv-key');
+    });
+    await page.evaluate(async () => {
+      await window.api.secrets.set('openai', 'oa-key');
+    });
+
+    // Each provider should now have its catalog after switching.
+    await page.getByTestId('chat-provider-select').selectOption('nvidia');
+    await expect.poll(() => getOptions(page)).toContain('fake/echo-2');
+
+    await page.getByTestId('chat-provider-select').selectOption('openai');
+    await expect.poll(() => getOptions(page)).toContain('fake/echo-2');
+
+    // Switching back to nvidia: catalog still present (cached, no
+    // refetch storm).
+    await page.getByTestId('chat-provider-select').selectOption('nvidia');
+    await expect.poll(() => getOptions(page)).toContain('fake/echo-2');
+  });
+
+  test('overwriting a key fires broadcast → catalog refresh still resolves', async () => {
+    const { page } = launched;
+    // Initial set + verify catalog populates.
+    await page.evaluate(async () => {
+      await window.api.secrets.set('openai', 'first-key');
+    });
+    await page.getByTestId('chat-provider-select').selectOption('openai');
+    await expect.poll(() => getOptions(page)).toContain('fake/echo-2');
+
+    // Overwrite with a new key — secrets:changed broadcast fires
+    // again, pre-fetch re-runs. Catalog must remain selectable
+    // (no transient empty state that the user can't recover from).
+    await page.evaluate(async () => {
+      await window.api.secrets.set('openai', 'second-key');
+    });
+    await expect.poll(() => getOptions(page)).toContain('fake/echo-2');
+    // The model select itself is still present + interactive.
+    await expect(page.getByTestId('chat-model-input')).toBeVisible();
+    await expect(page.getByTestId('chat-model-input')).toBeEnabled();
+  });
 });

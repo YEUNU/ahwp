@@ -4067,6 +4067,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               value={Math.round(activeFormat.fontSize / 100)}
               onChange={(e) => applyFontSizePt(Number(e.target.value))}
               aria-label="글자 크기"
+              title={hancomTitle('studio-font-size')}
               data-testid="studio-font-size"
             >
               {(() => {
@@ -4090,6 +4091,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               value={activeFormat.textColor}
               onChange={(e) => applyTextColor(e.target.value)}
               aria-label="글자 색상"
+              title={hancomTitle('studio-text-color')}
               data-testid="studio-text-color"
             />
             {styleList.length > 0 && (
@@ -4098,6 +4100,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                 value={activeFormat.styleId}
                 onChange={(e) => applyParagraphStyle(Number(e.target.value))}
                 aria-label="문단 스타일"
+                title={hancomTitle('studio-style-select')}
                 data-testid="studio-style-select"
               >
                 {styleList.map((s) => (
@@ -4113,6 +4116,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               onClick={() => setToolbarExpanded((v) => !v)}
               aria-label="더보기"
               aria-pressed={toolbarExpanded}
+              title={hancomTitle('studio-toolbar-more')}
               data-testid="studio-toolbar-more"
             >
               <MoreHorizontal className="size-4" />
@@ -4223,6 +4227,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               onClick={() => setShowControlCodes(!showControlCodes)}
               aria-label="조판 부호"
               aria-pressed={showControlCodes}
+              title={hancomTitle('studio-toggle-controls')}
               data-testid="studio-toggle-controls"
             >
               <Pilcrow className="size-4" />
@@ -4233,6 +4238,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               onClick={() => setShowTransparentBorders(!showTransparentBorders)}
               aria-label="투명 테두리"
               aria-pressed={showTransparentBorders}
+              title={hancomTitle('studio-toggle-transparent')}
               data-testid="studio-toggle-transparent"
             >
               <Square className="size-4" />
@@ -4262,6 +4268,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             <select
               className="h-7 rounded border border-input bg-background px-2 text-xs"
               aria-label="줄 간격"
+              title={hancomTitle('studio-line-spacing')}
               data-testid="studio-line-spacing"
               defaultValue=""
               onChange={(e) => {
@@ -4282,6 +4289,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             <select
               className="h-7 rounded border border-input bg-background px-2 text-xs"
               aria-label="문단 간격"
+              title={hancomTitle('studio-para-spacing')}
               data-testid="studio-para-spacing"
               defaultValue=""
               onChange={(e) => {
