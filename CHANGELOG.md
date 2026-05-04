@@ -6,6 +6,13 @@
 
 ## [Unreleased]
 
+### Changed — chunk 99: tool 라우터 휴리스틱 → LLM 기반 (0.3.35)
+
+- **휴리스틱 키워드 매칭 제거 → LLM 기반 라우팅** — chunk 98 의 키워드 그룹 정적 정의 (`GROUPS`) 가 사라지고, 사용자 선택 모델로 router LLM 한 번 호출해서 다음 turn 에 필요한 tool 이름 JSON 배열을 받음. 별도 small router 모델 없이 사용자 선택 모델 그대로. 휴리스틱이 미리 정의된 키워드에만 반응하던 한계 (예: 신규 표현 / 외래어 / 신조어) 해소.
+- **`selectToolsViaLlm({history, provider, model, hasKey})`** — router LLM 에 카탈로그 요약 (이름 + 1줄 설명) + 사용자 latest 메시지 → JSON 배열 응답 → `parseRouterResponse` 가 코드펜스/잡설을 정리하고 첫 `[...]` 추출 → `normalizeSelection` 이 이름 화이트리스트 검사 + always-include 두 개 (`getCaretPosition`, `getDocumentOutline`) 보강.
+- **Fail-safe** — router timeout (30s) / parse error / 빈 배열 / 키 없음 / 빈 query 면 full catalog fallback. `ToolSelectionResult.reason` 에 분기 사유 (router-ok / router-empty / router-timeout / router-error / router-parse-failed / no-key / empty-query) 직렬화 → 디버깅 / 메트릭 용도.
+- **검증** — fake-AI agent regression 9 케이스 통과 (router 가 fake provider 의 TOOL: 응답을 평문으로 못 받아 fallback → main turn 그대로 동작). NIM live 종단간 (자연 한국어 컨셉 질의 → 워크스페이스 검색 → 검토 모드 승인 → IR 변경) 31.1s 통과 (휴리스틱 22.3s 대비 +9s 가 router LLM 라운드트립 비용).
+
 ### Added — chunk 98: 휴리스틱 tool 라우터 (0.3.34)
 
 - **`src/features/chat/toolRouter.ts`** — 사용자 query 의 키워드 매칭으로 60+ tool catalog 의 부분집합만 LLM 에 노출. 별도 router LLM 없이 (사용자 선택 모델 그대로). 11개 키워드 그룹 (워크스페이스 / 정렬 / 글자 서식 / 단락 편집 / 표 / 그림·도형 / 머리말꼬리말 / 책갈피·각주 / 페이지 / 검색 / 스타일) + always-include 2개 (`getCaretPosition`, `getDocumentOutline`). 매칭 0개면 full catalog fallback (의도 모호 시 모델 자유 선택). useChatStreaming.fireChat 가 매 turn 마다 가장 최근 user 메시지로 selection 적용.
