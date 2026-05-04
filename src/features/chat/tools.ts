@@ -636,6 +636,14 @@ async function runOne(
         }
         return { ok: true, tool: call.tool, data };
       }
+      case 'switchTargetDoc': {
+        // chunk 99 follow-up — switchTargetDoc 는 chat hook (advanceAgent
+        // Loop) 에서 가로채 turnTargetPathRef 만 갱신하므로 viewer
+        // dispatcher 로 도달하지 않는 게 정상. 회귀 가드 차원에서 분기만
+        // 남기고 ok 반환 (no-op). 만약 여기 도달했다면 hook intercept
+        // 누락 — 동작은 무해.
+        return { ok: true, tool: call.tool, data: { noop: true } };
+      }
       default: {
         // The pre-flight validator narrows AhwpToolCall to the union, so
         // this is unreachable without a registry/type drift.
@@ -825,6 +833,10 @@ export function previewArgs(call: AhwpToolCall): string {
     case 'readParagraphByPath': {
       const base = call.args.path.split(/[\\/]/).pop() ?? call.args.path;
       return `${base}#${call.args.sectionIdx}/${call.args.paragraphIdx}`;
+    }
+    case 'switchTargetDoc': {
+      const base = call.args.path.split(/[\\/]/).pop() ?? call.args.path;
+      return `→ ${base}`;
     }
   }
 }

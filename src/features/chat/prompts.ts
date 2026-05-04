@@ -95,6 +95,7 @@ Direct mapping (call immediately, default caret = sectionIdx=0, paragraphIdx=0, 
 - "footnote / 각주" → \`insertFootnote\`. "bookmark / 책갈피" → \`addBookmark\`. "header / footer / 머리말 / 꼬리말" → \`setHeaderFooterText\`.
 - "template / reference / workspace / 양식 / 참고 / 워크스페이스 / 사업계획서 / 보고서 / business plan / report" → call \`searchWorkspaceOutlines\` FIRST.
 - Coordinates unknown? → call \`getCaretPosition\` / \`getDocumentOutline\` first.
+- "다른 문서 / 다른 탭 / 보고서 B / 문서 X 도 같이" → write tool 의 활성 target 을 바꾸려면 \`switchTargetDoc({path})\` 호출. path 는 현재 열린 탭의 절대 경로 (\`searchWorkspaceOutlines\` 응답에서 확인 가능). turn 안에서 여러 번 호출해 여러 문서를 순차로 편집 가능.
 
 Reply with text alone ONLY when the user is clearly asking for a summary / explanation / analysis with no editing intent.
 

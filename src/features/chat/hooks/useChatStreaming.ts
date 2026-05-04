@@ -488,6 +488,34 @@ export function useChatStreaming(
             });
             continue;
           }
+          // chunk 99 follow-up — switchTargetDoc 는 viewer dispatch 가
+          // 아니라 chat 라우팅 ref mutation. 열린 탭 중 path 매치하는
+          // 게 있으면 turnTargetPathRef 갱신 → 후속 write 가 새 target.
+          if (tu.name === 'switchTargetDoc') {
+            const path = (v.value as { args: { path: string } }).args.path;
+            const openDocsLocal = getOpenDocs?.() ?? [];
+            const matched = openDocsLocal.find((d) => d.path === path);
+            if (!matched) {
+              partialResults.set(tu.id, {
+                id: tu.id,
+                name: tu.name,
+                ok: false,
+                reason: `target-not-open:${path}`,
+              });
+              continue;
+            }
+            turnTargetPathRef.current = path;
+            partialResults.set(tu.id, {
+              id: tu.id,
+              name: tu.name,
+              ok: true,
+              data: {
+                switchedTo: path,
+                label: matched.label,
+              },
+            });
+            continue;
+          }
           const isReadOnly = isReadOnlyTool(tu.name);
           const autoApprove = !!autoApproveRef.current;
           if (isReadOnly || autoApprove) {

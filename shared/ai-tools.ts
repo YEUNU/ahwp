@@ -80,6 +80,10 @@ export const AHWP_TOOL_NAMES = [
   // Phase 5 chunk 96 — outline-as-router workspace search
   'searchWorkspaceOutlines',
   'readParagraphByPath',
+  // chunk 99 follow-up — cross-doc write routing. switchTargetDoc 가
+  // turn 의 활성 write target 을 절대 경로로 변경. read-only 분류 (실제
+  // IR 변경 없음 — 그냥 라우팅 ref 갱신).
+  'switchTargetDoc',
 ] as const;
 
 export type AhwpToolName = (typeof AHWP_TOOL_NAMES)[number];
@@ -102,6 +106,9 @@ export const READONLY_TOOL_NAMES = new Set<AhwpToolName>([
   'getCellInfo',
   'searchWorkspaceOutlines',
   'readParagraphByPath',
+  // chunk 99 follow-up — switchTargetDoc 는 IR 을 변경하지 않으므로
+  // read-only 게이트로 분류 (즉시 실행, 사용자 승인 불필요).
+  'switchTargetDoc',
 ]);
 
 export function isReadOnlyTool(name: string): boolean {
@@ -423,6 +430,8 @@ export interface AhwpToolArgs {
     paragraphIdx: number;
     contextParagraphs?: number;
   };
+  // chunk 99 follow-up — switchTargetDoc args.
+  switchTargetDoc: { path: string };
 }
 
 /** A single op as it appears inside the model-authored block. */

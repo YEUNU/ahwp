@@ -909,6 +909,23 @@ const TOOL_DESCRIPTORS: AhwpToolDescriptor[] = [
       required: ['path', 'sectionIdx', 'paragraphIdx'],
     },
   },
+  {
+    name: 'switchTargetDoc',
+    description:
+      'Cross-doc write routing (chunk 99 follow-up). 후속 write tool 들의 활성 target 을 다른 열린 문서로 전환. path 는 절대 경로 (현재 열린 탭 중 하나 — `searchWorkspaceOutlines` 응답이나 chat 시스템 메시지의 `[참조 문서]` path 와 동일). 닫힌 / 미열린 파일은 reject. 한 turn 안에서 여러 번 호출 가능 (예: 보고서 A 의 요약 작성 후 보고서 B 의 결론으로 이동). turn 종료 시점에 자동으로 원래 active doc 으로 복귀하지는 않으니, 작업 완료 후 명시적으로 다시 switchTargetDoc 으로 돌아가거나 그대로 마무리. read tool 은 이 라우팅과 무관하게 explicit path arg 를 받으니 영향 없음.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          minLength: 1,
+          description:
+            '전환할 활성 target 의 절대 경로 (.hwp 또는 .hwpx). 현재 열린 탭 중 하나여야 함.',
+        },
+      },
+      required: ['path'],
+    },
+  },
 ];
 
 /**

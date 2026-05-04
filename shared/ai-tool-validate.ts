@@ -677,6 +677,17 @@ function validateArgs<T extends AhwpToolName>(
         } as AhwpToolArgs[T],
       };
     }
+    case 'switchTargetDoc': {
+      const filePath = args.path;
+      if (typeof filePath !== 'string' || filePath.length === 0)
+        return { ok: false, reason: 'path-not-string' };
+      if (byteLen(filePath) > 4096)
+        return { ok: false, reason: 'path-too-large' };
+      return {
+        ok: true,
+        value: { path: filePath } as AhwpToolArgs[T],
+      };
+    }
     default: {
       // Exhaustiveness — the AHWP_TOOL_NAMES guard above already filters
       // unknown names, so this branch is unreachable unless the registry
