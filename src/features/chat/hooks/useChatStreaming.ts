@@ -607,6 +607,10 @@ export function useChatStreaming(
           inputSchema: d.inputSchema,
         }));
       request.toolChoice = 'auto';
+      // chunk 99 — main turn 도 reasoning_effort='low' 로 thinking 단축.
+      // 문서 편집 task 는 깊은 reasoning 불필요. gpt-5.x 기본 effort 가
+      // turn 당 1~2 분 추가하는 비용 회피. non-reasoning 모델은 무시.
+      request.reasoningEffort = 'low';
       console.info(
         `[chunk99 tool-router] reason=${selection.reason} latency=${selection.latencyMs}ms isFull=${selection.isFullCatalog} tools=${request.tools.length}`,
       );

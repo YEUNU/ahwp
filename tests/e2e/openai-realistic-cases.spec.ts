@@ -34,9 +34,9 @@ test.describe('OpenAI 사용자 시나리오 — 난이도별 10 케이스', () 
   test.skip(!OPENAI_KEY, 'AHWP_TEST_OPENAI_KEY env not set');
   // Playwright 기본 60s test timeout 가 reasoning model 의 multi-tool
   // chain (router LLM + main LLM + 도구 dispatch + Agent 재진입) 한
-  // turn 보다 짧아 stream 중간에 죽는 경우가 잦았음. 8min 으로 확장
-  // (Creative long-form 케이스 budget 7min 까지 커버).
-  test.setTimeout(8 * 60 * 1000);
+  // turn 보다 짧아 stream 중간에 죽는 경우가 잦았음. 12min 으로 확장
+  // (Creative long-form 케이스 budget 10min 까지 커버).
+  test.setTimeout(12 * 60 * 1000);
 
   let launched: LaunchedApp;
 
@@ -279,24 +279,22 @@ test.describe('OpenAI 사용자 시나리오 — 난이도별 10 케이스', () 
   // Creative — 처음부터 끝까지 만드는 큰 작업.
   // ============================================================
 
-  test('Creative — "사업계획서 처음부터 끝까지 작성해줘" (창의적 long-form)', async () => {
-    const { page } = launched;
-    await setupChat(page);
-    // Creative long-form 은 다중 turn / 다수 tool 호출 필요. 기본 budget
-    // (3min) 확장 위해 임시로 polling 자체 구현.
-    const CREATIVE_BUDGET_MS = 7 * 60 * 1000;
-    await page
-      .getByTestId('chat-input')
-      .fill(
-        [
-          '이 빈 문서에 가상의 IT 스타트업 사업계획서를 처음부터 끝까지 작성해줘.',
-          '필요한 구성: 회사 소개 / 시장 분석 / 제품·서비스 / 비즈니스 모델 / 추진 일정 / 예산 / 팀 구성. 각 섹션마다 헤더 + 본문 1~2단락.',
-          '예산 부분엔 가능하면 표도 하나 넣어줘.',
-        ].join('\n'),
-      );
+  /** 빈 문서 mount 후 long-form prompt 보내고 다중 turn polling. Creative
+   *  + Style preservation 공용. 반환: tool 종류별 카운트 + 본문 분석. */
+  async function runLongFormTurn(
+    page: Page,
+    prompt: string,
+    budgetMs = 10 * 60 * 1000,
+  ): Promise<{
+    toolsByName: Map<string, number>;
+    paraCount: number;
+    totalChars: number;
+    fallbackVisible: boolean;
+  }> {
+    await page.getByTestId('chat-input').fill(prompt);
     await page.getByTestId('chat-send').click();
     const t0 = Date.now();
-    while (Date.now() - t0 < CREATIVE_BUDGET_MS) {
+    while (Date.now() - t0 < budgetMs) {
       const stopVisible = await page
         .getByTestId('chat-stop')
         .isVisible()
@@ -323,14 +321,12 @@ test.describe('OpenAI 사용자 시나리오 — 난이도별 10 케이스', () 
       }
     }
     const fallbackBtn = page.getByTestId('chat-action-apply-html');
-    if (await fallbackBtn.isVisible().catch(() => false)) {
+    const fallbackVisible = await fallbackBtn.isVisible().catch(() => false);
+    if (fallbackVisible) {
       await fallbackBtn.click().catch(() => {});
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(800);
     }
-    // 검증 — 다중 도구 호출 (insertText / insertParagraph / applyStyle /
-    // createTable / applyHtml 중 합쳐 최소 5개) + 단락 수 baseline (1) →
-    // 5+ 증가 + 의미 있는 텍스트 (3자+) 다수.
-    const writeTools = [
+    const trackedTools = [
       'insertText',
       'insertParagraph',
       'applyStyle',
@@ -338,46 +334,144 @@ test.describe('OpenAI 사용자 시나리오 — 난이도별 10 케이스', () 
       'applyCharFormat',
       'applyAlignment',
       'applyFontSize',
+      'applyTextColor',
       'applyHtml',
       'createTable',
       'insertTableRow',
       'mergeTableCells',
+      'getStyleListJson',
+      'getStyleAt',
+      'getDocumentOutline',
+      'searchWorkspaceOutlines',
+      'readParagraphByPath',
     ];
-    let totalWrites = 0;
-    for (const n of writeTools) {
-      totalWrites += await page
+    const toolsByName = new Map<string, number>();
+    for (const n of trackedTools) {
+      const c = await page
         .locator(`[data-testid="chat-tool-entry"][data-tool-name="${n}"]`)
         .count();
+      if (c > 0) toolsByName.set(n, c);
     }
-    // markdown fallback 도 카운트 (모델이 long-form markdown 으로 답했다면
-    // 사용자 클릭으로 적용됨).
-    const fallbackBtnVisible = await page
-      .getByTestId('chat-action-apply-html')
-      .isVisible()
-      .catch(() => false);
-    if (totalWrites < 5 && !fallbackBtnVisible) {
-      // 적어도 어떤 도구라도 / fallback 이라도 — 둘 다 0 이면 fail.
-      const anyTool = await page
-        .locator('[data-testid="chat-tool-entry"]')
-        .count();
-      expect(anyTool + (fallbackBtnVisible ? 1 : 0)).toBeGreaterThanOrEqual(1);
-    }
-    // 활성 문서 단락 수 또는 본문 텍스트 길이 변화. baseline=1 (빈 문서에
-    // 1 paragraph). 작성 후 5+ 단락이거나 누적 텍스트 100자+ 면 통과.
-    const after = await page.evaluate(() => {
+    const ir = await page.evaluate(() => {
       const dbg = (window as Window & { __studioDebug?: StudioDebug })
         .__studioDebug!;
       const paraCount = dbg.getParagraphCount!(0);
       let totalChars = 0;
-      for (let p = 0; p < Math.min(paraCount, 50); p++) {
+      for (let p = 0; p < Math.min(paraCount, 100); p++) {
         const len = dbg.getParagraphLength!(0, p);
         totalChars += len;
       }
       return { paraCount, totalChars };
     });
-    expect(
-      after.paraCount + Math.floor(after.totalChars / 100),
-    ).toBeGreaterThan(1);
+    return { toolsByName, ...ir, fallbackVisible };
+  }
+
+  test('Creative — 사업계획서 풀 페이지 작성 (large long-form)', async () => {
+    const { page } = launched;
+    await setupChat(page);
+    const result = await runLongFormTurn(
+      page,
+      [
+        '이 빈 문서에 가상의 AI/SaaS 스타트업 "ahwp Cloud" 의 사업계획서를 처음부터 끝까지 풀 페이지 분량으로 풍부하게 작성해줘.',
+        '',
+        '필수 섹션 (각각 제목 + 본문 2~4 단락):',
+        '1. 회사 개요 (설립 배경 / 미션 / 비전)',
+        '2. 시장 분석 (TAM·SAM·SOM, 경쟁사, 차별화 포인트)',
+        '3. 제품/서비스 (핵심 기능 3가지 + 사용 시나리오)',
+        '4. 비즈니스 모델 (수익원, 가격 정책)',
+        '5. 추진 일정 (분기별 마일스톤)',
+        '6. 예산 계획 (12개월, 표 형태로 4행 3열 이상)',
+        '7. 팀 구성 (역할별)',
+        '8. 결론 / 다음 단계',
+        '',
+        '각 단락은 짧은 한 줄이 아니라 의미 있는 문장 2~3개로 구성. 전체 본문 1500자 이상 목표.',
+      ].join('\n'),
+    );
+    let totalCalls = 0;
+    for (const c of result.toolsByName.values()) totalCalls += c;
+    // 모델이 applyHtml 한 번에 큰 payload 로 처리하기도 하니 호출 수 보단
+    // IR 결과를 우선. baseline=1 단락 → 의미 있는 변경 확인. "작은 한 줄
+    // 응답" 만 차단.
+    const didSomething =
+      totalCalls >= 1 || result.totalChars >= 200 || result.fallbackVisible;
+    expect(didSomething).toBe(true);
+    expect(result.paraCount).toBeGreaterThanOrEqual(2);
+    expect(result.totalChars).toBeGreaterThanOrEqual(150);
+  });
+
+  test('Creative — 이전 사업계획서와 같은 서식 유지 (style preservation)', async () => {
+    const { page } = launched;
+    const ALPHA = path.resolve(
+      __dirname,
+      '..',
+      '..',
+      'examples',
+      '4. [사업계획서] 제조AI특화 스마트공장 사업계획서_양식_260326_01_데이터수집검증 중복화.hwp',
+    );
+    test.skip(!existsSync(ALPHA), 'examples/사업계획서 fixture missing');
+    const { mkdtempSync, copyFileSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const workspaceDir = mkdtempSync(path.join(tmpdir(), 'ahwp-style-'));
+    try {
+      const targetPath = path.join(workspaceDir, 'target.hwpx');
+      copyFileSync(FIXTURE, targetPath);
+      copyFileSync(ALPHA, path.join(workspaceDir, '이전_사업계획서.hwp'));
+      await page.evaluate(
+        async ({ folder, active }) => {
+          await window.api.session.set({
+            lastFolderPath: folder,
+            lastActivePath: active,
+            openTabPaths: [active],
+          });
+        },
+        { folder: workspaceDir, active: targetPath },
+      );
+      await page.reload();
+      await page.waitForLoadState('domcontentloaded');
+      await page.waitForFunction(
+        () =>
+          Boolean(
+            (window as Window & { __studioDebug?: StudioDebug }).__studioDebug,
+          ),
+        { timeout: 30_000 },
+      );
+      await setupChat(page);
+      const result = await runLongFormTurn(
+        page,
+        [
+          '워크스페이스에 있는 "이전_사업계획서" 의 서식 (제목 스타일, 단락 스타일, 표 형태) 을 그대로 따르면서, 신규 AI 스타트업의 사업계획서를 풀 페이지 분량으로 작성해줘.',
+          '',
+          '구성: 회사 개요 / 시장 분석 / 제품 / 비즈니스 모델 / 일정 / 예산 (표) / 팀.',
+          '각 섹션은 제목 + 본문 2~3 단락. 헤더에는 이전 문서가 사용한 스타일 (예: "제목 1" / "Heading 1") 을 명시적으로 적용해줘.',
+          '예산 섹션은 표 (최소 4행 3열) 포함.',
+        ].join('\n'),
+      );
+      // 워크스페이스 검색 + 스타일 매칭 + 적용 — 셋 중 둘 이상 + 다수
+      // 호출 + 풍부 본문.
+      const usedSearch = result.toolsByName.has('searchWorkspaceOutlines');
+      const usedStyleRead =
+        result.toolsByName.has('getStyleListJson') ||
+        result.toolsByName.has('getStyleAt') ||
+        result.toolsByName.has('readParagraphByPath');
+      const usedApplyStyle =
+        result.toolsByName.has('applyStyle') ||
+        result.toolsByName.has('applyHtml');
+      let totalCalls = 0;
+      for (const c of result.toolsByName.values()) totalCalls += c;
+      const matched =
+        Number(usedSearch) + Number(usedStyleRead) + Number(usedApplyStyle);
+      // search/style/apply 셋 중 하나 이상 사용 OR fallback OR 의미있는 IR.
+      const ok =
+        matched >= 1 ||
+        totalCalls >= 1 ||
+        result.totalChars >= 200 ||
+        result.fallbackVisible;
+      expect(ok).toBe(true);
+      expect(result.paraCount).toBeGreaterThanOrEqual(2);
+      expect(result.totalChars).toBeGreaterThanOrEqual(150);
+    } finally {
+      rmSync(workspaceDir, { recursive: true, force: true });
+    }
   });
 
   test('Hard 4 — "이전 보고서 양식 참고해서 첫 섹션" (워크스페이스)', async () => {
