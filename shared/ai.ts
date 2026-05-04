@@ -143,6 +143,11 @@ export interface ChatRequest {
   tools?: ChatTool[];
   /** 'auto' (기본) — 모델이 결정. 'none' — tool 호출 금지. {name} — 강제. */
   toolChoice?: ChatToolChoice;
+  /** chunk 99 — OpenAI reasoning models (o1/o3/gpt-5.x) 만 의미 있음.
+   *  https://developers.openai.com/api/docs/guides/reasoning. 'low' 면
+   *  reasoning_tokens 최소 (router 등 빠른 응답이 중요한 호출에서 사용).
+   *  non-reasoning 모델은 무시. */
+  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high';
 }
 
 /**

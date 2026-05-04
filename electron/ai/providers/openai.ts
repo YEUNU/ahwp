@@ -114,6 +114,11 @@ export const openaiProvider: Provider = {
       ...(typeof req.temperature === 'number'
         ? { temperature: req.temperature }
         : {}),
+      // chunk 99 — Reasoning models (o1/o3/gpt-5.x) 는 reasoning_effort 로
+      // thinking 깊이 조절. router 같은 빠른 응답이 필요한 호출은 'low' /
+      // 'minimal' 로 reasoning_tokens 최소화. non-reasoning 모델은 이
+      // 필드 무시 (OpenAI 가 silently 처리).
+      ...(req.reasoningEffort ? { reasoning_effort: req.reasoningEffort } : {}),
     };
     // Phase 3 — tool calling. ChatTool[] → OpenAI native format.
     if (req.tools && req.tools.length > 0) {

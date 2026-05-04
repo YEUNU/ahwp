@@ -83,26 +83,62 @@ function buildRouterSystemPrompt(): string {
 
 /** Parse the router's response — expect a JSON array of tool names.
  *  Tolerates leading / trailing whitespace, code fences, prose around
- *  the array. Returns null when no parseable array found. */
+ *  the array, and bracket-balanced extraction. Returns null when no
+ *  parseable array found. */
 function parseRouterResponse(raw: string): string[] | null {
-  const cleaned = raw.replace(/```json\s*|```/g, '').trim();
-  // First try direct parse.
+  // Strip code fences (```json ... ``` / ``` ... ```), thinking tags
+  // (<think>...</think> from some reasoning models), bullet prefixes.
+  let cleaned = raw
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/```json\s*/gi, '')
+    .replace(/```/g, '')
+    .trim();
+  // Strip leading "Answer:" / "도구 목록:" 같은 안내.
+  cleaned = cleaned.replace(/^[^[]+(?=\[)/m, '').trim();
+
+  // Direct parse — full text is JSON array.
   try {
     const parsed = JSON.parse(cleaned);
     if (Array.isArray(parsed)) return parsed.map((x) => String(x));
   } catch {
-    /* try regex below */
+    /* try bracket extraction below */
   }
-  // Fallback: extract first [...] in text.
-  const m = cleaned.match(/\[[^\]]*\]/);
-  if (!m) return null;
+
+  // Bracket-balanced extraction — find the FIRST balanced [...] in the
+  // text. Robust against arrays-of-strings even with embedded commas.
+  const start = cleaned.indexOf('[');
+  if (start < 0) return null;
+  let depth = 0;
+  let end = -1;
+  for (let i = start; i < cleaned.length; i++) {
+    const ch = cleaned[i];
+    if (ch === '[') depth += 1;
+    else if (ch === ']') {
+      depth -= 1;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+  if (end < 0) return null;
+  const candidate = cleaned.slice(start, end + 1);
   try {
-    const parsed = JSON.parse(m[0]);
+    const parsed = JSON.parse(candidate);
     if (Array.isArray(parsed)) return parsed.map((x) => String(x));
   } catch {
-    return null;
+    /* fallthrough to last-ditch parse */
   }
-  return null;
+
+  // Last-ditch: extract all "quoted" identifiers between the brackets.
+  // Useful when the model writes ['name', 'other'] with single quotes
+  // or trailing commas that JSON.parse rejects.
+  const inner = candidate.slice(1, -1);
+  const ids = inner
+    .split(/[,\n]/)
+    .map((s) => s.trim().replace(/^["']|["']$/g, ''))
+    .filter((s) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(s));
+  return ids.length > 0 ? ids : null;
 }
 
 /** Filter raw names down to known AhwpToolName values + always-include
@@ -190,6 +226,10 @@ export async function selectToolsViaLlm(opts: {
       { role: 'system', content: buildRouterSystemPrompt() },
       { role: 'user', content: userText },
     ],
+    // OpenAI reasoning 모델 (o1/o3/gpt-5.x) 의 경우 router 는 짧은 JSON
+    // 만 응답하면 되니 reasoning_effort='low' 로 thinking 단계 최소화.
+    // 다른 provider / non-reasoning 모델은 silently 무시.
+    reasoningEffort: 'low',
   };
   let raw: string;
   try {
