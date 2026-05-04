@@ -6,6 +6,13 @@
 
 ## [Unreleased]
 
+### Changed — chunk 99 follow-up: Diff cards 를 가운데 (Studio) 패널로 이동 (0.3.38)
+
+- **`react-dom` createPortal 로 ahwp-patches 카드 라우팅** — 기존엔 chat 메시지 버블 안에 inline 렌더되어 (a) 좁은 우측 패널에서 카드 가독성 ↓, (b) 본문 옆에 변경 제안이 있는데도 시선이 chat 으로 이동해야 하는 비효율. AppShell 의 center pane (TabBar 아래) 에 새 portal target `#ahwp-editor-diff-overlay` 추가 — sticky 우측 상단에 max-width 420px / max-height calc(100%-3.5rem-1rem). ChatPanel 의 Message 가 자기 패치 카드를 이 컨테이너로 portal.
+- **Chat 측엔 hint 만 잔류** — `📋 N개 변경 제안 — 에디터 우측 카드에서 검토` 한 줄. portal target 미마운트 환경(초기 / e2e fixture-less)에선 inline fallback.
+- **e2e 신규 1 케이스** — `chat-diff.spec.ts`: portal 카드가 overlay 컨테이너 안 visible / chat 메시지 트리 안엔 chat-patches-block 부재.
+- 기존 6 케이스 통과 회귀 가드.
+
 ### Added / Changed — chunk 99 follow-up: agentic 파이프라인 + Plan mode + Section replace (0.3.37)
 
 chunk 99 의 markdown fallback 후속 — Claude Code 식 자율 흐름으로 다음 7개 묶음 진화. NIM gemma4 31b it 류 도구 호출률 낮은 모델에서도 사업계획서 작성 같은 long-form 이 안정적으로 완주하도록.

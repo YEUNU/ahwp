@@ -30,6 +30,7 @@ import {
   type AhwpPreflightItem,
   type AhwpToolResult,
 } from '@shared/ai-tools';
+import { createPortal } from 'react-dom';
 import { parsePatchBlock, type AhwpPatch } from '@shared/ai-patches';
 import { MultiPatchStack, type PatchStatus } from './DiffCard';
 import { markdownToHtml } from './markdownToHtml';
@@ -2042,43 +2043,74 @@ function Message({
             ) : null}
           </div>
         ) : null}
-        {/* Q5 Diff Viewer — render patches block as Accept/Reject cards. */}
-        {patchesParsed && patchesParsed.ok && patchCount > 0 ? (
-          <div
-            className="mt-2 border-t border-border pt-2"
-            data-testid="chat-patches-block"
-          >
-            <MultiPatchStack
-              items={patchesParsed.items}
-              statuses={patchStatuses}
-              onAccept={handlePatchAcceptIdx}
-              onReject={handlePatchRejectIdx}
-              onAcceptAll={handlePatchAcceptAll}
-              onPreview={onPreviewPatch}
-            />
-            {patchToast ? (
-              <div
-                className="mt-2 flex items-center gap-3 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs"
-                data-testid="diff-applied-toast"
-              >
-                <Check className="size-3.5 text-emerald-600" />
-                <span className="flex-1 font-medium text-foreground">
-                  {patchToast.appliedCount}개 적용됨
-                </span>
-                {onUndoApply ? (
-                  <button
-                    type="button"
-                    onClick={handlePatchUndo}
-                    className="text-[11px] font-medium text-emerald-700 hover:underline dark:text-emerald-300"
-                    data-testid="diff-applied-undo"
-                  >
-                    되돌리기
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
+        {/* Q5 Diff Viewer — render patches block as Accept/Reject cards.
+          chunk 99 follow-up — react-dom createPortal 로 가운데 (Studio)
+          패널의 #ahwp-editor-diff-overlay 컨테이너에 떠 있도록 라우팅.
+          chat 안엔 작은 hint 만 남기고 실제 카드는 에디터 위에 sticky.
+          포털 target 이 mount 안 됐으면 (e2e 초기 / 미분기 환경) 기존
+          chat-side 인라인 fallback 으로 렌더. */}
+        {patchesParsed && patchesParsed.ok && patchCount > 0
+          ? (() => {
+              const cards = (
+                <div
+                  className="pointer-events-auto rounded-md border border-border bg-card px-3 py-2 shadow-lg"
+                  data-testid="chat-patches-block"
+                  data-message-id={message.id}
+                >
+                  <MultiPatchStack
+                    items={patchesParsed.items}
+                    statuses={patchStatuses}
+                    onAccept={handlePatchAcceptIdx}
+                    onReject={handlePatchRejectIdx}
+                    onAcceptAll={handlePatchAcceptAll}
+                    onPreview={onPreviewPatch}
+                  />
+                  {patchToast ? (
+                    <div
+                      className="mt-2 flex items-center gap-3 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs"
+                      data-testid="diff-applied-toast"
+                    >
+                      <Check className="size-3.5 text-emerald-600" />
+                      <span className="flex-1 font-medium text-foreground">
+                        {patchToast.appliedCount}개 적용됨
+                      </span>
+                      {onUndoApply ? (
+                        <button
+                          type="button"
+                          onClick={handlePatchUndo}
+                          className="text-[11px] font-medium text-emerald-700 hover:underline dark:text-emerald-300"
+                          data-testid="diff-applied-undo"
+                        >
+                          되돌리기
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              );
+              const target =
+                typeof document !== 'undefined'
+                  ? document.getElementById('ahwp-editor-diff-overlay')
+                  : null;
+              if (target) {
+                return (
+                  <>
+                    {createPortal(cards, target)}
+                    <div
+                      className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-[11px] text-amber-700 dark:text-amber-300"
+                      data-testid="chat-patches-hint"
+                    >
+                      📋 {patchCount}개 변경 제안 — 에디터 우측 카드에서 검토
+                    </div>
+                  </>
+                );
+              }
+              // Fallback: target 미마운트 시 inline.
+              return (
+                <div className="mt-2 border-t border-border pt-2">{cards}</div>
+              );
+            })()
+          : null}
         {patchesParsed && !patchesParsed.ok ? (
           <div
             className="mt-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"

@@ -939,7 +939,7 @@ export default function AppShell() {
           <PanelResizeHandle className="w-px bg-border transition-colors hover:bg-ring data-[resize-handle-state=drag]:bg-ring" />
 
           <Panel id="editor" order={2} defaultSize={56} minSize={30}>
-            <main className="flex h-full flex-col">
+            <main className="relative flex h-full flex-col">
               {tabsState.length > 0 && (
                 <TabBar
                   tabs={tabsState}
@@ -954,6 +954,18 @@ export default function AppShell() {
                   onTogglePin={togglePinTab}
                 />
               )}
+              {/* chunk 99 follow-up — Diff overlay portal target. ChatPanel
+                의 Message 컴포넌트가 ahwp-patches 블록을 react-dom 의
+                createPortal 로 이 요소에 렌더. 가운데 (Studio) 패널의
+                bottom-right 에 sticky 오버레이로 노출 — IDE 의 diff
+                viewer 와 유사. ChatPanel 안에는 패치 카드를 더 이상
+                inline 렌더 안 함 (포털 활성 시). */}
+              <div
+                id="ahwp-editor-diff-overlay"
+                data-testid="editor-diff-overlay"
+                className="pointer-events-none absolute right-4 top-12 z-30 flex max-h-[calc(100%-3.5rem-1rem)] w-[min(420px,80%)] flex-col gap-2 overflow-y-auto"
+                style={{ paddingBottom: 16 }}
+              />
               <div className="relative flex flex-1 overflow-hidden">
                 <div className="relative flex-1 overflow-hidden">
                   {tabsState.length === 0 ? (
