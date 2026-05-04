@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### Fixed — chunk 95.1: release CI Linux deb maintainer (0.3.31)
+
+- **`build.linux.maintainer` 추가** — 0.3.30 release CI 가 Linux .deb 빌드 단계에서 `Please specify author 'email' in the application package.json` 으로 실패. `package.json` `author` 가 string ("ahwp contributors") 인데 .deb 패키지는 별도로 maintainer 필드 (이름 + 이메일) 가 필수. `build.linux.maintainer` 에 GitHub noreply 메일 (`61678329+YEUNU@users.noreply.github.com`) 로 표기. AppImage 빌드는 이전에도 성공했고 mac/win 도 무관 — Linux .deb 단일 fix.
+
 ### Added — chunk 95: 한컴 매핑 확장 + 이전 세션 e2e 보강 (0.3.30)
 
 - **chunk 95 — 한컴 매핑 + StudioViewer 적용** — `HANCOM_TOOLTIPS` 에 `font-size` / `text-color` / `style-select` (F6) / `line-spacing` / `para-spacing` / `toolbar-more` / `toggle-controls` / `toggle-transparent` / `char-format-dialog` (⌥L) / `para-format-dialog` (⌥T) 추가. StudioViewer 툴바 / 확장 툴바 / 보기 토글에 `title={hancomTitle(...)}` 와이어링. `tooltip-i18n-svg.spec.ts` 에 chunk 95 매핑 검증 케이스 + edge case 8건 보강 (multi-line title 구조, 단축키 없는 entry, Alt 단축키 platform 분기, post-mutation re-render, idempotent, 영어 모드 + 플랫폼 단축키 독립, setLocale reload). 18/18 통과.
