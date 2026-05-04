@@ -136,11 +136,11 @@
 - [x] `ai:chat` 스트리밍 IPC — id 기반 채널, 인플라이트 abort 지원 (`electron/ipc/ai.ts`)
 - [x] NVIDIA NIM 어댑터 (`electron/ai/providers/nvidia.ts`) — OpenAI 어댑터에 `https://integrate.api.nvidia.com/v1` baseUrl 위임. SSE 100% 호환 라이브 검증 통과 (1.5s 응답)
 
-> **블록됨** — 아래 어댑터들은 메인테이너의 API 키/계정 준비를 기다리는 중. 코드 자체는 OpenAI/NVIDIA 패턴을 이미 확립해두었으므로 키만 확보되면 빠르게 진행 가능. 그 전까지는 `SHOWN_IDS`(SettingsDialog)에서 숨김 + `getProvider`에서 null 반환 유지.
+> **상태** — Google + Custom 은 Phase 3 진행 중 잠금 해제 (chunks 43 / 44). Anthropic 만 메인테이너 API 키 결정 대기 중이며 `SHOWN_IDS`(SettingsDialog)에서 숨김 유지.
 
-- [ ] Anthropic 어댑터 — 키 준비 대기 (`messages` API, `event:` line-prefixed SSE, Phase 3 `tool_use` 대비)
-- [ ] Google (Gemini) 어댑터 — 키 준비 대기
-- [ ] **Custom (OpenAI-compatible) 어댑터** — 키/baseUrl 입력 후 OpenAI 어댑터 재사용. 자체 호스팅 Ollama (`http://localhost:11434/v1`), vLLM, LM Studio, on-prem LLM 게이트웨이 등을 한 슬롯에 통합 (chunk 49에서 `ollama` provider 슬롯 제거하고 `custom`으로 통합)
+- [ ] Anthropic 어댑터 — 키 준비 대기 (`messages` API, `event:` line-prefixed SSE, `tool_use` 정식 통합 — Phase 3 chunk 42)
+- [x] Google (Gemini) 어댑터 ✅ Phase 3 chunk 43 (0.3.1) 에서 잠금 해제. `streamGenerateContent?alt=sse` SSE + functionCall/functionResponse 매핑
+- [x] **Custom (OpenAI-compatible) 어댑터** ✅ Phase 3 chunk 44 (0.3.5) 에서 잠금 해제. OpenAI 어댑터 재사용 + meta swap. 자체 호스팅 Ollama (`http://localhost:11434/v1`), vLLM, LM Studio, on-prem LLM 게이트웨이 한 슬롯 통합 (chunk 49 에서 `ollama` 슬롯 제거 → `custom` 흡수)
 
 ### 2-C. 채팅 UI
 
@@ -181,11 +181,11 @@
 - [x] **머리말/꼬리말 다중 라인 + 페이지 템플릿 (chunk 35)** ✅ — `HeaderFooterDialog`의 Input → 4행 textarea, applyTo 토글(양쪽/홀수/짝수) 추가. `setHeaderFooterText` 내부에서 `\n` 감지 시 `splitParagraphInHeaderFooter`로 라인별 단락 분리
 - [ ] **스타일 char/para shape 캡처 (chunk 36)** — chunk 14의 `createNamedStyle`은 빈 셸. **rhwp 0.8 대기** — `updateStyle` 또는 createStyle에 shape 파라미터 추가 필요. 해소되면 chunk 23 cell background coloring 같이 풀림 (KNOWN_ISSUES L-006)
 
-### 2-G. Phase 3 진입 정비 (chunk 37~)
+### 2-G. Phase 3 진입 정비 (chunk 37~) ✅ 완료
 
-- [ ] provider tool-use API 바인딩 — Anthropic / OpenAI function calling 정식 통합. 현재 chunk 19는 응답-텍스트 dispatcher. 같은 도구 카탈로그를 양 진입점에서 공유
-- [ ] docId-aware 라우팅 — chunk 19 single-target dispatch를 `runTools(docId, items)`로 확장. reference write 시도는 거절 결과로 사용자에 알림
-- [ ] 다중 턴 자동 실행 + tool-result 응답 루프 (Phase 3 Agent 모드 핵심)
+- [x] provider tool-use API 바인딩 — OpenAI function calling 정식 통합 (chunk 38). 같은 도구 카탈로그를 Manual / Agent 양 진입점에서 공유 (chunk 37)
+- [x] docId-aware 라우팅 ✅ Phase 3 chunk 50 (0.3.11) + chunk 59 — `runTools(items, targetPath)` 가 turn 시작 시 active path 캡처. mid-turn 탭 전환에도 원본 doc 으로 적용
+- [x] 다중 턴 자동 실행 + tool-result 응답 루프 ✅ Phase 3 chunk 39 — Agent fireChat 재귀, turn cap 10
 
 검증: 실제 문서를 열고 "이 단락 요약해서 다시 써줘" 같은 작업이 정상 동작.
 
@@ -252,9 +252,21 @@
 - [x] E2E 추가 — `tests/e2e/file-dialog-mock.spec.ts` 3 케이스 ✅ (chunk 60, 0.3.12): `app.evaluate` 로 main 의 `showOpenDialog`/`showSaveDialog` monkey-patch + `'menu:action'` IPC 직접 emit. open dialog 모킹 / save-as 신규 path / save-as overwrite (.bak 사이드카). IME/다국어 입력은 Playwright 한계로 보류 (composition event 를 emit 못 함). 표 셀 selection v4 는 chunk 32 에서 이미 진행 (chat-multidoc/cell-block 회귀 가드)
 - [x] 접근성 점검 ✅ (chunk 61, 0.3.13): radix shadcn 기본 + 추가 보강 — Settings 탭 `role="tab"` + `aria-selected`, FolderTree 행 `aria-selected`, ChatPanel 히스토리 `aria-current="page"`. 툴바 / 챗 입력 / 발췌 chip 등 인터랙티브 요소는 audit 결과 모두 `aria-label` 보유 (false-positive 0)
 - [x] 사용자 가이드 문서 ✅ (chunk 62, 0.3.14): [USER_GUIDE.md](USER_GUIDE.md) — 시작하기 / 편집 기본 / AI 챗봇 (Manual·Agent·발췌·멀티 문서·Diff Viewer) / 단축키 / 데이터 위치 / 알려진 한계. 흐름 위주 + 자주 막히는 지점 정리
-- [ ] 베타 사용자 피드백 채널 (GitHub Discussions)
 - [x] 성능: 큰 .hwpx 파일 (50p+) 로드 측정 ✅ (chunk 64, 0.3.16): `tests/e2e/studio-perf.spec.ts` 3 케이스 — initial load / cmd+End / 10× PageDown wall-clock 측정 + telemetry print + 느슨한 ceiling. 현 측정 327ms / 122ms / 984ms (avg 98ms/press) — 정확한 perf budget 은 별도 harness 로 후속, 이 spec 은 order-of-magnitude regression 만 catch
-- [x] 다국어 도입 (한·영) ✅ (chunks 89/93, 0.3.29): i18next + react-i18next 인프라. `src/lib/i18n/locales/{ko,en}.ts`, `useTranslation` 훅, localStorage `ahwp:locale` (잘못된 값은 ko fallback). WelcomePane / TitleBar / ThemeToggle 등 사용자-노출 string 마이그레이션. 한컴 매핑은 ko 만 (Phase 6 전환 검토)
+- [x] 다국어 도입 (한·영) ✅ (chunks 89/93, 0.3.29): i18next + react-i18next 인프라. `src/lib/i18n/locales/{ko,en}.ts`, `useTranslation` 훅, localStorage `ahwp:locale` (잘못된 값은 ko fallback). WelcomePane / TitleBar / ThemeToggle 등 사용자-노출 string 마이그레이션. 한컴 매핑은 ko 만 (Phase 6 전환 검토). Settings / Folder / Chat 의 잔여 hardcoded 텍스트는 후속 청크
+- [x] **chunks 65~67 — model selector / shortcut hijack / textarea overflow** ✅ (0.3.17): 자유입력 `<input list>` → 순수 `<select>` (저장된 모델 없으면 sticky "(저장됨)" 옵션) + window-level keydown 의 `isEditableFocused()` 가드 (⌘W/⌘K/⌘/ 등이 input/textarea/contentEditable focus 일 때 native 동작 회복) + 챗 입력 textarea auto-grow + scrollbar
+- [x] **chunks 68~69 — modal scrollbar + startup pre-fetch** ✅ (0.3.18): Dialog primitive 에 `max-h-[calc(100vh-4rem)] overflow-y-auto` (긴 form 의 Apply 버튼이 viewport 밖에 잘리던 문제) + ChatPanel 마운트 시 키 등록된 모든 provider `listModels` 병렬 발사 (24h 캐시 적중 시 즉시 반환)
+- [x] **chunks 70~71 — secrets broadcast + 메뉴 role copy/paste** ✅ (0.3.19): `secrets:set/delete` 가 모든 BrowserWindow 에 `secrets:changed` broadcast → ChatPanel 이 listen → 키 등록 직후 모든 provider 모델 리스트 pre-fetch 재실행 (chunk 69 mount-only 의 빈 구멍 메움). 메뉴 cut/copy/paste 를 Electron `role` 로 교체 — password input 에서 ⌘C/V 정상 작동 (custom IPC 의 `document.execCommand` 폴백이 password 에선 silently no-op 였음)
+- [x] **chunk 72 — Settings 스크롤 + ChatPanel hover tooltip** ✅ (0.3.20): chunk 55 4탭 사이드바 재설계 후 우측 PaneBody 스크롤이 안 되던 nested flex/grid `min-h-0` 누락 fix
+- [x] **chunk 73 — ChatPanel 메시지 스크롤** ✅ (0.3.21): 같은 `min-h-0` 패턴 — 긴 어시스턴트 메시지가 input form 을 viewport 밖으로 밀어내던 회귀 fix
+- [x] **chunk 74 — 현재 문서 첨부 (3-layer 누적 버그)** ✅ (0.3.22): ChatPanel attachDoc 토글이 send 시점에 unset 되지 않아 누적되던 버그
+- [x] **chunks 75~76 — send 후 attachDoc unset + 표 렌더링 한계 문서화** ✅ (0.3.23): 발송 직후 첨부 상태 정리 + 표 column-width 추정 한계 KNOWN_ISSUES L-004 박제
+- [x] **chunks 77~79 — provider bar 2행 / 새문서 ⌘S / 아이콘 404 / @rhwp 버전** ✅ (0.3.24): 좁은 우측 패널에서 모델 id 가 길면 history/+ 버튼이 화면 밖으로 밀리던 문제 — 1행 (provider+key+history+new) / 2행 (model selector full width + refresh) 분리 + 이모지 → lucide SVG. 빈 새 문서에서 ⌘S 가 no-op 이던 회귀 fix. file:// 경로 아이콘 404 / @rhwp/core 버전 표시
+- [x] **chunks 83~84 — tw-animate-css 마이그레이션 + paraformat alignment 회귀 root cause fix** ✅ (0.3.27): deprecated `tailwindcss-animate` → 공식 후속 `tw-animate-css`. paraformat `getActiveFormat()` 의 React state closure stale → fresh-read (`getCharPropertiesAt`/`getParaPropertiesAt` 직접 호출) 로 교체 — React 19 batching 환경에서도 안정. 격리 디버깅용 `__studioDebug.reparseAndReadParaProps` 신규
+- [x] **chunks 85~88 — Diff e2e / RP / perf** ✅ (0.3.28): chat-diff multi-patch 부분 reject + preview 콜백 e2e (3 → 5 케이스). RP v4 재시도 후 layout 회귀로 v2 환원. studio-perf JSONL 누적 + `npm run perf:run` / `npm run perf:report` 트렌드 추적 인프라
+- [x] **chunks 90~95 — 한컴 한글 매뉴얼 명칭 호버 툴팁 + 플랫폼별 단축키 표기** ✅ (0.3.28~0.3.30): `src/lib/hancom-tooltips.ts` 30+ 한컴 공식 명칭. 단축키 표기는 `navigator.platform` 으로 macOS `⌘`/`⇧`/`⌥`/`⌃` ↔ Win/Linux `Ctrl+`/`Shift+`/`Alt+` 자동 분기. chunk 91 Studio 툴바 / ChatPanel pill 까지 전수 적용 (사용 사이트 7 → 25+). chunk 92 SVG `<text>` 에 `<title>` 자식 후처리 — narrow column 잘린 셀 텍스트 hover 가독성. chunk 94 e2e 8 케이스 (mac/Win 단축키 분기 포함). chunk 95 매핑 추가 (font-size / text-color / line-spacing / Alt+L / Alt+T 등) + 이전 세션 e2e edge case 13건 보강
+- [x] **chunk 95.1 — Linux .deb maintainer hotfix** ✅ (0.3.31): `package.json` `author` 가 string 이면 .deb 빌드가 maintainer 필드 부재로 실패. `build.linux.maintainer` 에 GitHub noreply 메일 추가
+- [ ] 베타 사용자 피드백 채널 (GitHub Discussions)
 
 ---
 
