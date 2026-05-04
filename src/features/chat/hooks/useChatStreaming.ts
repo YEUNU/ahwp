@@ -32,6 +32,7 @@ import type { ExcerptAttachment } from '@shared/ai-excerpt';
 import {
   SYSTEM_PROMPT_DOC_CONTEXT,
   SYSTEM_PROMPT_AGENT_GUIDE,
+  SYSTEM_PROMPT_PLAN_MODE_SUFFIX,
   collectReferenceOutlines,
   buildReferenceSystemBlock,
   buildExcerptSystemPrompt,
@@ -49,6 +50,9 @@ interface UiToolEntry {
 interface UiMessage extends ChatMessage {
   id: string;
   toolEntries?: UiToolEntry[];
+  /** chunk 99 follow-up — true 이면 plan mode 에서 생성된 어시스턴트
+   *  메시지. UI 가 "이 계획대로 실행" 버튼 surface. */
+  planMode?: boolean;
 }
 
 function newId(): string {
@@ -90,6 +94,30 @@ export function saveAgentMaxTurns(n: number): void {
     localStorage.setItem(AGENT_MAX_TURNS_KEY, String(clamped));
   } catch {
     /* localStorage unavailable — silent */
+  }
+}
+
+/**
+ * Plan mode — Claude Code 식 dry-run. 활성 시 모델은 read tool 만 호출
+ * 가능하고, 본문엔 "이렇게 할 계획" 의 bullet plan 만 작성. 사용자가
+ * plan 검토 후 "이 계획대로 실행" 클릭 → plan mode off + 동일 prompt
+ * 재발사. localStorage 영속.
+ */
+const PLAN_MODE_KEY = 'ahwp:chat:plan-mode';
+
+export function loadPlanMode(): boolean {
+  try {
+    return localStorage.getItem(PLAN_MODE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function savePlanMode(on: boolean): void {
+  try {
+    localStorage.setItem(PLAN_MODE_KEY, on ? '1' : '0');
+  } catch {
+    /* silent */
   }
 }
 
@@ -567,10 +595,14 @@ export function useChatStreaming(
       verifiedExcerpts: ExcerptAttachment[] = [],
     ) => {
       setError(null);
+      // chunk 99 follow-up — plan mode flag 를 messsage 에 박제. UI 가
+      // assistant 메시지 옆에 "이 계획대로 실행" 버튼 노출 여부 결정.
+      const planModeNow = loadPlanMode();
       const assistantMsg: UiMessage = {
         id: newId(),
         role: 'assistant',
         content: '',
+        planMode: planModeNow ? true : undefined,
       };
       assistantIdRef.current = assistantMsg.id;
       setMessages([...history, assistantMsg]);
@@ -628,9 +660,14 @@ export function useChatStreaming(
       // 가이드는 무조건 inject. 사용자가 검토 모드 (autoApprove=false) 일
       // 때도 모델은 그대로 tool 호출하고, 게이트는 dispatch 단계에서
       // 적용된다 (UX 만 변하고 모델 perspective 는 동일).
+      // chunk 99 follow-up — plan mode suffix. catalog 가 read-only 로
+      // 필터링되므로 모델은 write 호출 자체가 불가능. suffix 로 "plan 만
+      // 작성" 지시 + 사용자 검토 흐름 안내.
       messages.unshift({
         role: 'system',
-        content: SYSTEM_PROMPT_AGENT_GUIDE,
+        content: planModeNow
+          ? SYSTEM_PROMPT_AGENT_GUIDE + SYSTEM_PROMPT_PLAN_MODE_SUFFIX
+          : SYSTEM_PROMPT_AGENT_GUIDE,
       });
 
       const request: ChatRequest = { provider, model, messages };
@@ -648,6 +685,10 @@ export function useChatStreaming(
       const allowed = new Set(selection.tools);
       request.tools = getAhwpToolCatalog()
         .filter((d) => allowed.has(d.name))
+        // chunk 99 follow-up — plan mode 일 땐 catalog 를 read-only 로
+        // 한정. 모델이 write 도구를 호출하려고 시도해도 catalog 에 없어
+        // 무시. 이중 안전망 (suffix prompt + catalog filter).
+        .filter((d) => !planModeNow || isReadOnlyTool(d.name))
         .map((d) => ({
           name: d.name,
           description: d.description,

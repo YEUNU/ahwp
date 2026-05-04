@@ -45,7 +45,12 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { MessageContent } from './MessageContent';
 import { useChatHistory } from './hooks/useChatHistory';
-import { useChatStreaming, loadAgentMaxTurns } from './hooks/useChatStreaming';
+import {
+  useChatStreaming,
+  loadAgentMaxTurns,
+  loadPlanMode,
+  savePlanMode,
+} from './hooks/useChatStreaming';
 import { useExcerptAttachments } from './hooks/useExcerptAttachments';
 import { previewArgs } from './tools';
 
@@ -91,6 +96,9 @@ interface UiMessage extends ChatMessage {
   id: string;
   /** Phase 3 — tool 호출/결과 inline 표시 (assistant 메시지 안). */
   toolEntries?: UiToolEntry[];
+  /** chunk 99 follow-up — plan mode 에서 생성된 어시스턴트 메시지.
+   *  UI 가 "이 계획대로 실행" 버튼 surface. */
+  planMode?: boolean;
 }
 
 interface UiToolEntry {
@@ -382,6 +390,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     useEffect(() => {
       autoApproveRef.current = autoApprove;
     }, [autoApprove]);
+    // chunk 99 follow-up — Plan mode (Claude Code 식). on=read tool 만
+    // 호출, write 차단, 응답은 bullet plan. user "이 계획대로 실행" 클릭
+    // 시 off + plan 텍스트 echo 로 새 turn 발사.
+    const [planMode, setPlanMode] = useState<boolean>(() => loadPlanMode());
+    useEffect(() => {
+      savePlanMode(planMode);
+    }, [planMode]);
     // 옛 chunk 18 호환을 위한 chatModeRef stub — useChatStreaming 의 옵션
     // 시그니처 호환용. 실제 분기는 autoApproveRef 가 담당.
     const chatModeRef = useRef<'manual' | 'agent'>('agent');
@@ -734,6 +749,33 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       [sendDirect],
     );
 
+    // chunk 99 follow-up — Plan mode 응답 직후 사용자가 "이 계획대로
+    // 실행" 클릭 시 호출. plan mode 토글 off + 직전 user prompt (plan
+    // 응답 바로 위 user message) 를 새 turn 으로 다시 발사. 모델은
+    // 이번엔 write tool 풀 catalog 로 작업.
+    const executePlanFromMessage = useCallback(
+      (assistantMessageId: string) => {
+        // 가장 가까운 직전 user message 찾기.
+        const idx = messages.findIndex((m) => m.id === assistantMessageId);
+        if (idx <= 0) return;
+        let userText: string | null = null;
+        for (let i = idx - 1; i >= 0; i--) {
+          if (messages[i].role === 'user') {
+            userText = messages[i].content;
+            break;
+          }
+        }
+        if (!userText) return;
+        setPlanMode(false);
+        // 다음 마이크로태스크에 발사 — savePlanMode effect 가 먼저 실행되어
+        // localStorage 가 false 로 갱신된 뒤 fireChat 가 그 값을 읽도록.
+        queueMicrotask(() => {
+          void sendDirect(userText);
+        });
+      },
+      [messages, sendDirect],
+    );
+
     const providerLabel = useMemo(
       () => PROVIDER_OPTIONS.find((p) => p.id === provider)?.label ?? provider,
       [provider],
@@ -865,8 +907,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         </div>
         {/* chunk 97 — Manual/Agent 통합. 자동 승인 토글로 교체. off=쓰기
           도구 호출마다 사용자 Accept/Reject (기존 Manual 검토 UX). on=즉시
-          실행 + 묶음 undo (기존 Agent). 읽기 도구는 항상 즉시 실행. */}
-        <div className="shrink-0 px-3 pb-2 pt-3" data-testid="chat-mode-bar">
+          실행 + 묶음 undo (기존 Agent). 읽기 도구는 항상 즉시 실행.
+          chunk 99 follow-up — Plan mode 토글 추가. on=read tool 만 호출,
+          write 차단, 응답은 bullet plan. */}
+        <div
+          className="flex shrink-0 flex-col gap-1.5 px-3 pb-2 pt-3"
+          data-testid="chat-mode-bar"
+        >
           <label
             className="flex cursor-pointer items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-1.5"
             title="off=쓰기 도구 호출마다 Accept/Reject 검토. on=즉시 실행 (묶음 undo 가능)."
@@ -885,6 +932,29 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               disabled={streaming}
               onChange={(e) => setAutoApprove(e.target.checked)}
               data-testid="chat-auto-approve-toggle"
+              className="h-4 w-4 cursor-pointer accent-primary"
+            />
+          </label>
+          <label
+            className="flex cursor-pointer items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-1.5"
+            title="on=AI 가 read tool 로 정보만 모으고 변경 계획만 작성. 사용자 검토 후 'Plan 실행' 클릭 시 off + 동일 prompt 재발사 → 실제 적용. 큰 변경을 dry-run 으로 검토할 때 사용."
+          >
+            <div className="flex flex-col">
+              <span className="text-xs font-medium">
+                Plan mode (변경 미리보기)
+              </span>
+              <span className="text-[10px] text-muted-foreground">
+                {planMode
+                  ? 'AI 가 변경 계획만 작성 (write 차단)'
+                  : '바로 실행 모드'}
+              </span>
+            </div>
+            <input
+              type="checkbox"
+              checked={planMode}
+              disabled={streaming}
+              onChange={(e) => setPlanMode(e.target.checked)}
+              data-testid="chat-plan-mode-toggle"
               className="h-4 w-4 cursor-pointer accent-primary"
             />
           </label>
@@ -1032,6 +1102,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   onApplyPatches={applyPatches}
                   onPreviewPatch={previewPatch}
                   onResolveApproval={resolveApproval}
+                  onExecutePlan={() => executePlanFromMessage(m.id)}
                 />
               ))
           )}
@@ -1389,6 +1460,10 @@ interface MessageProps {
   onPreviewPatch?: (patch: AhwpPatch) => void;
   /** chunk 97 — pending write tool 의 사용자 결정 콜백. */
   onResolveApproval?: (toolUseId: string, accept: boolean) => Promise<void>;
+  /** chunk 99 follow-up — plan mode 응답 직후 사용자가 "이 계획대로
+   *  실행" 클릭 시 호출. plan mode 를 끄고 같은 prompt 를 새 turn 으로
+   *  발사한다. */
+  onExecutePlan?: () => void;
 }
 
 /** Multi-doc chip strip — chunk 21. Reads `getOpenDocs` each render so
@@ -1476,6 +1551,7 @@ function Message({
   onApplyPatches,
   onPreviewPatch,
   onResolveApproval,
+  onExecutePlan,
 }: MessageProps): JSX.Element {
   const isUser = message.role === 'user';
   const isAssistantStreaming =
@@ -1868,6 +1944,28 @@ function Message({
                 </div>
               );
             })()}
+          </div>
+        ) : null}
+        {/* chunk 99 follow-up — plan mode 응답에 "이 계획대로 실행"
+          버튼. 클릭 시 plan mode 토글 off + 직전 user prompt 를 다시
+          새 turn 으로 발사. ChatPanel 의 onExecutePlan 이 그 플로우를
+          orchestrate. streaming 중엔 숨김 (plan 작성 중). */}
+        {!isUser && !streaming && message.planMode && onExecutePlan ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="default"
+              onClick={onExecutePlan}
+              data-testid="chat-action-execute-plan"
+              className="text-xs"
+              title="Plan 모드를 끄고 위 계획을 실제로 적용합니다 (write tool 호출 활성)."
+            >
+              ▶ 이 계획대로 실행
+            </Button>
+            <span className="text-[10px] text-muted-foreground">
+              Plan mode — write 도구 차단 상태
+            </span>
           </div>
         ) : null}
         {htmlPayload ? (

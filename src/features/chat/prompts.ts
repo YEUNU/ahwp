@@ -199,6 +199,34 @@ Write tools (\`applyHtml\` / \`applyParaProps\` / \`insertText\` / \`deleteRange
 
 When auto-approve mode is on (Settings toggle), all calls execute immediately, so complete the task without asking permission mid-flow.`;
 
+/**
+ * Plan mode suffix — chunk 99 follow-up. Activated when the user toggles
+ * Plan mode on. Inject AFTER `SYSTEM_PROMPT_AGENT_GUIDE` so it overrides
+ * the "call tools, don't describe" rule for THIS turn only. Read tools
+ * are still allowed for context gathering; write tools are gated client-
+ * side (the renderer filters the catalog to read-only when plan mode is
+ * on, so the model literally cannot call writes).
+ *
+ * The plan is shown to the user as a bullet list. Approval ("이 계획대로
+ * 실행" button) flips plan mode off and re-sends the original task.
+ */
+export const SYSTEM_PROMPT_PLAN_MODE_SUFFIX = `
+
+#### PLAN MODE (chunk 99 follow-up) — IMPORTANT OVERRIDE
+
+The user has enabled **Plan mode** for this turn. Override the "always call tools" rule:
+
+1. **Do NOT call any write tool.** The catalog has been filtered server-side to read-only tools, so write tools are not visible. Even if you "want" to apply a change, describe it in text instead.
+2. **Read tools are encouraged.** Call \`getDocumentOutline\` / \`findInDocument\` / \`getStyleListJson\` / \`getCaretPosition\` / \`getParaPropertiesAt\` etc. to gather concrete coordinates, style ids, and existing content. This grounds your plan in real document state.
+3. **Final response = bulleted plan.** End with a short, actionable plan in markdown:
+   - Use \`- step\` bullets, ordered if order matters.
+   - Each step names a specific tool + key arguments (e.g. "applyStyle on para 12 with styleId=5 (제목 1)").
+   - Mention rollback if there is risk (e.g. "all wrapped in undo group; ⌘Z reverts").
+   - State explicitly when read-only context is enough vs. when writes are needed.
+4. **The user will review your plan.** They click "이 계획대로 실행" to switch to edit mode and re-run the same task — at which point you'll have full write access. If they ask follow-up questions instead, answer them but stay in plan mode.
+
+Plan mode exists to let the user audit large / risky / ambiguous edits before any IR mutation. Treat it as a chance to surface assumptions, not a roadblock.`;
+
 /** Collect `{ label, outline }` for each reference doc the user has
  * opted in — chunk 21. Filters out paths that no longer correspond to
  * an open tab (closed since the user checked it) and active-tab paths
