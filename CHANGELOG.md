@@ -6,6 +6,613 @@
 
 ## [Unreleased]
 
+### Added — chunk 95: 한컴 매핑 확장 + 이전 세션 e2e 보강 (0.3.30)
+
+- **chunk 95 — 한컴 매핑 + StudioViewer 적용** — `HANCOM_TOOLTIPS` 에 `font-size` / `text-color` / `style-select` (F6) / `line-spacing` / `para-spacing` / `toolbar-more` / `toggle-controls` / `toggle-transparent` / `char-format-dialog` (⌥L) / `para-format-dialog` (⌥T) 추가. StudioViewer 툴바 / 확장 툴바 / 보기 토글에 `title={hancomTitle(...)}` 와이어링. `tooltip-i18n-svg.spec.ts` 에 chunk 95 매핑 검증 케이스 + edge case 8건 보강 (multi-line title 구조, 단축키 없는 entry, Alt 단축키 platform 분기, post-mutation re-render, idempotent, 영어 모드 + 플랫폼 단축키 독립, setLocale reload). 18/18 통과.
+- **이전 세션 e2e edge case 보강** — (a) `crash-reporter.spec.ts` (chunk 63): multi-error append / no-origin 기본값 (`renderer`) / multi-line stack 보존 / malformed payload silently no-op (4건). (b) `chat-prefetch.spec.ts` (chunk 70): multi-provider catalog 독립 / overwrite 후 catalog 회복 (2건). (c) `file-dialog-mock.spec.ts` (chunk 60): open dialog cancel / save-as cancel / `.hwpx` 자동 라우팅 to `.hwp` (3건). (d) `chat-agent-multidoc.spec.ts` (chunk 50): 두 turn 연속 dispatch (active 가 turn 사이 변경) / 잘못된 sectionIdx graceful fail without spillover (2건). (e) `studio-perf.spec.ts` (chunks 64/88): cmd+End → cmd+Home roundtrip / reload-load 두 번째 로드 perf parity (2건).
+
+### Added — chunks 91~94: 한컴 툴팁 / SVG title / i18n 마이그레이션 / e2e (0.3.29)
+
+- **chunk 91 — 한컴 툴팁 전체 적용** — Studio 툴바의 정렬 (left/center/right/justify), 들여쓰기/내어쓰기, undo/redo, zoom (in/out/fit/reset), find prev/next/close, insert-image 등 추가 적용. ChatPanel 의 Manual/Agent 모드 pill 도 hancomTitle 로 교체. 매핑 사용 사이트 7 → 25+ 곳.
+- **chunk 92 — SVG `<title>` 후처리** — `renderPageInto` 가 SVG 마운트 직후 모든 비-empty `<text>` 에 자기 textContent 를 `<title>` 자식으로 추가. 네이티브 hover tooltip 으로 narrow column 에 잘린 셀 텍스트도 hover 로 읽기 가능. SVG 레이아웃 변경 없음. lib SVG 가 이미 title 을 가지고 있으면 idempotent skip.
+- **chunk 93 — i18n 마이그레이션 (점진)** — WelcomePane (제목/부제목/카드 라벨/설명/⌘N⌘O 표기) + TitleBar (다크/라이트/설정/저장 안 됨/열린 문서 없음) 마이그레이션. 단축키 표기는 `localizeShortcutPublic` 으로 mac↔Win/Linux 자동 분기. 로케일 키 `welcome.drop_here`, `welcome.unsaved`, `titlebar.unsaved` 추가. Settings/Folder/Chat 의 추가 hardcoded 텍스트는 후속 청크.
+- **chunk 94 — e2e 8 케이스 + edge cases** — `tests/e2e/tooltip-i18n-svg.spec.ts`. (a) Studio Bold/가운데 정렬 title 검증 + 플랫폼별 단축키 분기 (mac `⌘B` / Win/Linux `Ctrl+B`), (b) `studio-zoom-reset` 인라인 title fallback, (c) 모든 `<text>` 의 `<title>` 자식 보유 + textContent 일치 (직접 child text node 만 추출해 nested title 노이즈 제거), (d) 빈 텍스트 element 는 title 추가 제외 (idempotent), (e) 로케일 default ko / 명시 en / 잘못된 locale (`xx-INVALID`) → fallback ko. 8/8 통과.
+
+### Added / Changed — chunks 85~90 (0.3.28)
+
+- **chunk 85 — Diff Viewer 다중 패치 e2e 보강** — `tests/e2e/chat-diff.spec.ts` 에 2 케이스 추가: (1) multi patch 의 개별 Reject — 첫 번째 reject → 두 번째 여전히 accept 가능 → 부분 적용 검증, (2) preview 클릭 시 onPreview 콜백 wired 확인 (smoke). 기존 3 → 5 케이스.
+- **chunk 86 — RP v4 재마이그레이션 시도 + 재 v2 환원** — v4.11 로 재시도했으나 chat-history popover 의 `flex-1 truncate` button 이 0px 로 hidden 되는 layout 회귀 동일하게 reproducible. v4 의 새 Group 인라인 스타일이 deeply-nested flex children 을 collapse 시키는 듯. RP v2.1.9 유지, 코멘트 갱신.
+- **chunk 87 — 표 column width 후처리** — deferred. lib SVG 출력에 우리 쪽 후처리는 hand-waving 수준이라 lib 0.8.x 의 column width 추정 fix 를 기다림. KNOWN_ISSUES L-004 에 이미 기록됨.
+- **chunk 88 — 성능 측정 CI artifact infra** — `tests/e2e/studio-perf.spec.ts` 가 `recordPerf()` 헬퍼로 JSONL 누적 (env `AHWP_PERF_LOG=path` 또는 OS tmpdir). `npm run perf:run` (build + perf spec → `perf-results.jsonl`) + `npm run perf:report` (console.table 으로 요약). CI 통합은 e2e 가 CI 에서 안 도는 상태라 후속 — 로컬에서 trend 추적 가능.
+- **chunk 89 — i18next 다국어 (한·영) 인프라** — `i18next` + `react-i18next` 도입. `src/lib/i18n/` 에 `ko` (default) + `en` 로케일 + setup. localStorage `ahwp:locale` 로 영속, 첫 실행 시 `navigator.language` 감지. flat dot-notation 키 (`titlebar.no_doc` 등). TitleBar 의 일부 텍스트 (다크/라이트 / 설정 / 열린 문서 없음) 를 `useTranslation` 으로 교체 — 점진적 도입 시작점. 새 키는 `ko.ts` 추가 → `en.ts` 번역.
+- **chunk 90 — 한컴 매뉴얼 명칭 호버 툴팁 + 플랫폼 별 단축키 표기** — `src/lib/hancom-tooltips.ts` 에 30+ 한컴오피스 공식 명칭 + 한 줄 설명 매핑 (진하게 / 기울임 / 글머리 기호 / 표 넣기 / 쪽 모양 / 머리말·꼬리말 / 책갈피 / 각주 / 스타일 관리 등). 단축키 표기는 `navigator.platform` 으로 분기 — macOS 는 `⌘`, `⇧`, `⌥`, `⌃` 심볼, Win/Linux 는 `Ctrl+`, `Shift+`, `Alt+` 텍스트. CommandPalette / Settings 단축키 탭 / Studio 툴바 (Bold·Italic·Underline·Bullet·Number·PageBreak·Insert Table) 에 적용. `hancomTitle(key)` 가 `${name} (${shortcut})\n${description}` 형식 multi-line 툴팁 생성.
+
+### Fixed — chunks 83~84 (0.3.27)
+
+- **chunk 83 — `tailwindcss-animate` (deprecated) → `tw-animate-css` 마이그레이션** — 같은 accordion-down/up / fade-in / zoom-in/out 키프레임 + utility 제공하는 공식 후속. `index.css` 의 `@plugin 'tailwindcss-animate'` → `@import 'tw-animate-css'`. shadcn Dialog 의 data-state 애니메이션 호환 유지. `npm uninstall tailwindcss-animate` + `npm install tw-animate-css`.
+- **chunk 84 — `studio-paraformat` alignment save→reopen 회귀 root cause fix** — 격리 테스트로 분리: lib 의 in-process `exportHwp → new HwpDocument(bytes)` roundtrip 은 alignment 를 떨구지만 (lib 한계) `file:save` IPC 를 통한 normalize-and-export-twice 흐름은 alignment 를 보존. 그렇다면 reload 후 doc 자체엔 alignment=center 가 살아있는데 왜 테스트가 fail? `__studioDebug.getActiveFormat()` 이 React `activeFormat` state 의 closure 를 캡처해서 React 19 의 더 공격적인 batching 에서 stale 값을 반환했기 때문. fresh read 로 교체 — `getCharPropertiesAt` / `getParaPropertiesAt` 을 호출 시점에 doc 으로부터 직접 읽어 React state 의존 제거. 결과: studio-paraformat / chat-agent 류의 다른 timing-sensitive 테스트도 안정.
+- **격리 디버깅을 위한 신규 debug 메서드** — `__studioDebug.reparseAndReadParaProps(sectionIdx, paraIdx)` — 현재 doc 을 export 한 뒤 fresh `HwpDocument` 로 재파싱해 같은 paragraph props 를 읽음. 향후 lib roundtrip 회귀를 격리할 수 있는 공통 도구.
+
+### Fixed — chunk 82: 메이저 일괄 업그레이드 회귀 fix (0.3.26)
+
+chunks 80~81 의 9개 메이저 일괄 업그레이드 후 full e2e (376 케이스) 결과 19 fail. 8개는 live spec env-gated 예상 실패 (Anthropic / NIM / Ollama / Gemini 키 부재). 11개 실제 회귀 중 10개 fix.
+
+- **`electron/hwp/converter.ts` createRequire 런타임 크래시** — vite 8 의 CJS bundle 이 `import.meta.url` 을 `({}).url` (=undefined) 로 erase 하면서 `createRequire(undefined)` 가 throw → main process 가 부팅 직후 죽어 모든 e2e 가 1분 타임아웃. WASM 경로 resolve 를 candidate path list (`process.cwd()` / `__dirname` 두 후보) 로 교체 — `import.meta.url` 의존 제거. asar 안에서도 `existsSync` + `readFileSync` 가 투명하게 동작.
+- **react-resizable-panels v4 → v2 다운그레이드** — v4 의 새 Group / Separator / orientation API 가 Electron 렌더러에서 flex children 을 간헐적으로 hidden 처리. chat-history popover button (`flex-1 truncate text-left`) 이 0px 사이즈로 잡혀 Playwright 가 `not visible` 로 실패. RP v2 (PanelGroup / Panel / PanelResizeHandle / direction / autoSaveId / order) 로 되돌려 14 케이스 회귀 해소. RP v4 의 layout 안정화 후 재시도.
+- **studio-find autoFocus** — React 19 의 batched setState 변경 후 `setTimeout(0) → input.focus()` 가 input 마운트 전에 fire. `useEffect([findOpen])` 으로 commit 후 focus 옮기는 effect 추가 (기존 setTimeout 은 fallback 으로 유지).
+- **ChatPanel `shrink-0` 가드** — chunk 73 의 `chat-scroller flex-1 + min-h-0` 가 sibling 들 (provider bar / mode bar / popover / input form) 을 default `shrink: 1` 로 collapse 시키는 이슈. 정적 영역 4 곳에 `shrink-0` 추가 — RP v2 환경에선 무영향이지만 CSS 위생 측면에서 유지.
+
+**알려진 잔여 (1 케이스)**: `studio-paraformat — alignment + fontSize + color survive save → reopen`. save 직후엔 center 로 적용되지만 reload 후 justify 로 복귀. @rhwp/core 0.7.9 의 alignment encode/decode 라운드트립 한계로 추정 (lib 변경은 없었으나 메이저 업그레이드 누적 환경에서만 확인됨). lib upgrade 후 재검증 예정.
+
+### Changed — Phase 4 chunks 80~81: 라이브러리 일괄 메이저 업그레이드 (0.3.25)
+
+ROADMAP 의 "메이저 버전 일괄 업그레이드" 항목 (Phase 4 별도 마이그레이션 트랙) 일괄 처리. 사용자 요청 "라이브러리 최신화 전부다".
+
+#### chunk 80 — vite `base: './'` + 추가 absolute path fix
+
+packaged Electron 의 `loadFile('dist/index.html')` 흐름에서 absolute root 경로 (`/icon.svg`, `/assets/*.js`) 가 `file:///icon.svg` 로 resolve 되어 404. `vite.config.ts` 에 `base: './'` 추가하면 vite 가 빌드 시 모든 자산 경로를 `./assets/...` 으로 작성, file:// 환경에서도 정상 로드.
+
+#### chunk 81 — 메이저 일괄
+
+| 패키지                                                                       | 이전          | 이후                                                                                                                                           | 마이그레이션                                      |
+| ---------------------------------------------------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `vite`                                                                       | 6.4           | 8.0                                                                                                                                            | (변경 없음 — base:./ 만 추가)                     |
+| `@vitejs/plugin-react`                                                       | 4.7           | 6.0                                                                                                                                            | peer 호환만                                       |
+| `esbuild`                                                                    | (peer 의존만) | 0.27 explicit                                                                                                                                  | vite-plugin-electron-renderer 가 peer 로 요구     |
+| `electron`                                                                   | 33.4          | 41.5                                                                                                                                           | API 변경 없음 — 빌드 통과                         |
+| `electron-builder`                                                           | 25.1          | 26.8                                                                                                                                           | 빌드 통과                                         |
+| `react`/`react-dom`                                                          | 18.3          | 19.2                                                                                                                                           | `JSX` global namespace 폐기 → `src/jsx.d.ts` shim |
+| `@types/react`/`@types/react-dom`                                            | 18 → 19       | (React 19 와 함께)                                                                                                                             |
+| `react-resizable-panels`                                                     | 2.1 → 4.11    | API 변경: `PanelGroup` → `Group`, `PanelResizeHandle` → `Separator`, `direction` → `orientation`, `autoSaveId` → `autoSave`, `order` prop 폐기 |
+| `typescript`                                                                 | 5.9 → 6.0     | `baseUrl` 폐기 (`paths` 만 사용)                                                                                                               |
+| `@types/node`                                                                | 22 → 25       | 글로벌 `NodeJS.Platform` 인라인 union 으로 교체 (renderer DOM tsconfig 에서 안 보임)                                                           |
+| `tailwindcss`                                                                | 3.4 → 4.2     | CSS-first config 자동 마이그레이션 (`@import "tailwindcss"` + `@theme` + `@plugin`). postcss 플러그인 `tailwindcss` → `@tailwindcss/postcss`   |
+| `globals` / `jsdom` / `postcss` / `eslint` / `vite-plugin-electron-renderer` | 패치/마이너   | 일괄                                                                                                                                           |
+
+**주요 코드 변경**:
+
+- `src/jsx.d.ts` 신설 — `import type { JSX as ReactJSX } from 'react'` 후 global namespace `JSX` 로 재노출. 14개 컴포넌트의 `: JSX.Element` 시그니처 그대로 유지.
+- `vitest.setup.ts` — `ResizeObserver` stub 추가 (react-resizable-panels v4 가 jsdom 에서 사용).
+- `tsconfig.json` / `tsconfig.node.json` — `baseUrl` 제거, `paths` 가 tsconfig 위치 기준 자동 resolve.
+- `shared/api.ts` — `NodeJS.Platform` → 리터럴 union (renderer 에서 보임).
+- `electron/menu.ts` — N/A. Electron 41 의 메뉴 / IPC API 변경 없음.
+- `tailwind.config.ts` — 유지 (Tailwind 4 의 `@config` directive 로 CSS 에서 import). `tailwindcss-animate` → `@plugin 'tailwindcss-animate'` (CSS 안에서).
+- HeaderFooterDialog — Tailwind upgrade tool 이 `variant="outline"` (Button prop) 을 잘못 `outline-solid` 로 렌이밍한 3 곳 수동 복원.
+
+**검증**: typecheck 통과, unit tests 15/15, build 통과 (mac arm64). e2e 는 사용자 검증으로 갈음.
+
+### Changed — UX 보강 chunks 77~79 (0.3.24)
+
+- **chunk 77 — provider bar 2행 분리 + lucide SVG 아이콘** — 우측 챗 패널이 좁고 모델 id 가 길면 (NVIDIA NIM 의 `deepseek-ai/...` 등) 우측 history / + 버튼이 화면 밖으로 밀려나는 문제. provider+상태+히스토리/+ 행 ↔ model selector + refresh 행 두 줄로 분리. 모든 버튼 이모지 (`📚` / `+` / `↻` / `⚠` / `키 ●` / `키 ○`) → lucide-react SVG (`History` / `Plus` / `RefreshCw` / `AlertTriangle` / `Key` / `KeyRound` / `Loader2`) 로 교체. 테마 토큰 색상 (emerald / muted-foreground / amber) 자동 적용. `IconButton` / `KeyStatusIcon` / `ModelRefreshButton` 헬퍼 컴포넌트 추출. e2e 4개 케이스 텍스트 → `data-state` attribute 로 갱신.
+- **chunk 78 — 새 문서 ⌘S → Save As 자동 라우팅** — `⌘N` 으로 만든 새 문서는 `userData/temp/new-<timestamp>.hwp` scratch path 에 위치. ⌘S 가 그대로 저장하면 사용자가 못 찾는 곳에 숨음. `useSaveFlow.saveCurrent` 가 path 의 `/temp/new-` substring 으로 scratch 식별 → 자동으로 `saveAsCurrent()` 위임. 사용자가 매번 ⌘⇧S 눌러야 했던 흐름 제거.
+- **chunk 79 — Settings 정보에 @rhwp/core 버전 + 상단바 아이콘 404 fix** — packaged Electron 에서 `<img src="/icon.svg">` 가 `file:///icon.svg` 로 resolve 되어 404 (TitleBar 와 Settings 사이드바 두 군데). 두 곳 모두 inline `<svg>` 로 교체 — 빌드 산출물 / 외부 자산 의존 제거. About pane 에 `@rhwp/core` 버전 row 추가 — `electron/main.ts` 가 `require('@rhwp/core/package.json').version` 으로 읽어 IPC `app:get-versions` 응답에 포함. UI 에 viewer 를 구동하는 WASM lib 버전 노출.
+
+### Changed — UX 보강 chunk 75 — send 후 attachDoc 자동 unset (0.3.23)
+
+- **send / sendDirect 후 `attachDoc` 자동 false 로 reset** — 사용자가 컨텍스트 첨부 → 한 번 보내면 doc HTML 이 이미 그 turn 의 시스템 프롬프트에 직렬화 됐으므로 다음 turn 에 또 보낼 필요 없음. 이전엔 chunk 74 에서 default true 로 만들어 항상 켜져 있었는데, 매 turn 마다 1000 단락 HTML 을 다시 보내 토큰 폭발 위험. 이제 명시적 한 번 첨부 패턴 — 사용자가 또 첨부하려면 체크박스 다시 켬. localStorage 저장도 unset 시점에 갱신되어 다음 실행에 첨부 안 됨.
+
+### Documented — KNOWN_ISSUES L-004 보강 (chunk 76)
+
+- **복잡한 표·병합 셀 렌더링 한계** — 사용자 보고: 다중 행/열 병합이 있는 양식 표에서 우측 narrow column (예: SF-AD3 코드 컬럼) 텍스트가 잘리고 행 높이가 불균형. 원인은 `@rhwp/core` 의 `renderPageSvg` 가 column width 를 추정해 SVG 를 직접 그려 우리에게 넘기는 구조 — 우리 쪽 viewer 는 그 SVG 를 그대로 표시할 뿐 셀 너비 / 행 높이 재계산 권한 없음. lib v0.7.x 활발히 개발 중이라 lib upgrade 후 해결 예상. 영향도 표 항목을 **중간 → 높음** 으로 갱신.
+
+### Fixed — UX 보강 chunk 74 — 현재 문서 첨부 (0.3.22)
+
+세 가지 누적 버그가 "AI 가 첨부된 문서를 인식 못 함" 증상으로 합쳐져 있었음. 사용자가 active doc 을 컨텍스트로 첨부했는데 모델이 "문서를 받지 못했습니다" 라고 응답하는 문제.
+
+- **AppShell `getDocHtml(1000)` 으로 명시** — 기존 `exportDocumentHtml()` 가 default `maxParagraphs=50` 호출. 144페이지짜리 보고서면 표지 / 목차 / 빈 단락만 50개 포함되고 본문은 단 한 줄도 첨부 안 되는 케이스 흔함. 메뉴 HTML 내보내기 / PDF 내보내기 와 동일한 1000 단락으로 통일.
+- **`attachDoc` default `true` + localStorage 영속** — 사용자 기대는 "ChatPanel 열려있고 active doc 있으면 AI 도 같이 본다". 기존 default false 라 사용자가 매번 체크박스 켜야 했음. 토큰 부담 큰 거대 문서에선 끄면 됨 — preference 가 로컬에 저장되어 다음 실행에도 유지.
+- **`SYSTEM_PROMPT_DOC_CONTEXT` 보강** — 첨부 잘 됐는데도 모델이 "문서 못 받았다" 응답하는 두 번째 원인. 기존 프롬프트가 응답 형식 가이드 (HTML / ahwp-tools / ahwp-patches 코드 블록) 만 있었고 `[현재 문서]:` 블록의 의미를 명시 안 함. 모델이 컨텍스트 헤더를 무시하거나 "단순 대화 → 코드 블록 형식 강제 → 부적절한 응답 거부" 흐름 발생. 프롬프트 앞부분에 `[현재 문서]:` / `[발췌]:` / `[참조 문서]:` 블록의 의미 + "절대 '문서를 받지 못했다'고 말하지 마" 안내 + 단순 대화 / 분석 / 요약 / Q&A 시 코드 블록 없이 자연어로 답해도 된다는 명시 추가.
+- **회귀 가드** — chat-html-apply / chat-tools / chat-multidoc / chat 등 chat 관련 e2e 30+ 케이스 통과. `chat-attach-checkbox` default 가 unchecked → checked 로 바뀌어 chat-html-apply 의 첫 케이스만 갱신.
+
+### Fixed — UX 보강 chunk 73 (0.3.21)
+
+- **ChatPanel 메시지 스크롤 fix** — chunk 72 의 Settings 와 동일한 `min-h-0` 누락 패턴이 ChatPanel 에도 있었음. 어시스턴트 메시지가 길어지면 chat-scroller (`flex-1 overflow-auto`) 가 제 height bound 안에 갇히지 않고 input form 을 viewport 밖으로 밀어냈다. AppShell 의 chat panel 래퍼 + ChatPanel root + chat-scroller 세 군데에 `min-h-0` 추가. `overflow-auto` → `overflow-y-auto` 명시. 이제 긴 응답이 와도 input + 컨텍스트 chip 영역은 항상 보이고 메시지 영역만 자체 스크롤.
+
+### Fixed — UX 보강 chunk 72 (0.3.20)
+
+- **Settings 모달 우측 패널 스크롤 fix** — chunk 55 의 4탭 사이드바 재설계 후 AI 공급자 / 단축키 탭에서 우측 PaneBody 가 스크롤 안 되던 문제. 원인은 nested flex/grid 의 `min-h-0` 누락 — 부모 grid track 이 height 를 부여해도 자식 flex 컬럼의 default `min-height: auto` 가 컨텐츠를 그대로 늘려 PaneBody 의 `flex-1 + overflow-auto` 가 무효화. 우측 컬럼 div 와 PaneBody 양쪽에 `min-h-0` 추가, PaneBody 의 `overflow-auto` → `overflow-y-auto` 로 명시.
+- **ChatPanel provider bar 호버 tooltip 보강** — `chat-key-indicator` 에 title 추가 (`{provider} API 키 등록됨/미등록 — Settings 에서 등록 필요`), 모델 selector 에 현재 모델명 + dropdown 안내, provider select / send / stop / 발췌 첨부 / 현재 문서 첨부 등 모든 provider bar / 입력 폼 컨트롤에 명시적 title 추가. 처음 보는 사용자가 `키 ●` / `📚` / `+` 같은 아이콘만 보고 기능을 추측해야 했던 문제 해결.
+
+### Fixed — UX 보강 chunks 70~71 (0.3.19)
+
+- **chunk 70 — secrets 변경 broadcast → ChatPanel re-fetch** — chunk 69 의 mount-only effect 는 앱 시작 시 키가 없으면 모든 provider 의 fetch 가 skipped 되고 다시 안 돌았다. main 의 `secrets:set` / `secrets:delete` 가 모든 BrowserWindow 에 `secrets:changed` 이벤트 broadcast → preload 가 `secrets.onChanged()` subscriber 로 노출 → ChatPanel 이 listen 해서 키 등록 직후 모든 provider 의 모델 리스트 pre-fetch 재실행. 이제 비-active provider 키를 등록해도 즉시 selector 가 채워짐.
+- **chunk 71 — 메뉴 cut/copy/paste 를 `role` 로 교체** — Settings 의 API 키 입력 (`type="password"`) 등에서 ⌘C/V 가 안 됐다. 기존 menu 의 custom click handler 가 `edit:copy` IPC 로 라우팅 → 렌더러가 `document.execCommand('copy')` 폴백했는데, password input 은 보안상 `execCommand` 가 silently no-op 한다. 메뉴 아이템을 `role: 'cut' | 'copy' | 'paste'` 로 교체 — Chromium clipboard 파이프라인이 password input + 일반 input + DevTools focus 모두 정상 처리. 뷰어의 IR copy 는 viewer 자체 onKeyDown 이 ⌘C/X/V 를 잡아 `navigator.clipboard.writeText` 로 덮어쓰기 때문에 viewer focus 일 때도 IR 데이터가 클립보드에 들어간다. 이제 사용된 적 없는 `devOrEdit` 헬퍼 제거.
+- **회귀 가드** — `tests/e2e/chat-prefetch.spec.ts` 2 케이스 (비-active provider 키 등록 → 즉시 catalog populate / delete 후에도 sticky 옵션 유지). 기존 chat / chat-model-list / settings (23 케이스) 회귀 없음.
+
+### Fixed — UX 보강 chunks 68~69 (0.3.18)
+
+- **chunk 68 — 모달 스크롤바** — Dialog primitive 의 `DialogContent` 베이스에 `max-h-[calc(100vh-4rem)] overflow-y-auto` 추가. 그 동안 다이얼로그 내용이 viewport 보다 길어지면 화면 밖으로 잘려 form 끝부분 / Apply 버튼 등이 안 보였다. 자체 height + `overflow-hidden` 을 갖는 SettingsDialog 처럼 커스텀 레이아웃 다이얼로그는 twMerge 가 자동 우선이라 영향 없음.
+- **chunk 69 — 앱 시작 시 모든 provider 모델 리스트 pre-fetch** — 기존엔 ChatPanel 의 active provider 만 마운트 / 전환 시 fetch → 다른 provider 로 처음 전환할 때 "확인 불가 → 새로고침 → 대기" 패턴 발생. 이제 ChatPanel 마운트 시 1회 `secrets.has()` 로 키가 등록된 모든 provider 를 식별하고 `listModels` 를 병렬 발사. 메인 측 24h 캐시 덕분에 fresh cache 면 IPC 가 즉시 반환 — 처음 실행 한 번만 네트워크 사용.
+
+### Fixed — UX 보강 chunks 65~67 (0.3.17)
+
+- **chunk 65 — 모델 선택 selector 화** — 기존 `<input list>` + `<datalist>` (자유 입력 + 자동완성) → 순수 `<select>` dropdown. provider `/v1/models` 가 노출하지 않는 모델을 직접 입력하는 일이 드물고 오타 위험만 컸다. 현재 `model` 이 fetched 목록에 없으면 "(저장됨)" sticky 옵션으로 보존 — provider 전환 / fetch 실패 시에도 마지막 선택을 잃지 않음. 빈 목록 + 저장 모델 없음 → "모델 없음" disabled placeholder.
+- **chunk 66 — 단축키 하이재킹 fix** — AppShell 의 window-level keydown 리스너가 input/textarea/contentEditable focus 일 때도 작동해서 ⌘W (탭 닫기), ⌘K (팔레트), ⌘/ (Settings), ⌘⇧F (검색), ⌘⇧O (아웃라인), F6/Alt+L/T/P 가 사용자 입력을 가로챘다. `isEditableFocused()` 헬퍼로 editable focus 일 때 short-circuit. macOS 의 ⌘W = "단어 단위 삭제" 같은 native input 단축키가 정상 전달됨. Studio shortcuts 는 자체 onKeyDown 으로 이미 분리되어 있어 영향 없음.
+- **chunk 67 — 채팅 입력칸 auto-grow + scrollbar** — `rows={2}` 고정 높이라 긴 프롬프트 작성 시 textarea 안에서만 스크롤됐다. `useLayoutEffect` 로 `scrollHeight` 추적해서 max-h-48 (≈ 8줄) 까지 자동 확장 + `overflow-y-auto` 로 ceiling 도달 시 외부 스크롤바 자연스럽게 노출.
+
+### Tests — Phase 5 chunk 64: 큰 파일 성능 smoke (0.3.16)
+
+- **`tests/e2e/studio-perf.spec.ts` 3 케이스** — `examples/` 의 50p+ doc 으로 (1) 초기 로드 (file:read → @rhwp/core parse → `__studioDebug` ready), (2) `Cmd+End` 점프 + 스크롤, (3) 10× PageDown 시퀀스 의 wall-clock 측정 + telemetry print + 느슨한 ceiling assertion (15s / 10s / 15s).
+- **현 측정 (dev 박스)** — initial load 327ms (pages=57) · cmd+End 122ms · 10× PageDown 984ms (avg ~98ms/press). 충분한 헤드룸 — order-of-magnitude regression 만 잡는 가드.
+- **벤치 vs gate 의도** — 정확한 perf 예산은 별도 harness (CI metrics infra 도입 시) 로 분리. 이 spec 은 lazy-mount / off-viewport unmount / find paragraph cache (chunk 1-D 3 개 최적화) 가 깨졌는지 catch 하는 목적.
+
+### Added — Phase 5 chunk 63: 자체 호스팅 Crash reporter (0.3.15)
+
+- **`electron/crash-reporter.ts`** — 외부 collector (Sentry 등) 없이
+  로컬 only sink. 3 layer:
+  1. **Native crashReporter** — `crashReporter.start({ uploadToServer:
+false, productName: 'ahwp' })`. GPU / renderer / utility 프로세스
+     의 native crash 를 `userData/Crashpad/` (mac/win) 또는
+     `userData/Crashes/` (linux) 에 minidump 으로 캡처.
+  2. **Main 프로세스 JS error** — `process.on('uncaughtException')`
+     - `unhandledRejection` → `userData/error.log` 에 ISO 타임스탬프
+     - origin + stack 추가.
+  3. **Renderer JS error** — `window.onerror` / `unhandledrejection`
+     → `app:log-error` IPC → 같은 `error.log` 파일.
+- **외부 origin 의존 0 모델 유지** — 베타 사용자가 GitHub Issue 에
+  log 직접 첨부하는 흐름. Sentry / 자체 collector 도입은 사용자
+  로그 외부 송신이라 ahwp 보안 모델과 충돌해 미채택.
+- **disable hatch** — `AHWP_DISABLE_CRASH_REPORTER=1` env (테스트 /
+  디버그 시나리오에서 비활성화).
+- **회귀 가드** — `tests/e2e/crash-reporter.spec.ts` 2 케이스: (a)
+  IPC 통과 → `error.log` append (sentinel 텍스트 + ISO 타임스탬프
+  prefix 검증), (b) `crashReporter.getUploadToServer()` === false 확인.
+- **USER_GUIDE 갱신** — 데이터 위치 섹션에 `error.log` + `Crashpad/`
+  안내 추가.
+
+### Documentation — Phase 5 chunk 62: 사용자 가이드 (0.3.14)
+
+- **`docs/USER_GUIDE.md` 신설** — 베타 사용자 대상의 흐름 위주 가이드. (1) 시작하기 (설치 / 첫 실행 / 폴더), (2) 편집 기본 (탭 / 저장 / .bak / 자동 초안 / 버전 히스토리), (3) AI 챗봇 (BYOK / Manual vs Agent / 발췌 첨부 / 멀티 문서 / Diff Viewer / 히스토리), (4) 단축키 요약 표, (5) 데이터 위치 (`userData/...`), (6) 알려진 한계, (7) 피드백 채널. 기능 카탈로그가 아니라 자주 막히는 지점 + 사용 흐름 권장안 위주.
+
+### Accessibility — Phase 5 chunk 61: aria 보강 (0.3.13)
+
+- **Settings 사이드바 탭 — `role="tab"` + `aria-selected`** — 활성 탭의 시각 강조 (bg-card font-semibold) 만으로는 스크린 리더가 활성 상태를 인식 못 함. `role="tab"` 으로 셀렉션 시멘틱을 명시하고 `aria-selected={active === tab.id}` 로 활성 상태를 노출.
+- **FolderTree 행 — `aria-selected={isSelected}`** — 활성 트리 노드의 활성 상태를 보조 기술에 노출. 기존엔 `bg-muted` 클래스로만 구분.
+- **ChatPanel 히스토리 항목 — `aria-current="page"`** — 현재 로드된 대화에 `aria-current="page"` 부여. `bg-muted` 시각 표시는 유지.
+- **사전 검증** — radix shadcn 의 Dialog / DropdownMenu / Select 등은 이미 a11y 처리됨. 툴바 / 챗 입력 / 발췌 chip / 다이얼로그 X close / 셀 우클릭 메뉴 모두 `aria-label` 보유 (audit 결과 false-positive 0). 기존 e2e (folder-tree / chat-history / settings 19 케이스) 회귀 없음.
+
+### Tests — Phase 5 chunk 60: 파일 다이얼로그 모킹 e2e (0.3.12)
+
+- **`tests/e2e/file-dialog-mock.spec.ts` 3 케이스 신규** — Playwright Electron 의 `app.evaluate(({ dialog }) => ...)` 로 main 의 `showOpenDialog` / `showSaveDialog` 를 monkey-patch. 그 후 `'menu:action'` IPC 를 직접 emit 해서 메뉴 액션 흐름을 트리거 (네이티브 OS 다이얼로그 우회).
+- **케이스 분류** — (1) `file:open` 모킹 → 탭 열림 검증; (2) `file:save-as` 신규 path → atomic write + HWP 매직 바이트 (`d0 cf 11 e0`) 검증 + 새 path 라 `.bak` 미생성 invariant; (3) `file:save-as` 기존 path overwrite → `.bak` 사이드카 1회 생성 + 사이드카 크기 = 원본 크기.
+- **IME/다국어 입력은 보류** — Playwright 의 `keyboard.insertText` 는 단일 `InputEvent` 라 composition cycle (`compositionstart` → `compositionupdate` → `compositionend`) 을 emit 하지 않음. 합성 CompositionEvent 를 `page.evaluate` 로 디스패치하는 건 우리 핸들러를 가짜 입력에 대해 테스트하는 꼴이라 회귀 가드로 가치가 낮다. 실제 IME 회귀는 manual 검증 + Phase 1 의 `studio-ux-fixes.spec.ts` 의 ⌘A / drag 과 같은 결정적 case 로 갈음.
+
+### Changed — Phase 3 chunk 59: docId-aware Agent dispatch (0.3.11)
+
+- **`runTools(items, targetPath)` — turn 시작 시점의 target doc 으로 dispatch 핀** — 사용자가 Agent turn 중간에 탭을 전환해도 write tool 은 원본 target doc 으로 라우팅. `useChatStreaming` 의 `turnTargetPathRef` 가 `send` / `sendDirect` 에서 `activeDocPath()` 를 캡처, Agent 루프 안 dispatch 사이트가 ref 를 두 번째 인자로 전달. `legacy null` 은 active viewer fallback (Manual "도구 실행" 버튼 호환).
+- **AppShell viewer-by-path 라우팅** — `runTools` prop 이 `targetPath` 를 받으면 `tabsState.find(t => t.path === targetPath)` + `viewerRefsRef.current.get(tab.key)` 로 mounted viewer 조회. target tab 이 닫힌 경우 모든 op 가 `target-doc-not-mounted:<path>` reason 으로 실패. inactive tab viewer 도 `display:none` 으로 mount 유지되므로 dispatch 가 정상 동작.
+- **회귀 가드** — `tests/e2e/chat-agent-multidoc.spec.ts` (1 케이스): 두 doc open 상태에서 active=target Agent insertText → target 첫 단락에 sentinel 존재 + reference 첫 단락에 sentinel 부재 검증.
+
+### Documented — Phase 4 chunk 58: ROADMAP 정정 (0.3.10)
+
+- **앱 아이콘 항목 ✅ 처리** — `build/icon.png` (1024×1024 RGBA) + `public/icon.svg` / `favicon-16/32.png` / `icon-large.svg` 가 사용자 제공으로 이미 트리에 존재. electron-builder 가 단일 1024 source 에서 mac (.icns) / win (.ico) / linux (.png) 을 자동 생성하므로 별도 디자인 작업 불필요. 이전 ROADMAP 의 미체크 상태는 잘못된 누락이었음
+- **rhwp studio 자산 로컬 번들링 ✅ N/A** — chunk 6 의 자체 Studio viewer 전환으로 iframe 자체가 제거됨. CSP `frame-src` 도 미사용 — 외부 origin 의존 0 의 보안 모델 유지
+
+### Changed — Phase 4 chunk 57: Q8 사이드바-디테일 (0.3.9)
+
+- **`PicturePropsDialog` 사이드바-디테일 재구성** — 기존의 단일 `<select>` picker (1개일 땐 숨김 / 2+ 개일 땐 dropdown) 를 좌측 사이드바 리스트로 교체. 각 행은 `1` `2` `3`… numbered avatar + `1페이지 · 단락 4` 형태 라벨, 활성 행은 `bg-card font-semibold shadow-sm`. 우측 디테일 패널은 Settings 와 동일한 17px 볼드 타이틀 (그림 라벨) + 12px description + 폼 영역 + footer (삭제 / 취소 / 적용). 빈 문서일 때는 사이드바 "이 문서에 그림이 없습니다." + 우측 "그림을 삽입한 뒤 다시 시도하세요." empty state — 다이얼로그 자동 닫힘 없이 일관된 레이아웃 유지.
+- **레이아웃 사양** — `grid-cols-[220px_1fr] h-[min(520px,82vh)] max-w-[min(760px,92vw)]`. 사이드바 footer 에 그림 개수 표시 (`3개`). 단일-목적 dialog 가 아닌 list-detail 성격이라 sidebar pattern 이 자연스럽게 fit.
+- **testid 호환** — 기존 `picture-props-dialog` / `picture-props-width` / `picture-props-height` / `picture-props-treat-as-char` / `picture-props-delete` / `picture-props-apply` 보존. `picture-props-picker` (dropdown) 는 제거 + `picture-props-list` / `picture-props-item` / `picture-props-empty` / `picture-props-form` 추가. 기존 e2e (`dialogs-ui.spec.ts` 4 케이스) 모두 통과.
+
+### Refactored — Phase 4 chunk 56: R5.A consumer narrowing (0.3.8)
+
+- **`shared/rhwp-types.ts` 필드 보정** — `RhwpPageDef` 의 잘못된 `paperWidth/paperHeight` → `width/height` 로 정정 (실제 lib 응답과 일치). HWPUNIT 단위 주석 추가.
+- **`PageSetupDialog` consumer-level narrowing** — props 의 `Record<string, unknown> | null` → `RhwpPageDef | null`. `typeof def.X === 'number' ? def.X : 0` 보일러플레이트 제거 → `def.X ?? 0` 으로 단순화 (-12 라인). public `ViewerHandle` 인터페이스는 그대로 (`Record<string, unknown>`) — narrow type 은 index signature 가 없어서 ripple 이 크기 때문에 dialog 입구에서만 명시 캐스트로 좁힌다.
+- **AppShell bridge** — `getCurrentPageDef` / `onApply` 두 prop 위치에서 `as RhwpPageDef` / `as Record<string, unknown>` 명시 캐스트로 viewer ↔ dialog 연결. 다른 dialog (HeaderFooter / Bookmark / TableProps / FormulaEditor) 도 같은 패턴으로 incremental 적용 가능 — 패턴만 확립, 일괄 적용은 보류 (rhwp-types 의 narrow 타입 21개 중 1개만 consume — 후속 chunk).
+
+### Added — Phase 4 chunk 55: Diff Viewer (0.3.7)
+
+- **`ahwp-patches` 응답 블록** — Manual 모드의 세 번째 응답 형식 (HTML / ahwp-tools 와 공존). 모델이 위치 한정 미세 수정 (오타 / 톤 / 표현) 을 제안할 때 사용. `shared/ai-patches.ts` (parser + AHWP_PATCH_LIMITS — maxOps 20, maxText 8KB)
+- **DiffCard UI** — `src/features/chat/DiffCard.tsx`. 1개 패치는 큰 카드 (제목 + 위치 + +/− diff line + reason expander + Accept/Reject), 2개 이상은 외부 컨테이너 + 컴팩트 StackedPatch + "모두 Accept" 버튼. accepted 상태는 emerald 글로우, rejected 는 dim
+- **묶음 undo** — Accept All 한 번 누르면 모든 pending 패치를 single ⌘Z 로 롤백 가능 (chunk 27 grouped-undo 활용). AppShell.applyPatches 가 `beginUndoGroup` → 각 패치 `irDeleteRange` + `irInsertText` → `endUndoGroup`
+- **System prompt 가이드** — `prompts.ts` SYSTEM_PROMPT_DOC_CONTEXT 에 [C] ahwp-patches 섹션 추가. location.startOffset/endOffset 으로 단락 내 일부만 교체 (없으면 전체 단락)
+- **Diff Viewer 확장** — 패치별 `additionFormat` 필드 (bold/italic/underline/textColor/fontSize) — Accept 시 `irApplyCharFormat` 호출로 같은 undo group 안에서 형식 적용. `previewPatch` ("에디터에서 보기") → `scrollToParagraph` 연결. Accept 후 12초 emerald 토스트 ("N개 적용됨 · 되돌리기")
+- **Diff Viewer e2e** — `tests/e2e/chat-diff.spec.ts` (3 케이스 — single Accept + ⌘Z, multi Accept All, invalid block 에러)
+
+### Changed — Phase 4 chunk 55: UI/UX align (0.3.7)
+
+- **Settings 다이얼로그 4탭 재설계** — 좌측 사이드바 (일반 / AI 공급자 / 단축키 / 정보) + 우측 디테일. 720×620 모달. 기존 AboutDialog + ShortcutsDialog 두 다이얼로그 통합 → 두 파일 삭제. `view:about` / `view:shortcuts` 메뉴 액션은 Settings 의 해당 탭으로 라우팅 (`openSettingsTab(tab)`)
+- **Manual / Agent pill 토글** — 라디오-스타일 토글을 inset pill segmented control 로 교체. icon + label + sub-label ("제안 → 승인" / "자동 실행"). 활성 버튼은 bg-card + shadow-sm + aria-selected=true
+- **AI 공급자 카드형 ProviderCard** — icon avatar + connected pill ("연결됨" / "미연결") + API 키 / Base URL / supportsTools / 저장·연결테스트·삭제 버튼. 기존 `●` / `○` indicator → 텍스트 pill 로 교체
+- **DialogTitle / DialogDescription primitive 업그레이드 (Q8)** — Settings header 와 동일한 17px 볼드 타이틀 + 12px leading-relaxed description. 단일 변경으로 PageSetup / HeaderFooter / Bookmark / Footnote / Equation / TableProps / CellProps / PictureProps / Shape / StyleManager / VersionHistory / FormulaEditor 12개 다이얼로그 모두 톤 정렬 (사이드바-디테일 구조는 단일-목적 다이얼로그라 과한 변환이라 보류)
+
+### Refactored — Phase 4 chunk 55: 코어 리팩토링 R1~R6 (0.3.7)
+
+전체 13551 → 7853 라인 (-49.4%). 외부 contract / e2e 동작 1:1 보존. 자세한 phase 별 진행 상황은 [docs/REFACTORING_PLAN.md](docs/REFACTORING_PLAN.md) 참조.
+
+- **R1: StudioViewer 분해 (9610 → 4843)** — `useDocumentLifecycle` (R1.1) / `useUndoHistory` (R1.2) / `useFindReplace` (R1.3) / `useKeyboardShortcuts` (R1.4) / `usePageMouseHandlers` (R1.5+R1.6 — selection model + cell drag) / `useViewerHandle` + `useDebugSurface` (R1.8) hook 추출 + `PaperPage` 컴포넌트 분리 (R1.7) + pure utils (`page-dims` / `relocate-excerpt`)
+- **R2: ChatPanel 분해 (2396 → 1501)** — `useChatHistory` (R2.1) / `useExcerptAttachments` (R2.2) / `useChatStreaming` (R2.3) hook 추출 + `prompts.ts` 모듈 분리 (시스템 프롬프트 + reference outline / 발췌 직렬화)
+- **R3: AppShell 분해 (1545 → 1080)** — `useDispatchMenuAction` / `useTabManagement` / `useNotice` / `useSaveFlow` hook 추출
+- **R4: ai-tools 4-way split (1965 → 429)** — `ai-tool-catalog` / `ai-tool-validate` / `ai-tool-parse` 모듈 분리, 본 파일은 타입 + 한도만 보유 + barrel re-export
+- **R5: safeIrCall helper (`src/lib/safe-ir-call.ts`) + irMutate / irRead 패턴** — useViewerHandle 의 33개 ir\* tool wrapper 보일러플레이트 try/catch 일원화 (-240 라인)
+- **R6: callCellOp helper (`src/features/studio/utils/cell-op.ts`)** — Phase E nested table InCell / ByPath 분기 통합. insertAtCaret / deleteAtCaret / getCursorRect 사이트에 적용 (잔여 28+ 사이트는 후속 sweep)
+
+### Added — Phase 4 진입: chunks 52~54 — About / electron-updater / RELEASE.md (0.3.6)
+
+베타 배포 준비. 사용자 측 자동 업데이트 인프라 + 버전/라이선스 표시 +
+release flow 문서화.
+
+#### chunk 52 — About 창 + 버전 표시
+
+- `src/app/AboutDialog.tsx` 신설. 메뉴 "ahwp 정보" + 명령 팔레트 "도움말
+  → ahwp 정보" 둘 다 동일 dialog 호출. 버전 / Apache 2.0 라이선스 / GitHub /
+  Releases / Issues 링크 / Electron · Chromium · Node.js · OS·arch 노출.
+- 신규 IPC `app:get-versions` + `AhwpApi.getVersions()`. main 의 `app.getVersion()`
+  과 `process.versions.{electron,chrome,node}` 통합.
+- macOS Apple menu 의 "About" 도 native 패널 대신 우리 dialog 로 라우팅
+  (`view:about` MenuAction). 명령 팔레트에도 추가.
+- 회귀 가드 `about-dialog.spec.ts` (1 케이스) — ⌘K → "정보" → Enter →
+  dialog 열림 + 버전 정규식 매칭.
+
+#### chunk 53 — electron-updater 통합 + GitHub Releases publish
+
+- `npm install electron-updater` (^6.8.3, lib).
+- `package.json` `build.publish` GitHub provider 설정 (owner: YEUNU,
+  repo: ahwp). electron-builder 가 release 빌드 시 `latest.yml` /
+  `latest-mac.yml` / `latest-linux.yml` 자동 생성 + GitHub Releases 업로드.
+- `electron/main.ts` `initAutoUpdater()` — `app.isPackaged` 일 때만 활성
+  (dev 모드 제외). 5초 후 `checkForUpdates()`. `autoDownload=false` (사용자
+  확인 요구), `autoInstallOnAppQuit=true` (다운로드 후 다음 quit 시 install).
+  `AHWP_DISABLE_UPDATER=1` env 로 강제 비활성 가능 (QA 용).
+- in-app update prompt UI 는 후속 (chunk 56) — 현재는 main console 로
+  로그만.
+
+#### chunk 54 — `docs/RELEASE.md` 신설
+
+- dev → main → tag → CI 매트릭스 빌드 → GitHub Release 흐름 8단계 박제
+- electron-updater 사용자 측 동작 흐름
+- 비상시 회수 / hotfix 절차
+- 검증 체크리스트 (typecheck/lint/test/e2e/version 일치/CHANGELOG)
+- macOS notarization / Windows code signing 미적용 사유 박제
+
+#### 검증
+
+- typecheck / lint / build 청정
+- e2e: studio 213 + chat 57 + about 1 = **271 통과** / 1 skipped
+- electron-updater 의 packaged 동작은 `v0.3.6` 태그 push 후 release CI
+  결과로 검증
+
+### Added — Phase 3 chunk 44: Custom (OpenAI-호환) provider 잠금 해제 (0.3.5)
+
+자체 호스팅 Ollama / vLLM / LM Studio / on-prem LLM gateway 등을 한
+슬롯에 통합. baseUrl + supportsTools 입력으로 BYOK 외 부가 설정 노출.
+
+#### 신규 인프라
+
+- **`electron/store/provider-config.ts`** 신설: `userData/provider-config.json`
+  per-provider 비-비밀 설정 (baseUrl, supportsTools). API 키는 기존
+  safeStorage (secrets.ts) 그대로 — URL 은 비밀 아니라 plain JSON.
+- **registry**: `customProvider` 등록 — `{ ...openaiProvider, meta:
+getProviderMeta('custom') }` 형태로 OpenAI 어댑터 재사용. baseUrl 만
+  별도라 코드 중복 0.
+- **chat-start IPC**: `getProviderConfig(request.provider).baseUrl` 을
+  `provider.chat({apiKey, baseUrl, signal})` 에 주입 — 기존엔 listModels
+  만 baseUrl 받았던 누락 fix.
+- **신규 IPC**: `ai:provider-config-get` / `ai:provider-config-set`
+  - `AhwpApi.getProviderConfig` / `setProviderConfig`.
+- **Settings UI**: `requiresBaseUrl` provider 에만 baseUrl 입력 + "이
+  모델은 tool calling 지원" 체크박스 노출. `SHOWN_IDS` 에 `custom` 추가.
+- **ChatPanel**: `ChatProviderId` union 에 `'custom'` 추가, modelList /
+  loadModels / loadProvider / DEFAULT_MODELS 모두 갱신. 빈 모델 placeholder.
+
+#### 신규 회귀 가드 — `tests/e2e/ollama-live.spec.ts`
+
+- **sentinel** — Ollama localhost:11434/v1 + gemma4:e2b 5.1B 로 OLLAMA_OK
+  echo round-trip. 5.3s 통과.
+- **Agent** — applyAlignment tool 호출. **AHWP_TEST_OLLAMA_AGENT=1 명시
+  시에만** 실행 (작은 모델 + 54-tool 카탈로그 조합은 모델 혼란 — 큰 모델
+  필요).
+
+#### 사용법
+
+1. 사용자가 Ollama 실행 (`ollama serve`)
+2. Settings → Provider 'Custom (OpenAI-호환)' 선택 → API 키 (Ollama 의
+   경우 더미 OK), baseUrl `http://localhost:11434/v1` 입력 → tool calling
+   지원 모델이면 체크박스 → 저장
+3. ChatPanel → Custom 선택 → 모델 입력 (Ollama `ollama list` 명령으로
+   확인) → 정상 동작
+
+#### 검증
+
+- typecheck / lint 청정
+- ollama-live: sentinel 1/1 통과 (Agent skipped due to model size)
+- 전체 chat 57 + studio 213 = 270 통과 / 1 skipped (1 flaky retry)
+
+### Added — Phase 3 chunk 51: Read tool 카탈로그 + 양식 매칭 워크플로우 (0.3.4)
+
+사용자 시나리오 ("내 주장을 추가해줘 — 같은 양식으로 / 뒷받침 내용도
+파악해서") 를 위한 능동 검사 인프라. write tool 만 있던 카탈로그 (45개)
+에 **read tool 9개** 추가 → 총 **54 tools**. Agent 가 turn 안에서
+read → reason → write 시퀀스로 양식 매칭/위치 결정/근거 검색 가능.
+
+#### 신규 read tool 9개 (카테고리 H)
+
+| 이름                  | 반환                                         | 용도                              |
+| --------------------- | -------------------------------------------- | --------------------------------- |
+| `getDocumentOutline`  | 제목 단락 좌표+text                          | 문서 구조 파악, 새 단락 위치 결정 |
+| `getStyleListJson`    | 사용 가능 styleId 카탈로그                   | applyStyle 매칭                   |
+| `getStyleAt`          | 좌표 단락의 styleId+detail                   | 인접 양식 매칭                    |
+| `getCharPropertiesAt` | 글자 서식 (font/size/color/bold/...)         | applyCharFormat 입력 매칭         |
+| `getParaPropertiesAt` | 단락 서식 (alignment/lineSpacing/indent/...) | applyParaProps 입력 매칭          |
+| `getTextRange`        | 좌표 범위 텍스트 (4096B cap)                 | 인용/근거 추출                    |
+| `getCaretPosition`    | 현재 caret 좌표                              | "여기 추가" 의미 변환             |
+| `findInDocument`      | 검색어 매칭 좌표 list (max 200)              | 키워드 위치 찾기                  |
+| `getCellInfo`         | 셀 row/col/span 메타                         | 표 편집 전 검증                   |
+
+모두 mutation 0. 결과는 `AhwpToolResult.data` 에 JSON 직렬화 →
+다음 turn 의 tool_result 메시지에 stringify 회신 (4096B cap).
+
+#### Agent 모드 system prompt 보강
+
+`SYSTEM_PROMPT_AGENT_GUIDE` 신설 — Manual 모드용 `SYSTEM_PROMPT_DOC_CONTEXT`
+와 별개. `chatMode === 'agent'` 일 때만 inject. 핵심:
+
+1. **워크플로우** — read → reason → write
+2. **우선순위** — `applyStyle` > `applyParaProps`/`applyCharFormat` > `applyHtml`
+3. **흔한 실수** 가이드 — applyHtml만 의존 / 좌표 추측 / 셀 편집 직진
+4. **응답 형식** — Agent 모드는 코드 블록 안 씀 (도구 직접 호출 + 텍스트는 설명만)
+
+#### 시나리오 예 — "내 주장 X 추가" 8 호출 시퀀스
+
+```
+1. getCaretPosition → {paragraphIndex:5, ...}
+2. getStyleAt(0, 5) → {styleId:0, name:"바탕글"}
+3. getParaPropertiesAt(0, 5) → {alignment:"justify", lineSpacing:160}
+4. (LLM 추론: 인접 양식 그대로 사용)
+5. insertParagraph(0, 6)
+6. insertText(0, 6, 0, "내 주장: ...")
+7. applyStyle(0, 6, 0)
+8. applyParaProps({alignment:"justify", lineSpacing:160})
+```
+
+Cap 10 안. 묶음 undo 1회로 전체 롤백.
+
+#### 인프라 변경
+
+- `ViewerHandle` 에 `irGet*` read 메서드 7개 추가 (lib API thin wrap +
+  JSON parse). `irFindInDocument` 는 paragraph walk 자체 구현 (lib
+  `findText` 미노출).
+- `AhwpToolResult` 에 optional `data` 필드 추가 — read tool 결과 캐리어.
+- `chat/tools.ts` 의 `runOne` switch + `previewArgs` 에 9 케이스 추가.
+- `ChatPanel` Agent loop: tool result 메시지 content 에 `data` JSON
+  stringify (4096B cap) 회신.
+
+#### 신규 회귀 가드
+
+`chat-agent.spec.ts` 에 chunk 51 read tool round-trip 케이스 추가
+(getCaretPosition with blank.hwpx fixture).
+
+#### 통계 (0.3.4)
+
+- 총 도구: **54개** (write 45 + read 9)
+- 카테고리: A(5)+B(8)+C(12)+D(7)+E(6)+F(4)+G(5)+H(9) = 56 (cross 2)
+- e2e: studio 213 + chat 57 (+1) = 270 통과 / 1 skipped
+
+### Added — Phase 3 chunks 45~49: tool 카탈로그 한컴 한글 전수 노출 (0.3.3)
+
+Agent 모드 tool 카탈로그를 chunk 19 의 12개 → **45개** 로 확장. 한컴
+한글 lib (`@rhwp/core` 0.7.9) 의 주요 mutation API 약 50개 중 ~90%
+커버. 단일 진실 원천: `shared/ai-tools.ts`의 `AHWP_TOOL_NAMES`. 모든
+provider (OpenAI / NVIDIA NIM / Google Gemini) 가 동일 카탈로그 사용.
+
+#### 신규 33개 도구 (waves 1~6)
+
+**Wave 1 — 본문 편집 primitive (5)** — Agent 가 `applyHtml` 우회 없이
+직접 텍스트 조작:
+
+- `insertText` (좌표+텍스트), `deleteRange` (범위 삭제),
+  `insertParagraph` / `deleteParagraph` / `mergeParagraph`
+
+**Wave 2 — 글자/단락 서식 통합 (3)** — 기존 부분 노출 → 통합:
+
+- `applyCharFormat` (props 객체로 폰트/색/취소선/첨자/밑줄종류/shadow
+  등 한 호출), `applyParaProps` (alignment + lineSpacing + indent +
+  spacing + margin 통합), `applyStyle` (id 로 명명 스타일 적용)
+
+**Wave 3 — 표 구조 (12)** — Manual 모드 우클릭 메뉴와 동등:
+
+- `createTable` (N×M), `insertTableRow/Column`, `deleteTableRow/Column`,
+  `mergeTableCells` (사각 영역), `splitTableCellInto` (n×m 분할),
+  `unmergeCell`, `setTableProperties`, `setCellProperties`,
+  `evaluateTableFormula` (HWP 수식 평가), `deleteTableControl`
+
+**Wave 4 — 이미지/도형 (6)**:
+
+- `setPictureProperties`, `deletePictureControl`, `setShapeProperties`,
+  `deleteShapeControl`, `changeShapeZOrder` (top/bottom/forward/backward),
+  `insertPicture` (base64 PNG/JPEG/GIF/BMP)
+
+**Wave 5 — 페이지/섹션 (5)**:
+
+- `insertPageBreak`, `insertColumnBreak`, `setColumnDef` (다단 layout),
+  `setSectionDef`, `setPageHide` (header/footer/border/fill/pageNum 숨김)
+
+**Wave 6 — 머리/꼬리말 + 책갈피 (3 + 1)**:
+
+- `applyHfTemplate`, `createHeaderFooter`, `deleteHeaderFooter`,
+  `deleteBookmark`
+
+#### 인프라 변경
+
+- `ViewerHandle` (`src/features/studio/types.ts`) 에 `ir*` 메서드
+  28개 추가 — lib API thin wrapper. mutation 후 `refreshAfterMutation`
+  - try/catch (부분 성공 모델). insertPicture 는 base64 → Uint8Array
+    변환 포함.
+- `shared/ai-tools.ts` `AhwpToolArgs` / `validateArgs` / `TOOL_DESCRIPTORS`
+  세 군데 lockstep 확장. `nonNegInts` 헬퍼로 좌표 validation 중복
+  제거.
+- `src/features/chat/tools.ts` `runOne` switch + `previewArgs` switch
+  각각 33 케이스 확장. exhaustive switch로 컴파일러가 drift 차단.
+- 신규 회귀 가드: `chat-agent.spec.ts` 에 chunk 45 (insertText) +
+  chunk 46 (createTable) 케이스 추가.
+
+#### 새 문서 — `docs/AGENT_TOOLS.md`
+
+전체 카탈로그 reference: 카테고리별 표, 사용 예, 좌표 시스템 (HWPUNIT
+변환), lib 한계 (KNOWN_ISSUES L-006/L-008/chunk 36 대기), 신규 도구
+추가 절차 8단계.
+
+#### 검증
+
+- typecheck / lint 청정
+- studio 213 + chat **56 (+2)** = **269 통과** / 1 skipped
+- gemini-live 2/2 + nvidia-live 5/5 = 7/7 라이브 통과 (1 flaky
+  retry 통과)
+- e2e 단계: agent fake provider 의 `TOOL:<name>:<json>` 모드로 신규
+  카탈로그 dispatch round-trip 확인 (insertText / createTable /
+  unknown tool 거절)
+
+#### Phase 3 잔여 (외부 의존)
+
+| 청크 | 항목                                 | 차단                                           |
+| ---- | ------------------------------------ | ---------------------------------------------- |
+| 42   | Anthropic 어댑터 tool_use            | API 키 결정 대기                               |
+| 44   | Custom (OpenAI-호환) capability flag | optional                                       |
+| 47   | docId-aware 라우팅 (다중 문서 write) | 후속                                           |
+| —    | numbering/bullet 자동화              | lib API 복잡, Manual 모드 슬래시 명령으로 충분 |
+| —    | insertEquation tool                  | 수식 엔진 (renderEquationSvg 별도)             |
+
+### Fixed — Gemini schema sanitize + live smoke 검증 (0.3.2)
+
+라이브 검증 시 발견한 Gemini API 제약 3건 + 회귀 가드 + 기본 모델
+교체. AHWP_TEST_GOOGLE_KEY 와 함께 e2e 통과 (sentinel + Agent 도구
+호출 round-trip 모두).
+
+- **schema sanitize** — `properties` 안 property 이름까지 dropping 되던
+  버그 fix (필터가 모든 키를 schema keyword 로 취급). `properties`
+  분기 추가해 키 보존 + 값만 재귀 sanitize.
+- **enum + type** — Gemini 는 `{enum: [...]}` 만으로는 안 받음.
+  `{type: 'string', enum: [...]}` 명시. `applyAlignment` /
+  `toggleCharFormat` 카탈로그 갱신.
+- **exclusiveMinimum / pattern drop** — Gemini 가 받는 JSON Schema
+  subset 이 OpenAI 보다 좁음 (`exclusiveMinimum`, `exclusiveMaximum`,
+  `pattern`, `additionalProperties`, `anyOf` 등 거부). sanitize 가
+  드롭. 우리 validator (`shared/ai-tools.ts`) 가 dispatch 전에 강제
+  하므로 보안성 영향 0.
+- **기본 모델** — `gemini-2.0-flash` → `gemini-2.5-flash`. 2.0 은 free
+  tier quota 0 인 프로젝트가 많아 2.5 가 안전.
+- **신규 spec** — `gemini-live.spec.ts` (2 케이스): sentinel round-trip,
+  Agent applyAlignment 호출 + tool-entry 렌더.
+- **인프라** — `playwright.config.ts` 에 dependency-free dotenv 로더.
+  `.env` 의 KEY=VALUE 자동 로드 → process.env 주입. nvidia-live 도
+  동일 메커니즘으로 NVAPI_KEY 자동 사용.
+
+라이브 e2e 결과: gemini-live 2/2 + nvidia-live 5/5 = **7/7 통과** (27.5s).
+
+### Added — Google Gemini 어댑터 (chunk 43, 0.3.1)
+
+Phase 3 chunk 43 — Google Gemini provider 잠금 해제. 기존 OpenAI/NIM과
+동일한 Manual + Agent 모드 양쪽에서 동작. tool calling (functionCall /
+functionResponse) 정식 지원.
+
+- `electron/ai/providers/google.ts` 신설:
+  - Endpoint: `generativelanguage.googleapis.com/v1beta/models/<model>:streamGenerateContent?alt=sse&key=...`
+  - 메시지 변환: system → top-level `systemInstruction`, user/assistant
+    → `contents[].role` ('model' for assistant), tool result → user role
+    - functionResponse part.
+  - tool 카탈로그: `{tools: [{functionDeclarations: [{name, description,
+parameters}]}]}`. `toolChoice` → `toolConfig.functionCallingConfig.mode`
+    (NONE/AUTO/ANY).
+  - functionCall part 즉시 emit (OpenAI 와 달리 chunk 분할 없음).
+    `finishReason='STOP'` 이라도 functionCall 있으면 `tool_calls` 로
+    재정의.
+  - `listModels` — `/v1beta/models` 응답에서 `supportedGenerationMethods`
+    가 `generateContent` 포함 모델만, `models/` prefix 제거 후 정렬.
+- 등록: `registry.ts` 에 `googleProvider` 추가.
+- UI: `SettingsDialog.SHOWN_IDS` + `ChatPanel.PROVIDER_OPTIONS` 에
+  `'google'` 추가. 기본 모델 `gemini-2.0-flash`.
+
+#### 사용법
+
+1. Settings → Provider 'Google (Gemini)' 선택 → API 키 입력 → 연결
+   테스트
+2. ChatPanel → Provider Google 선택 → 모델 입력 (`gemini-2.0-flash`,
+   `gemini-1.5-pro` 등 — 새로고침 ↻ 으로 fetch)
+3. Manual / Agent 모드 둘 다 동작 — Agent 모드면 tool-use API 자동 사용
+
+#### 제한
+
+- 한 호출 안에 tool result 메시지가 여러 개여도 Gemini 는 **tool name
+  으로만 매칭** (id 무시). 우리 내부적으로는 직전 model 메시지의
+  toolUses 에서 같은 id 의 name 을 lookup 해서 채움.
+- JSON Schema 일부 키워드 (예: `additionalProperties`) Gemini 가 무시 —
+  현재 카탈로그는 OpenAI/Gemini 양쪽 호환되는 subset 만 사용.
+
+### Added — Phase 3 MVP: Agent 모드 (chunks 37~41, 0.3.0)
+
+provider native tool-use API 정식 통합. 사용자가 ChatPanel 상단의
+**Agent 모드** 토글을 켜면 AI가 ahwp 도구를 직접 호출 → 자동 적용.
+한 turn 내 모든 변경은 묶음 undo (⌘Z 1회로 일괄 롤백).
+
+#### chunk 37 — `shared/ai.ts` tool-use 타입 확장
+
+- `ChatStreamEvent` 에 `tool-use` 이벤트 + `done.finishReason` 추가.
+- `ChatRequest.tools` (`ChatTool[]` JSON Schema) + `toolChoice`.
+- `ChatMessage.toolUses` / `toolResult` (assistant + role='tool' 메시지).
+- `shared/ai-tools.ts` 에 `getAhwpToolCatalog()` — chunk 19 의 12 tool
+  을 provider 어댑터에 주입 가능한 `AhwpToolDescriptor[]` 로 변환.
+
+#### chunk 38 — OpenAI 어댑터 tool calling
+
+- `tools` 파라미터를 `[{type:'function', function:{name, description,
+parameters}}]` 로 변환. `tool_choice` 도 native 변환.
+- stream 의 `delta.tool_calls` 를 index 별 슬롯에 누적 (id / name /
+  arguments JSON 분할 chunk) → 종료 시 한꺼번에 `tool-use` emit.
+- assistant + tool 메시지 변환 — `tool_calls` 배열, role='tool' +
+  `tool_call_id`.
+- `finish_reason` 매핑: `tool_calls` / `length` / `content_filter` /
+  `stop`.
+- fake provider 에 `TOOL:<name>:<json>` / `TOOL_DONE:` 모드 추가
+  (e2e deterministic).
+
+#### chunk 39 — Manual / Agent 모드 토글 + Agent 루프
+
+- ChatPanel 상단 라디오 — Manual (기본, 기존 chunk 18+19) / Agent
+  (실험적). localStorage `ahwp:chat:mode` 영속.
+- Agent 모드 fireChat: `ChatRequest.tools` 자동 주입, `toolChoice='auto'`.
+- onEvent 에서 `tool-use` 누적 → `done.finishReason='tool_calls'` 면
+  per-tool dispatch (`validateToolCall` + `runTools` props) → tool
+  result 메시지 추가 → fireChat 재귀.
+- 한 turn 호출 cap 10 (`AGENT_MAX_TOOLS_PER_TURN`). 초과 시 강제 종료.
+- `fireChatRef` + `agentToolUsesRef` + `agentTurnDepthRef` 로 루프
+  상태 잇기.
+
+#### chunk 40 — Agent 진행 UI
+
+- assistant 메시지 안 inline tool entry row — `🔧 toolName | argsPreview
+| 상태 (⏳/✓/✗)`. `data-testid="chat-tool-entry"` + `data-tool-name`
+  - `data-tool-status`.
+- role='tool' 메시지는 chat 화면에서 숨김 (tool entry 가 같은 정보를
+  더 좋게 표시).
+- 중단 버튼은 기존 abort 재사용 — Agent 루프 중에도 즉시 stream stop.
+
+#### chunk 41 — Agent 묶음 undo
+
+- `runTools` (chat/tools.ts) 가 이미 `beginUndoGroup` / `endUndoGroup`
+  으로 N op 를 1 entry 로 collapse — Agent dispatch 도 op 당 단일
+  call 이라 자연히 묶음. ⌘Z 한 번으로 turn 전체 롤백.
+- finally 블록 보장 — 중간 op throw 시에도 group 누설 안 함.
+
+#### 검증
+
+- 신규 회귀 가드 spec — `chat-agent.spec.ts` (3 케이스): 모드 토글,
+  tool-use 응답 → entry 표시, unknown tool failed 표시.
+- 전체 e2e: studio 213 + chat 54 = 267 통과 / 1 skipped.
+
+#### Phase 3 잔여 (외부 의존)
+
+| 청크 | 항목                                           | 차단                           |
+| ---- | ---------------------------------------------- | ------------------------------ |
+| 42   | Anthropic 어댑터 tool_use                      | API 키 결정 대기               |
+| 43   | Google function calling                        | API 키 결정 대기               |
+| 44   | Custom (OpenAI-호환) capability flag           | optional, 모델별 hardcode 필요 |
+| 45   | 추가 본문 편집 tool (insertTextAtCaret 등)     | 후속                           |
+| 46   | 추가 표 구조 tool (insertTable, mergeCells 등) | 후속                           |
+| 47   | docId-aware 라우팅 (다중 문서 write)           | 후속                           |
+
+MVP (37~41) 완료 — OpenAI 모델로 검증 가능. 키 결정 후 42/43/44 잠금
+해제, 후속 청크는 사용자 피드백 받아가며 점진 추가.
+
 ### Added — Phase 2 마무리: chunks 31, 32 (0.2.94)
 
 Phase 2 잔여 청크 일괄 마감.

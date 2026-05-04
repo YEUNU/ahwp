@@ -14,6 +14,7 @@
  */
 
 export const AHWP_TOOL_NAMES = [
+  // chunk 19 — manual mode dispatcher (Phase 2)
   'applyHtml',
   'applyAlignment',
   'applyFontSize',
@@ -26,9 +27,74 @@ export const AHWP_TOOL_NAMES = [
   'createNamedStyle',
   'createRectShape',
   'applyCellStyle',
+  // Phase 3 chunk 45 — body edit primitives + char/para format
+  'insertText',
+  'deleteRange',
+  'insertParagraph',
+  'deleteParagraph',
+  'mergeParagraph',
+  'applyCharFormat',
+  'applyParaProps',
+  'applyStyle',
+  // Phase 3 chunk 46 — table structure
+  'createTable',
+  'insertTableRow',
+  'insertTableColumn',
+  'deleteTableRow',
+  'deleteTableColumn',
+  'mergeTableCells',
+  'splitTableCellInto',
+  'unmergeCell',
+  'setTableProperties',
+  'setCellProperties',
+  'evaluateTableFormula',
+  'deleteTableControl',
+  // Phase 3 chunk 47 — image/shape
+  'setPictureProperties',
+  'deletePictureControl',
+  'setShapeProperties',
+  'deleteShapeControl',
+  'changeShapeZOrder',
+  'insertPicture',
+  // Phase 3 chunk 48 — page/section
+  'insertPageBreak',
+  'insertColumnBreak',
+  'setColumnDef',
+  'setSectionDef',
+  'setPageHide',
+  // Phase 3 chunk 49 — header/footer + bookmark
+  'applyHfTemplate',
+  'createHeaderFooter',
+  'deleteHeaderFooter',
+  'deleteBookmark',
+  // Phase 3 chunk 51 — read-only Agent tools (양식 매칭 / 위치 결정)
+  'getDocumentOutline',
+  'getStyleListJson',
+  'getStyleAt',
+  'getCharPropertiesAt',
+  'getParaPropertiesAt',
+  'getTextRange',
+  'getCaretPosition',
+  'findInDocument',
+  'getCellInfo',
 ] as const;
 
 export type AhwpToolName = (typeof AHWP_TOOL_NAMES)[number];
+
+/**
+ * Phase 3 — provider tool-use API 용 카탈로그. `getAhwpToolCatalog()` 가
+ * 반환하는 `ChatTool[]` 을 `ChatRequest.tools` 에 주입. JSON Schema (draft-07
+ * 호환) 는 각 tool 의 `validateArgs` switch 분기와 lockstep이라 변경 시
+ * 양쪽 같이 갱신.
+ *
+ * description 은 모델이 보는 문자열 — 실제 IR 호출의 의도/제약 (한글 OK).
+ * 현재는 chunk 19의 system prompt에 박힌 가이드와 동일한 톤으로 간결하게.
+ */
+export interface AhwpToolDescriptor {
+  name: AhwpToolName;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}
 
 /** Per-tool args. Keep narrow — extra unknown keys are tolerated by the
  * validators but the dispatcher only reads the fields it knows. */
@@ -70,6 +136,258 @@ export interface AhwpToolArgs {
     cellParaIdx: number;
     styleId: number;
   };
+  // Phase 3 chunk 45 — body edit primitives
+  insertText: {
+    sectionIdx: number;
+    paragraphIdx: number;
+    charOffset: number;
+    text: string;
+  };
+  deleteRange: {
+    sectionIdx: number;
+    startParagraphIdx: number;
+    startOffset: number;
+    endParagraphIdx: number;
+    endOffset: number;
+  };
+  insertParagraph: { sectionIdx: number; paragraphIdx: number };
+  deleteParagraph: { sectionIdx: number; paragraphIdx: number };
+  mergeParagraph: { sectionIdx: number; paragraphIdx: number };
+  applyCharFormat: {
+    sectionIdx: number;
+    paragraphIdx: number;
+    startOffset: number;
+    endOffset: number;
+    /** lib applyCharFormat 의 props_json 를 그대로 받음. 키:
+     *  bold/italic/underline (boolean), strikeThrough (boolean),
+     *  subscript/superscript (boolean), name (font family string),
+     *  size_hu (HWPUNIT, 1pt=100), color/shadeColor (#RRGGBB), etc.
+     *  추가 키는 lib quirk 에 따라 무시됨. */
+    props: Record<string, unknown>;
+  };
+  applyParaProps: {
+    /** alignment / lineSpacing / lineSpacingType / spacingBefore /
+     *  spacingAfter / marginLeft / marginRight / indent — 모두 optional.
+     *  ViewerHandle.applyParaProps 와 동일 schema. */
+    props: Record<string, unknown>;
+  };
+  applyStyle: {
+    sectionIdx: number;
+    paragraphIdx: number;
+    styleId: number;
+  };
+  // Phase 3 chunk 46 — table structure
+  createTable: {
+    sectionIdx: number;
+    paragraphIdx: number;
+    charOffset: number;
+    rowCount: number;
+    colCount: number;
+  };
+  insertTableRow: {
+    sectionIdx: number;
+    parentParaIdx: number;
+    controlIdx: number;
+    rowIdx: number;
+    below: boolean;
+  };
+  insertTableColumn: {
+    sectionIdx: number;
+    parentParaIdx: number;
+    controlIdx: number;
+    colIdx: number;
+    right: boolean;
+  };
+  deleteTableRow: {
+    sectionIdx: number;
+    parentParaIdx: number;
+    controlIdx: number;
+    rowIdx: number;
+  };
+  deleteTableColumn: {
+    sectionIdx: number;
+    parentParaIdx: number;
+    controlIdx: number;
+    colIdx: number;
+  };
+  mergeTableCells: {
+    sectionIdx: number;
+    parentParaIdx: number;
+    controlIdx: number;
+    startRow: number;
+    startCol: number;
+    endRow: number;
+    endCol: number;
+  };
+  splitTableCellInto: {
+    sectionIdx: number;
+    parentParaIdx: number;
+    controlIdx: number;
+    row: number;
+    col: number;
+    nRows: number;
+    mCols: number;
+    equalRowHeight: boolean;
+    mergeFirst: boolean;
+  };
+  unmergeCell: {
+    sectionIdx: number;
+    parentParaIdx: number;
+    controlIdx: number;
+    row: number;
+    col: number;
+  };
+  setTableProperties: {
+    sectionIdx: number;
+    parentParaIdx: number;
+    controlIdx: number;
+    props: Record<string, unknown>;
+  };
+  setCellProperties: {
+    sectionIdx: number;
+    parentParaIdx: number;
+    controlIdx: number;
+    cellIdx: number;
+    props: Record<string, unknown>;
+  };
+  evaluateTableFormula: {
+    sectionIdx: number;
+    parentParaIdx: number;
+    controlIdx: number;
+    targetRow: number;
+    targetCol: number;
+    formula: string;
+    writeResult: boolean;
+  };
+  deleteTableControl: {
+    sectionIdx: number;
+    parentParaIdx: number;
+    controlIdx: number;
+  };
+  // Phase 3 chunk 47 — image/shape
+  setPictureProperties: {
+    sectionIdx: number;
+    parentParaIdx: number;
+    controlIdx: number;
+    props: Record<string, unknown>;
+  };
+  deletePictureControl: {
+    sectionIdx: number;
+    parentParaIdx: number;
+    controlIdx: number;
+  };
+  setShapeProperties: {
+    sectionIdx: number;
+    parentParaIdx: number;
+    controlIdx: number;
+    props: Record<string, unknown>;
+  };
+  deleteShapeControl: {
+    sectionIdx: number;
+    parentParaIdx: number;
+    controlIdx: number;
+  };
+  changeShapeZOrder: {
+    sectionIdx: number;
+    parentParaIdx: number;
+    controlIdx: number;
+    operation: 'top' | 'bottom' | 'forward' | 'backward';
+  };
+  insertPicture: {
+    sectionIdx: number;
+    paragraphIdx: number;
+    charOffset: number;
+    /** Base64-encoded image bytes (PNG/JPEG/GIF/BMP). */
+    base64Data: string;
+    widthHwpunit: number;
+    heightHwpunit: number;
+    naturalWidthPx: number;
+    naturalHeightPx: number;
+    extension: string;
+    description: string;
+  };
+  // Phase 3 chunk 48 — page/section
+  insertPageBreak: {
+    sectionIdx: number;
+    paragraphIdx: number;
+    charOffset: number;
+  };
+  insertColumnBreak: {
+    sectionIdx: number;
+    paragraphIdx: number;
+    charOffset: number;
+  };
+  setColumnDef: {
+    sectionIdx: number;
+    columnCount: number;
+    /** 0=Newspaper, 1=BalancedNewspaper, 2=Parallel (lib enum). */
+    columnType: number;
+    /** 1 if columns share equal width, else 0. */
+    sameWidth: number;
+    /** Spacing between columns in HWPUNIT (1mm ≈ 567). */
+    spacingHu: number;
+  };
+  setSectionDef: {
+    sectionIdx: number;
+    props: Record<string, unknown>;
+  };
+  setPageHide: {
+    sectionIdx: number;
+    paragraphIdx: number;
+    hideHeader: boolean;
+    hideFooter: boolean;
+    hideMaster: boolean;
+    hideBorder: boolean;
+    hideFill: boolean;
+    hidePageNum: boolean;
+  };
+  // Phase 3 chunk 49 — header/footer + bookmark
+  applyHfTemplate: {
+    sectionIdx: number;
+    isHeader: boolean;
+    applyTo: number;
+    templateId: number;
+  };
+  createHeaderFooter: {
+    sectionIdx: number;
+    isHeader: boolean;
+    applyTo: number;
+  };
+  deleteHeaderFooter: {
+    sectionIdx: number;
+    isHeader: boolean;
+    applyTo: number;
+  };
+  deleteBookmark: {
+    sectionIdx: number;
+    paragraphIdx: number;
+    controlIdx: number;
+  };
+  // Phase 3 chunk 51 — read-only Agent tools
+  getDocumentOutline: Record<string, never>;
+  getStyleListJson: Record<string, never>;
+  getStyleAt: { sectionIdx: number; paragraphIdx: number };
+  getCharPropertiesAt: {
+    sectionIdx: number;
+    paragraphIdx: number;
+    charOffset: number;
+  };
+  getParaPropertiesAt: { sectionIdx: number; paragraphIdx: number };
+  getTextRange: {
+    sectionIdx: number;
+    startParagraphIdx: number;
+    startOffset: number;
+    endParagraphIdx: number;
+    endOffset: number;
+  };
+  getCaretPosition: Record<string, never>;
+  findInDocument: { query: string; maxResults?: number };
+  getCellInfo: {
+    sectionIdx: number;
+    parentParaIdx: number;
+    controlIdx: number;
+    cellIdx: number;
+  };
 }
 
 /** A single op as it appears inside the model-authored block. */
@@ -84,9 +402,13 @@ export interface AhwpToolBlock {
 
 /** Outcome of running a single op. `ok=false` covers both pre-flight
  * validation failures and IR-side throws (caller distinguishes via
- * `reason`). */
+ * `reason`).
+ *
+ * Phase 3 chunk 51 — read tool 의 결과는 `data` 에 JSON 으로 담음.
+ * Agent loop 가 다음 turn 의 tool_result 메시지에 stringify 해서 모델
+ * 에 회신. write tool 은 `data` 미사용 (success/failure 만 의미). */
 export type AhwpToolResult =
-  | { ok: true; tool: AhwpToolName }
+  | { ok: true; tool: AhwpToolName; data?: unknown }
   | { ok: false; tool: string; reason: string };
 
 /** Hard ceilings — anything bigger is rejected before dispatch. */
@@ -99,237 +421,9 @@ export const AHWP_TOOL_LIMITS = {
   maxShapeHwpunit: 283_500,
 } as const;
 
-const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
-
-function isObj(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
-
-function byteLen(s: string): number {
-  return new TextEncoder().encode(s).length;
-}
-
-/** Validate an op's args. Returns the typed args on success, or a
- * machine-readable failure reason. The dispatcher consults this before
- * the IR call — no validator means the tool is unsupported. */
-export function validateToolCall(
-  call: unknown,
-):
-  | { ok: true; value: AhwpToolCall }
-  | { ok: false; tool: string; reason: string } {
-  if (!isObj(call))
-    return { ok: false, tool: '<root>', reason: 'op-not-object' };
-  const tool = call.tool;
-  if (typeof tool !== 'string')
-    return { ok: false, tool: '<missing>', reason: 'tool-not-string' };
-  if (!(AHWP_TOOL_NAMES as readonly string[]).includes(tool))
-    return { ok: false, tool, reason: 'unknown_tool' };
-  const args = call.args;
-  if (!isObj(args)) return { ok: false, tool, reason: 'args-not-object' };
-  const v = validateArgs(tool as AhwpToolName, args);
-  if (!v.ok) return { ok: false, tool, reason: v.reason };
-  return { ok: true, value: { tool, args: v.value } as AhwpToolCall };
-}
-
-function validateArgs<T extends AhwpToolName>(
-  tool: T,
-  args: Record<string, unknown>,
-): { ok: true; value: AhwpToolArgs[T] } | { ok: false; reason: string } {
-  switch (tool) {
-    case 'applyHtml': {
-      const html = args.html;
-      if (typeof html !== 'string')
-        return { ok: false, reason: 'html-not-string' };
-      if (byteLen(html) > AHWP_TOOL_LIMITS.maxHtmlBytes)
-        return { ok: false, reason: 'html-too-large' };
-      return {
-        ok: true,
-        value: { html } as AhwpToolArgs[T],
-      };
-    }
-    case 'applyAlignment': {
-      const align = args.align;
-      if (
-        align !== 'left' &&
-        align !== 'center' &&
-        align !== 'right' &&
-        align !== 'justify'
-      )
-        return { ok: false, reason: 'align-not-enum' };
-      return { ok: true, value: { align } as AhwpToolArgs[T] };
-    }
-    case 'applyFontSize': {
-      const pt = args.pt;
-      if (typeof pt !== 'number' || !Number.isFinite(pt))
-        return { ok: false, reason: 'pt-not-number' };
-      if (pt < 1 || pt > AHWP_TOOL_LIMITS.maxFontSizePt)
-        return { ok: false, reason: 'pt-out-of-range' };
-      return { ok: true, value: { pt } as AhwpToolArgs[T] };
-    }
-    case 'applyTextColor': {
-      const hex = args.hex;
-      if (typeof hex !== 'string')
-        return { ok: false, reason: 'hex-not-string' };
-      if (!HEX_COLOR_RE.test(hex))
-        return { ok: false, reason: 'hex-not-rrggbb' };
-      return { ok: true, value: { hex } as AhwpToolArgs[T] };
-    }
-    case 'toggleCharFormat': {
-      const key = args.key;
-      if (key !== 'bold' && key !== 'italic' && key !== 'underline')
-        return { ok: false, reason: 'key-not-enum' };
-      return { ok: true, value: { key } as AhwpToolArgs[T] };
-    }
-    case 'insertFootnote': {
-      const text = args.text;
-      if (typeof text !== 'string')
-        return { ok: false, reason: 'text-not-string' };
-      if (byteLen(text) > AHWP_TOOL_LIMITS.maxTextBytes)
-        return { ok: false, reason: 'text-too-large' };
-      return { ok: true, value: { text } as AhwpToolArgs[T] };
-    }
-    case 'addBookmark': {
-      const name = args.name;
-      if (typeof name !== 'string')
-        return { ok: false, reason: 'name-not-string' };
-      if (name.length === 0) return { ok: false, reason: 'name-empty' };
-      if (byteLen(name) > AHWP_TOOL_LIMITS.maxNameBytes)
-        return { ok: false, reason: 'name-too-large' };
-      return { ok: true, value: { name } as AhwpToolArgs[T] };
-    }
-    case 'setHeaderFooterText': {
-      const sectionIdx = args.sectionIdx;
-      const isHeader = args.isHeader;
-      const applyTo = args.applyTo;
-      const text = args.text;
-      if (typeof sectionIdx !== 'number' || !Number.isInteger(sectionIdx))
-        return { ok: false, reason: 'sectionIdx-not-int' };
-      if (typeof isHeader !== 'boolean')
-        return { ok: false, reason: 'isHeader-not-bool' };
-      if (typeof applyTo !== 'number' || !Number.isInteger(applyTo))
-        return { ok: false, reason: 'applyTo-not-int' };
-      if (typeof text !== 'string')
-        return { ok: false, reason: 'text-not-string' };
-      if (byteLen(text) > AHWP_TOOL_LIMITS.maxTextBytes)
-        return { ok: false, reason: 'text-too-large' };
-      return {
-        ok: true,
-        value: { sectionIdx, isHeader, applyTo, text } as AhwpToolArgs[T],
-      };
-    }
-    case 'applyPageDef': {
-      const props = args.props;
-      if (!isObj(props)) return { ok: false, reason: 'props-not-object' };
-      const sectionIdx = args.sectionIdx;
-      if (
-        sectionIdx !== undefined &&
-        (typeof sectionIdx !== 'number' || !Number.isInteger(sectionIdx))
-      )
-        return { ok: false, reason: 'sectionIdx-not-int' };
-      return {
-        ok: true,
-        value: { props, sectionIdx } as AhwpToolArgs[T],
-      };
-    }
-    case 'createNamedStyle': {
-      const name = args.name;
-      const englishName = args.englishName;
-      if (typeof name !== 'string')
-        return { ok: false, reason: 'name-not-string' };
-      if (name.length === 0) return { ok: false, reason: 'name-empty' };
-      if (byteLen(name) > AHWP_TOOL_LIMITS.maxNameBytes)
-        return { ok: false, reason: 'name-too-large' };
-      if (englishName !== undefined && typeof englishName !== 'string')
-        return { ok: false, reason: 'englishName-not-string' };
-      return {
-        ok: true,
-        value: { name, englishName } as AhwpToolArgs[T],
-      };
-    }
-    case 'createRectShape': {
-      const w = args.widthHwpunit;
-      const h = args.heightHwpunit;
-      if (typeof w !== 'number' || !Number.isFinite(w) || w <= 0)
-        return { ok: false, reason: 'width-not-positive' };
-      if (typeof h !== 'number' || !Number.isFinite(h) || h <= 0)
-        return { ok: false, reason: 'height-not-positive' };
-      if (w > AHWP_TOOL_LIMITS.maxShapeHwpunit)
-        return { ok: false, reason: 'width-too-large' };
-      if (h > AHWP_TOOL_LIMITS.maxShapeHwpunit)
-        return { ok: false, reason: 'height-too-large' };
-      const opts = args.opts;
-      if (opts !== undefined && !isObj(opts))
-        return { ok: false, reason: 'opts-not-object' };
-      const treatAsChar = opts?.treatAsChar;
-      if (treatAsChar !== undefined && typeof treatAsChar !== 'boolean')
-        return { ok: false, reason: 'treatAsChar-not-bool' };
-      return {
-        ok: true,
-        value: {
-          widthHwpunit: w,
-          heightHwpunit: h,
-          opts: opts === undefined ? undefined : { treatAsChar },
-        } as AhwpToolArgs[T],
-      };
-    }
-    case 'applyCellStyle': {
-      const keys = [
-        'sectionIdx',
-        'parentParaIdx',
-        'controlIdx',
-        'cellIdx',
-        'cellParaIdx',
-        'styleId',
-      ] as const;
-      const out: Record<string, number> = {};
-      for (const k of keys) {
-        const v = args[k];
-        if (typeof v !== 'number' || !Number.isInteger(v) || v < 0)
-          return { ok: false, reason: `${k}-not-non-negative-int` };
-        out[k] = v;
-      }
-      return { ok: true, value: out as AhwpToolArgs[T] };
-    }
-    default: {
-      // Exhaustiveness — the AHWP_TOOL_NAMES guard above already filters
-      // unknown names, so this branch is unreachable unless the registry
-      // and the type drift apart.
-      const _exhaustive: never = tool;
-      return { ok: false, reason: `unknown_tool:${String(_exhaustive)}` };
-    }
-  }
-}
-
-/** Pre-flight item: per-op validation result. Both arms are kept (the
- * preview lists failures in red so the user sees what the model got
- * wrong); the dispatcher only runs the `ok: true` arm. */
-export type AhwpPreflightItem =
-  | { ok: true; call: AhwpToolCall }
-  | { ok: false; tool: string; reason: string };
-
-/** Parse a model-authored block. Block-level failures (parse error,
- * not-an-array, over op limit) reject the whole thing. Per-op
- * validation failures are kept as `ok: false` items so the preview can
- * show them — the dispatcher runs only the successful ones. */
-export function parseToolBlock(
-  raw: string,
-): { ok: true; items: AhwpPreflightItem[] } | { ok: false; reason: string } {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    return { ok: false, reason: `parse:${(err as Error).message}` };
-  }
-  if (!isObj(parsed)) return { ok: false, reason: 'root-not-object' };
-  const ops = parsed.ops;
-  if (!Array.isArray(ops)) return { ok: false, reason: 'ops-not-array' };
-  if (ops.length === 0) return { ok: false, reason: 'ops-empty' };
-  if (ops.length > AHWP_TOOL_LIMITS.maxOpsPerBlock)
-    return { ok: false, reason: 'ops-over-limit' };
-  const items: AhwpPreflightItem[] = ops.map((op) => {
-    const v = validateToolCall(op);
-    if (v.ok) return { ok: true, call: v.value };
-    return { ok: false, tool: v.tool, reason: v.reason };
-  });
-  return { ok: true, items };
-}
+// R4 — TOOL_DESCRIPTORS / getAhwpToolCatalog / validateToolCall /
+// parseToolBlock 은 ai-tool-{catalog,validate,parse}.ts 로 분리.
+// 본 파일은 이름 / 타입 / 한도 만 정의하고 나머지는 re-export.
+export { getAhwpToolCatalog } from './ai-tool-catalog';
+export { validateToolCall } from './ai-tool-validate';
+export { parseToolBlock, type AhwpPreflightItem } from './ai-tool-parse';

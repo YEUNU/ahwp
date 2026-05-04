@@ -213,7 +213,7 @@ export function TabBar({
           ref={menuRef}
           role="menu"
           data-testid="studio-tab-context-menu"
-          className="fixed z-50 min-w-[12rem] rounded-md border border-border bg-popover py-1 text-xs text-popover-foreground shadow-md"
+          className="fixed z-50 min-w-48 rounded-md border border-border bg-popover py-1 text-xs text-popover-foreground shadow-md"
           style={{ top: menuFor.y, left: menuFor.x }}
         >
           {onTogglePin ? (

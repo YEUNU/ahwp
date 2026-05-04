@@ -89,7 +89,7 @@ export function SearchPanel({
           }}
           placeholder={rootPath ? '폴더 내 검색…' : '먼저 폴더를 열어주세요'}
           disabled={!rootPath}
-          className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground/60"
+          className="min-w-0 flex-1 bg-transparent text-xs outline-hidden placeholder:text-muted-foreground/60"
           data-testid="folder-search-input"
         />
         {pending ? (

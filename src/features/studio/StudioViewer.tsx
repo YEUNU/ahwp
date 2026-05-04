@@ -31,16 +31,25 @@ import {
   forwardRef,
   useCallback,
   useEffect,
-  useImperativeHandle,
   useRef,
   useState,
   type CompositionEvent as ReactCompositionEvent,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type MouseEvent as ReactMouseEvent,
 } from 'react';
 import { Button } from '@/components/ui/button';
-import { ensureRhwpCore, HwpDocument } from '@/lib/rhwp-core';
-import { primaryModifier } from '@/lib/platform';
+import { hancomTitle } from '@/lib/hancom-tooltips';
+// `ensureRhwpCore` 는 R1.1 에서 useDocumentLifecycle 로 이동.
+import { HwpDocument } from '@/lib/rhwp-core';
+import { type PageDims } from '@/features/studio/utils/page-dims';
+// `relocateExcerpt` 는 R1.8 에서 useViewerHandle 로 이동.
+import { callCellOp } from '@/features/studio/utils/cell-op';
+import { useDocumentLifecycle } from '@/features/studio/hooks/useDocumentLifecycle';
+import { useUndoHistory } from '@/features/studio/hooks/useUndoHistory';
+import { useFindReplace } from '@/features/studio/hooks/useFindReplace';
+import { useKeyboardShortcuts } from '@/features/studio/hooks/useKeyboardShortcuts';
+import { PaperPage } from './PaperPage';
+import { useViewerHandle } from '@/features/studio/hooks/useViewerHandle';
+import { useDebugSurface } from '@/features/studio/hooks/useDebugSurface';
+import { usePageMouseHandlers } from '@/features/studio/hooks/usePageMouseHandlers';
 import { SlashMenu } from './SlashMenu';
 import type { CharFormatKey, ViewerHandle } from './types';
 
@@ -83,10 +92,7 @@ type Phase = 'mounting' | 'reading' | 'rendering' | 'ready';
 
 type RhwpDoc = InstanceType<typeof HwpDocument>;
 
-interface PageDims {
-  w: number;
-  h: number;
-}
+// `PageDims` 는 R1.0 에서 `utils/page-dims.ts` 로 추출됨.
 
 interface StyleListItem {
   id: number;
@@ -171,66 +177,9 @@ const PAGE_PADDING_PX = 32;
  * relocation guarantee past the cap and the chip falls to
  * `stale-missing`. The IR's getTextRange / getParagraphCount /
  * getParagraphLength are hot paths so this is a thin wrapper. */
-const RELOCATE_PARA_SCAN_LIMIT = 1000;
-interface DocReadOnly {
-  getParagraphCount: (sectionIdx: number) => number;
-  getParagraphLength: (sectionIdx: number, paraIdx: number) => number;
-  getTextRange: (
-    sectionIdx: number,
-    paraIdx: number,
-    startOffset: number,
-    length: number,
-  ) => string;
-}
-function relocateExcerpt(
-  doc: DocReadOnly,
-  expected: string,
-): {
-  sectionIndex: number;
-  startParagraphIndex: number;
-  startOffset: number;
-  endParagraphIndex: number;
-  endOffset: number;
-} | null {
-  if (expected.length === 0) return null;
-  // Single-section docs only (matches captureExcerpt). When we move to
-  // multi-section, walk every section the same way.
-  // Multi-paragraph excerpts that span paragraph breaks WILL have a
-  // '\n' in `expected`; we don't try to rejoin paragraphs to relocate
-  // those — they fall through to stale-missing. Single-line search
-  // covers the common case (single-para excerpt edited in place).
-  const SECTION_INDEX = 0;
-  let paraCount: number;
-  try {
-    paraCount = doc.getParagraphCount(SECTION_INDEX);
-  } catch {
-    return null;
-  }
-  const limit = Math.min(paraCount, RELOCATE_PARA_SCAN_LIMIT);
-  for (let p = 0; p < limit; p++) {
-    let paraText: string;
-    try {
-      const len = doc.getParagraphLength(SECTION_INDEX, p);
-      if (len < expected.length) continue;
-      paraText = doc.getTextRange(SECTION_INDEX, p, 0, len);
-    } catch {
-      continue;
-    }
-    const idx = paraText.indexOf(expected);
-    if (idx >= 0) {
-      return {
-        sectionIndex: SECTION_INDEX,
-        startParagraphIndex: p,
-        startOffset: idx,
-        endParagraphIndex: p,
-        endOffset: idx + expected.length,
-      };
-    }
-  }
-  return null;
-}
-
-/** Parse <svg width="X" height="Y"> or fall back to viewBox last two numbers. */
+// `relocateExcerpt` + `RELOCATE_PARA_SCAN_LIMIT` + `DocReadOnly` 는
+// `src/features/studio/utils/relocate-excerpt.ts` 로 추출됨 (R1.0
+// refactor). 본 파일은 import 만.
 /**
  * Mini "rows × cols" picker — 8×8 grid of cells the user can hover over.
  * Hovering highlights the rectangle from (1,1) up to the hover cell;
@@ -399,7 +348,7 @@ function CellContextMenu({
     <div
       ref={ref}
       role="menu"
-      className="fixed z-50 min-w-[10rem] rounded-md border border-border bg-popover py-1 shadow-md"
+      className="fixed z-50 min-w-40 rounded-md border border-border bg-popover py-1 shadow-md"
       style={{ left: state.x, top: state.y }}
       data-testid="studio-cell-context-menu"
     >
@@ -525,7 +474,7 @@ function AiCommandMenu({
       ref={ref}
       role="menu"
       data-testid="studio-ai-context-menu"
-      className="fixed z-50 min-w-[12rem] rounded-md border border-border bg-popover py-1 shadow-md"
+      className="fixed z-50 min-w-48 rounded-md border border-border bg-popover py-1 shadow-md"
       style={{ left: x, top: y }}
     >
       <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
@@ -552,83 +501,12 @@ function AiCommandMenu({
  * (matching how `@rhwp/core` rasterizes paper sizes). Vertical ruler is
  * deferred — it would need per-row ticking and isn't load-bearing for
  * casual reference of margins.
+ *
+ * R1.7 — `HorizontalRuler` 는 `PaperPage.tsx` 로 이전.
  */
-const SVG_PER_MM = 96 / 25.4;
 
-function HorizontalRuler({
-  widthSvg,
-  zoom,
-}: {
-  widthSvg: number;
-  zoom: number;
-}): React.ReactElement {
-  const widthPx = widthSvg * zoom;
-  const widthMm = widthSvg / SVG_PER_MM;
-  // One tick per cm + minor 5mm tick. Cap to a reasonable number to
-  // keep React render cheap (an A4 portrait at 210mm = 21 ticks).
-  const tickEls: React.ReactElement[] = [];
-  const cmCount = Math.floor(widthMm / 10);
-  for (let cm = 0; cm <= cmCount; cm++) {
-    const x = cm * 10 * SVG_PER_MM * zoom;
-    tickEls.push(
-      <div
-        key={`cm-${cm}`}
-        className="absolute bottom-0 border-l border-foreground/40"
-        style={{ left: x, height: 8 }}
-      />,
-    );
-    tickEls.push(
-      <span
-        key={`cm-l-${cm}`}
-        className="absolute bottom-2 select-none text-[8px] leading-none text-muted-foreground"
-        style={{ left: x + 2 }}
-      >
-        {cm}
-      </span>,
-    );
-    // 5mm half-tick (skip past the last cm).
-    if (cm < cmCount) {
-      const halfX = (cm * 10 + 5) * SVG_PER_MM * zoom;
-      tickEls.push(
-        <div
-          key={`mm5-${cm}`}
-          className="absolute bottom-0 border-l border-foreground/30"
-          style={{ left: halfX, height: 4 }}
-        />,
-      );
-    }
-  }
-  return (
-    <div
-      className="relative h-4 border-b border-border bg-muted/30"
-      style={{ width: widthPx }}
-      data-testid="studio-ruler-h"
-      aria-hidden="true"
-    >
-      {tickEls}
-    </div>
-  );
-}
-
-function parsePageDimensions(svg: string): PageDims | null {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(svg, 'image/svg+xml');
-  const root = doc.documentElement;
-  if (!root || root.tagName.toLowerCase() !== 'svg') return null;
-  const w = parseFloat(root.getAttribute('width') || '');
-  const h = parseFloat(root.getAttribute('height') || '');
-  if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
-    return { w, h };
-  }
-  const vb = root.getAttribute('viewBox');
-  if (vb) {
-    const parts = vb.split(/\s+/).map(parseFloat);
-    if (parts.length === 4 && parts.every((n) => Number.isFinite(n))) {
-      return { w: parts[2], h: parts[3] };
-    }
-  }
-  return null;
-}
+// `parsePageDimensions` + `PageDims` 는 `src/features/studio/utils/page-dims.ts`
+// 로 추출됨 (R1.0 refactor). 본 파일은 import 만.
 
 /**
  * Studio migration chunk 3 — multi-page + virtualized scroll + zoom.
@@ -907,8 +785,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     // bidirectional stack: each saveSnapshot returns an integer id; we
     // record IDs in chronological order along with an index pointer to
     // the "current" entry. New mutations after an undo discard the redo
-    // tail. We cap the stack depth so ancient snapshots can be released.
-    const HISTORY_CAP = 100;
+    // tail. R1.2 — bookkeeping moved to useUndoHistory; the ref + state
+    // stay here because the doc-load effect / __studioDebug also read
+    // them, and React state setters live with their useState anyway.
     const historyRef = useRef<{
       entries: number[];
       // index of the current (latest applied) snapshot in `entries`
@@ -922,40 +801,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     const undoGroupDepthRef = useRef(0);
     const [canUndo, setCanUndo] = useState(false);
     const [canRedo, setCanRedo] = useState(false);
-    // Find (chunk 9). When `findOpen=true` a small search bar overlays
-    // the toolbar. Matches are computed by iterating sections+paragraphs
-    // and indexOf-searching their text. Each match becomes a {s,p,off,len}
-    // tuple; the active one is highlighted distinctly and brought into view.
-    const [findOpen, setFindOpen] = useState(false);
-    const [findQuery, setFindQuery] = useState('');
-    const [findMatches, setFindMatches] = useState<
-      {
-        sectionIndex: number;
-        paragraphIndex: number;
-        offset: number;
-        length: number;
-      }[]
-    >([]);
-    const [findIndex, setFindIndex] = useState(0);
-    const [findHighlightsByPage, setFindHighlightsByPage] = useState<
-      Record<
-        number,
-        {
-          x: number;
-          y: number;
-          width: number;
-          height: number;
-          isActive: boolean;
-        }[]
-      >
-    >({});
-    const findInputRef = useRef<HTMLInputElement>(null);
-    /** Replace UI state — chunk 7. ⌘H opens the bar with replace focused;
-     *  ⌘F keeps the search-only entry point. The replace string can be empty
-     *  (= delete matches), so we don't gate the buttons on emptiness. */
-    const [replaceQuery, setReplaceQuery] = useState('');
-    const [replaceFeedback, setReplaceFeedback] = useState<string | null>(null);
-    const replaceInputRef = useRef<HTMLInputElement>(null);
+    // Find/Replace (chunk 9 + 7) — state · refs · callbacks · effects 모두
+    // R1.3 에서 useFindReplace hook 으로 이전. 호출은 sortRange /
+    // refreshAfterMutation 등 dependencies 가 모두 정의된 뒤 (아래) 에서.
     /** Hidden file input for the toolbar's "이미지 삽입" button. */
     const imageInputRef = useRef<HTMLInputElement>(null);
     /** Drop overlay state — true while a file drag is hovering the viewer. */
@@ -1031,168 +879,29 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       alignment: 'left',
     });
 
-    // Effect 1: load doc, render page 0 to learn dimensions, prime cache.
-    useEffect(() => {
-      let cancelled = false;
-      let localDoc: RhwpDoc | null = null;
-
-      // Capture refs for cleanup — react-hooks/exhaustive-deps wants explicit
-      // capture even though these are non-DOM refs (Map / array).
-      const cache = cacheRef.current;
-      const pageRefs = pageRefsRef;
-
-      // Reset everything for a fresh path. Refs reset synchronously
-      // (no React tear-related lint), but the React state setters are
-      // moved into the async IIFE below so we avoid the
-      // react-hooks/set-state-in-effect cascade warning.
-      cache.clear();
-      pageRefs.current = [];
-      dirtyRef.current = false;
-      historyRef.current = { entries: [], index: -1 };
-      findTextCacheRef.current = null;
-
-      (async () => {
-        try {
-          setDirty(false);
-          setCanUndo(false);
-          setCanRedo(false);
-          setError(null);
-          setPhase('mounting');
-          await ensureRhwpCore();
-          if (cancelled) return;
-
-          setPhase('reading');
-          const tRead = performance.now();
-          const buffer = await window.api.file.read(path);
-          if (cancelled) return;
-          console.info(
-            `[studio] read ${(buffer.byteLength / 1024 / 1024).toFixed(2)} MB in ${(performance.now() - tRead).toFixed(0)} ms`,
-          );
-
-          setPhase('rendering');
-          const tParse = performance.now();
-          // We use HwpDocument's render/page-count methods directly. We don't
-          // construct HwpViewer — its constructor consumes the HwpDocument
-          // (`document.__destroy_into_raw()`), zeroing the doc's internal
-          // pointer and breaking subsequent exportHwpx() / insertText() calls.
-          // The doc itself exposes everything we need (pageCount,
-          // renderPageSvg, renderPageHtml).
-          localDoc = new HwpDocument(new Uint8Array(buffer));
-          const total = localDoc.pageCount();
-          const svg0 = localDoc.renderPageSvg(0);
-          const dims = parsePageDimensions(svg0);
-          if (!dims) throw new Error('Could not parse page-0 dimensions');
-          console.info(
-            `[studio] parse ${total} pages, page-0 ${dims.w}×${dims.h} in ${(performance.now() - tParse).toFixed(0)} ms`,
-          );
-
-          if (cancelled) {
-            localDoc.free();
-            return;
-          }
-
-          docRef.current = localDoc;
-          cacheRef.current.set(0, svg0);
-          // Sync initial caret state from the doc.
-          try {
-            caretRef.current = JSON.parse(
-              localDoc.getCaretPosition(),
-            ) as typeof caretRef.current;
-          } catch {
-            /* keep default 0,0,0 */
-          }
-          // Compute initial cursor rect for the visual cursor.
-          try {
-            const c = caretRef.current;
-            setCursorRect(
-              JSON.parse(
-                localDoc.getCursorRect(
-                  c.sectionIndex,
-                  c.paragraphIndex,
-                  c.charOffset,
-                ),
-              ),
-            );
-          } catch {
-            /* keep null */
-          }
-          // Load style list (paragraph styles) for toolbar dropdown +
-          // initial active format from caret's paragraph CharShape.
-          try {
-            const list = JSON.parse(localDoc.getStyleList()) as StyleListItem[];
-            // Only show 본문 styles (type=0) — type=1 is system styles
-            // like 쪽 번호 which aren't user-applicable to body paragraphs.
-            setStyleList(list.filter((s) => s.type === 0));
-          } catch {
-            setStyleList([]);
-          }
-          try {
-            const c = caretRef.current;
-            const cp = JSON.parse(
-              localDoc.getCharPropertiesAt(
-                c.sectionIndex,
-                c.paragraphIndex,
-                c.charOffset,
-              ),
-            ) as CharProps;
-            const at = JSON.parse(
-              localDoc.getStyleAt(c.sectionIndex, c.paragraphIndex),
-            ) as { id: number };
-            let alignment: ParaAlignment = 'left';
-            try {
-              const pp = JSON.parse(
-                localDoc.getParaPropertiesAt(c.sectionIndex, c.paragraphIndex),
-              ) as ParaProps;
-              if (pp.alignment && PARA_ALIGNMENTS.includes(pp.alignment)) {
-                alignment = pp.alignment;
-              }
-            } catch {
-              /* keep default */
-            }
-            setActiveFormat({
-              bold: !!cp.bold,
-              italic: !!cp.italic,
-              underline: !!cp.underline,
-              styleId: at.id,
-              fontSize: typeof cp.fontSize === 'number' ? cp.fontSize : 1000,
-              textColor:
-                typeof cp.textColor === 'string' ? cp.textColor : '#000000',
-              alignment,
-            });
-          } catch {
-            /* keep defaults */
-          }
-          setPageCount(total);
-          setPageDims(dims);
-          setPhase('ready');
-          // Reset history and push baseline snapshot. Inline rather than
-          // calling pushHistory() because that closure references docRef,
-          // which has just been swapped — the safe ordering is to seed
-          // historyRef directly here.
-          try {
-            const baseId = localDoc.saveSnapshot();
-            historyRef.current = { entries: [baseId], index: 0 };
-            setCanUndo(false);
-            setCanRedo(false);
-          } catch (err) {
-            console.warn('[studio] baseline snapshot failed:', err);
-          }
-        } catch (err) {
-          if (!cancelled) {
-            setError(err instanceof Error ? err.message : String(err));
-          }
-          localDoc?.free();
-        }
-      })();
-
-      return () => {
-        cancelled = true;
-        docRef.current?.free();
-        docRef.current = null;
-        cache.clear();
-        pageRefs.current = [];
-      };
-    }, [path]);
+    // Effect 1: load doc, render page 0, prime cache, seed UI state.
+    // 본 effect 의 ~150 라인 본체는 R1.1 refactor 에서 useDocumentLifecycle
+    // 로 분해 (utils 가 아닌 hook — useEffect + 의존 ref/setter 조합).
+    useDocumentLifecycle({
+      path,
+      docRef,
+      caretRef,
+      cacheRef,
+      pageRefsRef,
+      dirtyRef,
+      historyRef,
+      findTextCacheRef,
+      setDirty,
+      setCanUndo,
+      setCanRedo,
+      setError,
+      setPhase,
+      setCursorRect,
+      setStyleList,
+      setActiveFormat,
+      setPageCount,
+      setPageDims,
+    });
 
     // Mount or fetch SVG for a page (uses cache).
     const renderPageInto = useCallback((idx: number): void => {
@@ -1240,6 +949,23 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       adopted.style.width = '100%';
       adopted.style.height = '100%';
       adopted.style.display = 'block';
+      // chunk 92 — narrow column 텍스트 잘림 우회 (KNOWN_ISSUES L-004).
+      // lib 가 추정한 column width 가 좁아서 text 가 잘려 보일 때, native
+      // browser 의 <title> tooltip 로 full text 를 hover-read 가능하게
+      // 한다. 모든 <text> 에 자기 textContent 를 <title> 로 한 번 더
+      // 노출 — clipping 자체는 그대로지만 hover 시 잘린 부분도 볼 수
+      // 있다. SVG 레이아웃 변경 없음 (안전).
+      const SVG_NS = 'http://www.w3.org/2000/svg';
+      adopted.querySelectorAll('text').forEach((t) => {
+        const txt = t.textContent?.trim();
+        if (!txt) return;
+        // Skip if a <title> child already exists (lib may add its own).
+        if (t.querySelector(':scope > title')) return;
+        const title = document.createElementNS(SVG_NS, 'title');
+        title.textContent = txt;
+        // <title> must be the first child for spec-compliant tooltip behavior.
+        t.insertBefore(title, t.firstChild);
+      });
       el.replaceChildren(adopted);
       // Diagnostic: track image counts per page for debugging.
       const stringCount = (svg.match(/<image\b/g) ?? []).length;
@@ -1284,24 +1010,14 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         const c = caretRef.current;
         let rectJson: string;
         if (c.cell) {
-          // Phase E — nested table 지원. path > 1이면 ByPath variant.
-          if (c.cell.path && c.cell.path.length > 1) {
-            rectJson = doc.getCursorRectByPath(
-              c.sectionIndex,
-              c.cell.parentParaIndex,
-              JSON.stringify(c.cell.path),
-              c.charOffset,
-            );
-          } else {
-            rectJson = doc.getCursorRectInCell(
-              c.sectionIndex,
-              c.cell.parentParaIndex,
-              c.cell.controlIndex,
-              c.cell.cellIndex,
-              c.cell.cellParaIndex,
-              c.charOffset,
-            );
-          }
+          // R6 — Phase E nested table 분기 callCellOp 통합.
+          rectJson = callCellOp(
+            c.cell,
+            c.sectionIndex,
+            doc.getCursorRectInCell.bind(doc),
+            doc.getCursorRectByPath.bind(doc),
+            c.charOffset,
+          );
         } else {
           rectJson = doc.getCursorRect(
             c.sectionIndex,
@@ -1728,115 +1444,34 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       }
     }, [sortRange]);
 
-    /**
-     * Push a snapshot of the current doc state onto the undo stack. Called
-     * from the doc-load effect (baseline) and after every mutation. Discards
-     * the redo tail (snapshots after the current index) so a fresh edit
-     * can't be "redone past". Caps stack depth and discards oldest.
-     */
-    const pushHistory = useCallback((): void => {
-      const doc = docRef.current;
-      if (!doc) return;
-      // chunk 27 — when an undo group is active, swallow intermediate
-      // snapshots. endUndoGroup() will push a single one.
-      if (undoGroupDepthRef.current > 0) return;
-      try {
-        const id = doc.saveSnapshot();
-        const h = historyRef.current;
-        // Drop redo tail (snapshots beyond current index) — they are now
-        // obsolete branches.
-        for (let i = h.index + 1; i < h.entries.length; i++) {
-          try {
-            doc.discardSnapshot(h.entries[i]);
-          } catch {
-            /* ignore */
-          }
-        }
-        h.entries.length = h.index + 1;
-        h.entries.push(id);
-        h.index = h.entries.length - 1;
-        // Cap depth — drop oldest entries (and their snapshot IDs).
-        while (h.entries.length > HISTORY_CAP) {
-          const oldId = h.entries.shift()!;
-          try {
-            doc.discardSnapshot(oldId);
-          } catch {
-            /* ignore */
-          }
-          h.index--;
-        }
-        setCanUndo(h.index > 0);
-        setCanRedo(h.index < h.entries.length - 1);
-      } catch (err) {
-        console.warn('[studio] saveSnapshot failed:', err);
-      }
-    }, []);
+    // R1.2 — undo/redo 스택 + grouping bracket → useUndoHistory hook.
+    // The hook owns saveSnapshot/restoreSnapshot/discardSnapshot calls,
+    // history index bookkeeping, redo-tail discard, depth-cap, dirty/
+    // canUndo/canRedo flag updates, and group depth counting. Caller-side
+    // post-restore cleanup (selection drop + cursor / format refresh) is
+    // passed in via `afterRestore`.
+    const afterRestore = useCallback((): void => {
+      setSelection(null);
+      setSelectionRectsByPage({});
+      refreshCursorRect();
+      refreshActiveFormat();
+    }, [setSelection, refreshCursorRect, refreshActiveFormat]);
 
-    /**
-     * Restore to the entry at index `targetIndex` and refresh layout/UI.
-     * Bypasses pushHistory (we don't snapshot the restore itself).
-     */
-    const restoreToIndex = useCallback(
-      (targetIndex: number): void => {
-        const doc = docRef.current;
-        const h = historyRef.current;
-        if (
-          !doc ||
-          targetIndex < 0 ||
-          targetIndex >= h.entries.length ||
-          targetIndex === h.index
-        )
-          return;
-        try {
-          doc.restoreSnapshot(h.entries[targetIndex]);
-          h.index = targetIndex;
-          try {
-            doc.reflowLinesegs();
-          } catch {
-            /* ignore — older lib */
-          }
-          cacheRef.current.clear();
-          pageRefsRef.current.forEach((el, idx) => {
-            if (el?.firstElementChild?.tagName.toLowerCase() === 'svg') {
-              el.innerHTML = '';
-              renderPageInto(idx);
-            }
-          });
-          try {
-            caretRef.current = JSON.parse(
-              doc.getCaretPosition(),
-            ) as typeof caretRef.current;
-          } catch {
-            /* keep previous */
-          }
-          // Selection is renderer-side state (not in the doc IR snapshot).
-          // Drop it — restoring to a different point shouldn't carry over a
-          // possibly-now-invalid range.
-          setSelection(null);
-          setSelectionRectsByPage({});
-          refreshCursorRect();
-          refreshActiveFormat();
-          // Dirty: the *baseline* (index 0) is the loaded-from-disk state,
-          // so being there means clean. Anything else is dirty.
-          const dirty = h.index !== 0;
-          dirtyRef.current = dirty;
-          setDirty(dirty);
-          setCanUndo(h.index > 0);
-          setCanRedo(h.index < h.entries.length - 1);
-        } catch (err) {
-          console.warn('[studio] restoreSnapshot failed:', err);
-        }
-      },
-      [renderPageInto, refreshCursorRect, refreshActiveFormat, setSelection],
-    );
-
-    const undo = useCallback((): void => {
-      restoreToIndex(historyRef.current.index - 1);
-    }, [restoreToIndex]);
-
-    const redo = useCallback((): void => {
-      restoreToIndex(historyRef.current.index + 1);
-    }, [restoreToIndex]);
+    const { pushHistory, undo, redo, beginUndoGroup, endUndoGroup } =
+      useUndoHistory({
+        docRef,
+        historyRef,
+        undoGroupDepthRef,
+        cacheRef,
+        pageRefsRef,
+        caretRef,
+        dirtyRef,
+        setCanUndo,
+        setCanRedo,
+        setDirty,
+        renderPageInto,
+        afterRestore,
+      });
 
     const refreshAfterMutation = useCallback(
       (opts?: { syncCaret?: boolean }): void => {
@@ -2035,27 +1670,15 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       if (!doc) return;
       const c = caretRef.current;
       if (c.cell) {
-        // Phase E — nested table 지원. path.length > 1이면 ByPath
-        // variant 사용 (insertTextInCellByPath). 1단계 cell이면 기존 API.
-        if (c.cell.path && c.cell.path.length > 1) {
-          doc.insertTextInCellByPath(
-            c.sectionIndex,
-            c.cell.parentParaIndex,
-            JSON.stringify(c.cell.path),
-            c.charOffset,
-            text,
-          );
-        } else {
-          doc.insertTextInCell(
-            c.sectionIndex,
-            c.cell.parentParaIndex,
-            c.cell.controlIndex,
-            c.cell.cellIndex,
-            c.cell.cellParaIndex,
-            c.charOffset,
-            text,
-          );
-        }
+        // R6 — Phase E nested table 분기를 callCellOp 으로 일원화.
+        callCellOp(
+          c.cell,
+          c.sectionIndex,
+          doc.insertTextInCell.bind(doc),
+          doc.insertTextInCellByPath.bind(doc),
+          c.charOffset,
+          text,
+        );
         caretRef.current = { ...c, charOffset: c.charOffset + text.length };
       } else {
         doc.insertText(c.sectionIndex, c.paragraphIndex, c.charOffset, text);
@@ -2073,26 +1696,15 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       if (!doc) return;
       const c = caretRef.current;
       if (c.cell) {
-        // Phase E — nested cell 지원.
-        if (c.cell.path && c.cell.path.length > 1) {
-          doc.deleteTextInCellByPath(
-            c.sectionIndex,
-            c.cell.parentParaIndex,
-            JSON.stringify(c.cell.path),
-            at,
-            count,
-          );
-        } else {
-          doc.deleteTextInCell(
-            c.sectionIndex,
-            c.cell.parentParaIndex,
-            c.cell.controlIndex,
-            c.cell.cellIndex,
-            c.cell.cellParaIndex,
-            at,
-            count,
-          );
-        }
+        // R6 — Phase E nested table 분기를 callCellOp 으로 일원화.
+        callCellOp(
+          c.cell,
+          c.sectionIndex,
+          doc.deleteTextInCell.bind(doc),
+          doc.deleteTextInCellByPath.bind(doc),
+          at,
+          count,
+        );
         if (at < c.charOffset) {
           caretRef.current = { ...c, charOffset: at };
         }
@@ -3312,314 +2924,39 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       return false;
     }, [copySelection, deleteSelectionIfAny, refreshAfterMutation]);
 
-    /**
-     * Iterate every paragraph in every section, indexOf-searching each
-     * paragraph's text for the query. Builds a flat list of matches. Big
-     * docs may take a few hundred ms — Phase 1 minimal. Future optimization:
-     * incremental search per typed char, debounce, or maintain a section
-     * text cache.
-     */
-    const runFindSearch = useCallback((query: string): void => {
-      const doc = docRef.current;
-      if (!doc || !query) {
-        setFindMatches([]);
-        setFindIndex(0);
-        setFindHighlightsByPage({});
-        return;
-      }
-      // Build the paragraph text cache on first run after the doc loads
-      // (or after a mutation cleared it). Entries are stored already-
-      // lowercased so the inner loop only needs indexOf on a primitive.
-      if (!findTextCacheRef.current) {
-        const cache = new Map<string, string>();
-        try {
-          const sectionCount = doc.getSectionCount();
-          for (let s = 0; s < sectionCount; s++) {
-            const paraCount = doc.getParagraphCount(s);
-            for (let p = 0; p < paraCount; p++) {
-              const text = doc.getTextRange(s, p, 0, 1_000_000);
-              if (!text) continue;
-              cache.set(`${s}:${p}`, text.toLowerCase());
-            }
-          }
-        } catch (err) {
-          console.warn('[studio] find cache build failed:', err);
-        }
-        findTextCacheRef.current = cache;
-      }
-      const lc = query.toLowerCase();
-      const matches: {
-        sectionIndex: number;
-        paragraphIndex: number;
-        offset: number;
-        length: number;
-      }[] = [];
-      const cache = findTextCacheRef.current;
-      for (const [key, haystack] of cache) {
-        const colon = key.indexOf(':');
-        const s = Number(key.slice(0, colon));
-        const p = Number(key.slice(colon + 1));
-        let from = 0;
-        while (from <= haystack.length - lc.length) {
-          const idx = haystack.indexOf(lc, from);
-          if (idx === -1) break;
-          matches.push({
-            sectionIndex: s,
-            paragraphIndex: p,
-            offset: idx,
-            length: query.length,
-          });
-          from = idx + Math.max(1, lc.length);
-        }
-      }
-      setFindMatches(matches);
-      setFindIndex(0);
-    }, []);
-
-    /**
-     * Project the matches list to per-page rect overlays. The active match
-     * (findIndex) is flagged so the renderer can color it differently.
-     */
-    const refreshFindHighlights = useCallback(
-      (matches: typeof findMatches, activeIdx: number): void => {
-        const doc = docRef.current;
-        if (!doc || matches.length === 0) {
-          setFindHighlightsByPage({});
-          return;
-        }
-        const grouped: Record<
-          number,
-          {
-            x: number;
-            y: number;
-            width: number;
-            height: number;
-            isActive: boolean;
-          }[]
-        > = {};
-        for (let i = 0; i < matches.length; i++) {
-          const m = matches[i];
-          try {
-            const rects = JSON.parse(
-              doc.getSelectionRects(
-                m.sectionIndex,
-                m.paragraphIndex,
-                m.offset,
-                m.paragraphIndex,
-                m.offset + m.length,
-              ),
-            ) as {
-              pageIndex: number;
-              x: number;
-              y: number;
-              width: number;
-              height: number;
-            }[];
-            for (const r of rects) {
-              (grouped[r.pageIndex] ??= []).push({
-                x: r.x,
-                y: r.y,
-                width: r.width,
-                height: r.height,
-                isActive: i === activeIdx,
-              });
-            }
-          } catch {
-            /* skip a paragraph that fails (no layout) */
-          }
-        }
-        setFindHighlightsByPage(grouped);
-      },
-      [],
-    );
-
-    /**
-     * Scroll the active match's page into view, set caret to the start of
-     * the match. Called after navigation between matches.
-     */
-    const focusFindMatch = useCallback(
-      (matches: typeof findMatches, idx: number): void => {
-        const m = matches[idx];
-        if (!m) return;
-        const doc = docRef.current;
-        if (!doc) return;
-        // Move caret + selection to the match, so subsequent edits target it.
-        caretRef.current = {
-          sectionIndex: m.sectionIndex,
-          paragraphIndex: m.paragraphIndex,
-          charOffset: m.offset,
-        };
-        try {
-          const rect = JSON.parse(
-            doc.getCursorRect(m.sectionIndex, m.paragraphIndex, m.offset),
-          ) as { pageIndex: number; x: number; y: number; height: number };
-          const pageEl = pageRefsRef.current[rect.pageIndex];
-          pageEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          setCursorRect(rect);
-        } catch {
-          /* keep previous */
-        }
-      },
-      [],
-    );
-
-    const findNext = useCallback((): void => {
-      if (findMatches.length === 0) return;
-      const next = (findIndex + 1) % findMatches.length;
-      setFindIndex(next);
-      refreshFindHighlights(findMatches, next);
-      focusFindMatch(findMatches, next);
-    }, [findMatches, findIndex, refreshFindHighlights, focusFindMatch]);
-
-    const findPrev = useCallback((): void => {
-      if (findMatches.length === 0) return;
-      const prev = (findIndex - 1 + findMatches.length) % findMatches.length;
-      setFindIndex(prev);
-      refreshFindHighlights(findMatches, prev);
-      focusFindMatch(findMatches, prev);
-    }, [findMatches, findIndex, refreshFindHighlights, focusFindMatch]);
-
-    const openFind = useCallback((): void => {
-      setFindOpen(true);
-      // Prime with current selection text if any (so users can hit ⌘F to
-      // search the selected word).
-      const sel = selectionRef.current;
-      if (sel) {
-        const r = sortRange(sel.anchor, sel.focus);
-        if (
-          !r.empty &&
-          r.startPara === r.endPara &&
-          r.endOffset - r.startOffset < 200
-        ) {
-          const doc = docRef.current;
-          if (doc) {
-            try {
-              const text = doc.getTextRange(
-                sel.anchor.sectionIndex,
-                r.startPara,
-                r.startOffset,
-                r.endOffset - r.startOffset,
-              );
-              if (text) {
-                setFindQuery(text);
-                runFindSearch(text);
-              }
-            } catch {
-              /* ignore */
-            }
-          }
-        }
-      }
-      // Move focus to the input on next tick so the caret lands inside.
-      setTimeout(() => findInputRef.current?.focus(), 0);
-    }, [sortRange, runFindSearch]);
-
-    const closeFind = useCallback((): void => {
-      setFindOpen(false);
-      setFindMatches([]);
-      setFindIndex(0);
-      setFindHighlightsByPage({});
-      setReplaceFeedback(null);
-      // Return focus to the scroll container so keyboard editing resumes.
-      scrollRef.current?.focus();
-    }, []);
-
-    /**
-     * Open the find bar with replace focused — chunk 7. Same surface as
-     * `openFind` but shifts focus to the replace input. Triggered by
-     * ⌘H / Ctrl+H or the Edit menu's "바꾸기…" entry.
-     */
-    const openReplace = useCallback((): void => {
-      setFindOpen(true);
-      setReplaceFeedback(null);
-      setTimeout(() => replaceInputRef.current?.focus(), 0);
-    }, []);
-
-    /**
-     * Run a single replace (replaceOne) or replace-all (replaceAll) on the
-     * IR via @rhwp/core. We delegate to the library rather than splicing
-     * matches ourselves so case-handling, multi-paragraph spans, and any
-     * future regex/whole-word options stay consistent with what the lib
-     * does internally.
-     *
-     * `replacementOverride` lets callers (e2e debug surface) inject a value
-     * without first round-tripping through React state — same UI buttons
-     * use the state-driven path with `undefined`.
-     *
-     * After the mutation:
-     *   - Find paragraph cache is invalidated (text changed)
-     *   - refreshAfterMutation re-reads page count + marks dirty
-     *   - runFindSearch(query) re-fires to populate updated match list
-     */
-    const applyReplace = useCallback(
-      (all: boolean, replacementOverride?: string): void => {
-        const doc = docRef.current;
-        if (!doc) return;
-        const query = findQuery;
-        if (query.length === 0) return;
-        const replacement =
-          replacementOverride !== undefined
-            ? replacementOverride
-            : replaceQuery;
-        try {
-          // Library is case-insensitive when the third arg is false — matches
-          // our own find cache behavior (we lowercase both sides).
-          const raw = all
-            ? doc.replaceAll(query, replacement, false)
-            : doc.replaceOne(query, replacement, false);
-          // The IR returns a JSON status string; we parse defensively because
-          // the lib doesn't expose a typed schema for this. The {count}
-          // shape is what 0.7.9 returns; falling back to "1 match replaced"
-          // for replaceOne keeps the UI honest if shape changes.
-          let count = all ? null : 1;
-          try {
-            const parsed = JSON.parse(raw) as { count?: number };
-            if (typeof parsed.count === 'number') count = parsed.count;
-          } catch {
-            /* ignore — feedback text falls back to a generic message */
-          }
-          // Invalidate the find text cache before re-running the search
-          // — the cached lowercase strings still hold the old matches.
-          findTextCacheRef.current = null;
-          refreshAfterMutation();
-          runFindSearch(query);
-          setReplaceFeedback(
-            count == null ? (all ? '모두 바꿈' : '바꿈') : `${count}건 바꿈`,
-          );
-        } catch (err) {
-          console.warn('[studio] replace failed:', err);
-          setReplaceFeedback(
-            err instanceof Error ? `에러: ${err.message}` : '에러',
-          );
-        }
-      },
-      [findQuery, replaceQuery, refreshAfterMutation, runFindSearch],
-    );
-
-    const replaceCurrent = useCallback(
-      (override?: string): void => applyReplace(false, override),
-      [applyReplace],
-    );
-    const replaceAllMatches = useCallback(
-      (override?: string): void => applyReplace(true, override),
-      [applyReplace],
-    );
-
-    // Recompute highlight rects whenever matches or active index change.
-    useEffect(() => {
-      if (findOpen) {
-        refreshFindHighlights(findMatches, findIndex);
-      }
-    }, [findOpen, findMatches, findIndex, refreshFindHighlights]);
-
-    // After matches first arrive, jump to the first one.
-    const matchCount = findMatches.length;
-    useEffect(() => {
-      if (findOpen && matchCount > 0) {
-        focusFindMatch(findMatches, 0);
-      }
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [matchCount, findOpen]);
+    // R1.3 — Find/Replace (chunk 9 + 7) → useFindReplace hook. State /
+    // refs / callbacks / 두 effects 모두 hook 안으로 이전.
+    const {
+      findOpen,
+      findQuery,
+      findMatches,
+      findIndex,
+      findHighlightsByPage,
+      replaceQuery,
+      replaceFeedback,
+      findInputRef,
+      replaceInputRef,
+      setFindQuery,
+      setReplaceQuery,
+      runFindSearch,
+      findNext,
+      findPrev,
+      openFind,
+      closeFind,
+      openReplace,
+      replaceCurrent,
+      replaceAllMatches,
+    } = useFindReplace({
+      docRef,
+      caretRef,
+      pageRefsRef,
+      selectionRef,
+      scrollRef,
+      findTextCacheRef,
+      sortRange,
+      refreshAfterMutation,
+      setCursorRect,
+    });
 
     /**
      * Paste at caret. If a selection is active it's deleted first
@@ -3858,708 +3195,52 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       }
     }, [sortRange]);
 
-    useImperativeHandle(
-      ref,
-      () => ({
-        // exportHwp (CFB), not exportHwpx — see electron/hwp/converter.ts:
-        // @rhwp/core v0.7.8's HWPX round-trip drops image references; HWP
-        // round-trip preserves them.
-        exportBytes: async () => {
-          if (!docRef.current) throw new Error('Document not loaded');
-          return docRef.current.exportHwp();
-        },
-        toggleCharFormat: (key: CharFormatKey) => {
-          toggleCharFormat(key);
-        },
-        undo: () => undo(),
-        canUndo: () => historyRef.current.index > 0,
-        redo: () => redo(),
-        copy: () => copySelection(),
-        cut: () => cutSelection(),
-        paste: () => pasteAtCaret(),
-        openFind: () => openFind(),
-        openReplace: () => openReplace(),
-        applyAlignment: (a: ParaAlignment) => applyAlignment(a),
-        applyFontSizePt: (pt: number) => applyFontSizePt(pt),
-        applyTextColor: (hex: string) => applyTextColor(hex),
-        getActiveFormat: () => ({ ...activeFormat }),
-        applyParaProps: (props: Record<string, unknown>) =>
-          applyParaProps(props as ParaProps),
-        getPageDef: (sectionIdx = 0) => {
-          const doc = docRef.current;
-          if (!doc) return null;
-          try {
-            return JSON.parse(doc.getPageDef(sectionIdx)) as Record<
-              string,
-              unknown
-            >;
-          } catch {
-            return null;
-          }
-        },
-        applyPageDef: (props, sectionIdx = 0) =>
-          applyPageDef(props, sectionIdx),
-        getHeaderFooter: (sectionIdx, isHeader, applyTo) => {
-          const doc = docRef.current;
-          if (!doc) return null;
-          try {
-            return JSON.parse(
-              doc.getHeaderFooter(sectionIdx, isHeader, applyTo),
-            ) as Record<string, unknown>;
-          } catch {
-            return null;
-          }
-        },
-        setHeaderFooterText: (sectionIdx, isHeader, applyTo, text) =>
-          setHeaderFooterText(sectionIdx, isHeader, applyTo, text),
-        addBookmarkAtCaret: (name) => addBookmarkAtCaret(name),
-        getBookmarks: () => {
-          const doc = docRef.current;
-          if (!doc) return null;
-          try {
-            const raw = JSON.parse(doc.getBookmarks()) as
-              | Record<string, unknown>[]
-              | { bookmarks?: Record<string, unknown>[] };
-            if (Array.isArray(raw)) return raw;
-            if (Array.isArray(raw?.bookmarks)) return raw.bookmarks;
-            return null;
-          } catch {
-            return null;
-          }
-        },
-        deleteBookmarkAt: (sec, para, ctrlIdx) =>
-          deleteBookmarkAt(sec, para, ctrlIdx),
-        renameBookmarkAt: (sec, para, ctrlIdx, newName) =>
-          renameBookmarkAt(sec, para, ctrlIdx, newName),
-        insertFootnoteAtCaret: (text) => insertFootnoteAtCaret(text),
-        createNamedStyle: (name, englishName) =>
-          createNamedStyle(name, englishName),
-        renameStyle: (id, name, englishName) =>
-          renameStyle(id, name, englishName),
-        deleteStyleById: (id) => deleteStyleById(id),
-        getStyleListJson: () => {
-          const doc = docRef.current;
-          if (!doc) return null;
-          try {
-            return JSON.parse(doc.getStyleList()) as Record<string, unknown>[];
-          } catch {
-            return null;
-          }
-        },
-        renderEquationSvg: (script, fontSizeHwpunit = 1000, color = 0) =>
-          renderEquationSvg(script, fontSizeHwpunit, color),
-        createRectShapeAtCaret: (widthHwpunit, heightHwpunit, opts) =>
-          createRectShapeAtCaret(widthHwpunit, heightHwpunit, opts),
-        applyHtmlAtCaret: (html) => applyHtmlAtCaret(html),
-        exportDocumentHtml: (maxParagraphs = 50) => {
-          const doc = docRef.current;
-          if (!doc) return '';
-          try {
-            const paraCount = doc.getParagraphCount(0);
-            const lastPara = Math.min(paraCount - 1, maxParagraphs - 1);
-            if (lastPara < 0) return '';
-            // End offset: a sentinel large enough to cover any paragraph.
-            return doc.exportSelectionHtml(0, 0, 0, lastPara, 1_000_000);
-          } catch (err) {
-            console.warn('[studio] exportDocumentHtml failed:', err);
-            return '';
-          }
-        },
-        isDirty: () => dirtyRef.current,
-        getActiveCellContext: () => {
-          const c = caretRef.current.cell;
-          if (!c) return null;
-          return {
-            sectionIndex: caretRef.current.sectionIndex,
-            parentParaIdx: c.parentParaIndex,
-            controlIdx: c.controlIndex,
-            cellIdx: c.cellIndex,
-          };
-        },
-        getTableProps: (sec, parentPara, ctrl) =>
-          getTableProps(sec, parentPara, ctrl),
-        setTableProps: (sec, parentPara, ctrl, props) =>
-          setTableProps(sec, parentPara, ctrl, props),
-        getCellProps: (sec, parentPara, ctrl, cellIdx) =>
-          getCellProps(sec, parentPara, ctrl, cellIdx),
-        setCellProps: (sec, parentPara, ctrl, cellIdx, props) =>
-          setCellProps(sec, parentPara, ctrl, cellIdx, props),
-        applyCellStyle: (sec, parentPara, ctrl, cell, cellPara, styleId) => {
-          const doc = docRef.current;
-          if (!doc) return false;
-          try {
-            const r = JSON.parse(
-              doc.applyCellStyle(
-                sec,
-                parentPara,
-                ctrl,
-                cell,
-                cellPara,
-                styleId,
-              ),
-            ) as { ok?: boolean };
-            if (r.ok) {
-              dirtyRef.current = true;
-              setDirty(true);
-              refreshAfterMutation({ syncCaret: false });
-              return true;
-            }
-            return false;
-          } catch (err) {
-            console.warn('[studio] applyCellStyle failed:', err);
-            return false;
-          }
-        },
-        evaluateTableFormula: (
-          sec,
-          parentPara,
-          ctrl,
-          targetRow,
-          targetCol,
-          formula,
-          writeResult,
-        ) => {
-          const doc = docRef.current;
-          if (!doc) return null;
-          try {
-            const json = doc.evaluateTableFormula(
-              sec,
-              parentPara,
-              ctrl,
-              targetRow,
-              targetCol,
-              formula,
-              writeResult,
-            );
-            const parsed = JSON.parse(json) as Record<string, unknown>;
-            // Only mark dirty if we actually wrote into the cell — pure
-            // evaluation (preview) leaves the doc untouched.
-            if (writeResult && parsed['ok']) {
-              dirtyRef.current = true;
-              setDirty(true);
-              refreshAfterMutation({ syncCaret: false });
-            }
-            return parsed;
-          } catch (err) {
-            console.warn('[studio] evaluateTableFormula failed:', err);
-            return null;
-          }
-        },
-        getPictureProps: (sec, parentPara, ctrl) => {
-          const doc = docRef.current;
-          if (!doc) return null;
-          try {
-            return JSON.parse(
-              doc.getPictureProperties(sec, parentPara, ctrl),
-            ) as Record<string, unknown>;
-          } catch (err) {
-            console.warn('[studio] getPictureProperties failed:', err);
-            return null;
-          }
-        },
-        setPictureProps: (sec, parentPara, ctrl, props) => {
-          const doc = docRef.current;
-          if (!doc) return false;
-          try {
-            const r = JSON.parse(
-              doc.setPictureProperties(
-                sec,
-                parentPara,
-                ctrl,
-                JSON.stringify(props),
-              ),
-            ) as { ok?: boolean };
-            if (r.ok) {
-              dirtyRef.current = true;
-              setDirty(true);
-              refreshAfterMutation({ syncCaret: false });
-              return true;
-            }
-            return false;
-          } catch (err) {
-            console.warn('[studio] setPictureProperties failed:', err);
-            return false;
-          }
-        },
-        enumeratePictures: () => {
-          const doc = docRef.current;
-          if (!doc) return [];
-          const out: {
-            sectionIdx: number;
-            parentParaIdx: number;
-            controlIdx: number;
-            label: string;
-          }[] = [];
-          // Section 0 only — multi-section enumeration left for when
-          // the doc shell supports it (chunk 1 fixture has 1 section).
-          let paraCount: number;
-          try {
-            paraCount = doc.getParagraphCount(0);
-          } catch {
-            return [];
-          }
-          for (let p = 0; p < paraCount; p++) {
-            let raw: string;
-            try {
-              raw = doc.getControlTextPositions(0, p);
-            } catch {
-              continue;
-            }
-            let entries: { controlIdx?: number; controlIndex?: number }[];
-            try {
-              entries = JSON.parse(raw) as typeof entries;
-              if (!Array.isArray(entries)) continue;
-            } catch {
-              continue;
-            }
-            for (const entry of entries) {
-              const cidx =
-                typeof entry.controlIdx === 'number'
-                  ? entry.controlIdx
-                  : typeof entry.controlIndex === 'number'
-                    ? entry.controlIndex
-                    : -1;
-              if (cidx < 0) continue;
-              // Probe by trying getPictureProperties — succeeds only
-              // for picture controls. Cheaper than introducing a
-              // separate kind-discrimination IR call.
-              try {
-                JSON.parse(doc.getPictureProperties(0, p, cidx));
-                out.push({
-                  sectionIdx: 0,
-                  parentParaIdx: p,
-                  controlIdx: cidx,
-                  label: `단락 ${p} · ctrl ${cidx}`,
-                });
-              } catch {
-                /* not a picture, skip */
-              }
-            }
-          }
-          return out;
-        },
-        deletePictureControl: (sec, parentPara, ctrl) => {
-          const doc = docRef.current;
-          if (!doc) return false;
-          try {
-            const r = JSON.parse(
-              doc.deletePictureControl(sec, parentPara, ctrl),
-            ) as { ok?: boolean };
-            if (r.ok) {
-              dirtyRef.current = true;
-              setDirty(true);
-              refreshAfterMutation({ syncCaret: false });
-              return true;
-            }
-            return false;
-          } catch (err) {
-            console.warn('[studio] deletePictureControl failed:', err);
-            return false;
-          }
-        },
-        beginUndoGroup: () => {
-          undoGroupDepthRef.current += 1;
-        },
-        endUndoGroup: () => {
-          undoGroupDepthRef.current = Math.max(
-            0,
-            undoGroupDepthRef.current - 1,
-          );
-          // Only push a snapshot when we exit the outermost group AND
-          // some mutation actually ran (dirty flag flipped or layout
-          // changed — pushHistory's saveSnapshot is cheap so we always
-          // push at end-of-group).
-          if (undoGroupDepthRef.current === 0) {
-            pushHistory();
-          }
-        },
-        copyControl: (sec, para, ctrl) => {
-          const doc = docRef.current;
-          if (!doc) return false;
-          try {
-            const r = JSON.parse(doc.copyControl(sec, para, ctrl)) as {
-              ok?: boolean;
-            };
-            return Boolean(r.ok);
-          } catch (err) {
-            console.warn('[studio] copyControl failed:', err);
-            return false;
-          }
-        },
-        copyControlAtCaret: (): boolean => {
-          const doc = docRef.current;
-          if (!doc) return false;
-          const c = caretRef.current;
-          // Case 1: caret is inside a table cell — copy the table.
-          if (c.cell) {
-            try {
-              const r = JSON.parse(
-                doc.copyControl(
-                  c.sectionIndex,
-                  c.cell.parentParaIndex,
-                  c.cell.controlIndex,
-                ),
-              ) as { ok?: boolean };
-              return Boolean(r.ok);
-            } catch {
-              return false;
-            }
-          }
-          // Case 2: caret is in body — try to find a control at the
-          // current paragraph and copy the first one.
-          try {
-            const raw = doc.getControlTextPositions(
-              c.sectionIndex,
-              c.paragraphIndex,
-            );
-            const entries = JSON.parse(raw) as {
-              controlIdx?: number;
-              controlIndex?: number;
-            }[];
-            const first = entries[0];
-            if (!first) return false;
-            const cidx =
-              typeof first.controlIdx === 'number'
-                ? first.controlIdx
-                : typeof first.controlIndex === 'number'
-                  ? first.controlIndex
-                  : -1;
-            if (cidx < 0) return false;
-            const r = JSON.parse(
-              doc.copyControl(c.sectionIndex, c.paragraphIndex, cidx),
-            ) as { ok?: boolean };
-            return Boolean(r.ok);
-          } catch {
-            return false;
-          }
-        },
-        pasteControlAtCurrentCaret: (): boolean => {
-          const doc = docRef.current;
-          if (!doc) return false;
-          const c = caretRef.current;
-          // pasteControl wants a body caret; if currently in a cell
-          // we still target the caret's section/para/charOffset
-          // (rhwp lets pasteControl work from any caret).
-          try {
-            const r = JSON.parse(
-              doc.pasteControl(c.sectionIndex, c.paragraphIndex, c.charOffset),
-            ) as { ok?: boolean };
-            if (r.ok) {
-              dirtyRef.current = true;
-              setDirty(true);
-              refreshAfterMutation({ syncCaret: false });
-              return true;
-            }
-            return false;
-          } catch {
-            return false;
-          }
-        },
-        pasteControlAt: (sec, para, charOffset) => {
-          const doc = docRef.current;
-          if (!doc) return false;
-          try {
-            const r = JSON.parse(doc.pasteControl(sec, para, charOffset)) as {
-              ok?: boolean;
-            };
-            if (r.ok) {
-              dirtyRef.current = true;
-              setDirty(true);
-              refreshAfterMutation({ syncCaret: false });
-              return true;
-            }
-            return false;
-          } catch (err) {
-            console.warn('[studio] pasteControl failed:', err);
-            return false;
-          }
-        },
-        scrollToParagraph: (sectionIdx: number, paraIdx: number) => {
-          const doc = docRef.current;
-          if (!doc) return;
-          try {
-            caretRef.current = {
-              sectionIndex: sectionIdx,
-              paragraphIndex: paraIdx,
-              charOffset: 0,
-            };
-            const rect = JSON.parse(
-              doc.getCursorRect(sectionIdx, paraIdx, 0),
-            ) as { pageIndex: number; x: number; y: number; height: number };
-            const pageEl = pageRefsRef.current[rect.pageIndex];
-            pageEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            setCursorRect(rect);
-          } catch (err) {
-            console.warn('[studio] scrollToParagraph failed:', err);
-          }
-        },
-        getOutline: () => {
-          const doc = docRef.current;
-          if (!doc) return [];
-          const headingByStyleId = new Map<number, number>();
-          for (const s of styleList) {
-            const koMatch = s.name.match(/^제목\s*(\d+)?/);
-            const enMatch = s.englishName?.match(/^Heading\s*(\d+)?/i);
-            const m = koMatch ?? enMatch;
-            if (m) {
-              const level = m[1] ? Math.min(6, parseInt(m[1], 10)) : 1;
-              headingByStyleId.set(s.id, level);
-            }
-          }
-          if (headingByStyleId.size === 0) return [];
-          const items: {
-            paragraphIndex: number;
-            level: number;
-            text: string;
-          }[] = [];
-          try {
-            const SECTION = 0;
-            const paraCount = doc.getParagraphCount(SECTION);
-            const cap = Math.min(paraCount, 1000);
-            for (let p = 0; p < cap; p++) {
-              const at = JSON.parse(doc.getStyleAt(SECTION, p)) as {
-                id?: number;
-              };
-              if (typeof at.id !== 'number') continue;
-              const level = headingByStyleId.get(at.id);
-              if (!level) continue;
-              const len = doc.getParagraphLength(SECTION, p);
-              const text =
-                len > 0
-                  ? doc.getTextRange(SECTION, p, 0, Math.min(len, 200))
-                  : '';
-              items.push({
-                paragraphIndex: p,
-                level,
-                text: text.trim() || '(제목 없음)',
-              });
-              if (items.length >= 200) break;
-            }
-          } catch (err) {
-            console.warn('[studio] getOutline failed:', err);
-          }
-          return items;
-        },
-        snapshotParagraphs: () => {
-          const doc = docRef.current;
-          const map = new Map<number, string>();
-          if (!doc) return map;
-          try {
-            const SECTION = 0;
-            const paraCount = doc.getParagraphCount(SECTION);
-            const cap = Math.min(paraCount, 1000);
-            for (let p = 0; p < cap; p++) {
-              const len = doc.getParagraphLength(SECTION, p);
-              const text = len > 0 ? doc.getTextRange(SECTION, p, 0, len) : '';
-              // Cheap fingerprint — length + first 40 + last 40 chars.
-              // Collisions are rare enough at the para level for diff
-              // visibility purposes.
-              const fp = `${len}|${text.slice(0, 40)}|${text.slice(-40)}`;
-              map.set(p, fp);
-            }
-          } catch (err) {
-            console.warn('[studio] snapshotParagraphs failed:', err);
-          }
-          return map;
-        },
-        markChangedParagraphsSince: (before: Map<number, string>) => {
-          const doc = docRef.current;
-          if (!doc) return;
-          const changed: number[] = [];
-          try {
-            const SECTION = 0;
-            const paraCount = doc.getParagraphCount(SECTION);
-            const cap = Math.min(paraCount, 1000);
-            for (let p = 0; p < cap; p++) {
-              const len = doc.getParagraphLength(SECTION, p);
-              const text = len > 0 ? doc.getTextRange(SECTION, p, 0, len) : '';
-              const fp = `${len}|${text.slice(0, 40)}|${text.slice(-40)}`;
-              const prior = before.get(p);
-              if (prior === undefined || prior !== fp) changed.push(p);
-            }
-          } catch (err) {
-            console.warn('[studio] markChangedParagraphs failed:', err);
-            return;
-          }
-          if (changed.length === 0) return;
-          // Resolve each paragraph to per-page rects via
-          // getSelectionRects(p, 0, p, len) — same path as the
-          // selection highlight uses.
-          const grouped: Record<
-            number,
-            { x: number; y: number; width: number; height: number }[]
-          > = {};
-          for (const p of changed) {
-            try {
-              const len = doc.getParagraphLength(0, p);
-              if (len === 0) continue;
-              const rects = JSON.parse(
-                doc.getSelectionRects(0, p, 0, p, len),
-              ) as {
-                pageIndex: number;
-                x: number;
-                y: number;
-                width: number;
-                height: number;
-              }[];
-              for (const r of rects) {
-                (grouped[r.pageIndex] ??= []).push({
-                  x: r.x,
-                  y: r.y,
-                  width: r.width,
-                  height: r.height,
-                });
-              }
-            } catch {
-              /* skip — IR may have shifted */
-            }
-          }
-          setChangedParaRects(grouped);
-          if (changedParaTimerRef.current !== null) {
-            window.clearTimeout(changedParaTimerRef.current);
-          }
-          changedParaTimerRef.current = window.setTimeout(() => {
-            setChangedParaRects({});
-            changedParaTimerRef.current = null;
-          }, 15_000);
-        },
-        // chunk 20 — excerpt capture + stale verification. Selection
-        // must be non-empty AND single-paragraph; multi-paragraph
-        // excerpts need a span anchor model that the IR's
-        // getTextRange (single-para) doesn't support yet.
-        captureExcerpt,
-        verifyExcerpt: (anchor, expected) => {
-          const doc = docRef.current;
-          if (!doc) return null;
-          try {
-            const sec = anchor.sectionIndex;
-            const paraCount = doc.getParagraphCount(sec);
-            // Bounds check on both ends — paragraphs may have been deleted.
-            if (
-              anchor.startParagraphIndex >= paraCount ||
-              anchor.endParagraphIndex >= paraCount ||
-              anchor.startParagraphIndex > anchor.endParagraphIndex
-            ) {
-              const relocated = relocateExcerpt(doc, expected);
-              return relocated
-                ? { status: 'stale-relocated', newAnchor: relocated }
-                : { status: 'stale-missing' };
-            }
-            // Re-read the slice the same way captureExcerpt did, then
-            // compare to expected. Mismatch falls into relocation. The
-            // relocator only handles single-paragraph hits (rare for
-            // multi-para excerpts), so spans that move tend to surface
-            // as stale-missing — acceptable: user re-selects.
-            const parts: string[] = [];
-            if (anchor.startParagraphIndex === anchor.endParagraphIndex) {
-              const paraLen = doc.getParagraphLength(
-                sec,
-                anchor.startParagraphIndex,
-              );
-              if (anchor.endOffset > paraLen) {
-                const relocated = relocateExcerpt(doc, expected);
-                return relocated
-                  ? { status: 'stale-relocated', newAnchor: relocated }
-                  : { status: 'stale-missing' };
-              }
-              parts.push(
-                doc.getTextRange(
-                  sec,
-                  anchor.startParagraphIndex,
-                  anchor.startOffset,
-                  anchor.endOffset - anchor.startOffset,
-                ),
-              );
-            } else {
-              const firstLen = doc.getParagraphLength(
-                sec,
-                anchor.startParagraphIndex,
-              );
-              if (anchor.startOffset > firstLen) {
-                return { status: 'stale-missing' };
-              }
-              parts.push(
-                doc.getTextRange(
-                  sec,
-                  anchor.startParagraphIndex,
-                  anchor.startOffset,
-                  Math.max(0, firstLen - anchor.startOffset),
-                ),
-              );
-              for (
-                let p = anchor.startParagraphIndex + 1;
-                p < anchor.endParagraphIndex;
-                p++
-              ) {
-                const len = doc.getParagraphLength(sec, p);
-                parts.push(doc.getTextRange(sec, p, 0, len));
-              }
-              const endLen = doc.getParagraphLength(
-                sec,
-                anchor.endParagraphIndex,
-              );
-              if (anchor.endOffset > endLen) {
-                return { status: 'stale-missing' };
-              }
-              if (anchor.endOffset > 0) {
-                parts.push(
-                  doc.getTextRange(
-                    sec,
-                    anchor.endParagraphIndex,
-                    0,
-                    anchor.endOffset,
-                  ),
-                );
-              }
-            }
-            const current = parts.join('\n');
-            if (current === expected) return { status: 'fresh' };
-            const relocated = relocateExcerpt(doc, expected);
-            return relocated
-              ? { status: 'stale-relocated', newAnchor: relocated }
-              : { status: 'stale-missing' };
-          } catch (err) {
-            console.warn('[studio] verifyExcerpt failed:', err);
-            return null;
-          }
-        },
-      }),
-      [
-        captureExcerpt,
-        getCellProps,
-        getTableProps,
-        pushHistory,
-        refreshAfterMutation,
-        setCellProps,
-        setTableProps,
-        toggleCharFormat,
-        undo,
-        redo,
-        copySelection,
-        cutSelection,
-        pasteAtCaret,
-        openFind,
-        openReplace,
-        applyAlignment,
-        applyFontSizePt,
-        applyTextColor,
-        activeFormat,
-        applyParaProps,
-        applyPageDef,
-        setHeaderFooterText,
-        addBookmarkAtCaret,
-        deleteBookmarkAt,
-        renameBookmarkAt,
-        insertFootnoteAtCaret,
-        createNamedStyle,
-        renameStyle,
-        deleteStyleById,
-        renderEquationSvg,
-        createRectShapeAtCaret,
-        applyHtmlAtCaret,
-        styleList,
-      ],
-    );
+    // R1.8 — ViewerHandle imperative handle (~1180 라인) → useViewerHandle.
+    useViewerHandle(ref, {
+      docRef,
+      caretRef,
+      dirtyRef,
+      pageRefsRef,
+      historyRef,
+      changedParaTimerRef,
+      setDirty,
+      setCursorRect,
+      setChangedParaRects,
+      activeFormat,
+      styleList,
+      captureExcerpt,
+      getCellProps,
+      getTableProps,
+      refreshAfterMutation,
+      setCellProps,
+      setTableProps,
+      toggleCharFormat,
+      undo,
+      redo,
+      beginUndoGroup,
+      endUndoGroup,
+      copySelection,
+      cutSelection,
+      pasteAtCaret,
+      openFind,
+      openReplace,
+      applyAlignment,
+      applyFontSizePt,
+      applyTextColor,
+      applyParaProps,
+      applyPageDef,
+      setHeaderFooterText,
+      addBookmarkAtCaret,
+      deleteBookmarkAt,
+      renameBookmarkAt,
+      insertFootnoteAtCaret,
+      createNamedStyle,
+      renameStyle,
+      deleteStyleById,
+      renderEquationSvg,
+      createRectShapeAtCaret,
+      applyHtmlAtCaret,
+    });
 
     /**
      * Compute word bounds around a char offset within a paragraph. A "word"
@@ -4680,1142 +3361,61 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
      * routes through `compositionend` (the browser delivers the final composed
      * string in `event.data`). Caret nav (arrow keys / Home) is local to our
      * caretRef — `@rhwp/core` has no public cursor-move API.
+     *
+     * R1.4 — 1100-라인 본체는 `useKeyboardShortcuts` hook 으로 이전.
+     * 외부 contract / 동작 1:1 동일.
      */
-    const handleKeyDown = useCallback(
-      (e: ReactKeyboardEvent<HTMLDivElement>): void => {
-        // Skip composing keystrokes — the IME owns them, and compositionend
-        // will deliver the final text. keyCode 229 is the historical signal
-        // for "IME is processing this key" on browsers that haven't set
-        // isComposing yet.
-        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-
-        const doc = docRef.current;
-        if (!doc) return;
-        const c = caretRef.current;
-
-        // Caret navigation — purely local. No doc API for cursor movement;
-        // we adjust charOffset and recompute cursorRect via getCursorRect.
-        // Shift+arrow extends selection (creates one if none), plain arrow
-        // collapses any selection to the new caret position.
-        // Read from selectionRef rather than the closure'd state so we
-        // see updates from external drivers (e2e debug API) before the
-        // next render attaches a fresh handler.
-        const sel0 = selectionRef.current;
-        // Phase B-2.5 — F5 확장 모드: arrow가 cell-block의 focus 셀을
-        // row/col 단위로 이동시켜 block 범위 확장. 본문 arrow 핸들러
-        // 보다 먼저 검사해야 cell context에서 confused 안 됨.
-        if (
-          cellBlockExtendModeRef.current &&
-          (e.key === 'ArrowLeft' ||
-            e.key === 'ArrowRight' ||
-            e.key === 'ArrowUp' ||
-            e.key === 'ArrowDown')
-        ) {
-          const cur = selectionRef.current;
-          if (
-            cur &&
-            cur.anchor.cell &&
-            cur.focus.cell &&
-            cur.anchor.cell.parentParaIndex ===
-              cur.focus.cell.parentParaIndex &&
-            cur.anchor.cell.controlIndex === cur.focus.cell.controlIndex
-          ) {
-            try {
-              const ac = cur.anchor.cell;
-              const fc = cur.focus.cell;
-              const cells = JSON.parse(
-                doc.getTableCellBboxes(
-                  cur.anchor.sectionIndex,
-                  ac.parentParaIndex,
-                  ac.controlIndex,
-                ),
-              ) as {
-                cellIdx: number;
-                row: number;
-                col: number;
-                rowSpan: number;
-                colSpan: number;
-              }[];
-              const fCell = cells.find((x) => x.cellIdx === fc.cellIndex);
-              if (fCell) {
-                const dr =
-                  e.key === 'ArrowDown'
-                    ? fCell.rowSpan
-                    : e.key === 'ArrowUp'
-                      ? -1
-                      : 0;
-                const dc =
-                  e.key === 'ArrowRight'
-                    ? fCell.colSpan
-                    : e.key === 'ArrowLeft'
-                      ? -1
-                      : 0;
-                const targetR = fCell.row + dr;
-                const targetC = fCell.col + dc;
-                const next = cells.find(
-                  (x) =>
-                    targetR >= x.row &&
-                    targetR <= x.row + x.rowSpan - 1 &&
-                    targetC >= x.col &&
-                    targetC <= x.col + x.colSpan - 1,
-                );
-                if (next) {
-                  const newFocus = {
-                    sectionIndex: cur.focus.sectionIndex,
-                    paragraphIndex: 0,
-                    charOffset: 0,
-                    cell: {
-                      parentParaIndex: fc.parentParaIndex,
-                      controlIndex: fc.controlIndex,
-                      cellIndex: next.cellIdx,
-                      cellParaIndex: 0,
-                    },
-                  };
-                  const newSel = { anchor: cur.anchor, focus: newFocus };
-                  caretRef.current = newFocus;
-                  setSelection(newSel);
-                  refreshCellBlockHighlights(newSel);
-                }
-              }
-            } catch (err) {
-              console.warn('[studio] cell-block extension failed:', err);
-            }
-            e.preventDefault();
-            return;
-          }
-          // No valid cell selection — exit extension mode.
-          setCellBlockExtendMode(false);
-        }
-        // Word-wise navigation: Cmd/Ctrl + (Shift?) + Arrow Left/Right
-        // moves the caret to the prev/next word boundary. With Shift this
-        // extends the current selection. Without Shift it collapses any
-        // selection to the new position.
-        const isWordKey =
-          primaryModifier(e) &&
-          !e.altKey &&
-          (e.key === 'ArrowLeft' || e.key === 'ArrowRight');
-        if (isWordKey) {
-          const dir: -1 | 1 = e.key === 'ArrowLeft' ? -1 : 1;
-          const nextOff = stepWordOffset(
-            c.sectionIndex,
-            c.paragraphIndex,
-            c.charOffset,
-            dir,
-          );
-          commitCaretMove({ ...c, charOffset: nextOff }, c, e.shiftKey, sel0);
-          e.preventDefault();
-          return;
-        }
-        if (e.key === 'ArrowLeft' && !c.cell) {
-          if (c.charOffset > 0) {
-            commitCaretMove(
-              { ...c, charOffset: c.charOffset - 1 },
-              c,
-              e.shiftKey,
-              sel0,
-            );
-          } else if (!e.shiftKey && sel0) {
-            clearSelection();
-          }
-          e.preventDefault();
-          return;
-        }
-        if (e.key === 'ArrowRight' && !c.cell) {
-          commitCaretMove(
-            { ...c, charOffset: c.charOffset + 1 },
-            c,
-            e.shiftKey,
-            sel0,
-          );
-          e.preventDefault();
-          return;
-        }
-        // Visual-line ArrowUp/Down — IR has no line concept (paragraphs may
-        // wrap), so we walk via cursor geometry: take the current cursor
-        // rect, step y by ±lineHeight, and hitTest the same x to find the
-        // offset on the previous/next visual line. Falls through to the
-        // adjacent page when stepping off the current page's bounds.
-        // In-cell caret is not yet supported here — cells use a separate
-        // hit-test path; punt to no-op until cell-line nav v2.
-        if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !c.cell) {
-          const rect = cursorRect;
-          if (!rect) {
-            e.preventDefault();
-            return;
-          }
-          const dirDown = e.key === 'ArrowDown';
-          // Step half a line height past the line so we land squarely in the
-          // adjacent line, not on the boundary.
-          const step = rect.height * 1.4;
-          let targetPage = rect.pageIndex;
-          let targetY = dirDown ? rect.y + step : rect.y - step;
-          const pageH = pageDims?.h ?? 0;
-          if (dirDown && targetY > pageH && targetPage + 1 < pageCount) {
-            targetPage += 1;
-            targetY = targetY - pageH;
-          } else if (!dirDown && targetY < 0 && targetPage > 0) {
-            targetPage -= 1;
-            targetY = pageH + targetY;
-          }
-          let hit: {
-            sectionIndex: number;
-            paragraphIndex: number;
-            charOffset: number;
-          } | null;
-          try {
-            hit = JSON.parse(doc.hitTest(targetPage, rect.x, targetY)) as {
-              sectionIndex: number;
-              paragraphIndex: number;
-              charOffset: number;
-            };
-          } catch {
-            hit = null;
-          }
-          if (hit) {
-            commitCaretMove(
-              {
-                sectionIndex: hit.sectionIndex,
-                paragraphIndex: hit.paragraphIndex,
-                charOffset: hit.charOffset,
-              },
-              c,
-              e.shiftKey,
-              sel0,
-            );
-          }
-          e.preventDefault();
-          return;
-        }
-        // Esc — clears selection in two scenarios:
-        // 1) Active drag: cancel and roll back to pre-drag state
-        //    (or clear if there was none).
-        // 2) Post-drag (selection committed but no longer dragging):
-        //    just clear the selection. Without this branch the user
-        //    had no keyboard way to dismiss a stale selection — the
-        //    `&& draggingRef.current` guard meant ESC silently no-op'd
-        //    after mouseup.
-        // Phase D 2차 — ⌘⇧M (Cmd+Shift+M) 토글 마퀴 모드.
-        if (
-          primaryModifier(e) &&
-          e.shiftKey &&
-          !e.altKey &&
-          e.key.toLowerCase() === 'm'
-        ) {
-          setMarqueeMode((v) => !v);
-          setMarqueeRect(null);
-          marqueeStartRef.current = null;
-          e.preventDefault();
-          return;
-        }
-        if (e.key === 'Escape') {
-          // 마퀴 모드 활성 시 ESC = 모드 종료.
-          if (marqueeMode) {
-            setMarqueeMode(false);
-            setMarqueeRect(null);
-            marqueeStartRef.current = null;
-            setSelectedControlBboxes({});
-            e.preventDefault();
-            return;
-          }
-          if (draggingRef.current) {
-            dragCleanupRef.current?.();
-            dragCleanupRef.current = null;
-            draggingRef.current = false;
-            cellDragRef.current = null;
-            setCellBlockExtendMode(false);
-            const origin = dragOriginSelectionRef.current;
-            if (origin) {
-              setSelection(origin);
-              refreshSelectionRects(origin);
-            } else {
-              clearSelection();
-            }
-            dragOriginSelectionRef.current = null;
-            e.preventDefault();
-            return;
-          }
-          if (selectionRef.current) {
-            setCellBlockExtendMode(false);
-            clearSelection();
-            e.preventDefault();
-            return;
-          }
-        }
-        // Phase B-2 — Hancom 호환 cell/row/column block 단축키.
-        // F5 = 현재 셀 (3번 연속 = 표 전체), F7 = 칸(열), F8 = 줄(행).
-        // Mac 변환 매핑: ⌘⌥B (cell) / ⌘⌥C (column) / ⌘⌥R (row) /
-        // ⌘⌥T (whole table). 키보드 핸들러에서 둘 다 받음.
-        const isCellBlockKey =
-          e.key === 'F5' ||
-          (e.metaKey && e.altKey && !e.shiftKey && e.key.toLowerCase() === 'b');
-        const isWholeTableKey =
-          e.metaKey && e.altKey && !e.shiftKey && e.key.toLowerCase() === 't';
-        const isColumnBlockKey =
-          e.key === 'F7' ||
-          (e.metaKey && e.altKey && !e.shiftKey && e.key.toLowerCase() === 'c');
-        const isRowBlockKey =
-          e.key === 'F8' ||
-          (e.metaKey && e.altKey && !e.shiftKey && e.key.toLowerCase() === 'r');
-        if (
-          isCellBlockKey ||
-          isWholeTableKey ||
-          isColumnBlockKey ||
-          isRowBlockKey
-        ) {
-          // F5 press counter — reset on any non-F5 key (here we
-          // increment only for F5; ⌘⌥B/C/R/T short-circuit count).
-          if (e.key === 'F5') {
-            const now = performance.now();
-            if (now - f5LastPressRef.current < 600) {
-              f5PressCountRef.current += 1;
-            } else {
-              f5PressCountRef.current = 1;
-            }
-            f5LastPressRef.current = now;
-          } else {
-            f5PressCountRef.current = 0;
-          }
-          if (!c.cell) {
-            // Outside a cell — F5/F7/F8 no-op (Hancom는 본문에선 동작 안 함).
-            e.preventDefault();
-            return;
-          }
-          const ci = c.cell;
-          try {
-            const cells = JSON.parse(
-              doc.getTableCellBboxes(
-                c.sectionIndex,
-                ci.parentParaIndex,
-                ci.controlIndex,
-              ),
-            ) as {
-              cellIdx: number;
-              row: number;
-              col: number;
-              rowSpan: number;
-              colSpan: number;
-              pageIndex: number;
-              x: number;
-              y: number;
-              w: number;
-              h: number;
-            }[];
-            const here = cells.find((x) => x.cellIdx === ci.cellIndex);
-            if (!here) {
-              e.preventDefault();
-              return;
-            }
-            // (anchor, focus) cell pair → refreshCellBlockHighlights
-            // computes the rectangle. Selection state도 업데이트해서
-            // 확장 모드(B-2.5)가 anchor에서 시작하도록 함.
-            let anchorCell = here;
-            let focusCell = here;
-            const f5x3 = isCellBlockKey && f5PressCountRef.current >= 3;
-            if (isWholeTableKey || f5x3) {
-              const minRow = Math.min(...cells.map((x) => x.row));
-              const maxRow = Math.max(
-                ...cells.map((x) => x.row + x.rowSpan - 1),
-              );
-              const minCol = Math.min(...cells.map((x) => x.col));
-              const maxCol = Math.max(
-                ...cells.map((x) => x.col + x.colSpan - 1),
-              );
-              anchorCell =
-                cells.find((x) => x.row === minRow && x.col === minCol) ?? here;
-              focusCell =
-                cells.find(
-                  (x) =>
-                    x.row + x.rowSpan - 1 === maxRow &&
-                    x.col + x.colSpan - 1 === maxCol,
-                ) ?? here;
-              setCellBlockExtendMode(false);
-              f5PressCountRef.current = 0;
-            } else if (isColumnBlockKey) {
-              const cStart = here.col;
-              const cEnd = here.col + here.colSpan - 1;
-              const inCol = cells.filter(
-                (x) => x.col + x.colSpan - 1 >= cStart && x.col <= cEnd,
-              );
-              const minRow = Math.min(...inCol.map((x) => x.row));
-              const maxRow = Math.max(
-                ...inCol.map((x) => x.row + x.rowSpan - 1),
-              );
-              anchorCell = inCol.find((x) => x.row === minRow) ?? here;
-              focusCell =
-                inCol.find((x) => x.row + x.rowSpan - 1 === maxRow) ?? here;
-              setCellBlockExtendMode(false);
-            } else if (isRowBlockKey) {
-              const rStart = here.row;
-              const rEnd = here.row + here.rowSpan - 1;
-              const inRow = cells.filter(
-                (x) => x.row + x.rowSpan - 1 >= rStart && x.row <= rEnd,
-              );
-              const minCol = Math.min(...inRow.map((x) => x.col));
-              const maxCol = Math.max(
-                ...inRow.map((x) => x.col + x.colSpan - 1),
-              );
-              anchorCell = inRow.find((x) => x.col === minCol) ?? here;
-              focusCell =
-                inRow.find((x) => x.col + x.colSpan - 1 === maxCol) ?? here;
-              setCellBlockExtendMode(false);
-            } else if (isCellBlockKey) {
-              // F5×1 = 현재 셀, F5×2 = 확장 모드 진입 (block 그대로).
-              if (f5PressCountRef.current === 2) {
-                setCellBlockExtendMode(true);
-                // Block 자체는 그대로 두고 mode flag만 set.
-              } else {
-                setCellBlockExtendMode(false);
-              }
-            }
-            const anchorCaret = {
-              sectionIndex: c.sectionIndex,
-              paragraphIndex: 0,
-              charOffset: 0,
-              cell: {
-                parentParaIndex: ci.parentParaIndex,
-                controlIndex: ci.controlIndex,
-                cellIndex: anchorCell.cellIdx,
-                cellParaIndex: 0,
-              },
-            };
-            const focusCaret = {
-              sectionIndex: c.sectionIndex,
-              paragraphIndex: 0,
-              charOffset: 0,
-              cell: {
-                parentParaIndex: ci.parentParaIndex,
-                controlIndex: ci.controlIndex,
-                cellIndex: focusCell.cellIdx,
-                cellParaIndex: 0,
-              },
-            };
-            const newSel = { anchor: anchorCaret, focus: focusCaret };
-            caretRef.current = focusCaret;
-            setSelection(newSel);
-            setSelectionRectsByPage({});
-            setSelectedControlBboxes({});
-            refreshCellBlockHighlights(newSel);
-          } catch (err) {
-            console.warn('[studio] F-key cell block failed:', err);
-          }
-          e.preventDefault();
-          return;
-        }
-        // Reset F5 counter on any other key (so non-F5 press breaks
-        // the F5×3 chain). 단, 확장 모드 진행 중인 화살표 키는 카운터
-        // 리셋하지 않음 (몇 번 확장해도 다시 F5 누르면 표 전체로
-        // 즉시 도달 가능하게).
-        if (
-          e.key !== 'F5' &&
-          !(
-            cellBlockExtendModeRef.current &&
-            (e.key === 'ArrowLeft' ||
-              e.key === 'ArrowRight' ||
-              e.key === 'ArrowUp' ||
-              e.key === 'ArrowDown')
-          )
-        ) {
-          f5PressCountRef.current = 0;
-        }
-        // Phase B-1 — 한글 호환 본문 block 단축키 (F3 시리즈).
-        // F3 1× = block mode entry (Shift+arrow와 동등이라 v1 no-op),
-        // F3 2× = 단어 선택, F3 3× = 단락 선택, F3 4× = 문서 전체.
-        // 셀 안 caret이면 fall-through (한글 reflex와 동일).
-        if (e.key === 'F3' && !c.cell) {
-          const now = performance.now();
-          if (now - f3LastPressRef.current < 600) {
-            f3PressCountRef.current += 1;
-          } else {
-            f3PressCountRef.current = 1;
-          }
-          f3LastPressRef.current = now;
-          const count = f3PressCountRef.current;
-          if (count === 2) {
-            const w = findWordBoundsAt(
-              c.sectionIndex,
-              c.paragraphIndex,
-              c.charOffset,
-            );
-            if (w && w.endOffset > w.startOffset) {
-              const start = { ...c, charOffset: w.startOffset };
-              const end = { ...c, charOffset: w.endOffset };
-              caretRef.current = end;
-              setSelection({ anchor: start, focus: end });
-              refreshSelectionRects({ anchor: start, focus: end });
-              refreshActiveFormat();
-            }
-          } else if (count === 3) {
-            try {
-              const len = doc.getParagraphLength(
-                c.sectionIndex,
-                c.paragraphIndex,
-              );
-              const start = { ...c, charOffset: 0 };
-              const end = { ...c, charOffset: len };
-              caretRef.current = end;
-              setSelection({ anchor: start, focus: end });
-              refreshSelectionRects({ anchor: start, focus: end });
-              refreshActiveFormat();
-            } catch {
-              /* ignore */
-            }
-          } else if (count >= 4) {
-            try {
-              const sec = c.sectionIndex;
-              const lastPara = doc.getParagraphCount(sec) - 1;
-              if (lastPara >= 0) {
-                const lastOffset = doc.getParagraphLength(sec, lastPara);
-                const start = {
-                  sectionIndex: sec,
-                  paragraphIndex: 0,
-                  charOffset: 0,
-                };
-                const end = {
-                  sectionIndex: sec,
-                  paragraphIndex: lastPara,
-                  charOffset: lastOffset,
-                };
-                caretRef.current = end;
-                setSelection({ anchor: start, focus: end });
-                refreshSelectionRects({ anchor: start, focus: end });
-                refreshActiveFormat();
-              }
-            } catch {
-              /* ignore */
-            }
-          }
-          // count === 1 은 v1에선 no-op (Shift+arrow가 같은 효과).
-          e.preventDefault();
-          return;
-        }
-        if (e.key !== 'F3') {
-          f3PressCountRef.current = 0;
-        }
-        // Phase B-3 — 표 안 navigation 단축키:
-        //   Tab / Shift+Tab → 다음/이전 셀로 caret 이동
-        //   Ctrl+Tab → 셀 안에 탭 문자 삽입 (insertTextInCell)
-        //   Alt+화살표 → 같은 표 안 row/col 단위 셀 이동
-        //   Shift+ESC → 표 빠져나가기 (caret을 표 다음 본문 단락으로)
-        // 셀 안 caret이 아니면 Tab 같은 키는 본문 동작 (탭 문자
-        // 삽입 등)으로 fall through.
-        if (c.cell) {
-          const ci = c.cell;
-          const moveCaretToCellByCellIdx = (newCellIdx: number): void => {
-            const newCaret = {
-              sectionIndex: c.sectionIndex,
-              paragraphIndex: 0,
-              charOffset: 0,
-              cell: { ...ci, cellIndex: newCellIdx, cellParaIndex: 0 },
-            };
-            caretRef.current = newCaret;
-            setSelection({ anchor: newCaret, focus: newCaret });
-            setSelectionRectsByPage({});
-            setCellBlockHighlights({});
-            refreshCursorRect();
-            refreshActiveFormat();
-          };
-          // Phase B-4 — 표 편집 단축키 (셀 안 caret 또는 셀 block 활성).
-          // 줄/칸 추가·삭제 + 셀 합치기·나누기 라이브러리 API에 매핑.
-          //   Ctrl+Enter → 현재 행 아래에 줄 추가 (insertTableRow below)
-          //   Ctrl+Backspace → 현재 행 삭제 (deleteTableRow)
-          //   Alt+Insert → 줄 추가 (Hancom: 셀 block 종류에 따라 row/col,
-          //     v1은 row만 — Ctrl+Enter와 동일 동작)
-          //   Alt+Delete → 줄 삭제 (Hancom: row/col, v1은 row만)
-          //   M (cell-block 활성) → 셀 합치기 (mergeTableCells)
-          //   S (cell-block 활성) → 셀 나누기 (splitTableCell)
-          const isInsertRow =
-            (e.ctrlKey && !e.metaKey && !e.altKey && e.key === 'Enter') ||
-            (e.altKey && !e.metaKey && !e.ctrlKey && e.key === 'Insert');
-          const isDeleteRow =
-            (e.ctrlKey && !e.metaKey && !e.altKey && e.key === 'Backspace') ||
-            (e.altKey && !e.metaKey && !e.ctrlKey && e.key === 'Delete');
-          if (isInsertRow || isDeleteRow) {
-            try {
-              const cells = JSON.parse(
-                doc.getTableCellBboxes(
-                  c.sectionIndex,
-                  ci.parentParaIndex,
-                  ci.controlIndex,
-                ),
-              ) as { cellIdx: number; row: number; col: number }[];
-              const here = cells.find((x) => x.cellIdx === ci.cellIndex);
-              if (here) {
-                if (isInsertRow) {
-                  doc.insertTableRow(
-                    c.sectionIndex,
-                    ci.parentParaIndex,
-                    ci.controlIndex,
-                    here.row,
-                    true /* below */,
-                  );
-                } else {
-                  doc.deleteTableRow(
-                    c.sectionIndex,
-                    ci.parentParaIndex,
-                    ci.controlIndex,
-                    here.row,
-                  );
-                }
-                refreshAfterMutation({ syncCaret: false });
-              }
-            } catch (err) {
-              console.warn('[studio] table row op failed:', err);
-            }
-            e.preventDefault();
-            return;
-          }
-          // 셀 합치기 / 나누기 — 셀-block 활성 (selection에 다른 셀
-          // 두 개의 anchor·focus가 같은 표) 시에만 동작.
-          if (
-            (e.key === 'm' ||
-              e.key === 'M' ||
-              e.key === 's' ||
-              e.key === 'S') &&
-            !e.metaKey &&
-            !e.ctrlKey &&
-            !e.altKey
-          ) {
-            const cur = selectionRef.current;
-            if (
-              cur &&
-              cur.anchor.cell &&
-              cur.focus.cell &&
-              cur.anchor.cell.parentParaIndex ===
-                cur.focus.cell.parentParaIndex &&
-              cur.anchor.cell.controlIndex === cur.focus.cell.controlIndex
-            ) {
-              try {
-                const ac = cur.anchor.cell;
-                const fc = cur.focus.cell;
-                const cells = JSON.parse(
-                  doc.getTableCellBboxes(
-                    cur.anchor.sectionIndex,
-                    ac.parentParaIndex,
-                    ac.controlIndex,
-                  ),
-                ) as {
-                  cellIdx: number;
-                  row: number;
-                  col: number;
-                  rowSpan: number;
-                  colSpan: number;
-                }[];
-                const acCell = cells.find((x) => x.cellIdx === ac.cellIndex);
-                const fcCell = cells.find((x) => x.cellIdx === fc.cellIndex);
-                if (acCell && fcCell) {
-                  const startRow = Math.min(acCell.row, fcCell.row);
-                  const endRow = Math.max(
-                    acCell.row + acCell.rowSpan - 1,
-                    fcCell.row + fcCell.rowSpan - 1,
-                  );
-                  const startCol = Math.min(acCell.col, fcCell.col);
-                  const endCol = Math.max(
-                    acCell.col + acCell.colSpan - 1,
-                    fcCell.col + fcCell.colSpan - 1,
-                  );
-                  if (e.key === 'm' || e.key === 'M') {
-                    // M: 셀 합치기. 라이브러리는 startRow/Col~endRow/Col
-                    // rectangle만 받음. anchor·focus rectangle은 처리.
-                    // 불연속 셀 (Ctrl+클릭 추가본)은 mergeTableCells 한
-                    // 호출에 포함 불가 — discontiguous cells가 rectangle
-                    // 안에 들어오는 경우만 자동 포함됨. 그 외엔 무시.
-                    doc.mergeTableCells(
-                      cur.anchor.sectionIndex,
-                      ac.parentParaIndex,
-                      ac.controlIndex,
-                      startRow,
-                      startCol,
-                      endRow,
-                      endCol,
-                    );
-                  } else {
-                    // S: 셀 나누기 — anchor/focus rectangle의 모든 셀에
-                    // 1×1 split 적용. 불연속 셀(Ctrl+클릭)도 동일하게
-                    // per-cell split 호출.
-                    const targetCells = cells.filter((cellInfo) => {
-                      const inRect =
-                        cellInfo.row + cellInfo.rowSpan - 1 >= startRow &&
-                        cellInfo.row <= endRow &&
-                        cellInfo.col + cellInfo.colSpan - 1 >= startCol &&
-                        cellInfo.col <= endCol;
-                      const inDiscontig = discontiguousCellsRef.current.some(
-                        (d) =>
-                          d.parentParaIndex === ac.parentParaIndex &&
-                          d.controlIndex === ac.controlIndex &&
-                          d.cellIndex === cellInfo.cellIdx,
-                      );
-                      return inRect || inDiscontig;
-                    });
-                    for (const tc of targetCells) {
-                      doc.splitTableCell(
-                        cur.anchor.sectionIndex,
-                        ac.parentParaIndex,
-                        ac.controlIndex,
-                        tc.row,
-                        tc.col,
-                      );
-                    }
-                  }
-                  refreshAfterMutation({ syncCaret: false });
-                  setCellBlockHighlights({});
-                  setSelection(null);
-                  setCellBlockExtendMode(false);
-                  discontiguousCellsRef.current = [];
-                }
-              } catch (err) {
-                console.warn('[studio] cell merge/split failed:', err);
-              }
-              e.preventDefault();
-              return;
-            }
-          }
-          if (e.key === 'Tab' && !e.ctrlKey && !e.altKey) {
-            try {
-              const cells = JSON.parse(
-                doc.getTableCellBboxes(
-                  c.sectionIndex,
-                  ci.parentParaIndex,
-                  ci.controlIndex,
-                ),
-              ) as { cellIdx: number; row: number; col: number }[];
-              // Row-major sort: row asc, col asc.
-              cells.sort((a, b) =>
-                a.row !== b.row ? a.row - b.row : a.col - b.col,
-              );
-              const idx = cells.findIndex((x) => x.cellIdx === ci.cellIndex);
-              if (idx >= 0) {
-                const dir = e.shiftKey ? -1 : 1;
-                const nextIdx = idx + dir;
-                if (nextIdx >= 0 && nextIdx < cells.length) {
-                  moveCaretToCellByCellIdx(cells[nextIdx].cellIdx);
-                }
-                // Edge of table: stay (Hancom creates a new row in
-                // some cases; v1 doesn't auto-grow).
-              }
-            } catch (err) {
-              console.warn('[studio] cell Tab nav failed:', err);
-            }
-            e.preventDefault();
-            return;
-          }
-          if (e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
-            const arrowDir =
-              e.key === 'ArrowLeft'
-                ? { dr: 0, dc: -1 }
-                : e.key === 'ArrowRight'
-                  ? { dr: 0, dc: 1 }
-                  : e.key === 'ArrowUp'
-                    ? { dr: -1, dc: 0 }
-                    : e.key === 'ArrowDown'
-                      ? { dr: 1, dc: 0 }
-                      : null;
-            if (arrowDir) {
-              try {
-                const cells = JSON.parse(
-                  doc.getTableCellBboxes(
-                    c.sectionIndex,
-                    ci.parentParaIndex,
-                    ci.controlIndex,
-                  ),
-                ) as {
-                  cellIdx: number;
-                  row: number;
-                  col: number;
-                  rowSpan: number;
-                  colSpan: number;
-                }[];
-                const here = cells.find((x) => x.cellIdx === ci.cellIndex);
-                if (here) {
-                  const targetR = here.row + arrowDir.dr * here.rowSpan;
-                  const targetC = here.col + arrowDir.dc * here.colSpan;
-                  // 가장 가까운 셀 (병합 셀이면 그 셀의 row/col 시작점이
-                  // targetR/targetC를 포함하는지 확인).
-                  const next = cells.find(
-                    (x) =>
-                      targetR >= x.row &&
-                      targetR <= x.row + x.rowSpan - 1 &&
-                      targetC >= x.col &&
-                      targetC <= x.col + x.colSpan - 1,
-                  );
-                  if (next) moveCaretToCellByCellIdx(next.cellIdx);
-                }
-              } catch (err) {
-                console.warn('[studio] Alt+arrow cell nav failed:', err);
-              }
-              e.preventDefault();
-              return;
-            }
-          }
-          if (e.key === 'Escape' && e.shiftKey) {
-            // 표 빠져나가기 — caret을 표가 속한 단락 바로 다음 단락의
-            // 시작으로 (없으면 같은 단락 끝). cell-block highlight 정리.
-            const sec = c.sectionIndex;
-            const parentPara = ci.parentParaIndex;
-            try {
-              const paraCount = doc.getParagraphCount(sec);
-              const nextPara =
-                parentPara + 1 < paraCount
-                  ? { paragraphIndex: parentPara + 1, charOffset: 0 }
-                  : {
-                      paragraphIndex: parentPara,
-                      charOffset: doc.getParagraphLength(sec, parentPara),
-                    };
-              const newCaret = {
-                sectionIndex: sec,
-                paragraphIndex: nextPara.paragraphIndex,
-                charOffset: nextPara.charOffset,
-              };
-              caretRef.current = newCaret;
-              setSelection({ anchor: newCaret, focus: newCaret });
-              setSelectionRectsByPage({});
-              setCellBlockHighlights({});
-              setSelectedControlBboxes({});
-              refreshCursorRect();
-              refreshActiveFormat();
-            } catch (err) {
-              console.warn('[studio] Shift+Esc exit table failed:', err);
-            }
-            e.preventDefault();
-            return;
-          }
-        }
-        if (e.key === 'Home') {
-          // Cmd/Ctrl + Home → jump to start of document (chunk 12).
-          if (primaryModifier(e)) {
-            commitCaretMove(
-              { sectionIndex: 0, paragraphIndex: 0, charOffset: 0 },
-              c,
-              e.shiftKey,
-              sel0,
-            );
-            scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
-            e.preventDefault();
-            return;
-          }
-          // Plain Home → start of current line/paragraph.
-          commitCaretMove({ ...c, charOffset: 0 }, c, e.shiftKey, sel0);
-          e.preventDefault();
-          return;
-        }
-        if (e.key === 'End') {
-          // Cmd/Ctrl + End → jump to end of document.
-          if (primaryModifier(e)) {
-            try {
-              const lastSec = doc.getSectionCount() - 1;
-              const lastPara = doc.getParagraphCount(lastSec) - 1;
-              const lastOffset = doc.getParagraphLength(lastSec, lastPara);
-              commitCaretMove(
-                {
-                  sectionIndex: lastSec,
-                  paragraphIndex: lastPara,
-                  charOffset: lastOffset,
-                },
-                c,
-                e.shiftKey,
-                sel0,
-              );
-              const scroll = scrollRef.current;
-              if (scroll) {
-                scroll.scrollTo({
-                  top: scroll.scrollHeight,
-                  behavior: 'smooth',
-                });
-              }
-            } catch (err) {
-              console.warn('[studio] cmd+end nav failed:', err);
-            }
-            e.preventDefault();
-            return;
-          }
-          // Plain End → end of current paragraph.
-          try {
-            const len = doc.getParagraphLength(
-              c.sectionIndex,
-              c.paragraphIndex,
-            );
-            commitCaretMove({ ...c, charOffset: len }, c, e.shiftKey, sel0);
-          } catch {
-            /* keep caret */
-          }
-          e.preventDefault();
-          return;
-        }
-        if (e.key === 'PageUp' || e.key === 'PageDown') {
-          // Page Up/Down — scroll the viewer by one viewport height. We
-          // don't try to move the caret in lockstep (text-flow heuristics
-          // would be needed); the user can click to reposition after.
-          const scroll = scrollRef.current;
-          if (scroll) {
-            const delta =
-              e.key === 'PageDown' ? scroll.clientHeight : -scroll.clientHeight;
-            scroll.scrollBy({ top: delta, behavior: 'smooth' });
-          }
-          e.preventDefault();
-          return;
-        }
-
-        // Undo / Redo: Cmd/Ctrl + Z (undo), Cmd/Ctrl + Shift + Z (redo).
-        // Cmd+Y is a Windows alternative for redo — accept it too.
-        if (primaryModifier(e) && !e.altKey) {
-          const k = e.key.toLowerCase();
-          if (k === 'z') {
-            if (e.shiftKey) {
-              redo();
-            } else {
-              undo();
-            }
-            e.preventDefault();
-            return;
-          }
-          if (k === 'y' && !e.shiftKey) {
-            redo();
-            e.preventDefault();
-            return;
-          }
-          // Clipboard shortcuts. Use void to discard the promise — keydown
-          // returns synchronously; the actual op completes asynchronously.
-          if (!e.shiftKey && k === 'c') {
-            void copySelection();
-            e.preventDefault();
-            return;
-          }
-          if (!e.shiftKey && k === 'x') {
-            void cutSelection();
-            e.preventDefault();
-            return;
-          }
-          if (!e.shiftKey && k === 'v') {
-            void pasteAtCaret();
-            e.preventDefault();
-            return;
-          }
-          if (!e.shiftKey && k === 'f') {
-            openFind();
-            e.preventDefault();
-            return;
-          }
-          if (!e.shiftKey && k === 'h') {
-            openReplace();
-            e.preventDefault();
-            return;
-          }
-          // Cmd/Ctrl+A — select all body text in the active section.
-          // Without preventDefault the browser falls back to selecting
-          // every text node in the chrome (toolbar, sidebar, status bar);
-          // user-visible symptom is "the whole program flashes blue."
-          // We restrict to section 0 because the IR's selection model is
-          // single-section. Multi-section docs are rare in practice.
-          if (!e.shiftKey && k === 'a') {
-            try {
-              const sec = c.sectionIndex;
-              const lastPara = doc.getParagraphCount(sec) - 1;
-              if (lastPara < 0) {
-                e.preventDefault();
-                return;
-              }
-              const lastOffset = doc.getParagraphLength(sec, lastPara);
-              const start = {
-                sectionIndex: sec,
-                paragraphIndex: 0,
-                charOffset: 0,
-              };
-              const end = {
-                sectionIndex: sec,
-                paragraphIndex: lastPara,
-                charOffset: lastOffset,
-              };
-              caretRef.current = end;
-              setSelection({ anchor: start, focus: end });
-              refreshSelectionRects({ anchor: start, focus: end });
-              refreshCursorRect();
-              refreshActiveFormat();
-            } catch (err) {
-              console.warn('[studio] select-all failed:', err);
-            }
-            e.preventDefault();
-            return;
-          }
-        }
-
-        // Format shortcuts: Cmd/Ctrl + B/I/U toggle the current paragraph.
-        // Must come before the generic modifier early-return.
-        if (primaryModifier(e) && !e.altKey && !e.shiftKey) {
-          const k = e.key.toLowerCase();
-          if (k === 'b' || k === 'i' || k === 'u') {
-            toggleCharFormat(
-              k === 'b' ? 'bold' : k === 'i' ? 'italic' : 'underline',
-            );
-            e.preventDefault();
-            return;
-          }
-        }
-
-        // Tab / Shift+Tab — when the caret is inside a table cell, jump
-        // to the next / previous cell. Outside a cell we let the default
-        // (focus traversal) happen.
-        if (
-          e.key === 'Tab' &&
-          c.cell &&
-          !e.metaKey &&
-          !e.ctrlKey &&
-          !e.altKey
-        ) {
-          const dir = e.shiftKey ? -1 : 1;
-          try {
-            const dims = JSON.parse(
-              doc.getTableDimensions(
-                c.sectionIndex,
-                c.cell.parentParaIndex,
-                c.cell.controlIndex,
-              ),
-            ) as { rowCount: number; colCount: number; cellCount: number };
-            const total = dims.cellCount;
-            const next = (((c.cell.cellIndex + dir) % total) + total) % total;
-            const nextCaret = {
-              ...c,
-              charOffset: 0,
-              cell: { ...c.cell, cellIndex: next, cellParaIndex: 0 },
-            };
-            caretRef.current = nextCaret;
-            refreshCursorRect();
-          } catch {
-            /* table not available — fall through */
-          }
-          e.preventDefault();
-          return;
-        }
-
-        // Don't intercept other browser shortcuts (Ctrl+S, Cmd+R, etc.).
-        // 여기는 platform-aware primaryModifier가 아니라 원래 OR 패턴
-        // 유지 — "어떤 modifier든 잡혀있으면 typing으로 처리하지 말고
-        // 흘려보낸다"가 의도. Mac에서 Ctrl+A를 잘못 'a' 입력으로
-        // 해석하는 회귀 방지.
-        if (e.metaKey || e.ctrlKey || e.altKey) return;
-
-        if (e.key === 'Backspace') {
-          if (deleteSelectionIfAny()) {
-            refreshAfterMutation();
-          } else if (c.charOffset > 0) {
-            deleteAtCaret(c.charOffset - 1, 1);
-            refreshAfterMutation({ syncCaret: !c.cell });
-          }
-          e.preventDefault();
-        } else if (e.key === 'Delete') {
-          if (deleteSelectionIfAny()) {
-            refreshAfterMutation();
-          } else {
-            try {
-              deleteAtCaret(c.charOffset, 1);
-              refreshAfterMutation({ syncCaret: !c.cell });
-            } catch {
-              /* ignore — past end */
-            }
-          }
-          e.preventDefault();
-        } else if (e.key === 'Enter') {
-          if (deleteSelectionIfAny()) {
-            // After delete, caret is at the start of the previous selection.
-            // Selection currently can't span into a cell (v1) so we use the
-            // outer insertText here and re-read the IR caret.
-            const cc = JSON.parse(
-              doc.getCaretPosition(),
-            ) as typeof caretRef.current;
-            doc.insertText(
-              cc.sectionIndex,
-              cc.paragraphIndex,
-              cc.charOffset,
-              '\n',
-            );
-          } else {
-            insertAtCaret('\n');
-          }
-          refreshAfterMutation({ syncCaret: !c.cell });
-          e.preventDefault();
-        } else if (
-          e.key === '/' &&
-          !c.cell &&
-          c.charOffset === 0 &&
-          (() => {
-            try {
-              return (
-                doc.getParagraphLength(c.sectionIndex, c.paragraphIndex) === 0
-              );
-            } catch {
-              return false;
-            }
-          })()
-        ) {
-          // chunk 64 — slash menu. Opening on an empty body paragraph
-          // means the literal `/` never enters the IR. The menu's
-          // command picker calls back into ViewerHandle methods
-          // (applyStyle / toggleList / insertPageBreak) that already
-          // know how to operate on the current caret.
-          const rect = cursorRect;
-          if (rect) {
-            const pageEl = pageRefsRef.current[rect.pageIndex];
-            const pr = pageEl?.getBoundingClientRect();
-            const x = (pr?.left ?? 0) + rect.x * zoom;
-            const y = (pr?.top ?? 0) + (rect.y + rect.height) * zoom + 4;
-            setSlashMenu({
-              x,
-              y,
-              sectionIndex: c.sectionIndex,
-              paragraphIndex: c.paragraphIndex,
-            });
-            e.preventDefault();
-            return;
-          }
-          // No cursor rect yet (rare) — fall through to literal `/`.
-        }
-        if (e.key.length === 1) {
-          // Single printable char, no modifier — ASCII fast path. Korean
-          // IME composition is handled by compositionend; we won't reach
-          // this branch with isComposing=true.
-          if (deleteSelectionIfAny()) {
-            const cc = JSON.parse(
-              doc.getCaretPosition(),
-            ) as typeof caretRef.current;
-            doc.insertText(
-              cc.sectionIndex,
-              cc.paragraphIndex,
-              cc.charOffset,
-              e.key,
-            );
-          } else {
-            insertAtCaret(e.key);
-          }
-          refreshAfterMutation({ syncCaret: !c.cell });
-          e.preventDefault();
-        }
-      },
-      [
-        refreshAfterMutation,
-        refreshCursorRect,
-        refreshActiveFormat,
-        toggleCharFormat,
-        clearSelection,
-        refreshSelectionRects,
-        deleteSelectionIfAny,
-        setSelection,
-        undo,
-        redo,
-        copySelection,
-        cutSelection,
-        pasteAtCaret,
-        openFind,
-        openReplace,
-        stepWordOffset,
-        insertAtCaret,
-        deleteAtCaret,
-        cursorRect,
-        pageDims,
-        pageCount,
-        commitCaretMove,
-        zoom,
-        marqueeMode,
-        setCellBlockExtendMode,
-      ],
-    );
+    const handleKeyDown = useKeyboardShortcuts({
+      docRef,
+      caretRef,
+      selectionRef,
+      cellBlockExtendModeRef,
+      marqueeStartRef,
+      draggingRef,
+      dragCleanupRef,
+      cellDragRef,
+      dragOriginSelectionRef,
+      f5LastPressRef,
+      f5PressCountRef,
+      f3LastPressRef,
+      f3PressCountRef,
+      discontiguousCellsRef,
+      scrollRef,
+      pageRefsRef,
+      setSelection,
+      setSelectionRectsByPage,
+      setSelectedControlBboxes,
+      setCellBlockHighlights,
+      setCellBlockExtendMode,
+      setMarqueeMode,
+      setMarqueeRect,
+      setSlashMenu,
+      cursorRect,
+      pageDims,
+      pageCount,
+      zoom,
+      marqueeMode,
+      refreshAfterMutation,
+      refreshCursorRect,
+      refreshActiveFormat,
+      refreshCellBlockHighlights,
+      refreshSelectionRects,
+      toggleCharFormat,
+      clearSelection,
+      deleteSelectionIfAny,
+      undo,
+      redo,
+      copySelection,
+      cutSelection,
+      pasteAtCaret,
+      openFind,
+      openReplace,
+      stepWordOffset,
+      insertAtCaret,
+      deleteAtCaret,
+      commitCaretMove,
+      findWordBoundsAt,
+    });
 
     const handleCompositionStart = useCallback(() => {
       composingRef.current = true;
@@ -5913,876 +3513,46 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
      *   1 — caret-only (existing)
      *   2 — select the word at the click position
      *   3 — select the entire paragraph
+     *
+     * R1.5 + R1.6 — handlePageMouseDown (~785 라인 selection 모델 +
+     * cell drag) + handlePageContextMenu (~73 라인) → usePageMouseHandlers.
      */
-    const handlePageMouseDown = useCallback(
-      (idx: number, e: ReactMouseEvent<HTMLDivElement>): void => {
-        if (e.button !== 0) return; // primary only
-        scrollRef.current?.focus({ preventScroll: true });
-        // Phase D 2차 — 마퀴 모드 활성 시 텍스트/셀 selection 대신
-        // 사각형 마퀴를 그림. mousedown은 시작점 저장만 하고 window
-        // 레벨 listener에서 mousemove/up 처리.
-        if (marqueeMode) {
-          const scroller = scrollRef.current;
-          if (!scroller) return;
-          const sr = scroller.getBoundingClientRect();
-          const startX = e.clientX - sr.left + scroller.scrollLeft;
-          const startY = e.clientY - sr.top + scroller.scrollTop;
-          marqueeStartRef.current = { x: startX, y: startY };
-          setMarqueeRect({ x: startX, y: startY, w: 0, h: 0 });
-          setSelectedControlBboxes({});
-          const onMove = (ev: MouseEvent): void => {
-            if (!marqueeStartRef.current || !scrollRef.current) return;
-            const sr2 = scrollRef.current.getBoundingClientRect();
-            const cx = ev.clientX - sr2.left + scrollRef.current.scrollLeft;
-            const cy = ev.clientY - sr2.top + scrollRef.current.scrollTop;
-            const sx = marqueeStartRef.current.x;
-            const sy = marqueeStartRef.current.y;
-            setMarqueeRect({
-              x: Math.min(sx, cx),
-              y: Math.min(sy, cy),
-              w: Math.abs(cx - sx),
-              h: Math.abs(cy - sy),
-            });
-          };
-          const onUp = (): void => {
-            document.removeEventListener('mousemove', onMove);
-            document.removeEventListener('mouseup', onUp);
-            const m = marqueeStartRef.current;
-            marqueeStartRef.current = null;
-            // 끝났으면 마퀴 영역과 겹치는 표 enumerate.
-            const final = (() => {
-              if (!m || !scrollRef.current) return null;
-              const sr2 = scrollRef.current.getBoundingClientRect();
-              return {
-                left: m.x,
-                top: m.y,
-                right: m.x,
-                bottom: m.y,
-                _sr: sr2,
-              };
-            })();
-            void final;
-            // marqueeRect의 최종값을 다시 읽기 위해 setMarqueeRect의
-            // updater pattern 사용.
-            setMarqueeRect((curr) => {
-              if (!curr) return null;
-              try {
-                const doc = docRef.current;
-                if (!doc) return null;
-                const paraCount = doc.getParagraphCount(0);
-                const grouped: Record<
-                  number,
-                  { x: number; y: number; width: number; height: number }[]
-                > = {};
-                for (let p = 0; p < paraCount; p++) {
-                  let raw: string;
-                  try {
-                    raw = doc.getControlTextPositions(0, p);
-                  } catch {
-                    continue;
-                  }
-                  let entries: {
-                    controlIdx?: number;
-                    controlIndex?: number;
-                  }[];
-                  try {
-                    entries = JSON.parse(raw);
-                    if (!Array.isArray(entries)) continue;
-                  } catch {
-                    continue;
-                  }
-                  for (const ent of entries) {
-                    const ci =
-                      typeof ent.controlIdx === 'number'
-                        ? ent.controlIdx
-                        : typeof ent.controlIndex === 'number'
-                          ? ent.controlIndex
-                          : -1;
-                    if (ci < 0) continue;
-                    let bbox: {
-                      pageIndex: number;
-                      x: number;
-                      y: number;
-                      width: number;
-                      height: number;
-                    };
-                    try {
-                      bbox = JSON.parse(doc.getTableBBox(0, p, ci));
-                    } catch {
-                      continue; // 표 아님 (이미지/도형은 lib L-008 blocker)
-                    }
-                    // bbox는 페이지 page-local 좌표. 마퀴 rect와 비교
-                    // 하려면 페이지 element의 scrollRef-relative 위치를
-                    // 더해야 함. pageRefsRef를 사용.
-                    const pageEl = pageRefsRef.current[bbox.pageIndex];
-                    if (!pageEl || !scrollRef.current) continue;
-                    const pr = pageEl.getBoundingClientRect();
-                    const sr3 = scrollRef.current.getBoundingClientRect();
-                    const tableLeft =
-                      pr.left -
-                      sr3.left +
-                      scrollRef.current.scrollLeft +
-                      bbox.x * zoom;
-                    const tableTop =
-                      pr.top -
-                      sr3.top +
-                      scrollRef.current.scrollTop +
-                      bbox.y * zoom;
-                    const tableRight = tableLeft + bbox.width * zoom;
-                    const tableBottom = tableTop + bbox.height * zoom;
-                    const overlap =
-                      tableLeft < curr.x + curr.w &&
-                      tableRight > curr.x &&
-                      tableTop < curr.y + curr.h &&
-                      tableBottom > curr.y;
-                    if (overlap) {
-                      (grouped[bbox.pageIndex] ??= []).push({
-                        x: bbox.x,
-                        y: bbox.y,
-                        width: bbox.width,
-                        height: bbox.height,
-                      });
-                    }
-                  }
-                }
-                setSelectedControlBboxes(grouped);
-              } catch (err) {
-                console.warn('[studio] marquee enumerate failed:', err);
-              }
-              return null; // 마퀴 rect 제거 (highlight는 selectedControlBboxes로 표시)
-            });
-          };
-          document.addEventListener('mousemove', onMove);
-          document.addEventListener('mouseup', onUp);
-          e.preventDefault();
-          return;
-        }
-        // Snapshot caret BEFORE we mutate caretRef below — Shift+click
-        // without prior selection anchors at this position.
-        const priorCaret = { ...caretRef.current };
-        const result = hitTestAt(idx, e.clientX, e.clientY, e.currentTarget);
-        if (!result) return;
-        // Cell info present when the click lands inside a table cell.
-        // Phase E: cellPath이 hit 결과에 있으면 셀 (top-level + nested 모두)
-        // 그게 1단계면 기존 동작, 2단계 이상이면 ByPath API 사용 분기.
-        const cell =
-          result.controlIndex !== undefined &&
-          result.cellIndex !== undefined &&
-          result.cellParaIndex !== undefined &&
-          result.parentParaIndex !== undefined
-            ? {
-                parentParaIndex: result.parentParaIndex,
-                controlIndex: result.controlIndex,
-                cellIndex: result.cellIndex,
-                cellParaIndex: result.cellParaIndex,
-                path: result.cellPath,
-              }
-            : undefined;
-        const baseCaret = {
-          sectionIndex: result.sectionIndex,
-          paragraphIndex: result.paragraphIndex,
-          charOffset: result.charOffset,
-          cell,
-        };
-        // Cell-internal drag selection (v1). When mousedown lands in a
-        // cell we initialize anchor=focus=baseCaret with cell context
-        // and enable drag scoped to that cell. Cross-cell drag is
-        // out-of-scope (focus stays in the same cell + same cellParaIndex
-        // — see applyPointerToSelection's cellDragRef branch). We still
-        // skip the body-level double/triple-click handlers below since
-        // word/paragraph selection inside a cell isn't wired yet.
-        if (cell) {
-          // Phase D — Cmd(Mac) / Ctrl(Win) +click on a cell adds it to
-          // the existing cell-block highlights (불연속 셀 추가). 같은
-          // 표 안의 기존 block에 추가만 하고 anchor/focus는 안 건드림.
-          // Mac에서는 Ctrl+click이 secondary click (= 우클릭)으로
-          // 변환되므로 ctrl 단독은 contextmenu로 빠지고 여기 안 옴 —
-          // primaryModifier(e)는 Mac은 metaKey, Win은 ctrlKey만 true.
-          const isDiscontiguousAdd =
-            primaryModifier(e) &&
-            !e.altKey &&
-            !e.shiftKey &&
-            (() => {
-              const cur = selectionRef.current;
-              return Boolean(
-                cur &&
-                cur.anchor.cell &&
-                cur.focus.cell &&
-                cur.anchor.cell.parentParaIndex === cell.parentParaIndex &&
-                cur.anchor.cell.controlIndex === cell.controlIndex,
-              );
-            })();
-          if (isDiscontiguousAdd) {
-            const docNow = docRef.current;
-            if (docNow) {
-              try {
-                const cells = JSON.parse(
-                  docNow.getTableCellBboxes(
-                    baseCaret.sectionIndex,
-                    cell.parentParaIndex,
-                    cell.controlIndex,
-                  ),
-                ) as {
-                  cellIdx: number;
-                  pageIndex: number;
-                  x: number;
-                  y: number;
-                  w: number;
-                  h: number;
-                }[];
-                const target = cells.find((x) => x.cellIdx === cell.cellIndex);
-                if (target) {
-                  setCellBlockHighlights((prev) => {
-                    const arr = prev[target.pageIndex] ?? [];
-                    const exists = arr.some(
-                      (b) =>
-                        Math.abs(b.x - target.x) < 0.5 &&
-                        Math.abs(b.y - target.y) < 0.5,
-                    );
-                    if (exists) return prev;
-                    return {
-                      ...prev,
-                      [target.pageIndex]: [
-                        ...arr,
-                        {
-                          x: target.x,
-                          y: target.y,
-                          width: target.w,
-                          height: target.h,
-                        },
-                      ],
-                    };
-                  });
-                  // ops iteration 용 ref에도 추가 (dedupe).
-                  const ref = discontiguousCellsRef.current;
-                  const dup = ref.some(
-                    (x) =>
-                      x.parentParaIndex === cell.parentParaIndex &&
-                      x.controlIndex === cell.controlIndex &&
-                      x.cellIndex === cell.cellIndex,
-                  );
-                  if (!dup) {
-                    discontiguousCellsRef.current = [...ref, cell];
-                  }
-                }
-              } catch (err) {
-                console.warn('[studio] discontiguous cell add failed:', err);
-              }
-            }
-            // Discontiguous selection은 visual-only. drag는 비활성.
-            cellDragRef.current = null;
-            draggingRef.current = false;
-            return;
-          }
-          // Plain click in cell — reset discontiguous list.
-          discontiguousCellsRef.current = [];
-          caretRef.current = baseCaret;
-          if (result.cursorRect) {
-            setCursorRect(result.cursorRect);
-          } else {
-            refreshCursorRect();
-          }
-          refreshActiveFormat();
-          const initSel = { anchor: baseCaret, focus: baseCaret };
-          setSelection(initSel);
-          setSelectionRectsByPage({});
-          setCellBlockHighlights({});
-          setSelectedControlBboxes({});
-          cellDragRef.current = cell;
-          cellDragStickyRef.current = false;
-          dragOriginSelectionRef.current = null;
-          draggingRef.current = true;
-          // Fall through to the shared drag listener attachment below
-          // (skip body-only word/paragraph + shift-click handling).
-        } else {
-          cellDragRef.current = null;
-          cellDragStickyRef.current = false;
-        }
-        if (!cell && e.detail === 3) {
-          // Triple click → entire paragraph.
-          const doc = docRef.current;
-          if (doc) {
-            try {
-              const len = doc.getParagraphLength(
-                baseCaret.sectionIndex,
-                baseCaret.paragraphIndex,
-              );
-              const start = { ...baseCaret, charOffset: 0 };
-              const end = { ...baseCaret, charOffset: len };
-              caretRef.current = end;
-              setSelection({ anchor: start, focus: end });
-              refreshSelectionRects({ anchor: start, focus: end });
-              refreshCursorRect();
-              refreshActiveFormat();
-              draggingRef.current = false;
-              return;
-            } catch {
-              /* fall through to single-click default */
-            }
-          }
-        }
-        if (!cell && e.detail === 2) {
-          // Double click → word at offset.
-          const w = findWordBoundsAt(
-            baseCaret.sectionIndex,
-            baseCaret.paragraphIndex,
-            baseCaret.charOffset,
-          );
-          if (w && w.endOffset > w.startOffset) {
-            const start = { ...baseCaret, charOffset: w.startOffset };
-            const end = { ...baseCaret, charOffset: w.endOffset };
-            caretRef.current = end;
-            setSelection({ anchor: start, focus: end });
-            refreshSelectionRects({ anchor: start, focus: end });
-            refreshCursorRect();
-            refreshActiveFormat();
-            draggingRef.current = false;
-            return;
-          }
-        }
-        if (!cell) {
-          caretRef.current = baseCaret;
-          if (result.cursorRect) {
-            setCursorRect(result.cursorRect);
-          } else {
-            refreshCursorRect();
-          }
-          refreshActiveFormat();
-          // Shift+click extends the existing selection (or creates one
-          // anchored at the previous caret) — matches Word/한컴/PDF readers.
-          // Plain click resets the selection.
-          const sel0 = selectionRef.current;
-          const initSel =
-            e.shiftKey && sel0
-              ? { anchor: sel0.anchor, focus: baseCaret }
-              : e.shiftKey
-                ? { anchor: priorCaret, focus: baseCaret }
-                : { anchor: baseCaret, focus: baseCaret };
-          // Capture the pre-drag selection so Esc can revert.
-          dragOriginSelectionRef.current = e.shiftKey && sel0 ? sel0 : null;
-          setSelection(initSel);
-          if (e.shiftKey) {
-            refreshSelectionRects(initSel);
-          } else {
-            setSelectionRectsByPage({});
-          }
-          // New drag begins: drop any control bboxes / cell-block
-          // highlights from a prior drag, exit cell-block extension mode.
-          setSelectedControlBboxes({});
-          setCellBlockHighlights({});
-          setCellBlockExtendMode(false);
-          draggingRef.current = true;
-        }
-
-        // PDF-style drag: attach window-level listeners so the drag survives
-        // (a) crossing the gap between pages, (b) leaving the scroll
-        // container, and (c) mouseup outside any page. Without these, the
-        // per-page `onMouseLeave` would prematurely commit the selection
-        // the moment the cursor left the originating page.
-        const lastClient = { x: e.clientX, y: e.clientY };
-        let autoScrollRaf: number | null = null;
-        const AUTO_SCROLL_ZONE = 36; // px from edge that triggers scroll
-        const AUTO_SCROLL_MAX_SPEED = 24; // px per frame at edge
-        const tickAutoScroll = (): void => {
-          autoScrollRaf = null;
-          if (!draggingRef.current) return;
-          const scroller = scrollRef.current;
-          if (!scroller) return;
-          const sr = scroller.getBoundingClientRect();
-          let dy = 0;
-          if (lastClient.y < sr.top + AUTO_SCROLL_ZONE) {
-            const ratio = Math.min(
-              1,
-              (sr.top + AUTO_SCROLL_ZONE - lastClient.y) / AUTO_SCROLL_ZONE,
-            );
-            dy = -Math.ceil(ratio * AUTO_SCROLL_MAX_SPEED);
-          } else if (lastClient.y > sr.bottom - AUTO_SCROLL_ZONE) {
-            const ratio = Math.min(
-              1,
-              (lastClient.y - (sr.bottom - AUTO_SCROLL_ZONE)) /
-                AUTO_SCROLL_ZONE,
-            );
-            dy = Math.ceil(ratio * AUTO_SCROLL_MAX_SPEED);
-          }
-          if (dy !== 0) {
-            scroller.scrollBy({ top: dy });
-            // Re-trigger hit-test against the new scroll position so the
-            // selection grows even when the user holds the mouse still
-            // near the edge.
-            applyPointerToSelection(lastClient.x, lastClient.y);
-            autoScrollRaf = requestAnimationFrame(tickAutoScroll);
-          }
-        };
-        const applyPointerToSelection = (cx: number, cy: number): void => {
-          const refs = pageRefsRef.current;
-          // 1. Try the page directly under the cursor first.
-          let pageIdx = -1;
-          let pageEl: HTMLElement | null = null;
-          let hitX = cx;
-          let hitY = cy;
-          for (let i = 0; i < refs.length; i++) {
-            const el = refs[i];
-            if (!el) continue;
-            const r = el.getBoundingClientRect();
-            if (cx >= r.left && cx < r.right && cy >= r.top && cy < r.bottom) {
-              pageIdx = i;
-              pageEl = el;
-              break;
-            }
-          }
-          // 2. Fallback: pointer is in a page gap / off-edge. Pick the
-          //    page nearest along the Y axis and clamp the hit-test to
-          //    its bounds. This mirrors PDF/Word drag behavior — the
-          //    selection extends to the page edge that the cursor is
-          //    closest to (start if dragging up past page top, end if
-          //    dragging down past page bottom).
-          if (pageIdx < 0) {
-            let bestDist = Infinity;
-            for (let i = 0; i < refs.length; i++) {
-              const el = refs[i];
-              if (!el) continue;
-              const r = el.getBoundingClientRect();
-              const dy =
-                cy < r.top ? r.top - cy : cy > r.bottom ? cy - r.bottom : 0;
-              if (dy < bestDist) {
-                bestDist = dy;
-                pageIdx = i;
-                pageEl = el;
-                // Clamp 1px inside the page rect so hitTest doesn't get
-                // a boundary value that resolves to the wrong line.
-                hitX = Math.max(r.left + 1, Math.min(r.right - 1, cx));
-                hitY = Math.max(r.top + 1, Math.min(r.bottom - 1, cy));
-              }
-            }
-          }
-          if (pageIdx < 0 || !pageEl) return;
-          const moveResult = hitTestAt(pageIdx, hitX, hitY, pageEl);
-          if (!moveResult) return;
-          // Cell-drag mode. Two sub-modes:
-          //   (a) cursor stays in the SAME cell + same cellParaIndex →
-          //       char-level selection (0.2.73 v1)
-          //   (b) cursor crosses into a DIFFERENT cell of the same
-          //       table → switch to Hancom-style cell-block mode
-          //       (Phase A). Selection unit becomes whole cells; the
-          //       in-cell text rect rendering is replaced by per-cell
-          //       bbox highlights computed via getTableCellBboxes.
-          //   (c) cursor leaves the table entirely → freeze focus
-          //       (cross-table drag is not supported)
-          const cd = cellDragRef.current;
-          if (cd) {
-            // 셀 boundary off-by-one 회피 — drag mousemove 시점에 한정.
-            // lib hitTest는 x=cellLeftEdge에서 이전 cell을 right-inclusive로
-            // 돌려줌. drag 중 cursor가 boundary에 짧게 떨어지면 focus가
-            // 한 칸 뒤로 잡혔다 풀렸다 깜빡 — bbox로 click point가 어떤
-            // 셀에 있는지 직접 확인해서 정정. 단발 click(mousedown)에는
-            // 적용 안 함 — 사용자의 명시적 click 의도 존중 + 셀 진입
-            // 보장.
-            if (
-              moveResult.controlIndex !== undefined &&
-              moveResult.cellIndex !== undefined &&
-              moveResult.parentParaIndex !== undefined &&
-              (moveResult.cellPath?.length ?? 1) === 1 &&
-              docRef.current
-            ) {
-              try {
-                const cellsJson = docRef.current.getTableCellBboxes(
-                  moveResult.sectionIndex,
-                  moveResult.parentParaIndex,
-                  moveResult.controlIndex,
-                );
-                const cells = JSON.parse(cellsJson) as {
-                  cellIdx: number;
-                  x: number;
-                  y: number;
-                  w: number;
-                  h: number;
-                }[];
-                // page-local x,y 계산 — applyPointerToSelection scope에 hitX/hitY 있음.
-                const localX =
-                  (hitX - pageEl.getBoundingClientRect().left) / zoom;
-                const localY =
-                  (hitY - pageEl.getBoundingClientRect().top) / zoom;
-                const correctCell = cells.find(
-                  (c) =>
-                    localX >= c.x &&
-                    localX < c.x + c.w &&
-                    localY >= c.y &&
-                    localY < c.y + c.h,
-                );
-                if (
-                  correctCell &&
-                  correctCell.cellIdx !== moveResult.cellIndex
-                ) {
-                  moveResult.cellIndex = correctCell.cellIdx;
-                  if (moveResult.cellPath && moveResult.cellPath.length === 1) {
-                    moveResult.cellPath[0].cellIndex = correctCell.cellIdx;
-                  }
-                }
-              } catch {
-                /* bbox 조회 실패 — 원본 그대로 */
-              }
-            }
-            const moveCell =
-              moveResult.controlIndex !== undefined &&
-              moveResult.cellIndex !== undefined &&
-              moveResult.cellParaIndex !== undefined &&
-              moveResult.parentParaIndex !== undefined
-                ? {
-                    parentParaIndex: moveResult.parentParaIndex,
-                    controlIndex: moveResult.controlIndex,
-                    cellIndex: moveResult.cellIndex,
-                    cellParaIndex: moveResult.cellParaIndex,
-                    path: moveResult.cellPath,
-                  }
-                : undefined;
-            // (c) outside table or different table — freeze.
-            if (
-              !moveCell ||
-              moveCell.parentParaIndex !== cd.parentParaIndex ||
-              moveCell.controlIndex !== cd.controlIndex
-            ) {
-              return;
-            }
-            const focus = {
-              sectionIndex: moveResult.sectionIndex,
-              paragraphIndex: moveResult.paragraphIndex,
-              charOffset: moveResult.charOffset,
-              cell: moveCell,
-            };
-            caretRef.current = focus;
-            if (moveResult.cursorRect) setCursorRect(moveResult.cursorRect);
-            // Crossed into a different cell? Switch to cell-block mode.
-            const crossedNow =
-              moveCell.cellIndex !== cd.cellIndex ||
-              moveCell.cellParaIndex !== cd.cellParaIndex;
-            // Sticky: 한 번 cross-cell 진입 후 anchor 셀 복귀해도
-            // cell-block 유지 (highlight 깜빡임 방지). mousedown에서 false
-            // reset이라 새 drag는 깨끗하게 시작.
-            if (crossedNow) cellDragStickyRef.current = true;
-            const useCellBlock = cellDragStickyRef.current;
-            setSelection((prev) => {
-              if (!prev) return null;
-              const next = { ...prev, focus };
-              if (useCellBlock) {
-                // Cell-block mode: drop char-level rects, draw cell bboxes.
-                setSelectionRectsByPage({});
-                refreshCellBlockHighlights(next);
-              } else {
-                // Still inside anchor cell + never crossed: char-level select.
-                setCellBlockHighlights({});
-                refreshSelectionRects(next);
-              }
-              return next;
-            });
-            return;
-          }
-          // Cell-hit guard — when drag started at body level but the
-          // cursor passes over a table during the drag, IR returns
-          // cell-internal hit info (`controlIndex`/`cellIndex`/
-          // `cellParaIndex`/`parentParaIndex`) and `paragraphIndex` is
-          // **cell-local** (index of paragraph inside the cell), not
-          // section-level. Using it directly snapped focus to section
-          // para 0 — selection then spanned [section-para-0 ~ anchor],
-          // which the user perceived as "everything below selected" /
-          // "down-drag visual even when dragging up". Body-level drag
-          // selection across cells isn't supported (cell selection v2
-          // — see handlePageMouseDown's cell branch which disables drag).
-          //
-          // UX requirement: dragging across a control (table / image /
-          // shape) should pull the entire object into the selection.
-          // We do that by extending focus to the boundary of the body
-          // paragraph that anchors the control (`parentParaIndex`).
-          // Direction-aware: if we're dragging past the object (anchor
-          // is above it), snap focus to the END of its parent
-          // paragraph; if anchor is below, snap to the START. The
-          // resulting [anchor → focus] range fully covers the parent
-          // paragraph and any inline control(s) it carries.
-          if (moveResult.controlIndex !== undefined) {
-            const anchor = selectionRef.current?.anchor;
-            const parentPara = moveResult.parentParaIndex;
-            if (anchor !== undefined && parentPara !== undefined) {
-              const goingDown = parentPara >= anchor.paragraphIndex;
-              let charOffset = 0;
-              if (goingDown) {
-                const doc = docRef.current;
-                if (doc) {
-                  try {
-                    charOffset = doc.getParagraphLength(
-                      moveResult.sectionIndex,
-                      parentPara,
-                    );
-                  } catch {
-                    /* fall back to start of paragraph */
-                  }
-                }
-              }
-              const focus = {
-                sectionIndex: moveResult.sectionIndex,
-                paragraphIndex: parentPara,
-                charOffset,
-              };
-              caretRef.current = focus;
-              setSelection((prev) => {
-                if (!prev) return null;
-                const next = { ...prev, focus };
-                refreshSelectionRects(next);
-                return next;
-              });
-              // Visual feedback: for tables we can fetch the full
-              // bounding box and render an overlay so the table is
-              // highlighted alongside the surrounding text. Tables
-              // are the only control type with a published `getTableBBox`
-              // in 0.7.9 — image/shape highlighting follows once the
-              // lib publishes a unified bbox API.
-              if (moveResult.controlIndex !== undefined) {
-                const doc = docRef.current;
-                if (doc) {
-                  try {
-                    const bbox = JSON.parse(
-                      doc.getTableBBox(
-                        moveResult.sectionIndex,
-                        parentPara,
-                        moveResult.controlIndex,
-                      ),
-                    ) as {
-                      pageIndex: number;
-                      x: number;
-                      y: number;
-                      width: number;
-                      height: number;
-                    };
-                    setSelectedControlBboxes((prev) => {
-                      const arr = prev[bbox.pageIndex] ?? [];
-                      const exists = arr.some(
-                        (b) =>
-                          Math.abs(b.x - bbox.x) < 0.5 &&
-                          Math.abs(b.y - bbox.y) < 0.5,
-                      );
-                      if (exists) return prev;
-                      return {
-                        ...prev,
-                        [bbox.pageIndex]: [
-                          ...arr,
-                          {
-                            x: bbox.x,
-                            y: bbox.y,
-                            width: bbox.width,
-                            height: bbox.height,
-                          },
-                        ],
-                      };
-                    });
-                  } catch {
-                    /* not a table (image/shape) — skipped for now */
-                  }
-                }
-              }
-            }
-            return;
-          }
-          // Whitespace-jump guard — when the cursor lands in vertical
-          // whitespace (margin / inter-paragraph gap), the IR snaps the
-          // returned (paraIdx, charOffset) to the nearest text position
-          // but often omits cursorRect (no text-box at click Y). Without
-          // cursorRect the previous guard was bypassed and focus jumped
-          // to wherever IR snapped — typically the section/page tail —
-          // selecting "everything below". Derive the rect via
-          // getCursorRect when missing, then reject any hit whose rect
-          // lives more than 80px from the actual mouse Y. Use the rect's
-          // own pageIndex (not the input pageEl) since the snap target
-          // can land on a neighbouring page.
-          let resultRect = moveResult.cursorRect;
-          if (!resultRect) {
-            const doc = docRef.current;
-            if (doc) {
-              try {
-                resultRect = JSON.parse(
-                  doc.getCursorRect(
-                    moveResult.sectionIndex,
-                    moveResult.paragraphIndex,
-                    moveResult.charOffset,
-                  ),
-                ) as typeof resultRect;
-              } catch {
-                /* keep undefined — fall through without guarding */
-              }
-            }
-          }
-          if (resultRect) {
-            const rectPageEl = pageRefsRef.current[resultRect.pageIndex];
-            if (rectPageEl) {
-              const r = rectPageEl.getBoundingClientRect();
-              const hitClientY = r.top + resultRect.y * zoom;
-              if (Math.abs(hitClientY - cy) > 80) {
-                return;
-              }
-            }
-          }
-          const focus = {
-            sectionIndex: moveResult.sectionIndex,
-            paragraphIndex: moveResult.paragraphIndex,
-            charOffset: moveResult.charOffset,
-          };
-          caretRef.current = focus;
-          if (resultRect) setCursorRect(resultRect);
-          setSelection((prev) => {
-            if (!prev) return null;
-            const next = { ...prev, focus };
-            refreshSelectionRects(next);
-            return next;
-          });
-        };
-        const onWinMove = (ev: MouseEvent): void => {
-          if (!draggingRef.current) return;
-          lastClient.x = ev.clientX;
-          lastClient.y = ev.clientY;
-          applyPointerToSelection(ev.clientX, ev.clientY);
-          // Auto-scroll if the cursor is close to the scroll container's
-          // top/bottom edge. We only kick the rAF loop when not already
-          // running; the loop self-renews while the cursor stays in zone.
-          if (autoScrollRaf === null) {
-            autoScrollRaf = requestAnimationFrame(tickAutoScroll);
-          }
-        };
-        const cleanup = (): void => {
-          document.removeEventListener('mousemove', onWinMove);
-          document.removeEventListener('mouseup', onWinUp);
-          if (autoScrollRaf !== null) cancelAnimationFrame(autoScrollRaf);
-          autoScrollRaf = null;
-          dragCleanupRef.current = null;
-        };
-        const onWinUp = (): void => {
-          cleanup();
-          if (!draggingRef.current) return;
-          draggingRef.current = false;
-          cellDragRef.current = null;
-          cellDragStickyRef.current = false;
-          dragOriginSelectionRef.current = null;
-          setSelection((prev) => {
-            if (!prev) return null;
-            // 셀 cross-cell drag(anchor.cell ≠ focus.cell)은
-            // paragraphIndex/charOffset이 둘 다 0이라도 비어있지 않음 —
-            // 셀 블록 selection이 살아있어야 함. 셀 컨텍스트 다르면
-            // empty 처리에서 제외.
-            const ac = prev.anchor.cell;
-            const fc = prev.focus.cell;
-            const cellDifferent =
-              ac &&
-              fc &&
-              (ac.cellIndex !== fc.cellIndex ||
-                ac.cellParaIndex !== fc.cellParaIndex);
-            const empty =
-              !cellDifferent &&
-              prev.anchor.paragraphIndex === prev.focus.paragraphIndex &&
-              prev.anchor.charOffset === prev.focus.charOffset;
-            if (empty) {
-              setSelectionRectsByPage({});
-              setSelectedControlBboxes({});
-              setCellBlockHighlights({});
-              return null;
-            }
-            return prev;
-          });
-          // Sync toolbar to the focus position once the drag commits.
-          refreshActiveFormat();
-        };
-        dragCleanupRef.current = cleanup;
-        document.addEventListener('mousemove', onWinMove);
-        document.addEventListener('mouseup', onWinUp);
-      },
-      [
+    const { handlePageMouseDown, handlePageContextMenu } = usePageMouseHandlers(
+      {
+        docRef,
+        caretRef,
+        selectionRef,
+        scrollRef,
+        pageRefsRef,
+        marqueeStartRef,
+        draggingRef,
+        dragCleanupRef,
+        cellDragRef,
+        dragOriginSelectionRef,
+        cellBlockExtendModeRef,
+        cellDragStickyRef,
+        discontiguousCellsRef,
+        setSelection,
+        setSelectionRectsByPage,
+        setSelectedControlBboxes,
+        setCellBlockHighlights,
+        setMarqueeRect,
+        setCellMenu,
+        setAiMenu,
+        setSlashMenu,
+        setCursorRect,
+        setCellBlockExtendMode,
+        marqueeMode,
+        zoom,
         hitTestAt,
+        sortRange,
+        clearSelection,
+        refreshSelectionRects,
+        refreshCellBlockHighlights,
         refreshCursorRect,
         refreshActiveFormat,
-        setSelection,
         findWordBoundsAt,
-        refreshSelectionRects,
-        zoom,
-      ],
-    );
-
-    /**
-     * Right-click on a page →
-     *   1. If it lands inside a table cell, open the cell context menu.
-     *   2. Else if there's an active body selection, open the AI menu
-     *      (chunk 56) — the menu items wrap the selection in a prompt
-     *      template and call `onAiCommand` (AppShell wires it to
-     *      `ChatPanelHandle.prefillAndSend`).
-     *   3. Else fall through (no native menu).
-     */
-    const handlePageContextMenu = useCallback(
-      (idx: number, e: ReactMouseEvent<HTMLDivElement>): void => {
-        const result = hitTestAt(idx, e.clientX, e.clientY, e.currentTarget);
-        if (!result) return;
-        const inCell =
-          result.controlIndex !== undefined &&
-          result.cellIndex !== undefined &&
-          result.parentParaIndex !== undefined;
-        if (!inCell) {
-          // chunk 56 — body right-click with active selection opens the
-          // AI command menu. We forward only the menu position; the
-          // menu component reads the current selection text via
-          // captureExcerptText() lazily.
-          const sel = selectionRef.current;
-          const hasNonEmptySel =
-            sel !== null &&
-            !(
-              sel.anchor.paragraphIndex === sel.focus.paragraphIndex &&
-              sel.anchor.charOffset === sel.focus.charOffset
-            );
-          if (hasNonEmptySel) {
-            e.preventDefault();
-            setAiMenu({ x: e.clientX, y: e.clientY });
-          }
-          return;
-        }
-        e.preventDefault();
-        const doc = docRef.current;
-        if (!doc) return;
-        // TS narrowing doesn't survive across the inCell check — pin the
-        // cell fields here so the rest of the block sees `number`.
-        const parentParaIndex = result.parentParaIndex!;
-        const controlIndex = result.controlIndex!;
-        const cellIndex = result.cellIndex!;
-        const cellParaIndex = result.cellParaIndex ?? 0;
-        try {
-          const dims = JSON.parse(
-            doc.getTableDimensions(
-              result.sectionIndex,
-              parentParaIndex,
-              controlIndex,
-            ),
-          ) as { rowCount: number; colCount: number; cellCount: number };
-          // Move caret into the right-clicked cell so subsequent ops act
-          // on it. (Matches Word/한컴: right-click selects the cell.)
-          caretRef.current = {
-            sectionIndex: result.sectionIndex,
-            paragraphIndex: 0,
-            charOffset: 0,
-            cell: {
-              parentParaIndex,
-              controlIndex,
-              cellIndex,
-              cellParaIndex,
-            },
-          };
-          setSelection(null);
-          setSelectionRectsByPage({});
-          setCellMenu({
-            x: e.clientX,
-            y: e.clientY,
-            sectionIndex: result.sectionIndex,
-            parentParaIndex,
-            controlIndex,
-            cellIndex,
-            rowCount: dims.rowCount,
-            colCount: dims.colCount,
-          });
-        } catch {
-          /* not a table cell or dims unavailable */
-        }
       },
-      [hitTestAt, setSelection],
     );
 
     const insertTableRowAt = useCallback(
@@ -6982,925 +3752,69 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
      * mutations + read state without going through real input UI (which
      * lands in chunk 4-B). Production builds also keep this — the surface
      * is small and non-destructive.
+     *
+     * R1.8 — ~970-라인 본체는 useDebugSurface hook 으로 이전.
      */
-    useEffect(() => {
-      if (phase !== 'ready') return;
-      // With multiple StudioViewers mounted (tab system), only the active
-      // one claims `window.__studioDebug` — otherwise N viewers race to
-      // overwrite a single global and tests / DevTools see nondeterministic
-      // state.
-      if (!isActive) return;
-      const debug = {
-        insertText: (
-          sectionIdx: number,
-          paraIdx: number,
-          charOffset: number,
-          text: string,
-        ): string => {
-          const doc = docRef.current;
-          if (!doc) throw new Error('Document not loaded');
-          const result = doc.insertText(sectionIdx, paraIdx, charOffset, text);
-          refreshAfterMutation();
-          return result;
-        },
-        deleteText: (
-          sectionIdx: number,
-          paraIdx: number,
-          charOffset: number,
-          count: number,
-        ): string => {
-          const doc = docRef.current;
-          if (!doc) throw new Error('Document not loaded');
-          const result = doc.deleteText(sectionIdx, paraIdx, charOffset, count);
-          refreshAfterMutation();
-          return result;
-        },
-        // @rhwp/core 0.7.9 — paragraph-level IR ops. Distinct from text-level
-        // insertText/deleteText: these add or remove an entire paragraph node,
-        // shifting the indices of subsequent paragraphs by 1.
-        insertParagraph: (sectionIdx: number, paraIdx: number): string => {
-          const doc = docRef.current;
-          if (!doc) throw new Error('Document not loaded');
-          const result = doc.insertParagraph(sectionIdx, paraIdx);
-          // Page count can change because a new blank paragraph may push
-          // content past a page boundary; refreshAfterMutation re-reads it.
-          refreshAfterMutation();
-          return result;
-        },
-        deleteParagraph: (sectionIdx: number, paraIdx: number): string => {
-          const doc = docRef.current;
-          if (!doc) throw new Error('Document not loaded');
-          const result = doc.deleteParagraph(sectionIdx, paraIdx);
-          refreshAfterMutation();
-          return result;
-        },
-        getParagraphCount: (sectionIdx: number): number => {
-          const doc = docRef.current;
-          if (!doc) throw new Error('Document not loaded');
-          return doc.getParagraphCount(sectionIdx);
-        },
-        getParagraphLength: (sectionIdx: number, paraIdx: number): number => {
-          const doc = docRef.current;
-          if (!doc) throw new Error('Document not loaded');
-          return doc.getParagraphLength(sectionIdx, paraIdx);
-        },
-        getTextRange: (
-          sectionIdx: number,
-          paraIdx: number,
-          startOffset: number,
-          endOffset: number,
-        ): string => {
-          const doc = docRef.current;
-          if (!doc) throw new Error('Document not loaded');
-          return doc.getTextRange(sectionIdx, paraIdx, startOffset, endOffset);
-        },
-        getCaretPosition: (): string => {
-          const doc = docRef.current;
-          if (!doc) throw new Error('Document not loaded');
-          return doc.getCaretPosition();
-        },
-        exportBytes: (): Uint8Array => {
-          const doc = docRef.current;
-          if (!doc) throw new Error('Document not loaded');
-          // HWP, not HWPX — see imperative handle comment.
-          return doc.exportHwp();
-        },
-        getPageCount: (): number => pageCount,
-        isDirty: (): boolean => dirtyRef.current,
-        getCaret: (): {
-          sectionIndex: number;
-          paragraphIndex: number;
-          charOffset: number;
-        } => ({ ...caretRef.current }),
-        focusViewer: (): void => {
-          scrollRef.current?.focus();
-        },
-        toggleCharFormat: (key: CharFormatKey): void => {
-          toggleCharFormat(key);
-        },
-        applyStyle: (styleId: number): void => {
-          applyParagraphStyle(styleId);
-        },
-        getActiveFormat: () => ({ ...activeFormat }),
-        getStyleList: () => [...styleList],
-        // Selection helpers (chunk 5b). Set anchor and focus directly so
-        // tests can drive range ops without simulating mouse drag.
-        setSelection: (
-          anchorPara: number,
-          anchorOff: number,
-          focusPara: number,
-          focusOff: number,
-          opts?: {
-            anchorCell?: {
-              parentParaIndex: number;
-              controlIndex: number;
-              cellIndex: number;
-              cellParaIndex: number;
-            };
-            focusCell?: {
-              parentParaIndex: number;
-              controlIndex: number;
-              cellIndex: number;
-              cellParaIndex: number;
-            };
-          },
-        ): void => {
-          const sel = {
-            anchor: {
-              sectionIndex: 0,
-              paragraphIndex: anchorPara,
-              charOffset: anchorOff,
-              cell: opts?.anchorCell,
-            },
-            focus: {
-              sectionIndex: 0,
-              paragraphIndex: focusPara,
-              charOffset: focusOff,
-              cell: opts?.focusCell,
-            },
-          };
-          caretRef.current = sel.focus;
-          setSelection(sel);
-          // chunk 32 — cell-block selection이면 char-level rect 대신
-          // per-cell highlight 표시.
-          const ac = sel.anchor.cell;
-          const fc = sel.focus.cell;
-          if (
-            ac &&
-            fc &&
-            ac.parentParaIndex === fc.parentParaIndex &&
-            ac.controlIndex === fc.controlIndex &&
-            (ac.cellIndex !== fc.cellIndex ||
-              ac.cellParaIndex !== fc.cellParaIndex)
-          ) {
-            refreshCellBlockHighlights(sel);
-          } else {
-            refreshSelectionRects(sel);
-          }
-          refreshCursorRect();
-          refreshActiveFormat();
-        },
-        getSelection: () => {
-          // Read from the ref so multiple synchronous setSelection calls
-          // (e.g. e2e loops) see the latest value without waiting for
-          // React to flush state updates.
-          const sel = selectionRef.current;
-          if (!sel) return null;
-          const r = sortRange(sel.anchor, sel.focus);
-          return r.empty ? null : r;
-        },
-        clearSelection: (): void => {
-          clearSelection();
-        },
-        undo: (): void => undo(),
-        redo: (): void => redo(),
-        canUndo: (): boolean => historyRef.current.index > 0,
-        canRedo: (): boolean =>
-          historyRef.current.index < historyRef.current.entries.length - 1,
-        historyDepth: (): { index: number; size: number } => ({
-          index: historyRef.current.index,
-          size: historyRef.current.entries.length,
-        }),
-        copy: () => copySelection(),
-        cut: () => cutSelection(),
-        paste: () => pasteAtCaret(),
-        openFind: (initialQuery?: string): void => {
-          openFind();
-          if (typeof initialQuery === 'string' && initialQuery) {
-            setFindQuery(initialQuery);
-            runFindSearch(initialQuery);
-          }
-        },
-        closeFind: (): void => closeFind(),
-        findNext: (): void => findNext(),
-        findPrev: (): void => findPrev(),
-        getFindState: (): {
-          open: boolean;
-          query: string;
-          matchCount: number;
-          activeIndex: number;
-          replaceQuery: string;
-          replaceFeedback: string | null;
-        } => ({
-          open: findOpen,
-          query: findQuery,
-          matchCount: findMatches.length,
-          activeIndex: findIndex,
-          replaceQuery,
-          replaceFeedback,
-        }),
-        // Replace surface — chunk 7. e2e drives these via __studioDebug
-        // (Playwright clicks too, but the direct hooks make assertions
-        // simpler when verifying IR-side outcomes). Optional override arg
-        // bypasses React state so tests don't have to wait for a state
-        // round-trip after `setReplaceQuery`.
-        openReplace: (): void => openReplace(),
-        setReplaceQuery: (text: string): void => setReplaceQuery(text),
-        replaceCurrent: (override?: string): void => replaceCurrent(override),
-        replaceAll: (override?: string): void => replaceAllMatches(override),
-        applyAlignment: (a: ParaAlignment): void => applyAlignment(a),
-        applyFontSizePt: (pt: number): void => applyFontSizePt(pt),
-        applyTextColor: (hex: string): void => applyTextColor(hex),
-        // Paragraph-shape ops — chunk 8 (line spacing / indent / spacing).
-        applyLineSpacing: (percent: number): void => applyLineSpacing(percent),
-        stepIndent: (dir: 'increase' | 'decrease'): void => stepIndent(dir),
-        applyParaSpacing: (before: number, after: number): void =>
-          applyParaSpacing(before, after),
-        getParaProps: (sectionIdx: number, paraIdx: number): unknown => {
-          const doc = docRef.current;
-          if (!doc) throw new Error('Document not loaded');
-          return JSON.parse(doc.getParaPropertiesAt(sectionIdx, paraIdx));
-        },
-        // Raw escape hatch — lets e2e probes try alternate prop key names
-        // when the lib's input schema diverges from its output schema.
-        applyParaPropsRaw: (
-          sectionIdx: number,
-          paraIdx: number,
-          propsJson: string,
-        ): string => {
-          const doc = docRef.current;
-          if (!doc) throw new Error('Document not loaded');
-          const result = doc.applyParaFormat(sectionIdx, paraIdx, propsJson);
-          refreshAfterMutation({ syncCaret: false });
-          return result;
-        },
-        // Click-count selection synthesis for e2e — Playwright's
-        // mouse.dblclick simulates two mousedowns but the resulting
-        // e.detail isn't always 2 in Electron. These helpers emulate the
-        // viewer's response directly.
-        selectWordAt: (sec: number, para: number, offset: number): void => {
-          const w = findWordBoundsAt(sec, para, offset);
-          if (!w) return;
-          const start = {
-            sectionIndex: sec,
-            paragraphIndex: para,
-            charOffset: w.startOffset,
-          };
-          const end = {
-            sectionIndex: sec,
-            paragraphIndex: para,
-            charOffset: w.endOffset,
-          };
-          caretRef.current = end;
-          setSelection({ anchor: start, focus: end });
-          refreshSelectionRects({ anchor: start, focus: end });
-          refreshCursorRect();
-          refreshActiveFormat();
-        },
-        selectParagraph: (sec: number, para: number): void => {
-          const doc = docRef.current;
-          if (!doc) return;
-          try {
-            const len = doc.getParagraphLength(sec, para);
-            const start = {
-              sectionIndex: sec,
-              paragraphIndex: para,
-              charOffset: 0,
-            };
-            const end = {
-              sectionIndex: sec,
-              paragraphIndex: para,
-              charOffset: len,
-            };
-            caretRef.current = end;
-            setSelection({ anchor: start, focus: end });
-            refreshSelectionRects({ anchor: start, focus: end });
-            refreshCursorRect();
-            refreshActiveFormat();
-          } catch {
-            /* ignore */
-          }
-        },
-        stepWordOffset: (
-          sec: number,
-          para: number,
-          offset: number,
-          dir: -1 | 1,
-        ): number => stepWordOffset(sec, para, offset, dir),
-        // Cell editing v1 — drive the caret into a cell directly so e2e
-        // can verify cell-typing without simulating a click that lands
-        // exactly on a cell rect.
-        enterCell: (
-          sec: number,
-          parentParaIndex: number,
-          controlIndex: number,
-          cellIndex: number,
-          cellParaIndex: number,
-          charOffset: number = 0,
-        ): void => {
-          caretRef.current = {
-            sectionIndex: sec,
-            paragraphIndex: 0,
-            charOffset,
-            cell: {
-              parentParaIndex,
-              controlIndex,
-              cellIndex,
-              cellParaIndex,
-            },
-          };
-          setSelection(null);
-          setSelectionRectsByPage({});
-          refreshCursorRect();
-        },
-        exitCell: (): void => {
-          caretRef.current = {
-            ...caretRef.current,
-            cell: undefined,
-          };
-          refreshCursorRect();
-        },
-        getCellText: (
-          sec: number,
-          parentParaIndex: number,
-          controlIndex: number,
-          cellIndex: number,
-          cellParaIndex: number,
-        ): string => {
-          const doc = docRef.current;
-          if (!doc) return '';
-          try {
-            return doc.getTextInCell(
-              sec,
-              parentParaIndex,
-              controlIndex,
-              cellIndex,
-              cellParaIndex,
-              0,
-              1_000_000,
-            );
-          } catch {
-            return '';
-          }
-        },
-        getCaretCell: () => caretRef.current.cell ?? null,
-        // Cell row/col ops for e2e (skip the right-click flow and
-        // exercise the IPC + refresh path directly).
-        insertTableRow: (
-          sec: number,
-          parentPara: number,
-          ctrl: number,
-          rowIdx: number,
-          below: boolean,
-        ): void => insertTableRowAt(sec, parentPara, ctrl, rowIdx, below),
-        insertTableColumn: (
-          sec: number,
-          parentPara: number,
-          ctrl: number,
-          colIdx: number,
-          right: boolean,
-        ): void => insertTableColumnAt(sec, parentPara, ctrl, colIdx, right),
-        deleteTableRow: (
-          sec: number,
-          parentPara: number,
-          ctrl: number,
-          rowIdx: number,
-        ): void => deleteTableRowAt(sec, parentPara, ctrl, rowIdx),
-        deleteTableColumn: (
-          sec: number,
-          parentPara: number,
-          ctrl: number,
-          colIdx: number,
-        ): void => deleteTableColumnAt(sec, parentPara, ctrl, colIdx),
-        getTableDimensions: (
-          sec: number,
-          parentPara: number,
-          ctrl: number,
-        ): { rowCount: number; colCount: number; cellCount: number } | null => {
-          const doc = docRef.current;
-          if (!doc) return null;
-          try {
-            return JSON.parse(
-              doc.getTableDimensions(sec, parentPara, ctrl),
-            ) as { rowCount: number; colCount: number; cellCount: number };
-          } catch {
-            return null;
-          }
-        },
-        // Cell merge / split — chunk 9.
-        mergeCells: (
-          sec: number,
-          parentPara: number,
-          ctrl: number,
-          startRow: number,
-          startCol: number,
-          endRow: number,
-          endCol: number,
-        ): void =>
-          mergeCells(sec, parentPara, ctrl, startRow, startCol, endRow, endCol),
-        splitCellInto: (
-          sec: number,
-          parentPara: number,
-          ctrl: number,
-          row: number,
-          col: number,
-          nRows: number,
-          mCols: number,
-        ): void => splitCellInto(sec, parentPara, ctrl, row, col, nRows, mCols),
-        unmergeCell: (
-          sec: number,
-          parentPara: number,
-          ctrl: number,
-          row: number,
-          col: number,
-        ): void => unmergeCell(sec, parentPara, ctrl, row, col),
-        // Page setup — chunk 10.
-        getPageDef: (sectionIdx = 0): Record<string, unknown> | null => {
-          const doc = docRef.current;
-          if (!doc) return null;
-          try {
-            return JSON.parse(doc.getPageDef(sectionIdx)) as Record<
-              string,
-              unknown
-            >;
-          } catch {
-            return null;
-          }
-        },
-        applyPageDef: (props: Record<string, unknown>, sectionIdx = 0): void =>
-          applyPageDef(props, sectionIdx),
-        // HTML export + paste with paragraph-shape decomposition — chunk 18.
-        applyHtmlAtCaret: (html: string): void => applyHtmlAtCaret(html),
-        // chunk 20 — excerpt capture + stale verify mirror the
-        // ViewerHandle entries so e2e specs can drive the chip flow
-        // without needing to script real selection drags.
-        scrollToParagraph: (sectionIdx: number, paraIdx: number) => {
-          const doc = docRef.current;
-          if (!doc) return;
-          try {
-            // Place caret at the paragraph's start and reuse the same
-            // scroll-to-rect path as Find.
-            caretRef.current = {
-              sectionIndex: sectionIdx,
-              paragraphIndex: paraIdx,
-              charOffset: 0,
-            };
-            const rect = JSON.parse(
-              doc.getCursorRect(sectionIdx, paraIdx, 0),
-            ) as { pageIndex: number; x: number; y: number; height: number };
-            const pageEl = pageRefsRef.current[rect.pageIndex];
-            pageEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            setCursorRect(rect);
-          } catch (err) {
-            console.warn('[studio] scrollToParagraph failed:', err);
-          }
-        },
-        getOutline: () => {
-          const doc = docRef.current;
-          if (!doc) return [];
-          // Resolve heading styles by name. HWP convention is "제목 1",
-          // "제목 2", "제목 3" — we also accept "Heading N" for HWPX
-          // imports of foreign docs. Body styles ("바탕글" / "본문")
-          // are skipped.
-          const headingByStyleId = new Map<number, number>();
-          for (const s of styleList) {
-            const koMatch = s.name.match(/^제목\s*(\d+)?/);
-            const enMatch = s.englishName?.match(/^Heading\s*(\d+)?/i);
-            const m = koMatch ?? enMatch;
-            if (m) {
-              const level = m[1] ? Math.min(6, parseInt(m[1], 10)) : 1;
-              headingByStyleId.set(s.id, level);
-            }
-          }
-          if (headingByStyleId.size === 0) return [];
-          const items: {
-            paragraphIndex: number;
-            level: number;
-            text: string;
-          }[] = [];
-          try {
-            const SECTION = 0;
-            const paraCount = doc.getParagraphCount(SECTION);
-            const cap = Math.min(paraCount, 1000);
-            for (let p = 0; p < cap; p++) {
-              const at = JSON.parse(doc.getStyleAt(SECTION, p)) as {
-                id?: number;
-              };
-              if (typeof at.id !== 'number') continue;
-              const level = headingByStyleId.get(at.id);
-              if (!level) continue;
-              const len = doc.getParagraphLength(SECTION, p);
-              const text =
-                len > 0
-                  ? doc.getTextRange(SECTION, p, 0, Math.min(len, 200))
-                  : '';
-              items.push({
-                paragraphIndex: p,
-                level,
-                text: text.trim() || '(제목 없음)',
-              });
-              if (items.length >= 200) break;
-            }
-          } catch (err) {
-            console.warn('[studio] getOutline failed:', err);
-          }
-          return items;
-        },
-        captureExcerpt: () => captureExcerpt(),
-        exportSelectionHtmlAt: (
-          sec: number,
-          startPara: number,
-          startOff: number,
-          endPara: number,
-          endOff: number,
-        ): string =>
-          exportSelectionHtmlAt(sec, startPara, startOff, endPara, endOff),
-        pasteHtmlAt: (
-          sec: number,
-          para: number,
-          charOffset: number,
-          html: string,
-        ): void => pasteHtmlAt(sec, para, charOffset, html),
-        // Shapes — chunk 15.
-        createRectShapeAtCaret: (
-          widthHwpunit: number,
-          heightHwpunit: number,
-          opts?: { treatAsChar?: boolean },
-        ): { paraIdx: number; controlIdx: number } | null =>
-          createRectShapeAtCaret(widthHwpunit, heightHwpunit, opts),
-        getShapeProps: (
-          sec: number,
-          parentPara: number,
-          ctrl: number,
-        ): Record<string, unknown> | null =>
-          getShapeProps(sec, parentPara, ctrl),
-        setShapeProps: (
-          sec: number,
-          parentPara: number,
-          ctrl: number,
-          props: Record<string, unknown>,
-        ): void => setShapeProps(sec, parentPara, ctrl, props),
-        deleteShape: (sec: number, parentPara: number, ctrl: number): void =>
-          deleteShape(sec, parentPara, ctrl),
-        changeShapeZOrderAt: (
-          sec: number,
-          parentPara: number,
-          ctrl: number,
-          op: 'front' | 'back' | 'forward' | 'backward',
-        ): void => changeShapeZOrderAt(sec, parentPara, ctrl, op),
-        // Table / cell properties — chunk 17.
-        getTableProps: (
-          sec: number,
-          parentPara: number,
-          ctrl: number,
-        ): Record<string, unknown> | null =>
-          getTableProps(sec, parentPara, ctrl),
-        setTableProps: (
-          sec: number,
-          parentPara: number,
-          ctrl: number,
-          props: Record<string, unknown>,
-        ): void => setTableProps(sec, parentPara, ctrl, props),
-        getCellProps: (
-          sec: number,
-          parentPara: number,
-          ctrl: number,
-          cellIdx: number,
-        ): Record<string, unknown> | null =>
-          getCellProps(sec, parentPara, ctrl, cellIdx),
-        setCellProps: (
-          sec: number,
-          parentPara: number,
-          ctrl: number,
-          cellIdx: number,
-          props: Record<string, unknown>,
-        ): void => setCellProps(sec, parentPara, ctrl, cellIdx, props),
-        // Cell style apply — chunk 23 (KNOWN_ISSUES L-006: lib has no
-        // direct cell-color setter; this routes a pre-existing styleId).
-        applyCellStyle: (
-          sec: number,
-          parentPara: number,
-          ctrl: number,
-          cell: number,
-          cellPara: number,
-          styleId: number,
-        ): boolean => {
-          const doc = docRef.current;
-          if (!doc) return false;
-          try {
-            const r = JSON.parse(
-              doc.applyCellStyle(
-                sec,
-                parentPara,
-                ctrl,
-                cell,
-                cellPara,
-                styleId,
-              ),
-            ) as { ok?: boolean };
-            if (r.ok) {
-              dirtyRef.current = true;
-              setDirty(true);
-              refreshAfterMutation({ syncCaret: false });
-              return true;
-            }
-            return false;
-          } catch {
-            return false;
-          }
-        },
-        // Picture properties — chunk 24.
-        getPictureProps: (
-          sec: number,
-          parentPara: number,
-          ctrl: number,
-        ): Record<string, unknown> | null => {
-          const doc = docRef.current;
-          if (!doc) return null;
-          try {
-            return JSON.parse(
-              doc.getPictureProperties(sec, parentPara, ctrl),
-            ) as Record<string, unknown>;
-          } catch {
-            return null;
-          }
-        },
-        setPictureProps: (
-          sec: number,
-          parentPara: number,
-          ctrl: number,
-          props: Record<string, unknown>,
-        ): boolean => {
-          const doc = docRef.current;
-          if (!doc) return false;
-          try {
-            const r = JSON.parse(
-              doc.setPictureProperties(
-                sec,
-                parentPara,
-                ctrl,
-                JSON.stringify(props),
-              ),
-            ) as { ok?: boolean };
-            if (r.ok) {
-              dirtyRef.current = true;
-              setDirty(true);
-              refreshAfterMutation({ syncCaret: false });
-              return true;
-            }
-            return false;
-          } catch {
-            return false;
-          }
-        },
-        deletePictureControl: (
-          sec: number,
-          parentPara: number,
-          ctrl: number,
-        ): boolean => {
-          const doc = docRef.current;
-          if (!doc) return false;
-          try {
-            const r = JSON.parse(
-              doc.deletePictureControl(sec, parentPara, ctrl),
-            ) as { ok?: boolean };
-            if (r.ok) {
-              dirtyRef.current = true;
-              setDirty(true);
-              refreshAfterMutation({ syncCaret: false });
-              return true;
-            }
-            return false;
-          } catch {
-            return false;
-          }
-        },
-        // Control clipboard — chunk 25.
-        copyControl: (sec: number, para: number, ctrl: number): boolean => {
-          const doc = docRef.current;
-          if (!doc) return false;
-          try {
-            const r = JSON.parse(doc.copyControl(sec, para, ctrl)) as {
-              ok?: boolean;
-            };
-            return Boolean(r.ok);
-          } catch {
-            return false;
-          }
-        },
-        pasteControlAt: (
-          sec: number,
-          para: number,
-          charOffset: number,
-        ): boolean => {
-          const doc = docRef.current;
-          if (!doc) return false;
-          try {
-            const r = JSON.parse(doc.pasteControl(sec, para, charOffset)) as {
-              ok?: boolean;
-            };
-            if (r.ok) {
-              dirtyRef.current = true;
-              setDirty(true);
-              refreshAfterMutation({ syncCaret: false });
-              return true;
-            }
-            return false;
-          } catch {
-            return false;
-          }
-        },
-        // Bundled undo — chunk 27.
-        beginUndoGroup: (): void => {
-          undoGroupDepthRef.current += 1;
-        },
-        endUndoGroup: (): void => {
-          undoGroupDepthRef.current = Math.max(
-            0,
-            undoGroupDepthRef.current - 1,
-          );
-          if (undoGroupDepthRef.current === 0) {
-            pushHistory();
-          }
-        },
-        // Equation preview — chunk 16.
-        renderEquationSvg: (
-          script: string,
-          fontSizeHwpunit = 1000,
-          color = 0,
-        ): string => renderEquationSvg(script, fontSizeHwpunit, color),
-        // Styles — chunk 14.
-        createNamedStyle: (name: string, englishName?: string): number | null =>
-          createNamedStyle(name, englishName),
-        renameStyle: (
-          id: number,
-          name: string,
-          englishName?: string,
-        ): boolean => renameStyle(id, name, englishName),
-        deleteStyleById: (id: number): boolean => deleteStyleById(id),
-        getStyleListJson: (): Record<string, unknown>[] | null => {
-          const doc = docRef.current;
-          if (!doc) return null;
-          try {
-            return JSON.parse(doc.getStyleList()) as Record<string, unknown>[];
-          } catch {
-            return null;
-          }
-        },
-        // Footnotes — chunk 13.
-        insertFootnoteAtCaret: (text: string): void =>
-          insertFootnoteAtCaret(text),
-        // Raw probe surface — debug only, returns the IR's JSON string.
-        insertFootnoteRaw: (
-          sec: number,
-          para: number,
-          charOffset: number,
-        ): string => {
-          const doc = docRef.current;
-          if (!doc) return '';
-          return doc.insertFootnote(sec, para, charOffset);
-        },
-        getFootnoteInfoRaw: (
-          sec: number,
-          para: number,
-          ctrlIdx: number,
-        ): string => {
-          const doc = docRef.current;
-          if (!doc) return '';
-          try {
-            return doc.getFootnoteInfo(sec, para, ctrlIdx);
-          } catch (err) {
-            return `ERROR: ${err instanceof Error ? err.message : String(err)}`;
-          }
-        },
-        getFootnoteInfo: (
-          sec: number,
-          para: number,
-          ctrlIdx: number,
-        ): Record<string, unknown> | null => {
-          const doc = docRef.current;
-          if (!doc) return null;
-          try {
-            return JSON.parse(
-              doc.getFootnoteInfo(sec, para, ctrlIdx),
-            ) as Record<string, unknown>;
-          } catch {
-            return null;
-          }
-        },
-        // Bookmarks — chunk 12.
-        addBookmarkAtCaret: (name: string): void => addBookmarkAtCaret(name),
-        getBookmarks: (): Record<string, unknown>[] | null => {
-          const doc = docRef.current;
-          if (!doc) return null;
-          try {
-            const raw = JSON.parse(doc.getBookmarks()) as
-              | Record<string, unknown>[]
-              | { bookmarks?: Record<string, unknown>[] };
-            if (Array.isArray(raw)) return raw;
-            if (Array.isArray(raw?.bookmarks)) return raw.bookmarks;
-            return null;
-          } catch {
-            return null;
-          }
-        },
-        deleteBookmarkAt: (sec: number, para: number, ctrlIdx: number): void =>
-          deleteBookmarkAt(sec, para, ctrlIdx),
-        renameBookmarkAt: (
-          sec: number,
-          para: number,
-          ctrlIdx: number,
-          newName: string,
-        ): void => renameBookmarkAt(sec, para, ctrlIdx, newName),
-        // Header / footer — chunk 11.
-        setHeaderFooterText: (
-          sectionIdx: number,
-          isHeader: boolean,
-          applyTo: number,
-          text: string,
-        ): void => setHeaderFooterText(sectionIdx, isHeader, applyTo, text),
-        getHeaderFooter: (
-          sectionIdx: number,
-          isHeader: boolean,
-          applyTo: number,
-        ): Record<string, unknown> | null => {
-          const doc = docRef.current;
-          if (!doc) return null;
-          try {
-            return JSON.parse(
-              doc.getHeaderFooter(sectionIdx, isHeader, applyTo),
-            ) as Record<string, unknown>;
-          } catch {
-            return null;
-          }
-        },
-        // Image insert hook for e2e — bytes encoded as base64 to keep
-        // the test deterministic without needing real image files.
-        insertImageBase64: async (
-          base64: string,
-          ext: string,
-          description?: string,
-        ): Promise<void> => {
-          const bin = atob(base64);
-          const bytes = new Uint8Array(bin.length);
-          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-          await insertImage(bytes, ext, description ?? '');
-        },
-        // Synthetic Korean IME helper for e2e — Playwright's keyboard.type
-        // doesn't trigger real IME composition. This bypasses keydown to
-        // exercise the same code path compositionend uses.
-        injectComposedText: (text: string): void => {
-          const doc = docRef.current;
-          if (!doc) throw new Error('Document not loaded');
-          const c = caretRef.current;
-          doc.insertText(c.sectionIndex, c.paragraphIndex, c.charOffset, text);
-          // Mirror what handleCompositionEnd would do post-doc-mutation.
-          cacheRef.current.clear();
-          pageRefsRef.current.forEach((el, idx) => {
-            const target = el?.querySelector('svg');
-            if (target) {
-              el!.innerHTML = '';
-              renderPageInto(idx);
-            }
-          });
-          try {
-            caretRef.current = JSON.parse(
-              doc.getCaretPosition(),
-            ) as typeof caretRef.current;
-            const cc = caretRef.current;
-            setCursorRect(
-              JSON.parse(
-                doc.getCursorRect(
-                  cc.sectionIndex,
-                  cc.paragraphIndex,
-                  cc.charOffset,
-                ),
-              ),
-            );
-          } catch {
-            /* keep prev */
-          }
-          dirtyRef.current = true;
-          setDirty(true);
-        },
-      };
-      (window as Window & { __studioDebug?: typeof debug }).__studioDebug =
-        debug;
-      return () => {
-        delete (window as Window & { __studioDebug?: typeof debug })
-          .__studioDebug;
-      };
-    }, [
-      captureExcerpt,
+    useDebugSurface({
       phase,
       isActive,
       pageCount,
+      docRef,
+      caretRef,
+      dirtyRef,
+      pageRefsRef,
+      historyRef,
+      selectionRef,
+      cellBlockExtendModeRef,
+      undoGroupDepthRef,
+      f5LastPressRef,
+      f5PressCountRef,
+      f3LastPressRef,
+      f3PressCountRef,
+      discontiguousCellsRef,
+      scrollRef,
+      composingRef,
+      changedParaTimerRef,
+      cacheRef,
+      findTextCacheRef,
+      setDirty,
+      setCursorRect,
+      setChangedParaRects,
+      setMarqueeMode,
+      setMarqueeRect,
+      setSelectedControlBboxes,
+      setCellBlockHighlights,
+      setSelectionRectsByPage,
+      setSlashMenu,
+      setCellBlockExtendMode,
+      setSelection,
+      setFindQuery,
+      setReplaceQuery,
+      activeFormat,
+      styleList,
+      selection,
+      findOpen,
+      findQuery,
+      findMatches,
+      findIndex,
+      replaceQuery,
+      replaceFeedback,
+      captureExcerpt,
       pushHistory,
       refreshAfterMutation,
       renderPageInto,
       toggleCharFormat,
       applyParagraphStyle,
-      activeFormat,
-      styleList,
-      selection,
       sortRange,
       refreshSelectionRects,
       refreshActiveFormat,
       refreshCursorRect,
+      refreshCellBlockHighlights,
       clearSelection,
-      setSelection,
       undo,
       redo,
+      beginUndoGroup,
+      endUndoGroup,
       copySelection,
       cutSelection,
       pasteAtCaret,
@@ -7909,15 +3823,9 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       findNext,
       findPrev,
       runFindSearch,
-      findOpen,
-      findQuery,
-      findMatches,
-      findIndex,
       openReplace,
       replaceCurrent,
       replaceAllMatches,
-      replaceQuery,
-      replaceFeedback,
       applyAlignment,
       applyFontSizePt,
       applyTextColor,
@@ -7956,7 +3864,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       exportSelectionHtmlAt,
       pasteHtmlAt,
       applyHtmlAtCaret,
-    ]);
+    });
 
     // Effect 2: page indicator + mount window. On every scroll (rAF-
     // throttled) we (a) pick the topmost-visible page for the indicator
@@ -8099,6 +4007,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               onClick={() => toggleCharFormat('bold')}
               aria-label="진하게"
               aria-pressed={activeFormat.bold}
+              title={hancomTitle('studio-format-bold')}
               data-testid="studio-format-bold"
             >
               <Bold className="size-4" />
@@ -8109,6 +4018,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               onClick={() => toggleCharFormat('italic')}
               aria-label="기울임"
               aria-pressed={activeFormat.italic}
+              title={hancomTitle('studio-format-italic')}
               data-testid="studio-format-italic"
             >
               <Italic className="size-4" />
@@ -8119,6 +4029,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               onClick={() => toggleCharFormat('underline')}
               aria-label="밑줄"
               aria-pressed={activeFormat.underline}
+              title={hancomTitle('studio-format-underline')}
               data-testid="studio-format-underline"
             >
               <Underline className="size-4" />
@@ -8140,6 +4051,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                 onClick={() => applyAlignment(a)}
                 aria-label={label}
                 aria-pressed={activeFormat.alignment === a}
+                title={hancomTitle(`studio-align-${a}` as never)}
                 data-testid={`studio-align-${a}`}
               >
                 <Icon className="size-4" />
@@ -8155,6 +4067,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               value={Math.round(activeFormat.fontSize / 100)}
               onChange={(e) => applyFontSizePt(Number(e.target.value))}
               aria-label="글자 크기"
+              title={hancomTitle('studio-font-size')}
               data-testid="studio-font-size"
             >
               {(() => {
@@ -8178,6 +4091,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               value={activeFormat.textColor}
               onChange={(e) => applyTextColor(e.target.value)}
               aria-label="글자 색상"
+              title={hancomTitle('studio-text-color')}
               data-testid="studio-text-color"
             />
             {styleList.length > 0 && (
@@ -8186,6 +4100,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                 value={activeFormat.styleId}
                 onChange={(e) => applyParagraphStyle(Number(e.target.value))}
                 aria-label="문단 스타일"
+                title={hancomTitle('studio-style-select')}
                 data-testid="studio-style-select"
               >
                 {styleList.map((s) => (
@@ -8201,6 +4116,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               onClick={() => setToolbarExpanded((v) => !v)}
               aria-label="더보기"
               aria-pressed={toolbarExpanded}
+              title={hancomTitle('studio-toolbar-more')}
               data-testid="studio-toolbar-more"
             >
               <MoreHorizontal className="size-4" />
@@ -8219,6 +4135,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               variant="ghost"
               onClick={() => toggleList('bullet')}
               aria-label="글머리 기호"
+              title={hancomTitle('studio-toggle-bullet')}
               data-testid="studio-toggle-bullet"
             >
               <List className="size-4" />
@@ -8228,6 +4145,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               variant="ghost"
               onClick={() => toggleList('number')}
               aria-label="번호 매기기"
+              title={hancomTitle('studio-toggle-number')}
               data-testid="studio-toggle-number"
             >
               <ListOrdered className="size-4" />
@@ -8239,7 +4157,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               variant="ghost"
               onClick={() => insertPageBreak()}
               aria-label="페이지 나누기"
-              title="페이지 나누기"
+              title={hancomTitle('studio-insert-page-break')}
               data-testid="studio-insert-page-break"
             >
               <SeparatorHorizontal className="size-4" />
@@ -8251,6 +4169,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                 onClick={() => setTablePickerOpen((v) => !v)}
                 aria-label="표 삽입"
                 aria-pressed={tablePickerOpen}
+                title={hancomTitle('studio-insert-table')}
                 data-testid="studio-insert-table"
               >
                 <Table2 className="size-4" />
@@ -8278,7 +4197,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               variant="ghost"
               onClick={() => imageInputRef.current?.click()}
               aria-label="이미지 삽입"
-              title="이미지 삽입"
+              title={hancomTitle('studio-insert-image')}
               data-testid="studio-insert-image"
             >
               <ImageIcon className="size-4" />
@@ -8308,6 +4227,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               onClick={() => setShowControlCodes(!showControlCodes)}
               aria-label="조판 부호"
               aria-pressed={showControlCodes}
+              title={hancomTitle('studio-toggle-controls')}
               data-testid="studio-toggle-controls"
             >
               <Pilcrow className="size-4" />
@@ -8318,6 +4238,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               onClick={() => setShowTransparentBorders(!showTransparentBorders)}
               aria-label="투명 테두리"
               aria-pressed={showTransparentBorders}
+              title={hancomTitle('studio-toggle-transparent')}
               data-testid="studio-toggle-transparent"
             >
               <Square className="size-4" />
@@ -8329,6 +4250,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               variant="ghost"
               onClick={() => stepIndent('decrease')}
               aria-label="내어쓰기"
+              title={hancomTitle('studio-indent-decrease')}
               data-testid="studio-indent-decrease"
             >
               <IndentDecrease className="size-4" />
@@ -8338,6 +4260,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               variant="ghost"
               onClick={() => stepIndent('increase')}
               aria-label="들여쓰기"
+              title={hancomTitle('studio-indent-increase')}
               data-testid="studio-indent-increase"
             >
               <IndentIncrease className="size-4" />
@@ -8345,6 +4268,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             <select
               className="h-7 rounded border border-input bg-background px-2 text-xs"
               aria-label="줄 간격"
+              title={hancomTitle('studio-line-spacing')}
               data-testid="studio-line-spacing"
               defaultValue=""
               onChange={(e) => {
@@ -8365,6 +4289,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             <select
               className="h-7 rounded border border-input bg-background px-2 text-xs"
               aria-label="문단 간격"
+              title={hancomTitle('studio-para-spacing')}
               data-testid="studio-para-spacing"
               defaultValue=""
               onChange={(e) => {
@@ -8431,6 +4356,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                 onClick={findPrev}
                 disabled={findMatches.length === 0}
                 aria-label="이전 매치"
+                title="이전 매치 (Shift+Enter)"
                 data-testid="studio-find-prev"
               >
                 <ChevronUp className="size-4" />
@@ -8441,6 +4367,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                 onClick={findNext}
                 disabled={findMatches.length === 0}
                 aria-label="다음 매치"
+                title="다음 매치 (Enter)"
                 data-testid="studio-find-next"
               >
                 <ChevronDown className="size-4" />
@@ -8450,6 +4377,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
                 variant="ghost"
                 onClick={closeFind}
                 aria-label="닫기"
+                title="찾기 닫기 (Esc)"
                 data-testid="studio-find-close"
               >
                 <X className="size-4" />
@@ -8511,7 +4439,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         <div
           ref={scrollRef}
           className={
-            'relative flex-1 overflow-auto bg-muted/30 outline-none ' +
+            'relative flex-1 overflow-auto bg-muted/30 outline-hidden ' +
             (isImageDropTarget ? 'ring-2 ring-inset ring-ring' : '')
           }
           data-testid="studio-scroll"
@@ -8554,7 +4482,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           {marqueeMode && (
             <div
               data-testid="studio-marquee-mode"
-              className="pointer-events-none absolute left-1/2 top-2 z-50 -translate-x-1/2 rounded bg-primary/80 px-3 py-1 text-xs font-medium text-primary-foreground shadow"
+              className="pointer-events-none absolute left-1/2 top-2 z-50 -translate-x-1/2 rounded bg-primary/80 px-3 py-1 text-xs font-medium text-primary-foreground shadow-sm"
             >
               개체 선택 모드 (Esc 해제 / 드래그로 표 영역 선택)
             </div>
@@ -8580,198 +4508,26 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               }}
             >
               {Array.from({ length: pageCount }, (_, i) => (
-                <div
+                <PaperPage
                   key={i}
-                  className="flex flex-col items-stretch"
-                  data-testid="studio-page-wrap"
-                >
-                  {showRuler && (
-                    <HorizontalRuler widthSvg={pageDims.w} zoom={zoom} />
-                  )}
-                  <div
-                    // chunk 54 — page paper is always white, even in dark
-                    // mode. The IR's SVG renderer hard-codes black text;
-                    // matching `bg-background` would make text invisible
-                    // on a dark theme. Chrome around the page (toolbar,
-                    // sidebar, status bar) follows the theme normally.
-                    //
-                    // `select-none` — drag selection is fully owned by our
-                    // IR-level handlers (handlePageMouseDown + the
-                    // selectionRectsByPage overlay). Without this, the
-                    // browser ALSO runs native text selection over the
-                    // SVG `<text>` elements in parallel, producing a wide
-                    // blue highlight that is independent of our IR state
-                    // (and not clearable via ESC since ESC doesn't reset
-                    // native selection). User-perceived symptom: drag
-                    // results in "the entire page is highlighted" while
-                    // our debug log shows the IR selection is tiny.
-                    // Native copy/select-all still works because the menu
-                    // layer routes Cmd+A/C to our IR handlers when Studio
-                    // is focused.
-                    className="relative cursor-text select-none bg-[hsl(var(--paper))] text-[hsl(var(--paper-foreground))] shadow-md"
-                    style={{
-                      width: pageDims.w * zoom,
-                      height: pageDims.h * zoom,
-                    }}
-                    onMouseDown={(e) => handlePageMouseDown(i, e)}
-                    // Mouse move / up / leave are handled at the document
-                    // level by listeners attached in handlePageMouseDown.
-                    // This keeps drag selection consistent across page gaps
-                    // and chrome (PDF-like behavior).
-                    onContextMenu={(e) => handlePageContextMenu(i, e)}
-                  >
-                    {/* SVG mount target — kept as a separate child so the
-                      cursor overlay survives renderPageInto's
-                      el.replaceChildren(adopted) call. */}
-                    <div
-                      ref={(el) => {
-                        pageRefsRef.current[i] = el;
-                      }}
-                      data-testid="studio-viewer-page"
-                      data-page-idx={i}
-                      className="absolute inset-0"
-                    />
-                    {/* chunk 57 — AI-applied paragraph highlight. A
-                      thin amber stripe along the left edge of each
-                      changed paragraph, fades after 15s. Pointer
-                      events disabled so it doesn't intercept text
-                      selection. */}
-                    {(changedParaRects[i] ?? []).map((r, ri) => (
-                      <div
-                        key={`changed-${ri}`}
-                        data-testid="studio-changed-stripe"
-                        className="pointer-events-none absolute animate-pulse rounded-r bg-amber-400/60"
-                        style={{
-                          left: r.x * zoom,
-                          top: r.y * zoom,
-                          width: 3,
-                          height: r.height * zoom,
-                        }}
-                      />
-                    ))}
-                    {/* Selection highlight overlay — one rect per visible
-                      line in the selection range, computed via
-                      getSelectionRects. */}
-                    {(selectionRectsByPage[i] ?? []).map((r, ri) => (
-                      <div
-                        key={ri}
-                        data-testid="studio-selection-rect"
-                        // chunk 22 — selection rects are interactive so the
-                        // user can grab them as a drag source. Mousedown
-                        // here also passes through to text selection /
-                        // caret movement via the page surface's pointer
-                        // event, but HTML5 drag fires on its own threshold
-                        // (no mouseup needed). This matches native browser
-                        // text selection drag UX.
-                        className="absolute cursor-grab bg-primary/25 active:cursor-grabbing"
-                        draggable={isActive}
-                        onDragStart={(e) => {
-                          const cap = captureExcerpt();
-                          if (!cap) {
-                            e.preventDefault();
-                            return;
-                          }
-                          const payload = {
-                            docPath: path,
-                            sectionIndex: cap.sectionIndex,
-                            startParagraphIndex: cap.startParagraphIndex,
-                            startOffset: cap.startOffset,
-                            endParagraphIndex: cap.endParagraphIndex,
-                            endOffset: cap.endOffset,
-                            text: cap.text,
-                          };
-                          try {
-                            e.dataTransfer.setData(
-                              'application/x-ahwp-excerpt',
-                              JSON.stringify(payload),
-                            );
-                            e.dataTransfer.setData('text/plain', cap.text);
-                            e.dataTransfer.effectAllowed = 'copy';
-                          } catch {
-                            /* dataTransfer can throw under hardened CSP */
-                          }
-                        }}
-                        style={{
-                          left: r.x * zoom,
-                          top: r.y * zoom,
-                          width: r.width * zoom,
-                          height: r.height * zoom,
-                        }}
-                      />
-                    ))}
-                    {/* Control highlight overlay — drag selection that
-                      passed over a table (bbox via getTableBBox).
-                      Rendered with same color as text selection so the
-                      object reads as "selected" alongside the lines.
-                      pointer-events-none so it doesn't intercept the
-                      page's mousedown. */}
-                    {(selectedControlBboxes[i] ?? []).map((r, ri) => (
-                      <div
-                        key={`ctrl-${ri}`}
-                        data-testid="studio-control-selection-rect"
-                        className="pointer-events-none absolute bg-primary/25"
-                        style={{
-                          left: r.x * zoom,
-                          top: r.y * zoom,
-                          width: r.width * zoom,
-                          height: r.height * zoom,
-                        }}
-                      />
-                    ))}
-                    {/* Phase A — multi-cell block highlights. Cells
-                      between anchor.cell and focus.cell of the same
-                      table when drag crossed cell boundaries. Same
-                      tint as selection / control highlight for visual
-                      consistency. */}
-                    {(cellBlockHighlights[i] ?? []).map((r, ri) => (
-                      <div
-                        key={`cb-${ri}`}
-                        data-testid="studio-cell-block-rect"
-                        className="pointer-events-none absolute bg-primary/25"
-                        style={{
-                          left: r.x * zoom,
-                          top: r.y * zoom,
-                          width: r.width * zoom,
-                          height: r.height * zoom,
-                        }}
-                      />
-                    ))}
-                    {/* Find match highlights (chunk 9). Active match rendered
-                      with a stronger color so it stands out from the rest. */}
-                    {(findHighlightsByPage[i] ?? []).map((r, ri) => (
-                      <div
-                        key={`fm-${ri}`}
-                        data-testid={
-                          r.isActive
-                            ? 'studio-find-match-active'
-                            : 'studio-find-match'
-                        }
-                        className={
-                          'pointer-events-none absolute ' +
-                          (r.isActive ? 'bg-amber-400/70' : 'bg-amber-300/35')
-                        }
-                        style={{
-                          left: r.x * zoom,
-                          top: r.y * zoom,
-                          width: r.width * zoom,
-                          height: r.height * zoom,
-                        }}
-                      />
-                    ))}
-                    {cursorRect && cursorRect.pageIndex === i && (
-                      <div
-                        data-testid="studio-cursor"
-                        className="animate-caret-blink pointer-events-none absolute bg-foreground"
-                        style={{
-                          left: cursorRect.x * zoom,
-                          top: cursorRect.y * zoom,
-                          width: Math.max(1, zoom),
-                          height: cursorRect.height * zoom,
-                        }}
-                      />
-                    )}
-                  </div>
-                </div>
+                  pageIndex={i}
+                  widthSvg={pageDims.w}
+                  heightSvg={pageDims.h}
+                  zoom={zoom}
+                  showRuler={!!showRuler}
+                  isActive={isActive}
+                  path={path}
+                  pageRefsRef={pageRefsRef}
+                  changedParaRects={changedParaRects[i] ?? []}
+                  selectionRects={selectionRectsByPage[i] ?? []}
+                  controlBboxes={selectedControlBboxes[i] ?? []}
+                  cellBlockHighlights={cellBlockHighlights[i] ?? []}
+                  findHighlights={findHighlightsByPage[i] ?? []}
+                  cursorRect={cursorRect}
+                  onMouseDown={handlePageMouseDown}
+                  onContextMenu={handlePageContextMenu}
+                  captureExcerpt={captureExcerpt}
+                />
               ))}
             </div>
           )}
@@ -8985,7 +4741,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         )}
 
         {phase !== 'ready' && !error && (
-          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background/60 backdrop-blur-sm">
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background/60 backdrop-blur-xs">
             <Loader2 className="size-6 animate-spin text-muted-foreground" />
             <span className="text-xs text-muted-foreground">
               {phase === 'mounting' && '@rhwp/core 초기화 중…'}
@@ -9015,6 +4771,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               onClick={() => undo()}
               disabled={!canUndo}
               aria-label="실행 취소"
+              title={hancomTitle('studio-undo')}
               data-testid="studio-undo"
             >
               <Undo2 className="size-4" />
@@ -9025,6 +4782,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               onClick={() => redo()}
               disabled={!canRedo}
               aria-label="다시 실행"
+              title={hancomTitle('studio-redo')}
               data-testid="studio-redo"
             >
               <Redo2 className="size-4" />
@@ -9035,12 +4793,13 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               variant="ghost"
               onClick={() => stepZoom('out')}
               aria-label="축소"
+              title={hancomTitle('studio-zoom-out')}
               data-testid="studio-zoom-out"
             >
               <ZoomOut className="size-4" />
             </Button>
             <span
-              className="min-w-[3.5rem] text-center font-mono text-muted-foreground"
+              className="min-w-14 text-center font-mono text-muted-foreground"
               data-testid="studio-zoom-level"
             >
               {Math.round(zoom * 100)}%
@@ -9050,6 +4809,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               variant="ghost"
               onClick={() => stepZoom('in')}
               aria-label="확대"
+              title={hancomTitle('studio-zoom-in')}
               data-testid="studio-zoom-in"
             >
               <ZoomIn className="size-4" />
@@ -9059,6 +4819,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               variant="ghost"
               onClick={() => setZoom(1)}
               data-testid="studio-zoom-reset"
+              title="원래 크기 (100%)"
             >
               100%
             </Button>
@@ -9067,6 +4828,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
               variant="ghost"
               onClick={setZoomFit}
               aria-label="너비 맞춤"
+              title={hancomTitle('studio-zoom-fit')}
               data-testid="studio-zoom-fit"
             >
               <Maximize2 className="size-4" />

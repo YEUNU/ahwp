@@ -81,14 +81,14 @@ export function EquationDialog({
             value={script}
             onChange={(e) => setScript(e.target.value)}
             rows={4}
-            className="rounded-md border border-input bg-background px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            className="rounded-md border border-input bg-background px-3 py-2 font-mono text-sm focus:outline-hidden focus:ring-2 focus:ring-ring"
             data-testid="equation-script"
             spellCheck={false}
           />
         </label>
 
         <section
-          className="flex min-h-[8rem] items-center justify-center rounded-md border border-border bg-card/50 p-4"
+          className="flex min-h-32 items-center justify-center rounded-md border border-border bg-card/50 p-4"
           data-testid="equation-preview"
           aria-label="수식 미리보기"
         >

@@ -102,5 +102,6 @@ export function buildActionItems(
     e('format:italic', '서식 → 기울임', ['italic', '기울임'], '⌘I'),
     e('format:underline', '서식 → 밑줄', ['underline', '밑줄'], '⌘U'),
     e('view:settings', '보기 → 설정', ['settings', '설정', 'preferences']),
+    e('view:about', '도움말 → ahwp 정보', ['about', '정보', '버전', 'version']),
   ];
 }

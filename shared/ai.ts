@@ -78,12 +78,60 @@ export function getProviderMeta(id: ProviderId): ProviderMeta {
   return meta;
 }
 
-export type ChatRole = 'system' | 'user' | 'assistant';
+export type ChatRole = 'system' | 'user' | 'assistant' | 'tool';
 
+/**
+ * Phase 3 — chat message가 plain text 외에 `tool_use` (assistant)와
+ * `tool_result` (tool) 도 carry. provider 어댑터에서 native 형식으로
+ * 변환:
+ *   - OpenAI: assistant의 tool_calls + 별도 role='tool' 메시지
+ *   - Anthropic: content blocks (text / tool_use / tool_result)
+ *   - Google: parts[] with functionCall / functionResponse
+ */
 export interface ChatMessage {
   role: ChatRole;
+  /** Plain text portion. tool_use/tool_result 메시지는 비어있어도 됨 */
   content: string;
+  /**
+   * assistant 가 호출한 tool. 한 메시지에 여러 호출 가능 (provider에
+   * 따라 병렬 가능). chunk 38 OpenAI tool calling 에서 적재.
+   */
+  toolUses?: ToolUseRecord[];
+  /**
+   * role='tool' 일 때만 의미 — 직전 turn의 tool_use에 대한 응답.
+   */
+  toolResult?: ToolResultRecord;
 }
+
+export interface ToolUseRecord {
+  /** provider가 부여한 호출 id — tool_result에 다시 인용. */
+  id: string;
+  name: string;
+  /** tool_use 인자 — JSON object. 실제 schema 검증은
+   * `shared/ai-tools.ts` 의 `validateToolCall` 이 담당. */
+  args: unknown;
+}
+
+export interface ToolResultRecord {
+  id: string;
+  /** 직전 호출의 IR 결과 — 성공 시 free-form text (값/요약), 실패 시
+   * machine-readable reason 코드. provider에 다시 들려보냄. */
+  content: string;
+  isError?: boolean;
+}
+
+/**
+ * Phase 3 — Agent 모드용 tool 카탈로그. `shared/ai-tools.ts` 의
+ * `AHWP_TOOL_NAMES` 에서 변환해서 ChatRequest.tools 로 주입.
+ */
+export interface ChatTool {
+  name: string;
+  description: string;
+  /** JSON Schema (draft-07 호환). provider가 자체 형식으로 변환. */
+  inputSchema: Record<string, unknown>;
+}
+
+export type ChatToolChoice = 'auto' | 'none' | { name: string };
 
 export interface ChatRequest {
   provider: ProviderId;
@@ -91,17 +139,37 @@ export interface ChatRequest {
   messages: ChatMessage[];
   /** 0~2 (provider clamps as needed). Defaults are provider-specific. */
   temperature?: number;
+  /** Phase 3 — Agent 모드일 때 주입. `undefined` 면 Manual (text-only). */
+  tools?: ChatTool[];
+  /** 'auto' (기본) — 모델이 결정. 'none' — tool 호출 금지. {name} — 강제. */
+  toolChoice?: ChatToolChoice;
 }
 
 /**
- * Streamed chat events. Phase 2 only emits text deltas; Phase 3 will add
- * tool-call events for agent mode. A stream always terminates with exactly
- * one `done` or `error`.
+ * Streamed chat events. Phase 3 부터 tool-use / tool-result 이벤트 추가.
+ * 한 stream은 정확히 한 개의 `done` 또는 `error` 로 종료.
+ *
+ * Agent 한 turn 흐름:
+ *   text-delta? → tool-use* → done (tool이 있으면 다음 turn 호출 필요)
+ *
+ * tool-use 이벤트는 호출 시점이 아니라 stream 종료 직전에 emit (모델이
+ * 인자 JSON 을 chunk 단위로 흘리는 경우 어댑터가 누적해서 한 번에).
  */
 export type ChatStreamEvent =
   | { type: 'text-delta'; text: string }
-  | { type: 'done'; usage?: ChatUsage }
+  | { type: 'tool-use'; id: string; name: string; args: unknown }
+  | { type: 'done'; usage?: ChatUsage; finishReason?: ChatFinishReason }
   | { type: 'error'; message: string };
+
+/**
+ * `done` 이벤트의 종료 원인. agent 루프는 `tool_calls` 면 다음 turn 을
+ * 자동 호출하고, 그 외 (`stop` / `length` / `content_filter`) 면 종료.
+ */
+export type ChatFinishReason =
+  | 'stop'
+  | 'tool_calls'
+  | 'length'
+  | 'content_filter';
 
 export interface ChatUsage {
   inputTokens?: number;

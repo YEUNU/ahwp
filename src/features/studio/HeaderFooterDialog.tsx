@@ -168,7 +168,7 @@ export function HeaderFooterDialog({
               rows={4}
               data-testid="hf-text-input"
               autoFocus
-              className="rounded-md border border-input bg-background px-3 py-2 font-mono text-xs outline-none focus:ring-2 focus:ring-ring"
+              className="rounded-md border border-input bg-background px-3 py-2 font-mono text-xs outline-hidden focus:ring-2 focus:ring-ring"
             />
           </label>
 

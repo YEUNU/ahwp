@@ -1,24 +1,30 @@
 import { FolderInput } from 'lucide-react';
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type RefCallback,
-} from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+// chunk 86 — RP v2 유지 (v4 재시도 결과 동일 layout 회귀: chat-history
+// popover 의 flex-1 truncate button 이 0px 로 hidden). v4 의 새 Group
+// 인라인 스타일이 deeply-nested flex children 을 collapse 시키는 듯.
+// lib upstream issue 추적 후 재시도.
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
-import type { MenuAction, PingResponse } from '@shared/api';
-import { correctExtension } from '@shared/format';
+import type { PingResponse } from '@shared/api';
 import { ChatPanel, type ChatPanelHandle } from '@/features/chat/ChatPanel';
 import { runTools } from '@/features/chat/tools';
 import { primaryModifier } from '@/lib/platform';
+import { useDispatchMenuAction } from '@/app/hooks/useDispatchMenuAction';
+import {
+  useTabManagement,
+  makeTabKey,
+  type TabState,
+} from '@/app/hooks/useTabManagement';
+import { useNotice } from '@/app/hooks/useNotice';
+import { useSaveFlow } from '@/app/hooks/useSaveFlow';
 import {
   CommandPalette,
   type CommandItem,
 } from '@/features/cmdk/CommandPalette';
 import { buildActionItems } from '@/features/cmdk/items';
-import { ShortcutsDialog } from '@/features/cmdk/ShortcutsDialog';
+// `ShortcutsDialog` 와 `AboutDialog` 는 SettingsDialog 의 탭으로 통합 (UI/UX
+// align). view:shortcuts / view:about 메뉴 액션은 settingsTab 을 설정하고
+// settingsOpen 을 true 로.
 import { FolderTree } from '@/features/files/FolderTree';
 import { SearchPanel } from '@/features/files/SearchPanel';
 import { SettingsDialog } from '@/features/settings/SettingsDialog';
@@ -53,8 +59,7 @@ import {
   TableFormulaDialog,
   type FormulaCellContext,
 } from '@/features/studio/TableFormulaDialog';
-import { TabBar, type TabDescriptor } from '@/features/studio/TabBar';
-import type { ViewerHandle } from '@/features/studio/types';
+import { TabBar } from '@/features/studio/TabBar';
 import { TitleBar } from './TitleBar';
 import { WelcomePane } from './WelcomePane';
 
@@ -72,26 +77,38 @@ import { WelcomePane } from './WelcomePane';
  *   re-mounted and `lastActivePath` is the activated tab.
  */
 
-interface TabState extends TabDescriptor {
-  /** Stable React key — survives re-orderings (tabs aren't reorderable
-   * yet, but this also distinguishes two tabs at the same path which we
-   * disallow today). */
-  key: string;
-}
+// `TabState` / `makeTabKey` 는 R3 (2차) 에서 useTabManagement 로 이동.
 
-let tabKeyCounter = 0;
-function makeTabKey(): string {
-  tabKeyCounter += 1;
-  return `tab-${tabKeyCounter}`;
+/**
+ * chunk 66 — true when focus is inside an editable element (chat
+ * input / rename input / dialog text fields). Used to suppress global
+ * ⌘W / ⌘K / ⌘/ / ⌘⇧F / ⌘⇧O / F6 / Alt+L|T|P bindings so they don't
+ * hijack keystrokes the user actually wants delivered to the field
+ * (e.g. ⌘W = "delete word backward" in macOS text inputs).
+ *
+ * StudioViewer doesn't use contentEditable — it's a custom viewer
+ * with synthesized caret + IME composition handlers. So a plain
+ * INPUT/TEXTAREA check is sufficient; we add `isContentEditable` as
+ * defense in depth.
+ */
+function isEditableFocused(): boolean {
+  const el = document.activeElement as HTMLElement | null;
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable;
 }
 
 export default function AppShell() {
   const [pingResult, setPingResult] = useState<PingResponse | null>(null);
   const [pingError, setPingError] = useState<string | null>(null);
-  const [tabsState, setTabsState] = useState<TabState[]>([]);
-  const [activeIndex, setActiveIndex] = useState(-1);
   const [folderRoot, setFolderRoot] = useState<string | null>(null);
+  // Settings is the single home for AI 공급자 / 단축키 / 정보 / 일반.
+  // `settingsTab` lets menu actions (view:about / view:shortcuts) route
+  // to the right tab on open.
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<
+    'general' | 'ai' | 'shortcuts' | 'about'
+  >('ai');
   const [pageSetupOpen, setPageSetupOpen] = useState(false);
   const [hfOpen, setHfOpen] = useState(false);
   const [bookmarkOpen, setBookmarkOpen] = useState(false);
@@ -119,14 +136,8 @@ export default function AppShell() {
   // until apply / cancel.
   const [formulaOpen, setFormulaOpen] = useState(false);
   const [formulaCtx, setFormulaCtx] = useState<FormulaCellContext | null>(null);
-  // Lightweight in-app notice — surfaces non-fatal save-time messages
-  // (e.g. "saved as .hwp because .hwpx round-trip is lossy"). Auto-clears
-  // after a short delay; see `showNotice` below.
-  const [notice, setNotice] = useState<{
-    kind: 'info' | 'warn';
-    text: string;
-  } | null>(null);
-  const noticeTimerRef = useRef<number | null>(null);
+  // R3 (2차) — notice → useNotice hook.
+  const { notice, showNotice, dismissNotice } = useNotice();
   // chunk 50 — command palette (⌘K). Open state lives here so any
   // sub-component (welcome screen, future help button) can also
   // trigger it.
@@ -162,285 +173,33 @@ export default function AppShell() {
       /* localStorage can throw under hardened CSP */
     }
   }, [showRuler]);
-  // chunk 53 — shortcut cheatsheet (⌘/).
-  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  // chunk 53 — shortcut cheatsheet (⌘/) — 이제 Settings 의 단축키 탭으로
+  // 라우팅. setSettingsTab('shortcuts') + setSettingsOpen(true).
   // chunk 62 — version history dialog.
   const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
-  // viewerRef per tab (by key). The active tab's viewer is what menu /
-  // shortcut actions target.
-  const viewerRefsRef = useRef<Map<string, ViewerHandle | null>>(new Map());
   const sessionRestoredRef = useRef(false);
 
-  const activeTab: TabState | null =
-    activeIndex >= 0 && activeIndex < tabsState.length
-      ? tabsState[activeIndex]
-      : null;
-
-  const activeViewerRef = useCallback((): ViewerHandle | null => {
-    if (!activeTab) return null;
-    return viewerRefsRef.current.get(activeTab.key) ?? null;
-  }, [activeTab]);
-
-  // Add a new tab for `path` (or focus an existing one). Returns the
-  // index of the resulting active tab.
-  const openTab = useCallback((path: string): void => {
-    let isNewTab = false;
-    setTabsState((prev) => {
-      const existing = prev.findIndex((t) => t.path === path);
-      if (existing >= 0) {
-        setActiveIndex(existing);
-        return prev;
-      }
-      isNewTab = true;
-      const next: TabState[] = [
-        ...prev,
-        { path, dirty: false, key: makeTabKey() },
-      ];
-      setActiveIndex(next.length - 1);
-      return next;
-    });
-    // chunk 52 — auto-save recovery. After a fresh tab mount, check if
-    // an `<path>.ahwp-draft` sidecar exists from a previous crashed
-    // session. Skip temp paths (file:new scratch files) — drafts are
-    // never written for those.
-    if (isNewTab && !path.includes('/temp/') && !path.includes('\\temp\\')) {
-      void (async () => {
-        const has = await window.api.file.hasDraft(path);
-        if (!has) return;
-        const fname = path.split(/[\\/]/).pop() ?? path;
-        const ok = window.confirm(
-          `'${fname}' 파일에 자동 저장된 변경사항이 있습니다. 복구하시겠습니까?\n\n취소하면 자동 저장 사본이 삭제됩니다.`,
-        );
-        if (ok) {
-          // Load the draft bytes, save them through the regular path so
-          // the file:save flow handles HWPX routing + .bak + watcher
-          // suppression, then bump the tab key to remount the viewer
-          // off the freshly-saved content.
-          try {
-            const bytes = await window.api.file.loadDraft(path);
-            if (bytes) {
-              await window.api.file.save({ path, bytes });
-              setTabsState((prev) =>
-                prev.map((t) =>
-                  t.path === path ? { ...t, key: makeTabKey() } : t,
-                ),
-              );
-            }
-          } catch (err) {
-            console.warn('[autosave] recovery failed:', err);
-          }
-        }
-        // Either way (recovered or declined), the draft is no longer
-        // useful — drop it so we don't keep prompting on every open.
-        await window.api.file.clearDraft(path);
-      })();
-    }
-  }, []);
-
-  // Replace the path of a tab — used after Save As or after the main
-  // process auto-routes the extension (.hwpx → .hwp). Doesn't open a
-  // new tab; the underlying viewer keeps its mounted state.
-  const replaceTabPath = useCallback(
-    (oldPath: string, newPath: string): void => {
-      if (oldPath === newPath) return;
-      setTabsState((prev) =>
-        prev.map((t) => (t.path === oldPath ? { ...t, path: newPath } : t)),
-      );
-    },
-    [],
-  );
-
-  // Close a tab. If dirty, prompt the user first. Pinned tabs (chunk 55)
-  // are protected here too — closing requires explicit confirmation
-  // even when clean.
-  const closeTab = useCallback((index: number): void => {
-    setTabsState((prev) => {
-      const tab = prev[index];
-      if (!tab) return prev;
-      if (tab.pinned) {
-        const ok = window.confirm('고정된 탭입니다. 정말로 닫으시겠습니까?');
-        if (!ok) return prev;
-      }
-      if (tab.dirty) {
-        const ok = window.confirm(
-          '저장하지 않은 변경사항이 있습니다. 정말로 닫으시겠습니까?',
-        );
-        if (!ok) return prev;
-      }
-      viewerRefsRef.current.delete(tab.key);
-      const next = prev.filter((_, i) => i !== index);
-      // Activate the previous tab (or the next one if we closed the first).
-      setActiveIndex((curIdx) => {
-        if (next.length === 0) return -1;
-        if (curIdx > index) return curIdx - 1;
-        if (curIdx === index) return Math.min(index, next.length - 1);
-        return curIdx;
-      });
-      return next;
-    });
-  }, []);
-
-  // chunk 55 — toggle a tab's pinned flag. Pinned tabs sort to the
-  // left of unpinned tabs and survive bulk close-others / close-right.
-  const togglePinTab = useCallback((index: number): void => {
-    setTabsState((prev) => {
-      if (index < 0 || index >= prev.length) return prev;
-      const target = prev[index];
-      const willPin = !target.pinned;
-      const next = prev.map((t, i) =>
-        i === index ? { ...t, pinned: willPin } : t,
-      );
-      // Re-sort so all pinned tabs come first, preserving relative order
-      // within each group. Active index follows the moved tab.
-      const indexed = next.map((t, i) => ({ t, i }));
-      indexed.sort((a, b) => {
-        const ap = a.t.pinned ? 0 : 1;
-        const bp = b.t.pinned ? 0 : 1;
-        if (ap !== bp) return ap - bp;
-        return a.i - b.i;
-      });
-      const sorted = indexed.map((x) => x.t);
-      const newIdx = sorted.findIndex((t) => t.key === target.key);
-      setActiveIndex((curIdx) => {
-        const cur = next[curIdx];
-        if (!cur) return curIdx;
-        return sorted.findIndex((t) => t.key === cur.key);
-      });
-      void newIdx;
-      return sorted;
-    });
-  }, []);
-
-  // Phase 1 잔여 — drag-reorder + context menu.
-  const reorderTab = useCallback((from: number, to: number): void => {
-    setTabsState((prev) => {
-      if (from < 0 || from >= prev.length || to < 0 || to >= prev.length)
-        return prev;
-      if (from === to) return prev;
-      const next = [...prev];
-      const [moved] = next.splice(from, 1);
-      next.splice(to, 0, moved);
-      // Keep the same logical tab active by chasing the moved id.
-      setActiveIndex((curIdx) => {
-        if (curIdx === from) return to;
-        // Closing a tab on either side may shift the active index.
-        if (from < curIdx && to >= curIdx) return curIdx - 1;
-        if (from > curIdx && to <= curIdx) return curIdx + 1;
-        return curIdx;
-      });
-      return next;
-    });
-  }, []);
-
-  const closeOtherTabs = useCallback((keepIndex: number): void => {
-    setTabsState((prev) => {
-      const keep = prev[keepIndex];
-      if (!keep) return prev;
-      // chunk 55 — pinned tabs (and the keep target) survive the bulk
-      // close. Confirm only on the dirty subset that's actually about
-      // to disappear.
-      const willClose = prev.filter((t, i) => i !== keepIndex && !t.pinned);
-      const willKeep = prev.filter((t, i) => i === keepIndex || t.pinned);
-      if (willClose.length === 0) return prev;
-      const dirtyNames = willClose
-        .filter((t) => t.dirty)
-        .map((t) => t.path.split(/[/\\]/).pop() ?? t.path);
-      if (dirtyNames.length > 0) {
-        const ok = window.confirm(
-          `저장하지 않은 변경사항이 있는 탭을 닫습니다 (${dirtyNames.length}개). 계속하시겠습니까?`,
-        );
-        if (!ok) return prev;
-      }
-      for (const t of willClose) viewerRefsRef.current.delete(t.key);
-      // Re-locate the active tab (keep target) within the shrunken array.
-      const newIdx = willKeep.findIndex((t) => t.key === keep.key);
-      setActiveIndex(newIdx >= 0 ? newIdx : 0);
-      return willKeep;
-    });
-  }, []);
-
-  const closeTabsToRight = useCallback((index: number): void => {
-    setTabsState((prev) => {
-      if (index < 0 || index >= prev.length - 1) return prev;
-      // chunk 55 — pinned tabs to the right are preserved.
-      const right = prev.slice(index + 1);
-      const willClose = right.filter((t) => !t.pinned);
-      const pinnedRight = right.filter((t) => t.pinned);
-      if (willClose.length === 0) return prev;
-      const dirtyNames = willClose
-        .filter((t) => t.dirty)
-        .map((t) => t.path.split(/[/\\]/).pop() ?? t.path);
-      if (dirtyNames.length > 0) {
-        const ok = window.confirm(
-          `저장하지 않은 변경사항이 있는 탭을 닫습니다 (${dirtyNames.length}개). 계속하시겠습니까?`,
-        );
-        if (!ok) return prev;
-      }
-      for (const t of willClose) viewerRefsRef.current.delete(t.key);
-      const next = [...prev.slice(0, index + 1), ...pinnedRight];
-      setActiveIndex((curIdx) => Math.min(curIdx, next.length - 1));
-      return next;
-    });
-  }, []);
-
-  const copyTabPath = useCallback((index: number): void => {
-    setTabsState((prev) => {
-      const tab = prev[index];
-      if (tab) {
-        void window.api.clipboard.writeText(tab.path);
-      }
-      return prev;
-    });
-  }, []);
-
-  const revealTab = useCallback((index: number): void => {
-    setTabsState((prev) => {
-      const tab = prev[index];
-      if (tab) {
-        void window.api.folder.reveal(tab.path);
-      }
-      return prev;
-    });
-  }, []);
-
-  const handleDirtyChange = useCallback((key: string, dirty: boolean): void => {
-    setTabsState((prev) => {
-      const idx = prev.findIndex((t) => t.key === key);
-      if (idx < 0) return prev;
-      if (prev[idx].dirty === dirty) return prev;
-      const next = [...prev];
-      next[idx] = { ...next[idx], dirty };
-      return next;
-    });
-    // chunk 58 — bump the outline refresh signal so the TOC sidebar
-    // re-fetches without polling. The sidebar is cheap (single IR walk
-    // bounded to 1k paragraphs).
-    setOutlineKey((v) => v + 1);
-  }, []);
-
-  // Stable ref-callback factory per tab key. Each StudioViewer's ref
-  // funnels into our Map.
-  const refCallbackFor = useCallback(
-    (key: string): RefCallback<ViewerHandle> =>
-      (handle) => {
-        if (handle) {
-          viewerRefsRef.current.set(key, handle);
-        } else {
-          viewerRefsRef.current.delete(key);
-        }
-      },
-    [],
-  );
-
-  // Memoized dirty-change callback per tab key (avoids re-attaching on
-  // every parent render).
-  const dirtyCallbacks = useMemo(() => {
-    const m = new Map<string, (dirty: boolean) => void>();
-    for (const t of tabsState) {
-      m.set(t.key, (dirty) => handleDirtyChange(t.key, dirty));
-    }
-    return m;
-  }, [tabsState, handleDirtyChange]);
+  // R3 (2차) — tab management → useTabManagement hook.
+  const {
+    tabsState,
+    setTabsState,
+    activeIndex,
+    setActiveIndex,
+    activeTab,
+    viewerRefsRef,
+    activeViewerRef,
+    openTab,
+    replaceTabPath,
+    closeTab,
+    togglePinTab,
+    reorderTab,
+    closeOtherTabs,
+    closeTabsToRight,
+    copyTabPath,
+    revealTab,
+    refCallbackFor,
+    dirtyCallbacks,
+  } = useTabManagement({ setOutlineKey });
 
   useEffect(() => {
     void (async () => {
@@ -509,30 +268,7 @@ export default function AppShell() {
     });
   }, [tabsState, activeTab, folderRoot]);
 
-  // Surfaces a non-fatal message inline at the top of the app for
-  // ~5 seconds — used for save-time notices (HWPX → HWP route),
-  // external-change conflicts, etc. Replaces any in-flight notice; the
-  // timer auto-clears unless `dismissNotice` is called sooner.
-  const showNotice = useCallback(
-    (text: string, kind: 'info' | 'warn' = 'info'): void => {
-      setNotice({ kind, text });
-      if (noticeTimerRef.current !== null) {
-        window.clearTimeout(noticeTimerRef.current);
-      }
-      noticeTimerRef.current = window.setTimeout(() => {
-        setNotice(null);
-        noticeTimerRef.current = null;
-      }, 5000);
-    },
-    [],
-  );
-  const dismissNotice = useCallback(() => {
-    if (noticeTimerRef.current !== null) {
-      window.clearTimeout(noticeTimerRef.current);
-      noticeTimerRef.current = null;
-    }
-    setNotice(null);
-  }, []);
+  // (showNotice / dismissNotice now provided by useNotice hook above)
 
   // External file watcher — keep main's chokidar tracking exactly the
   // currently open tab paths. Resends the full list on every tab change,
@@ -609,94 +345,43 @@ export default function AppShell() {
     return off;
   }, [showNotice]);
 
-  const openFromDialog = useCallback(async () => {
-    const result = await window.api.file.open();
-    if (result) openTab(result.path);
-  }, [openTab]);
-
-  const openByPath = useCallback(
-    async (path: string) => {
-      const result = await window.api.file.openByPath(path);
-      if (result) openTab(result.path);
-    },
-    [openTab],
-  );
-
-  const newDocument = useCallback(async () => {
-    const result = await window.api.file.new();
-    openTab(result.path);
-  }, [openTab]);
-
-  const openFolder = useCallback(async () => {
-    const picked = await window.api.folder.pick();
-    if (picked) setFolderRoot(picked);
-  }, []);
-
-  const exportBytes = useCallback(async (): Promise<Uint8Array | null> => {
-    const handle = activeViewerRef();
-    if (!handle) return null;
-    const t0 = performance.now();
-    const bytes = await handle.exportBytes();
-    console.info(
-      `[ahwp] export ${(bytes.byteLength / 1024 / 1024).toFixed(2)}MB in ${(performance.now() - t0).toFixed(0)}ms`,
-    );
-    return bytes;
-  }, [activeViewerRef]);
-
-  const saveCurrent = useCallback(async () => {
-    const tab = activeTab;
-    if (!tab) return;
-    const bytes = await exportBytes();
-    if (!bytes) return;
-    const result = await window.api.file.save({ path: tab.path, bytes });
-    if (result.path !== tab.path) replaceTabPath(tab.path, result.path);
-    // chunk 52 — explicit save invalidates the auto-save draft.
-    void window.api.file.clearDraft(tab.path);
-    if (result.path !== tab.path) {
-      void window.api.file.clearDraft(result.path);
-    }
-    // chunk 62 — every explicit save spawns a version snapshot under
-    // userData/versions/<hash>/<ISO>.hwp. FIFO trim at 50.
-    void window.api.file.createVersion({ path: result.path, bytes });
-    if (result.routedFrom) {
-      // The user requested .hwpx but @rhwp/core's HWPX round-trip drops
-      // images (KNOWN_ISSUES L-001), so file:save auto-routes to .hwp.
-      // Tell them so they don't go looking for a missing .hwpx.
-      showNotice(
-        `'.hwpx' 저장은 라이브러리 한계로 일시 비활성화되어 있어 ${result.path.split(/[\\/]/).pop()} 로 저장했습니다.`,
-        'warn',
-      );
-    }
-  }, [activeTab, exportBytes, replaceTabPath, showNotice]);
-
-  const saveAsCurrent = useCallback(async () => {
-    const tab = activeTab;
-    const bytes = await exportBytes();
-    if (!bytes) return;
-    const defaultPath = tab ? correctExtension(tab.path, 'hwpx') : undefined;
-    const result = await window.api.file.saveAs({ bytes, defaultPath });
-    if (result) {
-      if (tab) replaceTabPath(tab.path, result.path);
-      else openTab(result.path);
-      void window.api.file.clearDraft(result.path);
-      if (tab) void window.api.file.clearDraft(tab.path);
-      void window.api.file.createVersion({ path: result.path, bytes });
-      if (result.routedFrom) {
-        showNotice(
-          `'.hwpx' 저장은 라이브러리 한계로 일시 비활성화되어 있어 ${result.path.split(/[\\/]/).pop()} 로 저장했습니다.`,
-          'warn',
-        );
-      }
-    }
-  }, [activeTab, exportBytes, replaceTabPath, openTab, showNotice]);
+  // R3 (2차) — file open / new / save / saveAs / folder pick →
+  // useSaveFlow hook.
+  const {
+    openFromDialog,
+    openByPath,
+    newDocument,
+    openFolder,
+    saveCurrent,
+    saveAsCurrent,
+  } = useSaveFlow({
+    activeTab,
+    activeViewerRef,
+    openTab,
+    replaceTabPath,
+    setFolderRoot,
+    showNotice,
+  });
 
   // ⌘W / Ctrl+W: close the active tab. Bound at the document level
   // because the StudioViewer's keydown handler doesn't run when the
   // user's focus is outside the scroll container (e.g. on a tab button).
   // ⌘K / Ctrl+K toggles the command palette (chunk 50) — same reason
   // it lives at document level: we want to open it from anywhere.
+  //
+  // chunk 66 — guard against editable focus. The chat input / rename
+  // inputs / dialog form fields all sit inside the same window event
+  // bubble, and a global ⌘W there used to close the active tab while
+  // the user was typing (browser native ⌘W = close tab). Same for
+  // ⌘K, ⌘/, ⌘⇧F, ⌘⇧O, F6, Alt+L/T/P. Studio shortcuts (⌘B/I/U/A/F/H/Z)
+  // already short-circuit inside StudioViewer's own onKeyDown — those
+  // never bubbled to window. The viewer textarea/input is **not**
+  // guarded out of bounds here because the user always wants ⌘W to
+  // close the tab from the toolbar / page background; only editable
+  // focus zones are excluded.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
+      if (isEditableFocused()) return;
       if (primaryModifier(e) && !e.altKey && !e.shiftKey) {
         if (e.key.toLowerCase() === 'w') {
           if (activeIndex >= 0) {
@@ -707,8 +392,9 @@ export default function AppShell() {
           setPaletteOpen((v) => !v);
           e.preventDefault();
         } else if (e.key === '/') {
-          // chunk 53 — ⌘/ toggles the shortcuts cheatsheet.
-          setShortcutsOpen((v) => !v);
+          // chunk 53 — ⌘/ opens Settings 의 단축키 탭 (UI/UX align).
+          setSettingsTab('shortcuts');
+          setSettingsOpen(true);
           e.preventDefault();
         }
       } else if (
@@ -799,133 +485,39 @@ export default function AppShell() {
   // onMenuAction useEffect so the command palette (chunk 50) can fire
   // the same actions through the same code path. The native menu and
   // ⌘K both feed into this.
-  const dispatchMenuAction = useCallback(
-    (action: MenuAction): void => {
-      const handle = activeViewerRef();
-      if (action === 'file:new') {
-        void newDocument();
-      } else if (action === 'file:open') {
-        void openFromDialog();
-      } else if (action === 'file:save') {
-        void saveCurrent();
-      } else if (action === 'file:save-as') {
-        void saveAsCurrent();
-      } else if (action === 'file:export-html') {
-        const v = activeViewerRef();
-        const html = v?.exportDocumentHtml(1000) ?? '';
-        if (html.length === 0) {
-          window.alert('내보낼 문서가 없습니다.');
-        } else {
-          void window.api.file.exportHtml({
-            html,
-            defaultPath: activeTab?.path,
-          });
-        }
-      } else if (action === 'file:export-pdf') {
-        // chunk 59 — same HTML pipeline as export-html, but main runs it
-        // through Chrome's printToPDF instead of writing the source.
-        const v = activeViewerRef();
-        const html = v?.exportDocumentHtml(1000) ?? '';
-        if (html.length === 0) {
-          window.alert('내보낼 문서가 없습니다.');
-        } else {
-          void window.api.file.exportPdf({
-            html,
-            defaultPath: activeTab?.path,
-          });
-        }
-      } else if (action === 'edit:undo') {
-        handle?.undo();
-      } else if (action === 'edit:redo') {
-        handle?.redo();
-      } else if (
-        action === 'edit:copy' ||
-        action === 'edit:cut' ||
-        action === 'edit:paste'
-      ) {
-        // Studio 에디터(가운데)가 활성일 때만 IR clipboard 사용,
-        // 그 외(폴더 트리, 채팅, 입력창 등)에서는 표준 DOM clipboard로
-        // 라우팅. activeElement가 [data-studio-pane]의 자손이면 Studio
-        // 활성으로 본다 (Studio mousedown 시 scrollRef가 focus를 받음).
-        const ae = document.activeElement;
-        const inStudio = !!(
-          ae && (ae as HTMLElement).closest?.('[data-studio-pane]')
-        );
-        if (inStudio) {
-          if (action === 'edit:copy') void handle?.copy();
-          else if (action === 'edit:cut') void handle?.cut();
-          else void handle?.paste();
-        } else {
-          // document.execCommand는 deprecated이지만 input/textarea/일반
-          // selection 모두에 대해 활성 element 기준으로 동작 — Electron
-          // 에서 가장 호환성 좋은 fallback. 표준 Clipboard API는 paste 시
-          // 권한 프롬프트가 필요해 적합하지 않다.
-          const op =
-            action === 'edit:copy'
-              ? 'copy'
-              : action === 'edit:cut'
-                ? 'cut'
-                : 'paste';
-          try {
-            document.execCommand(op);
-          } catch {
-            /* swallow — best-effort fallback */
-          }
-        }
-      } else if (action === 'edit:find') {
-        handle?.openFind();
-      } else if (action === 'edit:replace') {
-        handle?.openReplace();
-      } else if (action === 'edit:copy-control') {
-        handle?.copyControlAtCaret();
-      } else if (action === 'edit:paste-control') {
-        handle?.pasteControlAtCurrentCaret();
-      } else if (
-        action === 'format:bold' ||
-        action === 'format:italic' ||
-        action === 'format:underline'
-      ) {
-        const key = action.split(':')[1] as 'bold' | 'italic' | 'underline';
-        handle?.toggleCharFormat(key);
-      } else if (action === 'view:settings') {
-        setSettingsOpen(true);
-      } else if (action === 'view:page-setup') {
-        setPageSetupOpen(true);
-      } else if (action === 'insert:header-footer') {
-        setHfOpen(true);
-      } else if (action === 'insert:bookmark') {
-        setBookmarkOpen(true);
-      } else if (action === 'insert:footnote') {
-        setFootnoteOpen(true);
-      } else if (action === 'view:style-manager') {
-        setStyleManagerOpen(true);
-      } else if (action === 'insert:equation') {
-        setEquationOpen(true);
-      } else if (action === 'insert:shape') {
-        setShapeOpen(true);
-      } else if (action === 'view:picture-props') {
-        setPicturePropsOpen(true);
-      } else if (action === 'view:toggle-ruler') {
-        setShowRuler((v) => !v);
-      } else if (action === 'view:version-history') {
-        setVersionHistoryOpen(true);
-      } else if (action === 'app:new-window') {
-        void window.api.newWindow();
-      }
+  // R3 — dispatchMenuAction (~115 라인) + 메뉴 IPC 등록 effect →
+  // useDispatchMenuAction hook.
+  // Helper: open Settings on a specific tab. view:about / view:shortcuts
+  // both reroute to Settings now (R3 + UI align — single home for all
+  // app-level config / info).
+  const openSettingsTab = useCallback(
+    (tab: 'general' | 'ai' | 'shortcuts' | 'about') => {
+      setSettingsTab(tab);
+      setSettingsOpen(true);
     },
-    [
-      activeTab?.path,
-      activeViewerRef,
-      newDocument,
-      openFromDialog,
-      saveCurrent,
-      saveAsCurrent,
-    ],
+    [],
   );
 
-  useEffect(() => {
-    return window.api.onMenuAction(dispatchMenuAction);
-  }, [dispatchMenuAction]);
+  const dispatchMenuAction = useDispatchMenuAction({
+    activeViewerRef,
+    activeTab,
+    newDocument,
+    openFromDialog,
+    saveCurrent,
+    saveAsCurrent,
+    setSettingsOpen,
+    openSettingsTab,
+    setPageSetupOpen,
+    setHfOpen,
+    setBookmarkOpen,
+    setFootnoteOpen,
+    setStyleManagerOpen,
+    setEquationOpen,
+    setShapeOpen,
+    setPicturePropsOpen,
+    setShowRuler,
+    setVersionHistoryOpen,
+  });
 
   // Build the command-palette item list. The lint rule `react-hooks/refs`
   // flags passing dispatchMenuAction (or anything closing over the
@@ -966,7 +558,6 @@ export default function AppShell() {
         onOpenChange={setPaletteOpen}
         items={paletteItems}
       />
-      <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
       <VersionHistoryDialog
         open={versionHistoryOpen}
         onOpenChange={setVersionHistoryOpen}
@@ -991,12 +582,22 @@ export default function AppShell() {
           showNotice('이전 버전으로 복원되었습니다.', 'info');
         }}
       />
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <SettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        initialTab={settingsTab}
+      />
       <PageSetupDialog
         open={pageSetupOpen}
         onOpenChange={setPageSetupOpen}
-        getCurrentPageDef={() => activeViewerRef()?.getPageDef() ?? null}
-        onApply={(props) => activeViewerRef()?.applyPageDef(props)}
+        getCurrentPageDef={() =>
+          activeViewerRef()?.getPageDef() as
+            | import('@shared/rhwp-types').RhwpPageDef
+            | null
+        }
+        onApply={(props) =>
+          activeViewerRef()?.applyPageDef(props as Record<string, unknown>)
+        }
       />
       <HeaderFooterDialog
         open={hfOpen}
@@ -1468,12 +1069,24 @@ export default function AppShell() {
                   챗봇
                 </h2>
               </div>
-              <div className="flex-1 overflow-hidden">
+              {/* chunk 73 — `min-h-0` propagates the resizable Panel's
+                  height bound through the flex column so ChatPanel's
+                  inner scroller doesn't grow past its allotted region.
+                  Without it, long assistant messages pushed the input
+                  form below the viewport. */}
+              <div className="min-h-0 flex-1 overflow-hidden">
                 <ChatPanel
                   ref={chatRef}
                   onOpenSettings={() => setSettingsOpen(true)}
                   getDocHtml={() =>
-                    activeViewerRef()?.exportDocumentHtml() ?? ''
+                    // chunk 74 — `exportDocumentHtml()` defaults to 50
+                    // paragraphs which on a 100p+ doc only captures the
+                    // title page / TOC. The model then replies "문서를
+                    // 받지 못했습니다" because the body looks empty. Pass
+                    // 1000 to match the menu HTML-export and PDF paths.
+                    // The provider truncates at the token cap if the
+                    // payload is too large.
+                    activeViewerRef()?.exportDocumentHtml(1000) ?? ''
                   }
                   applyHtml={(html) => {
                     // chunk 57 — bracket the AI apply with a
@@ -1485,9 +1098,32 @@ export default function AppShell() {
                     v.applyHtmlAtCaret(html);
                     v.markChangedParagraphsSince(before);
                   }}
-                  runTools={(items) => {
-                    const v = activeViewerRef();
-                    if (!v) return [];
+                  runTools={(items, targetPath) => {
+                    // Phase 3 chunk 50 — docId-aware routing. If the
+                    // chat turn pinned a target path, look up the
+                    // matching mounted viewer (it stays mounted with
+                    // display:none even when the user switches tabs).
+                    // null targetPath = legacy / Manual "도구 실행"
+                    // button → fall back to active viewer.
+                    const lookupByPath = (p: string) => {
+                      const tab = tabsState.find((t) => t.path === p);
+                      return tab
+                        ? (viewerRefsRef.current.get(tab.key) ?? null)
+                        : null;
+                    };
+                    const v = targetPath
+                      ? lookupByPath(targetPath)
+                      : activeViewerRef();
+                    if (!v) {
+                      if (targetPath) {
+                        return items.map((it) => ({
+                          ok: false,
+                          tool: it.ok ? it.call.tool : it.tool,
+                          reason: `target-doc-not-mounted:${targetPath}`,
+                        }));
+                      }
+                      return [];
+                    }
                     const before = v.snapshotParagraphs();
                     const results = runTools(v, items);
                     v.markChangedParagraphsSince(before);
@@ -1528,6 +1164,79 @@ export default function AppShell() {
                     if (!v.canUndo()) return false;
                     v.undo();
                     return true;
+                  }}
+                  applyPatches={(patches) => {
+                    // Q5 Diff Viewer — apply a batch of patches as a single
+                    // grouped-undo turn. Per-patch: irDeleteRange to remove
+                    // the existing range, then irInsertText with addition.
+                    // Whole-paragraph patches (no startOffset/endOffset)
+                    // use irGetTextRange to discover paragraph length first.
+                    const v = activeViewerRef();
+                    if (!v) return patches.map(() => false);
+                    v.beginUndoGroup();
+                    const results = patches.map((p) => {
+                      try {
+                        const sec = p.location.sectionIndex;
+                        const para = p.location.paragraphIndex;
+                        const start = p.location.startOffset ?? 0;
+                        let end = p.location.endOffset;
+                        if (end === undefined) {
+                          // Whole-paragraph — find current length via the
+                          // text range read tool (caps at 4096 bytes which
+                          // is plenty for a paragraph).
+                          const txt = v.irGetTextRange(
+                            sec,
+                            para,
+                            0,
+                            para,
+                            10_000,
+                          );
+                          end = (txt ?? '').length;
+                        }
+                        const okDel = v.irDeleteRange(
+                          sec,
+                          para,
+                          start,
+                          para,
+                          end,
+                        );
+                        if (!okDel) return false;
+                        const okIns = v.irInsertText(
+                          sec,
+                          para,
+                          start,
+                          p.addition,
+                        );
+                        if (!okIns) return false;
+                        // Q5 확장 — additionFormat 이 있으면 삽입한
+                        // 영역에 char format 적용. 같은 undo group 안.
+                        if (p.additionFormat) {
+                          const insEnd = start + p.addition.length;
+                          v.irApplyCharFormat(
+                            sec,
+                            para,
+                            start,
+                            insEnd,
+                            p.additionFormat as Record<string, unknown>,
+                          );
+                        }
+                        return true;
+                      } catch (err) {
+                        console.warn('[diff] applyPatch failed:', err);
+                        return false;
+                      }
+                    });
+                    v.endUndoGroup();
+                    return results;
+                  }}
+                  previewPatch={(patch) => {
+                    // Q5 확장 — "에디터에서 보기". 스크롤 + caret 이동.
+                    const v = activeViewerRef();
+                    if (!v) return;
+                    v.scrollToParagraph(
+                      patch.location.sectionIndex,
+                      patch.location.paragraphIndex,
+                    );
                   }}
                 />
               </div>

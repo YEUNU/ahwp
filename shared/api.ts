@@ -17,7 +17,21 @@ export interface PingRequest {
 export interface PingResponse {
   pong: string;
   at: number;
-  platform: NodeJS.Platform;
+  /** Literal union of `process.platform` values. Inlined to avoid the
+   *  `NodeJS` global namespace which only exists in node-typed contexts
+   *  — `shared/api.ts` is read by the renderer (DOM) tsconfig too. */
+  platform:
+    | 'aix'
+    | 'darwin'
+    | 'freebsd'
+    | 'linux'
+    | 'openbsd'
+    | 'sunos'
+    | 'win32'
+    | 'cygwin'
+    | 'netbsd'
+    | 'haiku'
+    | 'android';
   electron: string;
 }
 
@@ -56,7 +70,8 @@ export type MenuAction =
   | 'format:bold'
   | 'format:italic'
   | 'format:underline'
-  | 'view:settings';
+  | 'view:settings'
+  | 'view:about';
 
 export interface RecentFile {
   path: string;
@@ -336,6 +351,10 @@ export interface SecretsApi {
   has: (providerId: ProviderId) => Promise<boolean>;
   /** Providers with stored keys, in insertion order. */
   list: () => Promise<ProviderId[]>;
+  /** chunk 70 — subscribe to set/delete broadcasts so the renderer can
+   *  re-warm the model-list cache when keys change. Returns an
+   *  unsubscribe fn. */
+  onChanged: (handler: () => void) => () => void;
 }
 
 export interface AiChatHandle {
@@ -390,6 +409,17 @@ export interface AiApi {
   /** Drop the on-disk cache entry for `providerId`. Used by Settings'
    * 새로고침 button when the user wants a hard refresh. */
   clearModelsCache: (providerId: ProviderId) => Promise<void>;
+  /** Phase 3 chunk 44 — read per-provider config (baseUrl, supportsTools). */
+  getProviderConfig: (
+    providerId: ProviderId,
+  ) => Promise<{ baseUrl?: string; supportsTools?: boolean }>;
+  /** Phase 3 chunk 44 — write per-provider config. Pass only the keys you
+   * want to update (existing keys preserved). */
+  setProviderConfig: (params: {
+    providerId: ProviderId;
+    baseUrl?: string;
+    supportsTools?: boolean;
+  }) => Promise<{ ok: true }>;
 }
 
 /** Chat history persistence — chunk 26. SQLite-backed conversations
@@ -430,11 +460,30 @@ export interface ChatHistoryApi {
   delete: (id: number) => Promise<{ ok: true }>;
 }
 
+export interface AppVersions {
+  app: string;
+  electron: string;
+  chrome: string;
+  node: string;
+  platform: string;
+  arch: string;
+  /** chunk 79 — `@rhwp/core` (HWP/HWPX WASM lib) version. Read from
+   *  `package.json` dependencies at app launch — surfaced in Settings
+   *  → 정보 so users know which WASM build powers their viewer. */
+  rhwpCore: string;
+}
+
 export interface AhwpApi {
   ping: (req: PingRequest) => Promise<PingResponse>;
   onMenuAction: (handler: (action: MenuAction) => void) => () => void;
   /** chunk 65 — open a fresh BrowserWindow with the same React app. */
   newWindow: () => Promise<void>;
+  /** chunk 52 — About 창에서 사용. app/electron/chrome/node 버전 +
+   * platform/arch 일괄 조회. package.json version 은 app.getVersion(). */
+  getVersions: () => Promise<AppVersions>;
+  /** chunk 63 — renderer-side global error bridge. Append to
+   * `userData/error.log` (local-only sink — no upload). */
+  logError: (req: { origin?: string; message: string }) => Promise<void>;
   file: FileApi;
   session: SessionApi;
   clipboard: ClipboardApi;

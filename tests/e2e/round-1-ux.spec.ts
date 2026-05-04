@@ -125,21 +125,27 @@ test.describe('round 1 UX — chunks 50/51/52/53/54/55', () => {
       await window.api.file.saveDraft({ path: p, bytes });
     }, target);
 
-    // hasDraft now true; on-disk sibling exists.
+    // hasDraft now true. (실제 저장 위치는 main 의 os.tmpdir()/ahwp-drafts/
+    // <sha1(origPath)>.ahwp-draft — sibling 이 아니라 hashed central
+    // store. existsSync 검증은 IPC 응답으로 갈음.)
     expect(
       await page.evaluate(
         async (p) => await window.api.file.hasDraft(p),
         target,
       ),
     ).toBe(true);
-    expect(existsSync(`${target}.ahwp-draft`)).toBe(true);
 
-    // Clear and verify.
+    // Clear and verify via IPC.
     await page.evaluate(
       async (p) => await window.api.file.clearDraft(p),
       target,
     );
-    expect(existsSync(`${target}.ahwp-draft`)).toBe(false);
+    expect(
+      await page.evaluate(
+        async (p) => await window.api.file.hasDraft(p),
+        target,
+      ),
+    ).toBe(false);
   });
 
   test('chunk 53 — ⌘/ opens the shortcuts cheatsheet', async () => {
@@ -148,10 +154,11 @@ test.describe('round 1 UX — chunks 50/51/52/53/54/55', () => {
 
     const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
     await page.keyboard.press(`${mod}+/`);
-    await expect(page.getByTestId('shortcuts-dialog')).toBeVisible();
-    await expect(page.getByTestId('shortcuts-dialog')).toContainText('⌘K');
+    // UI/UX align — 단축키는 Settings 의 단축키 탭으로 통합.
+    await expect(page.getByTestId('settings-dialog')).toBeVisible();
+    await expect(page.getByTestId('settings-pane-body')).toContainText('⌘K');
     await page.keyboard.press('Escape');
-    await expect(page.getByTestId('shortcuts-dialog')).not.toBeVisible();
+    await expect(page.getByTestId('settings-dialog')).not.toBeVisible();
   });
 
   test('chunk 54 — page div uses --paper variable (light mode = white)', async () => {

@@ -1,7 +1,13 @@
 import {
+  AlertTriangle,
   Check,
   Copy,
+  History,
+  Key,
+  KeyRound,
   Loader2,
+  Plus,
+  RefreshCw,
   RotateCcw,
   Send,
   Square,
@@ -12,27 +18,23 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
-  type FormEvent,
-  type KeyboardEvent,
+  type ReactNode,
 } from 'react';
-import type {
-  ChatMessage,
-  ChatRequest,
-  ChatStreamEvent,
-  ProviderId,
-} from '@shared/ai';
+import type { ChatMessage, ProviderId } from '@shared/ai';
 import {
   parseToolBlock,
   type AhwpPreflightItem,
   type AhwpToolResult,
 } from '@shared/ai-tools';
+import { parsePatchBlock, type AhwpPatch } from '@shared/ai-patches';
+import { hancomTitle } from '@/lib/hancom-tooltips';
+import { MultiPatchStack, type PatchStatus } from './DiffCard';
 import {
-  EXCERPT_HARD_CHAR_LIMIT,
   EXCERPT_SOFT_CHAR_LIMIT,
-  hashText,
   type ExcerptAttachment,
   type ExcerptStatus,
   type TextRange,
@@ -41,39 +43,85 @@ import type { AiChatHandle } from '@shared/api';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { MessageContent } from './MessageContent';
+import { useChatHistory } from './hooks/useChatHistory';
+import { useChatStreaming } from './hooks/useChatStreaming';
+import { useExcerptAttachments } from './hooks/useExcerptAttachments';
 import { previewArgs } from './tools';
 
-type ChatProviderId = Extract<ProviderId, 'openai' | 'nvidia'>;
+type ChatProviderId = Extract<
+  ProviderId,
+  'openai' | 'nvidia' | 'google' | 'custom'
+>;
 
 const PROVIDER_OPTIONS: { id: ChatProviderId; label: string }[] = [
   { id: 'openai', label: 'OpenAI' },
   { id: 'nvidia', label: 'NVIDIA NIM' },
+  { id: 'google', label: 'Google (Gemini)' },
+  { id: 'custom', label: 'Custom (OpenAI-호환)' },
 ];
 
 const DEFAULT_MODELS: Record<ChatProviderId, string> = {
   openai: 'gpt-4o-mini',
   nvidia: 'meta/llama-3.1-70b-instruct',
+  google: 'gemini-2.0-flash',
+  custom: '',
 };
 
 const STORAGE_PROVIDER = 'ahwp:chat:provider';
 const STORAGE_MODELS = 'ahwp:chat:models';
+const STORAGE_CHAT_MODE = 'ahwp:chat:mode';
+const STORAGE_ATTACH_DOC = 'ahwp:chat:attach-doc';
+
+// chunk 77 — module-scope so helper components below (ModelRefreshButton)
+// can declare prop types referencing it without crossing the React
+// component closure.
+type ModelListState =
+  | { kind: 'idle' }
+  | { kind: 'loading' }
+  | { kind: 'ok'; models: string[]; fetchedAt: number }
+  | { kind: 'stale'; models: string[]; fetchedAt: number; reason: string }
+  | { kind: 'error'; reason: string };
+
+export type ChatMode = 'manual' | 'agent';
 
 interface UiMessage extends ChatMessage {
   id: string;
+  /** Phase 3 — tool 호출/결과 inline 표시 (assistant 메시지 안). */
+  toolEntries?: UiToolEntry[];
 }
 
-function newId(): string {
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+interface UiToolEntry {
+  id: string;
+  name: string;
+  argsPreview: string;
+  status: 'running' | 'ok' | 'failed';
+  reason?: string;
 }
 
 function loadProvider(): ChatProviderId {
   try {
     const raw = localStorage.getItem(STORAGE_PROVIDER);
-    if (raw === 'openai' || raw === 'nvidia') return raw;
+    if (
+      raw === 'openai' ||
+      raw === 'nvidia' ||
+      raw === 'google' ||
+      raw === 'custom'
+    )
+      return raw;
   } catch {
     /* no-op */
   }
   return 'openai';
+}
+
+function loadChatMode(): ChatMode {
+  try {
+    const raw = localStorage.getItem(STORAGE_CHAT_MODE);
+    if (raw === 'agent') return 'agent';
+  } catch {
+    /* no-op */
+  }
+  return 'manual';
 }
 
 function loadModels(): Record<ChatProviderId, string> {
@@ -90,6 +138,14 @@ function loadModels(): Record<ChatProviderId, string> {
           typeof parsed.nvidia === 'string' && parsed.nvidia.length > 0
             ? parsed.nvidia
             : DEFAULT_MODELS.nvidia,
+        google:
+          typeof parsed.google === 'string' && parsed.google.length > 0
+            ? parsed.google
+            : DEFAULT_MODELS.google,
+        custom:
+          typeof parsed.custom === 'string'
+            ? parsed.custom
+            : DEFAULT_MODELS.custom,
       };
     }
   } catch {
@@ -118,12 +174,17 @@ export interface ChatPanelProps {
    */
   applyHtml?: (html: string) => void;
   /**
-   * Run a pre-flighted ahwp-tools op list against the active doc — chunk 19.
-   * Wraps `runTools` from src/features/chat/tools.ts. Surfaced as a
-   * "도구 실행" button on assistant messages that contain
-   * ```ahwp-tools``` JSON blocks.
+   * Run a pre-flighted ahwp-tools op list against a target doc — chunk 19,
+   * extended in chunk 59 to be docId-aware. `targetPath` is the absolute
+   * path of the doc the turn was started on; AppShell looks up the matching
+   * mounted viewer and dispatches the ops there. Passing `null` falls back
+   * to the active viewer (legacy / "도구 실행" button on Manual responses).
+   * Wraps `runTools` from src/features/chat/tools.ts.
    */
-  runTools?: (items: AhwpPreflightItem[]) => AhwpToolResult[];
+  runTools?: (
+    items: AhwpPreflightItem[],
+    targetPath?: string | null,
+  ) => AhwpToolResult[];
   /**
    * Capture the active StudioViewer selection as a portable excerpt — chunk 20.
    * `null` when no selection is active or the selection spans paragraphs.
@@ -183,6 +244,20 @@ export interface ChatPanelProps {
    * "✓ 적용됨" / "도구 실행" affordances for ~15 seconds after apply.
    */
   undoLastApply?: () => boolean;
+  /**
+   * Diff Viewer apply (Q5 UI/UX align). Apply a batch of patches as a
+   * single grouped-undo turn. Returns per-patch success/failure (parallel
+   * to the input array). Caller (AppShell) wraps in
+   * `beginUndoGroup` / `endUndoGroup` so a single ⌘Z rolls back the
+   * whole batch.
+   */
+  applyPatches?: (patches: AhwpPatch[]) => boolean[];
+  /**
+   * Diff Viewer "에디터에서 보기" (Q5 확장). Scroll the active viewer
+   * to the patch's paragraph + place caret at the start offset.
+   * No-op when no viewer is active.
+   */
+  previewPatch?: (patch: AhwpPatch) => void;
 }
 
 /**
@@ -202,95 +277,7 @@ export interface ChatPanelHandle {
 
 const HTML_BLOCK_RE = /```html\n?([\s\S]*?)```/i;
 const TOOLS_BLOCK_RE = /```ahwp-tools\n?([\s\S]*?)```/i;
-
-const SYSTEM_PROMPT_DOC_CONTEXT = `너는 한컴 한글 문서 어시스턴트야. 사용자의 요청을 두 가지 코드 블록 중 하나(또는 둘 다)로 표현해서 응답해. 사용자가 코드 블록을 한 번의 클릭으로 문서에 적용해.
-
-[A] 흐르는 글자/문단 양식 → \`\`\`html ... \`\`\` 한 블록만:
-- 단락 정렬: <p style="text-align: left|center|right|justify;">...</p>
-- 줄 간격: <p style="line-height: 1.5;"> (배수, 1.0/1.15/1.5/2.0/3.0)
-- 문단 들여쓰기: <p style="margin-left: 30px;">
-- 첫 줄 들여쓰기: <p style="text-indent: 20pt;">
-- 문단 위/아래 간격: <p style="margin-top: 12px; margin-bottom: 6px;">
-- 글자 서식: <strong>, <em>, <u>, <s>, <span style="color:#ff0000;font-size:14pt;">
-- 표: <table><tr><td>...</td></tr></table>
-
-[B] 한컴 컨트롤 객체(각주·머리말·책갈피·페이지 설정·스타일·도형) → \`\`\`ahwp-tools ... \`\`\` 한 블록 (JSON):
-{
-  "ops": [
-    { "tool": "applyHtml",          "args": { "html": "<p style='text-align:center;'>제목</p>" } },
-    { "tool": "applyAlignment",     "args": { "align": "left|center|right|justify" } },
-    { "tool": "applyFontSize",      "args": { "pt": 12 } },
-    { "tool": "applyTextColor",     "args": { "hex": "#RRGGBB" } },
-    { "tool": "toggleCharFormat",   "args": { "key": "bold|italic|underline" } },
-    { "tool": "insertFootnote",     "args": { "text": "각주 본문" } },
-    { "tool": "addBookmark",        "args": { "name": "section1" } },
-    { "tool": "setHeaderFooterText","args": { "sectionIdx": 0, "isHeader": true, "applyTo": 0, "text": "머리말 텍스트" } },
-    { "tool": "applyPageDef",       "args": { "props": { "landscape": true } } },
-    { "tool": "createNamedStyle",   "args": { "name": "본문2", "englishName": "Body2" } },
-    { "tool": "createRectShape",    "args": { "widthHwpunit": 5670, "heightHwpunit": 2835 } }
-  ]
-}
-
-분리 기준: 양식(정렬/간격/글자 서식/표) = [A] HTML, 컨트롤 객체 = [B] ahwp-tools. 같은 일을 두 갈래로 보내지 마. 각 형식은 응답에 최대 한 블록만 포함해. 코드 블록 외에 짧은 설명을 함께 써도 돼.`;
-
-/** Collect `{ label, outline }` for each reference doc the user has
- * opted in — chunk 21. Filters out paths that no longer correspond to
- * an open tab (closed since the user checked it) and active-tab paths
- * (target is implicit, never a reference). */
-function collectReferenceOutlines(
-  referencePaths: string[],
-  getOpenDocs?: () => { path: string; label: string; isActive: boolean }[],
-  getDocOutline?: (path: string) => string,
-): { label: string; outline: string }[] {
-  if (!getOpenDocs || !getDocOutline || referencePaths.length === 0) return [];
-  const docs = getOpenDocs();
-  const byPath = new Map(docs.map((d) => [d.path, d]));
-  const out: { label: string; outline: string }[] = [];
-  for (const path of referencePaths) {
-    const meta = byPath.get(path);
-    if (!meta || meta.isActive) continue;
-    const outline = getDocOutline(path);
-    if (outline.length === 0) continue;
-    out.push({ label: meta.label, outline });
-  }
-  return out;
-}
-
-/** Serialize references into the system prompt — chunk 21. Read-only
- * by contract; the system prompt explicitly forbids modification. */
-function buildReferenceSystemBlock(
-  refs: { label: string; outline: string }[],
-): string {
-  const lines: string[] = ['[참조 문서]:'];
-  refs.forEach((r, i) => {
-    lines.push(`[ref ${i + 1}] doc="${r.label}" (read-only)`);
-    lines.push(r.outline);
-    lines.push('');
-  });
-  lines.push(
-    '참조 규칙: [참조 문서]는 읽기·인용·문체 분석만 허용. 절대 수정 대상으로 삼지 마. 변경 적용 (` ```html``` ` / ` ```ahwp-tools``` `) 은 활성 문서(target)에만 한다.',
-  );
-  return lines.join('\n');
-}
-
-/** Serialize chips into the system message for chunk 20. The block
- * mirrors the spec in `docs/AI_INTEGRATION.md` §발췌 드래그 첨부 ›
- * 프롬프트 직렬화: numbered entries with role/doc/anchor metadata so
- * the model can refer to "[1]" without ambiguity. */
-function buildExcerptSystemPrompt(excerpts: ExcerptAttachment[]): string {
-  const lines: string[] = [SYSTEM_PROMPT_DOC_CONTEXT, '', '[발췌]:'];
-  excerpts.forEach((ex, i) => {
-    lines.push(
-      `[${i + 1}] role=${ex.role}  doc="${ex.docLabel}"  anchor={para:${ex.anchor.startParagraphIndex}${ex.anchor.endParagraphIndex !== ex.anchor.startParagraphIndex ? `..${ex.anchor.endParagraphIndex}` : ''}, [${ex.anchor.startOffset},${ex.anchor.endOffset}]}`,
-    );
-    lines.push(`    "${ex.text.replace(/\s+/g, ' ').trim()}"`);
-  });
-  lines.push('');
-  lines.push(
-    '발췌 규칙: 사용자가 "이 단락"이라고 하면 [발췌]의 첫 항목을 가리킴. 변경 대상은 role=target 발췌만. role=reference는 인용·문체 참고용으로만 읽고 절대 수정 대상으로 삼지 마.',
-  );
-  return lines.join('\n');
-}
+const PATCHES_BLOCK_RE = /```ahwp-patches\n?([\s\S]*?)```/i;
 
 export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
   function ChatPanel(
@@ -305,6 +292,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       getOpenDocs,
       getDocOutline,
       undoLastApply,
+      applyPatches,
+      previewPatch,
     },
     ref,
   ) {
@@ -316,6 +305,22 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [provider, setProvider] = useState<ChatProviderId>(() =>
       loadProvider(),
     );
+    // Phase 3 — Manual / Agent 모드. Manual 은 기존 chunk 18+19 (HTML/
+    // ahwp-tools 텍스트 dispatcher) — 사용자가 "도구 실행" 버튼을 눌러야
+    // 변경 적용. Agent 는 provider native tool-use API 로 자동 루프 +
+    // 묶음 undo. 기본 manual.
+    const [chatMode, setChatMode] = useState<ChatMode>(() => loadChatMode());
+    useEffect(() => {
+      try {
+        localStorage.setItem(STORAGE_CHAT_MODE, chatMode);
+      } catch {
+        /* no-op */
+      }
+    }, [chatMode]);
+    const chatModeRef = useRef(chatMode);
+    useEffect(() => {
+      chatModeRef.current = chatMode;
+    }, [chatMode]);
     const [models, setModels] = useState<Record<ChatProviderId, string>>(() =>
       loadModels(),
     );
@@ -325,19 +330,35 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // a fetch is in flight; `ok` / `stale` / `error` after. The free-text
     // input is always available — the dropdown just *suggests* values
     // (datalist), so a missing list (`error`) doesn't block chat.
-    type ModelListState =
-      | { kind: 'idle' }
-      | { kind: 'loading' }
-      | { kind: 'ok'; models: string[]; fetchedAt: number }
-      | { kind: 'stale'; models: string[]; fetchedAt: number; reason: string }
-      | { kind: 'error'; reason: string };
+    // chunk 77 — `ModelListState` 는 모듈 스코프로 hoist 해서 helper
+    // component (ModelRefreshButton) 가 참조할 수 있게 했다.
     const [modelList, setModelList] = useState<
       Record<ChatProviderId, ModelListState>
     >({
       openai: { kind: 'idle' },
       nvidia: { kind: 'idle' },
+      google: { kind: 'idle' },
+      custom: { kind: 'idle' },
     });
-    const [attachDoc, setAttachDoc] = useState(false);
+    // chunk 74 — default true. The user expectation when opening
+    // ChatPanel with an active doc is "AI knows what I'm looking at".
+    // Toggling off is for very long docs where token cost is a concern.
+    // Persisted via localStorage so the user's preference sticks.
+    const [attachDoc, setAttachDoc] = useState<boolean>(() => {
+      try {
+        const raw = localStorage.getItem(STORAGE_ATTACH_DOC);
+        return raw === null ? true : raw === '1';
+      } catch {
+        return true;
+      }
+    });
+    useEffect(() => {
+      try {
+        localStorage.setItem(STORAGE_ATTACH_DOC, attachDoc ? '1' : '0');
+      } catch {
+        /* no-op */
+      }
+    }, [attachDoc]);
     // chunk 20 — excerpt chips. When non-empty, the system message
     // injects a structured `[발췌]:` block instead of the whole-doc
     // HTML (the toggle still appears but the docHtml path is suppressed).
@@ -359,17 +380,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // 같은 대화 내 중복 호출 방지. 실패는 silent — 첫 user 메시지 60자
     // truncated title이 그대로 유지됨.
     const autoTitledConvIdsRef = useRef<Set<number>>(new Set());
-    // chunk 26 — history list for the popover. Loaded on demand when
-    // the user opens the dropdown; refreshed after rename/delete.
-    const [historyList, setHistoryList] = useState<
-      {
-        id: number;
-        docPath: string | null;
-        title: string;
-        updatedAt: number;
-      }[]
-    >([]);
-    const [historyOpen, setHistoryOpen] = useState(false);
+    // chunk 26 — history list for the popover. State + callbacks live
+    // in `useChatHistory` (R2.1).
     // chunk 21 — paths the user opted in as references. Active tab is
     // implicit target (always included) and never appears in this set.
     // Stored as an array (not Set) so React equality is straightforward.
@@ -377,8 +389,25 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const handleRef = useRef<AiChatHandle | null>(null);
     const scrollerRef = useRef<HTMLDivElement>(null);
     const assistantIdRef = useRef<string | null>(null);
+    // chunk 67 — auto-grow textarea. Height tracks content up to a
+    // ceiling, then overflow-y kicks in. Without this the user typing
+    // a long prompt either gets a 2-row letterbox (rows={2}) with
+    // hidden content or — worse — a fixed huge area cropping the
+    // chat scroller above.
+    const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
     const model = models[provider];
+
+    // chunk 67 — auto-grow textarea on input change. Height = max
+    // (scrollHeight, baseline). Tailwind's max-h-48 is the upper
+    // bound; once content exceeds it the browser shows a scrollbar
+    // because of overflow-y-auto.
+    useLayoutEffect(() => {
+      const ta = inputRef.current;
+      if (!ta) return;
+      ta.style.height = 'auto';
+      ta.style.height = `${ta.scrollHeight}px`;
+    }, [input]);
 
     // chunk 31 — provider/model을 onEvent에서 stale-closure 없이 읽기 위해
     // ref로 mirror. setProvider/setModels가 트리거되는 useEffect에서 동기화.
@@ -483,6 +512,39 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       void fetchModels(provider);
     }, [provider, hasKey, fetchModels]);
 
+    // chunk 69 — pre-fetch every provider that has a stored key so the
+    // model selector is ready the moment the user switches to it (no
+    // "확인 불가" → click 새로고침 → wait dance). The cache layer in
+    // main keeps the cost trivial after the first run; force is false
+    // so a fresh < 24h cache short-circuits immediately. We fire in
+    // parallel — providers don't block each other.
+    //
+    // chunk 70 — also re-fire on `secrets:changed` (broadcast from
+    // main when the user saves / deletes a key in Settings). The
+    // mount-only effect alone missed the common path of "launch app
+    // with no keys → add key in Settings → switch provider in
+    // ChatPanel → wait" because the startup effect had already
+    // exited.
+    const prefetchAllProviders = useCallback(async (): Promise<void> => {
+      const checks = await Promise.all(
+        PROVIDER_OPTIONS.map(async (p) => ({
+          id: p.id,
+          has: await window.api.secrets.has(p.id),
+        })),
+      );
+      for (const { id, has } of checks) {
+        if (has) void fetchModels(id);
+      }
+    }, [fetchModels]);
+
+    useEffect(() => {
+      void prefetchAllProviders();
+      const unsubscribe = window.api.secrets.onChanged(() => {
+        void prefetchAllProviders();
+      });
+      return unsubscribe;
+    }, [prefetchAllProviders]);
+
     useEffect(() => {
       const el = scrollerRef.current;
       if (!el) return;
@@ -495,549 +557,106 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       };
     }, []);
 
-    /** Buffer the assistant's streamed text so we can persist it once
-     * — chunk 26. setMessages would also work but reading state from
-     * onEvent (a useCallback with [] deps) requires an extra ref hop;
-     * a local string ref is cleaner.
-     */
-    const assistantBufferRef = useRef('');
-
-    /**
-     * chunk 31 — 자동 제목 요약. 대화의 메시지 4개 이상 누적 후 1회만
-     * 호출. 대화의 user/assistant 메시지를 모아 짧은 system prompt와
-     * 함께 보내고 응답 텍스트 첫 줄을 30자 이내 trim → renameConversation.
-     *
-     * - 같은 conversationId에 대해 한 번만 (autoTitledConvIdsRef로 dedup).
-     * - 모든 실패는 silent — 첫 user 메시지 60자 truncated title이 유지.
-     * - 사용자 진행 중인 chat과 별도 IPC 호출 (window.api.ai.chat) — abort
-     *   handle은 잡지 않음 (5단어 응답이라 곧 끝남).
-     */
+    // Mirror slot for `refreshHistory` so streaming send-completion can
+    // read the latest binding without stale closure.
     const refreshHistoryRef = useRef<(() => Promise<void>) | null>(null);
-    const maybeAutoTitle = useCallback(
-      (convId: number, finalMessages: UiMessage[]): void => {
-        if (autoTitledConvIdsRef.current.has(convId)) return;
-        if (finalMessages.length < 4) return;
-        autoTitledConvIdsRef.current.add(convId);
-        const provNow = providerRef.current;
-        const modelNow = modelRef.current;
-        if (!modelNow || modelNow.length === 0) return;
-        const transcript = finalMessages
-          .map(
-            (m) =>
-              `${m.role === 'user' ? '사용자' : '어시스턴트'}: ${m.content}`,
-          )
-          .join('\n')
-          .slice(0, 4000);
-        const req: ChatRequest = {
-          provider: provNow,
-          model: modelNow,
-          temperature: 0.2,
-          messages: [
-            {
-              role: 'system',
-              content:
-                '다음은 사용자와 AI의 대화 일부야. 이 대화의 핵심 주제를 한국어 5단어 이내의 명사구로 요약해줘. 따옴표나 마침표 없이 본문만 출력. 예: "표 합계 행 추가", "이미지 정렬 문의".',
-            },
-            { role: 'user', content: transcript },
-          ],
-        };
-        let buf = '';
-        try {
-          window.api.ai.chat(req, {
-            onEvent: (evt) => {
-              if (evt.type === 'text-delta') {
-                buf += evt.text;
-                return;
-              }
-              if (evt.type === 'done') {
-                const title = buf
-                  .split('\n')[0]
-                  .replace(/^["'`「『\s]+|["'`」』.\s]+$/g, '')
-                  .slice(0, 30);
-                if (title.length === 0) return;
-                void window.api.chatHistory
-                  .rename(convId, title)
-                  .then(() => refreshHistoryRef.current?.())
-                  .catch((err: unknown) =>
-                    console.warn('[chat] auto-title rename failed', err),
-                  );
-              } else if (evt.type === 'error') {
-                console.warn('[chat] auto-title stream error', evt.message);
-              }
-            },
-          });
-        } catch (err) {
-          console.warn('[chat] auto-title chat failed', err);
-        }
-      },
-      [],
-    );
 
-    const onEvent = useCallback(
-      (evt: ChatStreamEvent) => {
-        if (evt.type === 'text-delta') {
-          // Capture the id eagerly: the setMessages updater may run later in a
-          // React batch, by which point a terminal event might have cleared
-          // assistantIdRef. Reading it inside the updater drops late deltas.
-          const id = assistantIdRef.current;
-          if (!id) return;
-          assistantBufferRef.current += evt.text;
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === id ? { ...m, content: m.content + evt.text } : m,
-            ),
-          );
-          return;
-        }
-        if (evt.type === 'error') {
-          setError(evt.message);
-        }
-        // chunk 26 — persist the assistant turn (best-effort). Errors here
-        // are logged but don't surface to the user; a chat history blip
-        // shouldn't block the conversation flow.
-        const convId = conversationIdRef.current;
-        const buf = assistantBufferRef.current;
-        if (convId !== null && buf.length > 0) {
-          void window.api.chatHistory
-            .append(convId, 'assistant', buf)
-            .catch((err: unknown) =>
-              console.warn('[chat] history.append assistant failed', err),
-            );
-          // chunk 31 — auto-title trigger. setMessages updater로 prev (현재
-          // assistant turn 이 들어간 messages) 길이를 보고 4 이상이면 1회.
-          setMessages((prev) => {
-            maybeAutoTitle(convId, prev);
-            return prev;
-          });
-        }
-        assistantBufferRef.current = '';
-        setStreaming(false);
-        handleRef.current = null;
-        assistantIdRef.current = null;
-      },
-      [maybeAutoTitle],
-    );
-
-    /**
-     * Append a fresh assistant bubble to `history` and start streaming the
-     * provider's response into it. `history` should already end in the user
-     * message that the assistant is replying to. The optional
-     * `verifiedExcerpts` arg is the chip list after `send`'s stale check;
-     * passed in so we serialize exactly what the user is committing to,
-     * not whatever excerpts state happens to be by the time React has
-     * batched updates through.
-     */
-    const fireChat = useCallback(
-      (history: UiMessage[], verifiedExcerpts: ExcerptAttachment[] = []) => {
-        setError(null);
-        const assistantMsg: UiMessage = {
-          id: newId(),
-          role: 'assistant',
-          content: '',
-        };
-        assistantIdRef.current = assistantMsg.id;
-        setMessages([...history, assistantMsg]);
-        setStreaming(true);
-
-        // Build provider-bound message list. The system message
-        // composition picks one of three context strategies for the
-        // *target* doc (the active tab):
-        //   (1) excerpts present  → `[발췌]:` block, narrowly anchored
-        //   (2) attach toggle on  → `[현재 문서]:` whole-doc HTML
-        //   (3) neither           → no target body in prompt (just refs)
-        // Excerpts win over the toggle when both are set, per
-        // memory/project_chat_context_pipeline.md priority rule.
-        //
-        // Reference docs (chunk 21) are appended as an additional
-        // `[참조 문서]:` block when the user has opted any in. They are
-        // read-only — write tools (chunk 19) still target the active doc
-        // by construction since the dispatcher hands them to the active
-        // viewer's IR.
-        const messages: {
-          role: 'system' | 'user' | 'assistant';
-          content: string;
-        }[] = history.map(({ role, content }) => ({ role, content }));
-
-        const refOutlines = collectReferenceOutlines(
-          referencePaths,
-          getOpenDocs,
-          getDocOutline,
-        );
-
-        let systemContent: string | null = null;
-        if (verifiedExcerpts.length > 0) {
-          systemContent = buildExcerptSystemPrompt(verifiedExcerpts);
-        } else if (attachDoc && getDocHtml) {
-          const docHtml = getDocHtml();
-          if (docHtml.length > 0) {
-            systemContent = `${SYSTEM_PROMPT_DOC_CONTEXT}\n\n[현재 문서]:\n${docHtml}`;
-          }
-        }
-        if (refOutlines.length > 0) {
-          const refBlock = buildReferenceSystemBlock(refOutlines);
-          systemContent =
-            systemContent === null
-              ? `${SYSTEM_PROMPT_DOC_CONTEXT}\n\n${refBlock}`
-              : `${systemContent}\n\n${refBlock}`;
-        }
-        if (systemContent !== null) {
-          messages.unshift({ role: 'system', content: systemContent });
-        }
-
-        const request: ChatRequest = { provider, model, messages };
-        handleRef.current = window.api.ai.chat(request, { onEvent });
-      },
-      [
-        attachDoc,
-        getDocHtml,
-        getDocOutline,
-        getOpenDocs,
-        model,
-        onEvent,
-        provider,
-        referencePaths,
-      ],
-    );
-
-    // chunk 20 — capture the active viewer selection as a chip. The
-    // button is disabled when nothing's selectable, so the null-return
-    // path is only hit during a race (selection cleared between hover
-    // and click). Drag-and-drop wiring is a follow-up; this gives us
-    // the data model NOW.
-    /** Push a captured excerpt onto the chip list. Shared between the
-     * `📌 발췌 첨부` button click and the HTML5 drag-and-drop path
-     * (chunk 22). The payload differs only in the source: the button
-     * reads via captureExcerpt(); drop reads via dataTransfer's
-     * `application/x-ahwp-excerpt` MIME. */
-    const addExcerptFromPayload = useCallback(
-      (cap: {
-        sectionIndex: number;
-        startParagraphIndex: number;
-        startOffset: number;
-        endParagraphIndex: number;
-        endOffset: number;
-        text: string;
-        docPath?: string | null;
-      }) => {
-        if (cap.text.length > EXCERPT_HARD_CHAR_LIMIT) {
-          setExcerptError(
-            `발췌가 너무 깁니다 (${cap.text.length} / ${EXCERPT_HARD_CHAR_LIMIT}자 상한).`,
-          );
-          return;
-        }
-        setExcerptError(null);
-        const path =
-          cap.docPath !== undefined ? cap.docPath : (activeDocPath?.() ?? null);
-        const label = path
-          ? (path.split(/[/\\]/).pop() ?? path)
-          : '(이름 없음)';
-        const chip: ExcerptAttachment = {
-          id: newId(),
-          docPath: path,
-          docLabel: label,
-          role: 'target',
-          anchor: {
-            sectionIndex: cap.sectionIndex,
-            startParagraphIndex: cap.startParagraphIndex,
-            startOffset: cap.startOffset,
-            endParagraphIndex: cap.endParagraphIndex,
-            endOffset: cap.endOffset,
-          },
-          text: cap.text,
-          hash: hashText(cap.text),
-          status: 'fresh',
-        };
-        setExcerpts((prev) => [...prev, chip]);
-      },
-      [activeDocPath],
-    );
-
-    const onCaptureExcerpt = useCallback(() => {
-      if (!captureExcerpt) return;
-      const cap = captureExcerpt();
-      if (!cap) {
-        setExcerptError(
-          '선택된 텍스트가 없습니다. 먼저 문서에서 텍스트를 선택해 주세요.',
-        );
-        return;
-      }
-      addExcerptFromPayload(cap);
-    }, [addExcerptFromPayload, captureExcerpt]);
-
-    /** Drop handler for the input form — chunk 22. Accepts the custom
-     * `application/x-ahwp-excerpt` MIME emitted by `studio-selection-rect`
-     * dragstart. Falls back to creating a chip from `text/plain` if the
-     * structured payload is missing — that case has no anchor and so is
-     * marked stale-relocated immediately on send (verifyExcerpt will
-     * either find the text or reject). */
-    const onDropExcerpt = useCallback(
-      (e: React.DragEvent<HTMLFormElement>) => {
-        const types = Array.from(e.dataTransfer.types);
-        if (!types.includes('application/x-ahwp-excerpt')) return;
-        e.preventDefault();
-        const raw = e.dataTransfer.getData('application/x-ahwp-excerpt');
-        if (!raw) return;
-        try {
-          const parsed = JSON.parse(raw) as {
-            docPath?: string | null;
-            sectionIndex: number;
-            startParagraphIndex: number;
-            startOffset: number;
-            endParagraphIndex: number;
-            endOffset: number;
-            text: string;
-          };
-          addExcerptFromPayload(parsed);
-        } catch {
-          setExcerptError('발췌 페이로드를 읽지 못했습니다.');
-        }
-      },
-      [addExcerptFromPayload],
-    );
-
-    /** preventDefault on dragover lets the drop fire. Without it the
-     * browser rejects the drop ahead of our handler. */
-    const onDragOverExcerpt = useCallback(
-      (e: React.DragEvent<HTMLFormElement>) => {
-        const types = Array.from(e.dataTransfer.types);
-        if (!types.includes('application/x-ahwp-excerpt')) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'copy';
-      },
-      [],
-    );
-
-    // chunk 26 — history list pull. Filtered by active doc when one is
-    // loaded so the dropdown is scoped to the doc you're editing.
-    const refreshHistory = useCallback(async () => {
-      try {
-        const docPath = activeDocPath?.() ?? null;
-        const rows = await window.api.chatHistory.list(docPath);
-        setHistoryList(
-          rows.map((r) => ({
-            id: r.id,
-            docPath: r.docPath,
-            title: r.title,
-            updatedAt: r.updatedAt,
-          })),
-        );
-      } catch (err) {
-        console.warn('[chat] history.list failed', err);
-      }
-    }, [activeDocPath]);
-    useEffect(() => {
-      refreshHistoryRef.current = refreshHistory;
-    }, [refreshHistory]);
-
-    const newConversation = useCallback(() => {
-      if (streaming) return;
-      setMessages([]);
-      setConversationId(null);
-      conversationIdRef.current = null;
-      setError(null);
-      setExcerpts([]);
-      setExcerptError(null);
-      setHistoryOpen(false);
-      // chunk 31 — 새 대화 시작 시 auto-title 마킹은 conversation id 단위
-      // 라 따로 clear할 필요 없음 (id가 새로 발급될 때 자연히 미마킹 상태).
-    }, [streaming]);
-
-    const loadConversation = useCallback(async (id: number) => {
-      try {
-        const r = await window.api.chatHistory.get(id);
-        setMessages(
-          r.messages
-            .filter((m) => m.role === 'user' || m.role === 'assistant')
-            .map((m) => ({
-              id: `db-${m.id}`,
-              role: m.role,
-              content: m.content,
-            })),
-        );
-        setConversationId(id);
-        conversationIdRef.current = id;
-        setHistoryOpen(false);
-        setError(null);
-      } catch (err) {
-        console.warn('[chat] history.get failed', err);
-      }
-    }, []);
-
-    const deleteHistoryItem = useCallback(
-      async (id: number) => {
-        try {
-          await window.api.chatHistory.delete(id);
-          // If we deleted the currently-loaded conversation, reset to a fresh chat.
-          if (conversationIdRef.current === id) {
-            newConversation();
-          }
-          await refreshHistory();
-        } catch (err) {
-          console.warn('[chat] history.delete failed', err);
-        }
-      },
-      [newConversation, refreshHistory],
-    );
-
-    // Inline rename — chunk 30. Double-click on a conversation title swaps
-    // it for an input; Enter persists, Esc cancels. The conversation row
-    // shows the new title immediately via optimistic local update; the
-    // chatHistory.rename IPC writes through to SQLite. On failure we revert
-    // by re-fetching the list.
-    const [renamingId, setRenamingId] = useState<number | null>(null);
-    const [renameDraft, setRenameDraft] = useState('');
-    const beginRename = useCallback(
-      (id: number, currentTitle: string | null): void => {
-        setRenamingId(id);
-        setRenameDraft(currentTitle ?? '');
-      },
-      [],
-    );
-    const cancelRename = useCallback(() => {
-      setRenamingId(null);
-      setRenameDraft('');
-    }, []);
-    const commitRename = useCallback(
-      async (id: number): Promise<void> => {
-        const next = renameDraft.trim();
-        if (next.length === 0) {
-          cancelRename();
-          return;
-        }
-        // Optimistic update so the row reflects the new title before the
-        // IPC round-trip completes.
-        setHistoryList((prev) =>
-          prev.map((row) => (row.id === id ? { ...row, title: next } : row)),
-        );
-        setRenamingId(null);
-        setRenameDraft('');
-        try {
-          await window.api.chatHistory.rename(id, next);
-        } catch (err) {
-          console.warn('[chat] history.rename failed', err);
-          // Revert: re-fetch authoritative list from SQLite.
-          await refreshHistory();
-        }
-      },
-      [renameDraft, cancelRename, refreshHistory],
-    );
-
-    const removeExcerpt = useCallback((id: string) => {
-      setExcerpts((prev) => prev.filter((e) => e.id !== id));
-    }, []);
-
-    const send = useCallback(async () => {
-      const text = input.trim();
-      if (text.length === 0 || streaming) return;
-
-      // Per-chip stale verification — chunk 20. Each chip's anchor is
-      // re-read from the IR. Fresh = pass through. Relocated = update
-      // anchor in place (silent). Missing = block send and surface a
-      // toast so the user can re-select. We reset to fresh chips so
-      // subsequent turns don't keep re-checking the same anchors.
-      const verified: ExcerptAttachment[] = [];
-      const stillMissing: string[] = [];
-      if (excerpts.length > 0 && verifyExcerpt) {
-        for (const ex of excerpts) {
-          const r = verifyExcerpt(ex.anchor, ex.text);
-          if (!r) {
-            stillMissing.push(ex.docLabel);
-            continue;
-          }
-          if (r.status === 'fresh') {
-            verified.push({ ...ex, status: 'fresh' });
-          } else if (r.status === 'stale-relocated' && r.newAnchor) {
-            verified.push({
-              ...ex,
-              anchor: r.newAnchor,
-              status: 'stale-relocated',
-            });
-          } else {
-            stillMissing.push(ex.docLabel);
-          }
-        }
-        if (stillMissing.length > 0) {
-          setExcerptError(
-            `발췌 위치를 찾을 수 없습니다 (${stillMissing.join(', ')}). 다시 선택해 주세요.`,
-          );
-          return;
-        }
-        setExcerpts(verified);
-        setExcerptError(null);
-      }
-
-      const userMsg: UiMessage = { id: newId(), role: 'user', content: text };
-      setInput('');
-
-      // chunk 26 — ensure the conversation exists BEFORE starting the
-      // stream so onEvent's terminator (which persists the assistant
-      // turn) sees a non-null conversationIdRef. We await the create +
-      // user-append so persistence is in lockstep with the visual turn.
-      try {
-        if (conversationIdRef.current === null) {
-          const docPath = activeDocPath?.() ?? null;
-          const title = text.slice(0, 60);
-          const r = await window.api.chatHistory.create(docPath, title);
-          conversationIdRef.current = r.id;
-          setConversationId(r.id);
-        }
-        await window.api.chatHistory.append(
-          conversationIdRef.current,
-          'user',
-          text,
-        );
-      } catch (err) {
-        console.warn('[chat] history.append user failed', err);
-        // Persistence failure shouldn't block the chat — proceed even if
-        // the DB write threw.
-      }
-
-      fireChat([...messages, userMsg], verified);
-    }, [
+    // R2.2 — chunk 20 (excerpt 첨부) + chunk 22 (drag/drop) →
+    // useExcerptAttachments hook.
+    const {
+      onCaptureExcerpt,
+      onDropExcerpt,
+      onDragOverExcerpt,
+      removeExcerpt,
+    } = useExcerptAttachments({
       activeDocPath,
-      excerpts,
-      fireChat,
-      input,
-      messages,
+      captureExcerpt,
+      setExcerpts,
+      setExcerptError,
+    });
+
+    // R2.1 — chunk 26 (history list) + chunk 30 (inline rename) →
+    // useChatHistory hook.
+    const {
+      historyList,
+      historyOpen,
+      setHistoryOpen,
+      renamingId,
+      renameDraft,
+      setRenameDraft,
+      refreshHistory,
+      newConversation,
+      loadConversation,
+      deleteHistoryItem,
+      beginRename,
+      cancelRename,
+      commitRename,
+    } = useChatHistory({
+      activeDocPath,
+      conversationIdRef,
       streaming,
+      setMessages,
+      setConversationId,
+      setError,
+      setExcerpts,
+      setExcerptError,
+      refreshHistoryRef,
+    });
+
+    // R2.3 — streaming + agent loop → useChatStreaming hook.
+    const {
+      sendDirect,
+      regenerate,
+      deleteMessage,
+      copyMessage,
+      onSubmit,
+      onKeyDown,
+      stop,
+    } = useChatStreaming({
+      conversationIdRef,
+      autoTitledConvIdsRef,
+      providerRef,
+      modelRef,
+      chatModeRef,
+      handleRef,
+      scrollerRef,
+      assistantIdRef,
+      refreshHistoryRef,
+      messages,
+      setMessages,
+      input,
+      setInput,
+      streaming,
+      setStreaming,
+      setError,
+      hasKey,
+      provider,
+      model,
+      chatMode,
+      modelList,
+      attachDoc,
+      setAttachDoc,
+      excerpts,
+      excerptError,
+      setExcerptError,
+      setExcerpts,
+      conversationId,
+      setConversationId,
+      referencePaths,
+      onOpenSettings,
+      getDocHtml,
+      applyHtml,
+      runTools,
+      captureExcerpt,
+      activeDocPath,
       verifyExcerpt,
-    ]);
+      getOpenDocs,
+      getDocOutline,
+      undoLastApply,
+    });
 
-    // chunk 56 — AI selection menu trigger. Builds and fires a chat turn
-    // directly from `text` (the menu wraps the user's selection in a
-    // template prompt before calling), bypassing the input field. We
-    // skip the excerpt-chip verification path because the caller has
-    // already inlined the relevant text.
-    const sendDirect = useCallback(
-      async (text: string): Promise<void> => {
-        const trimmed = text.trim();
-        if (trimmed.length === 0 || streaming) return;
-        const userMsg: UiMessage = {
-          id: newId(),
-          role: 'user',
-          content: trimmed,
-        };
-        try {
-          if (conversationIdRef.current === null) {
-            const docPath = activeDocPath?.() ?? null;
-            const title = trimmed.slice(0, 60);
-            const r = await window.api.chatHistory.create(docPath, title);
-            conversationIdRef.current = r.id;
-            setConversationId(r.id);
-          }
-          await window.api.chatHistory.append(
-            conversationIdRef.current,
-            'user',
-            trimmed,
-          );
-        } catch (err) {
-          console.warn('[chat] history.append user (direct) failed', err);
-        }
-        fireChat([...messages, userMsg], []);
-      },
-      [activeDocPath, fireChat, messages, streaming],
-    );
-
+    // The ChatPanelHandle imperative — chunk 56. Provides prefillAndSend
+    // for cross-pane triggers (Studio AI command menu).
     useImperativeHandle(
       ref,
       () => ({
@@ -1047,67 +666,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       }),
       [sendDirect],
     );
-
-    const regenerate = useCallback(
-      (assistantId: string) => {
-        if (streaming) return;
-        const idx = messages.findIndex((m) => m.id === assistantId);
-        if (idx === -1) return;
-        const history = messages.slice(0, idx);
-        // Need a preceding user turn to regenerate from.
-        if (history.length === 0 || history[history.length - 1].role !== 'user')
-          return;
-        fireChat(history);
-      },
-      [fireChat, messages, streaming],
-    );
-
-    const deleteMessage = useCallback(
-      (id: string) => {
-        if (streaming) return;
-        setMessages((prev) => prev.filter((m) => m.id !== id));
-      },
-      [streaming],
-    );
-
-    const copyMessage = useCallback(
-      async (id: string): Promise<boolean> => {
-        const m = messages.find((x) => x.id === id);
-        if (!m) return false;
-        try {
-          await window.api.clipboard.writeText(m.content);
-          return true;
-        } catch {
-          return false;
-        }
-      },
-      [messages],
-    );
-
-    const onSubmit = useCallback(
-      (e: FormEvent<HTMLFormElement>) => {
-        e.preventDefault();
-        void send();
-      },
-      [send],
-    );
-
-    const onKeyDown = useCallback(
-      (e: KeyboardEvent<HTMLTextAreaElement>) => {
-        if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-          e.preventDefault();
-          void send();
-        }
-      },
-      [send],
-    );
-
-    const stop = useCallback(() => {
-      handleRef.current?.abort();
-      handleRef.current = null;
-      setStreaming(false);
-      assistantIdRef.current = null;
-    }, []);
 
     const providerLabel = useMemo(
       () => PROVIDER_OPTIONS.find((p) => p.id === provider)?.label ?? provider,
@@ -1127,126 +685,187 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     );
 
     return (
-      <div className="flex h-full flex-col">
+      // chunk 73 — `min-h-0` lets nested flex children honor the
+      // parent's height bound. Without it the chat-scroller's
+      // `flex-1 overflow-auto` collapsed when the message list grew,
+      // pushing the input form out of view (same root cause as the
+      // Settings PaneBody issue in chunk 72).
+      <div className="flex h-full min-h-0 flex-col">
+        {/* chunk 77 — provider bar 2-row layout. Row 1: provider +
+            status icons + actions (always visible regardless of model
+            id length). Row 2: full-width model selector + refresh.
+            Earlier single-row layout collapsed history/+ buttons when
+            NVIDIA / NIM model ids stretched the model select. */}
         <div
-          className="flex items-center gap-2 border-b border-border bg-card px-3 py-2"
+          className="flex shrink-0 flex-col gap-1.5 border-b border-border bg-card px-3 py-2"
           data-testid="chat-provider-bar"
         >
-          <select
-            value={provider}
-            onChange={(e) => onProviderChange(e.target.value as ChatProviderId)}
-            className="rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
-            data-testid="chat-provider-select"
-            aria-label="Provider"
-            disabled={streaming}
+          <div className="flex items-center gap-1.5">
+            <select
+              value={provider}
+              onChange={(e) =>
+                onProviderChange(e.target.value as ChatProviderId)
+              }
+              className="flex-1 rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-hidden focus:ring-2 focus:ring-ring"
+              data-testid="chat-provider-select"
+              aria-label="Provider"
+              title="AI 공급자 선택 (OpenAI / NVIDIA NIM / Google Gemini / Custom)"
+              disabled={streaming}
+            >
+              {PROVIDER_OPTIONS.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+            <KeyStatusIcon hasKey={hasKey} providerLabel={providerLabel} />
+            <IconButton
+              onClick={() => {
+                const next = !historyOpen;
+                setHistoryOpen(next);
+                if (next) void refreshHistory();
+              }}
+              disabled={streaming}
+              testid="chat-history-toggle"
+              ariaLabel="대화 목록"
+              title="대화 목록 (현재 문서 기준 — 클릭해 이전 대화 불러오기)"
+              active={historyOpen}
+            >
+              <History className="size-3.5" />
+            </IconButton>
+            <IconButton
+              onClick={newConversation}
+              disabled={streaming}
+              testid="chat-history-new"
+              ariaLabel="새 대화"
+              title="새 대화 시작 (기존 대화는 DB 에 보존)"
+            >
+              <Plus className="size-3.5" />
+            </IconButton>
+          </div>
+          <div className="flex items-center gap-1.5">
+            {/* chunk 65 — model selector. fetched 목록의 dropdown 만
+              사용. 현재 model 이 목록에 없으면 "(저장됨)" sticky 옵션
+              으로 보존. */}
+            {(() => {
+              const state = modelList[provider];
+              const fetched =
+                state.kind === 'ok' || state.kind === 'stale'
+                  ? state.models
+                  : [];
+              const inFetched = fetched.includes(model);
+              const empty = fetched.length === 0 && !model;
+              return (
+                <select
+                  value={model}
+                  onChange={(e) => onModelChange(e.target.value)}
+                  className="min-w-0 flex-1 truncate rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-hidden focus:ring-2 focus:ring-ring"
+                  data-testid="chat-model-input"
+                  aria-label="Model"
+                  title={
+                    empty
+                      ? '모델 목록 없음 — 키 등록 후 옆 새로고침 버튼'
+                      : `현재 모델: ${model || '(미선택)'}\n클릭해 다른 모델 선택`
+                  }
+                  disabled={streaming || state.kind === 'loading' || empty}
+                >
+                  {empty ? (
+                    <option value="">
+                      {state.kind === 'loading'
+                        ? '모델 목록 가져오는 중…'
+                        : state.kind === 'error'
+                          ? '모델 목록 확인 불가 — 새로고침'
+                          : '모델 없음'}
+                    </option>
+                  ) : null}
+                  {!inFetched && model ? (
+                    <option value={model}>{model} (저장됨)</option>
+                  ) : null}
+                  {fetched.map((id) => (
+                    <option key={id} value={id}>
+                      {id}
+                    </option>
+                  ))}
+                </select>
+              );
+            })()}
+            <ModelRefreshButton
+              state={modelList[provider]}
+              streaming={streaming}
+              onClick={() => void fetchModels(provider, true)}
+            />
+          </div>
+        </div>
+        {/* Phase 3 — Manual / Agent 모드 pill 토글 (style_example). Manual:
+          AI 응답의 도구 블록을 사용자가 직접 적용. Agent: provider native
+          tool-use API + 자동 루프 + 묶음 undo. */}
+        <div className="shrink-0 px-3 pb-2 pt-3" data-testid="chat-mode-bar">
+          <div
+            className="flex gap-0.5 rounded-md bg-muted p-0.5"
+            role="tablist"
           >
-            {PROVIDER_OPTIONS.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label}
-              </option>
-            ))}
-          </select>
-          <input
-            value={model}
-            onChange={(e) => onModelChange(e.target.value)}
-            className="flex-1 rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
-            data-testid="chat-model-input"
-            aria-label="Model"
-            disabled={streaming}
-            spellCheck={false}
-            list={`chat-model-list-${provider}`}
-          />
-          {/* chunk 48 — datalist autocomplete. Free-text input still wins
-            (user can type any model id), but a list of fetched ids
-            appears as suggestions on focus. Empty list (error / idle)
-            silently degrades to plain free-text. */}
-          {(() => {
-            const state = modelList[provider];
-            const list =
-              state.kind === 'ok' || state.kind === 'stale' ? state.models : [];
-            return (
-              <datalist
-                id={`chat-model-list-${provider}`}
-                data-testid="chat-model-datalist"
-              >
-                {list.map((id) => (
-                  <option key={id} value={id} />
-                ))}
-              </datalist>
-            );
-          })()}
-          {/* chunk 48 — refresh button + status badge. Click forces a
-            cache-bypassing refetch. The badge tells the user whether
-            we're using a fresh list, a stale-cache fallback, or a
-            "확인 불가" state where the dropdown is empty and they have
-            to type the model id by hand. */}
-          <button
-            type="button"
-            onClick={() => void fetchModels(provider, true)}
-            disabled={streaming || modelList[provider].kind === 'loading'}
-            className="rounded-md border border-input bg-background px-1.5 py-1 text-[10px] hover:bg-muted disabled:opacity-50"
-            data-testid="chat-model-refresh"
-            title={
-              modelList[provider].kind === 'error'
-                ? `모델 목록 확인 불가: ${(modelList[provider] as { reason: string }).reason}`
-                : modelList[provider].kind === 'stale'
-                  ? `오래된 캐시: ${(modelList[provider] as { reason: string }).reason}`
-                  : '모델 목록 새로고침'
-            }
-            aria-label="모델 목록 새로고침"
-          >
-            {modelList[provider].kind === 'loading'
-              ? '⟳'
-              : modelList[provider].kind === 'error'
-                ? '⚠'
-                : modelList[provider].kind === 'stale'
-                  ? '⚠'
-                  : '↻'}
-          </button>
-          <span
-            className={cn(
-              'text-[10px]',
-              hasKey === true
-                ? 'text-emerald-600 dark:text-emerald-400'
-                : hasKey === false
-                  ? 'text-muted-foreground'
-                  : 'text-muted-foreground/60',
-            )}
-            data-testid="chat-key-indicator"
-            aria-label={hasKey ? 'API 키 있음' : 'API 키 없음'}
-          >
-            {hasKey === true ? '키 ●' : hasKey === false ? '키 ○' : '…'}
-          </span>
-          <button
-            type="button"
-            onClick={() => {
-              const next = !historyOpen;
-              setHistoryOpen(next);
-              if (next) void refreshHistory();
-            }}
-            disabled={streaming}
-            className="rounded-md border border-input px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
-            data-testid="chat-history-toggle"
-            aria-label="대화 목록"
-            title="대화 목록"
-          >
-            📚
-          </button>
-          <button
-            type="button"
-            onClick={newConversation}
-            disabled={streaming}
-            className="rounded-md border border-input px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
-            data-testid="chat-history-new"
-            aria-label="새 대화"
-            title="새 대화"
-          >
-            +
-          </button>
+            <ModePill
+              active={chatMode === 'manual'}
+              disabled={streaming}
+              onClick={() => setChatMode('manual')}
+              testId="chat-mode-manual"
+              title={hancomTitle('chat-mode-manual')}
+              icon={
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0" />
+                  <path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2" />
+                  <path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8" />
+                  <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />
+                </svg>
+              }
+              label="Manual"
+              sub="제안 → 승인"
+            />
+            <ModePill
+              active={chatMode === 'agent'}
+              disabled={streaming}
+              onClick={() => setChatMode('agent')}
+              testId="chat-mode-agent"
+              title={hancomTitle('chat-mode-agent')}
+              icon={
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <rect x="3" y="11" width="18" height="10" rx="2" />
+                  <circle cx="12" cy="5" r="2" />
+                  <path d="M12 7v4" />
+                  <line x1="8" y1="16" x2="8" y2="16" />
+                  <line x1="16" y1="16" x2="16" y2="16" />
+                </svg>
+              }
+              label="Agent"
+              sub="자동 실행"
+            />
+          </div>
         </div>
         {historyOpen ? (
           <div
-            className="border-b border-border bg-card px-3 py-2"
+            // chunk 82 — `shrink-0` 가드. chat-scroller 가 `flex-1 +
+            // min-h-0` 로 잡혀 있어서 sibling 들이 default `shrink: 1`
+            // 로 0 height 까지 줄어들 수 있다 (popover 컨텐츠가 보여
+            // 야 하는데 button 들이 0 size 로 hidden 처리됨).
+            className="shrink-0 border-b border-border bg-card px-3 py-2"
             data-testid="chat-history-popover"
           >
             {historyList.length === 0 ? (
@@ -1264,6 +883,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                         'group flex items-center gap-1 rounded px-1 text-[11px] hover:bg-muted',
                         c.id === conversationId && 'bg-muted',
                       )}
+                      aria-current={
+                        c.id === conversationId ? 'page' : undefined
+                      }
                       data-testid="chat-history-item"
                       data-id={c.id}
                       data-active={c.id === conversationId ? 'true' : 'false'}
@@ -1285,7 +907,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                           }}
                           onBlur={() => void commitRename(c.id)}
                           autoFocus
-                          className="flex-1 rounded border border-input bg-background px-1 py-0.5 text-[11px] outline-none focus:ring-1 focus:ring-ring"
+                          className="flex-1 rounded border border-input bg-background px-1 py-0.5 text-[11px] outline-hidden focus:ring-1 focus:ring-ring"
                           data-testid="chat-history-item-rename-input"
                           aria-label="대화 제목 수정"
                         />
@@ -1333,7 +955,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         ) : null}
         <div
           ref={scrollerRef}
-          className="flex-1 space-y-4 overflow-auto px-4 py-4"
+          // chunk 73 — `min-h-0` so this region can shrink below its
+          // intrinsic content height when the parent flex container
+          // caps it. Pairs with `flex-1` + `overflow-y-auto` so long
+          // assistant replies scroll within the bounds instead of
+          // pushing the input form below the viewport.
+          className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4"
           data-testid="chat-scroller"
         >
           {messages.length === 0 ? (
@@ -1357,19 +984,23 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               )}
             </div>
           ) : (
-            messages.map((m) => (
-              <Message
-                key={m.id}
-                message={m}
-                streaming={streaming}
-                onCopy={copyMessage}
-                onRegenerate={regenerate}
-                onDelete={deleteMessage}
-                onApplyHtml={applyHtml}
-                onRunTools={runTools}
-                onUndoApply={undoLastApply}
-              />
-            ))
+            messages
+              .filter((m) => m.role !== 'tool')
+              .map((m) => (
+                <Message
+                  key={m.id}
+                  message={m}
+                  streaming={streaming}
+                  onCopy={copyMessage}
+                  onRegenerate={regenerate}
+                  onDelete={deleteMessage}
+                  onApplyHtml={applyHtml}
+                  onRunTools={runTools}
+                  onUndoApply={undoLastApply}
+                  onApplyPatches={applyPatches}
+                  onPreviewPatch={previewPatch}
+                />
+              ))
           )}
           {error ? (
             <div
@@ -1385,7 +1016,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           onSubmit={onSubmit}
           onDragOver={onDragOverExcerpt}
           onDrop={onDropExcerpt}
-          className="border-t border-border bg-card p-3"
+          className="shrink-0 border-t border-border bg-card p-3"
           data-testid="chat-input-form"
         >
           {getOpenDocs ? (
@@ -1413,7 +1044,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 title={
                   excerpts.length > 0
                     ? '발췌 첨부가 있을 때는 통째 첨부 대신 발췌가 사용됩니다.'
-                    : undefined
+                    : '체크하면 현재 문서 전체 HTML 을 시스템 프롬프트에 첨부 (긴 문서는 토큰 사용량 주의)'
                 }
               >
                 <input
@@ -1432,6 +1063,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   disabled={streaming}
                   data-testid="chat-capture-excerpt"
                   className="rounded-md border border-input px-2 py-0.5 hover:bg-muted disabled:opacity-50"
+                  title="에디터에서 선택한 텍스트를 칩으로 첨부 (selection rect 를 채팅 입력란으로 드래그해도 동일)"
                 >
                   📌 발췌 첨부
                 </button>
@@ -1469,7 +1101,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                         ? `..${ex.anchor.endParagraphIndex}`
                         : ''}
                     </span>
-                    <span className="max-w-[14rem] truncate">
+                    <span className="max-w-56 truncate">
                       {ex.text.replace(/\s+/g, ' ').trim()}
                     </span>
                     {tooLong ? (
@@ -1506,6 +1138,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           ) : null}
           <div className="flex items-end gap-2">
             <textarea
+              ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={onKeyDown}
@@ -1513,7 +1146,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               rows={2}
               className={cn(
                 'flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm',
-                'placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring',
+                // chunk 67 — max-h ≈ 8 rows worth of text-sm leading.
+                // overflow-y-auto so the scrollbar shows once the
+                // auto-grow useLayoutEffect hits the ceiling.
+                'max-h-48 overflow-y-auto',
+                'placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-ring',
                 'disabled:opacity-50',
               )}
               disabled={hasKey === false}
@@ -1526,6 +1163,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 size="icon"
                 onClick={stop}
                 aria-label="전송 중단"
+                title="전송 중단 (응답 스트리밍 취소)"
                 data-testid="chat-stop"
               >
                 <Square className="h-4 w-4" />
@@ -1536,6 +1174,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 size="icon"
                 disabled={input.trim().length === 0 || hasKey === false}
                 aria-label="전송"
+                title="전송 (Enter)"
                 data-testid="chat-send"
               >
                 <Send className="h-4 w-4" />
@@ -1547,6 +1186,128 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     );
   },
 );
+
+// chunk 77 — provider-bar 작은 SVG 아이콘 버튼 helper. 일관된
+// border / hover / disabled 스타일 + lucide 아이콘 size 정렬.
+function IconButton({
+  onClick,
+  disabled,
+  testid,
+  ariaLabel,
+  title,
+  active,
+  dataState,
+  children,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  testid: string;
+  ariaLabel: string;
+  title: string;
+  active?: boolean;
+  dataState?: string;
+  children: ReactNode;
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      data-testid={testid}
+      data-state={dataState}
+      aria-label={ariaLabel}
+      title={title}
+      className={cn(
+        'flex size-7 shrink-0 items-center justify-center rounded-md border border-input transition disabled:opacity-50',
+        active ? 'bg-muted text-foreground' : 'hover:bg-muted',
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+// chunk 77 — API 키 상태 아이콘. lucide Key (등록) / KeyRound 윤곽
+// (미등록) / Loader2 (확인 중). 테마의 emerald / muted-foreground 토큰
+// 사용. 텍스트 "키 ●" / "키 ○" 이모지 → SVG 교체.
+function KeyStatusIcon({
+  hasKey,
+  providerLabel,
+}: {
+  hasKey: boolean | null;
+  providerLabel: string;
+}): JSX.Element {
+  const title =
+    hasKey === true
+      ? `${providerLabel} API 키 등록됨 — 채팅 가능`
+      : hasKey === false
+        ? `${providerLabel} API 키 미등록 — Settings 에서 등록 필요`
+        : 'API 키 상태 확인 중…';
+  return (
+    <span
+      className={cn(
+        'flex size-7 shrink-0 items-center justify-center rounded-md',
+        hasKey === true
+          ? 'text-emerald-600 dark:text-emerald-400'
+          : hasKey === false
+            ? 'text-muted-foreground'
+            : 'text-muted-foreground/60',
+      )}
+      data-testid="chat-key-indicator"
+      data-state={
+        hasKey === true ? 'ok' : hasKey === false ? 'missing' : 'loading'
+      }
+      aria-label={hasKey ? 'API 키 있음' : 'API 키 없음'}
+      title={title}
+    >
+      {hasKey === null ? (
+        <Loader2 className="size-3.5 animate-spin" />
+      ) : hasKey ? (
+        <Key className="size-3.5" />
+      ) : (
+        <KeyRound className="size-3.5" />
+      )}
+    </span>
+  );
+}
+
+// chunk 77 — 모델 목록 새로고침 버튼. 상태에 따라 RefreshCw (idle/ok)
+// / Loader2 spin (loading) / AlertTriangle (error/stale) 아이콘 교체.
+// 이전엔 ↻ / ⟳ / ⚠ 텍스트로 OS 폰트에 따라 모양이 일정치 않았다.
+function ModelRefreshButton({
+  state,
+  streaming,
+  onClick,
+}: {
+  state: ModelListState;
+  streaming: boolean;
+  onClick: () => void;
+}): JSX.Element {
+  const title =
+    state.kind === 'error'
+      ? `모델 목록 확인 불가: ${state.reason}`
+      : state.kind === 'stale'
+        ? `오래된 캐시: ${state.reason}`
+        : '모델 목록 새로고침';
+  return (
+    <IconButton
+      onClick={onClick}
+      disabled={streaming || state.kind === 'loading'}
+      testid="chat-model-refresh"
+      ariaLabel="모델 목록 새로고침"
+      title={title}
+      dataState={state.kind}
+    >
+      {state.kind === 'loading' ? (
+        <Loader2 className="size-3.5 animate-spin" />
+      ) : state.kind === 'error' || state.kind === 'stale' ? (
+        <AlertTriangle className="size-3.5 text-amber-600 dark:text-amber-400" />
+      ) : (
+        <RefreshCw className="size-3.5" />
+      )}
+    </IconButton>
+  );
+}
 
 interface MessageProps {
   message: UiMessage;
@@ -1565,6 +1326,66 @@ interface MessageProps {
    * when something was actually undone.
    */
   onUndoApply?: () => boolean;
+  /** Apply a batch of patches as a grouped-undo turn (Q5 diff viewer). */
+  onApplyPatches?: (patches: AhwpPatch[]) => boolean[];
+  /** Scroll the editor to a patch's location (Q5 확장). */
+  onPreviewPatch?: (patch: AhwpPatch) => void;
+}
+
+/** Manual / Agent mode pill (style_example). Two-state segmented toggle
+ * with icon + label + sub-label, 5px radius pill containing a 6px-radius
+ * inner pill for the active button. */
+function ModePill({
+  active,
+  disabled,
+  onClick,
+  testId,
+  title,
+  icon,
+  label,
+  sub,
+}: {
+  active: boolean;
+  disabled: boolean;
+  onClick: () => void;
+  testId: string;
+  title: string;
+  icon: JSX.Element;
+  label: string;
+  sub: string;
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      disabled={disabled}
+      onClick={onClick}
+      title={title}
+      data-testid={testId}
+      className={cn(
+        'flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-[11.5px] transition disabled:opacity-50',
+        active
+          ? 'bg-card font-semibold text-foreground shadow-xs'
+          : 'text-muted-foreground hover:text-foreground',
+      )}
+    >
+      <span className="flex size-3.5 items-center justify-center opacity-90">
+        {icon}
+      </span>
+      <span className="flex flex-col items-start leading-tight">
+        <span className="tracking-tight">{label}</span>
+        <span
+          className={cn(
+            'text-[9.5px] font-normal',
+            active ? 'text-muted-foreground' : 'text-muted-foreground/70',
+          )}
+        >
+          {sub}
+        </span>
+      </span>
+    </button>
+  );
 }
 
 /** Multi-doc chip strip — chunk 21. Reads `getOpenDocs` each render so
@@ -1647,6 +1468,8 @@ function Message({
   onApplyHtml,
   onRunTools,
   onUndoApply,
+  onApplyPatches,
+  onPreviewPatch,
 }: MessageProps): JSX.Element {
   const isUser = message.role === 'user';
   const isAssistantStreaming =
@@ -1721,6 +1544,102 @@ function Message({
         setUndone(false);
       }, 2000);
     }
+  };
+
+  // Diff Viewer affordance — Q5 (UI/UX align). The model emits a
+  // ```ahwp-patches``` block when it has discrete, location-anchored
+  // changes that benefit from per-patch Accept/Reject. We pre-flight
+  // here so the preview can show invalid patches in red.
+  const patchesMatch =
+    !isUser && !streaming && onApplyPatches
+      ? PATCHES_BLOCK_RE.exec(message.content)
+      : null;
+  const patchesParsed = useMemo(() => {
+    if (!patchesMatch) return null;
+    return parsePatchBlock(patchesMatch[1].trim());
+  }, [patchesMatch]);
+  // Per-patch status. The patches block becomes visible only after
+  // streaming completes (patchesMatch gates on !streaming), so on first
+  // mount patchCount may be 0 → patchStatuses=[]. Once streaming flips,
+  // patchCount becomes N. We compute *displayed* statuses by aligning
+  // length with patchCount each render — falling back to 'pending'
+  // for missing slots — so the UI is always coherent without a
+  // setState-in-effect cascade.
+  const patchCount =
+    patchesParsed && patchesParsed.ok ? patchesParsed.items.length : 0;
+  const [patchStatusOverrides, setPatchStatusOverrides] = useState<
+    Record<number, PatchStatus>
+  >({});
+  const patchStatuses: PatchStatus[] = Array.from(
+    { length: patchCount },
+    (_, i) => patchStatusOverrides[i] ?? 'pending',
+  );
+  const setPatchStatusAt = (idx: number, status: PatchStatus): void => {
+    setPatchStatusOverrides((prev) => ({ ...prev, [idx]: status }));
+  };
+
+  // Q5 확장 — Accept 후 ~12s 토스트 ("N개 적용됨 · 되돌리기").
+  const [patchToast, setPatchToast] = useState<{
+    appliedCount: number;
+  } | null>(null);
+  const patchToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (patchToastTimerRef.current) clearTimeout(patchToastTimerRef.current);
+    };
+  }, []);
+  const showPatchToast = (count: number): void => {
+    if (count <= 0) return;
+    setPatchToast({ appliedCount: count });
+    if (patchToastTimerRef.current) clearTimeout(patchToastTimerRef.current);
+    patchToastTimerRef.current = setTimeout(() => setPatchToast(null), 12000);
+  };
+  const handlePatchUndo = (): void => {
+    if (!onUndoApply) return;
+    if (onUndoApply()) {
+      // After undo, all accepted statuses revert visually to pending —
+      // we don't track which ones were just accepted vs. earlier, so
+      // wipe overrides entirely. (For multi-step accept flows the user
+      // can re-apply.)
+      setPatchStatusOverrides({});
+      if (patchToastTimerRef.current) clearTimeout(patchToastTimerRef.current);
+      setPatchToast(null);
+    }
+  };
+
+  const handlePatchAcceptIdx = (idx: number): void => {
+    if (!patchesParsed?.ok || !onApplyPatches) return;
+    const item = patchesParsed.items[idx];
+    if (!item.ok) return;
+    const results = onApplyPatches([item.patch]);
+    if (results[0]) {
+      setPatchStatusAt(idx, 'accepted');
+      showPatchToast(1);
+    }
+  };
+  const handlePatchRejectIdx = (idx: number): void => {
+    setPatchStatusAt(idx, 'rejected');
+  };
+  const handlePatchAcceptAll = (): void => {
+    if (!patchesParsed?.ok || !onApplyPatches) return;
+    const pendingItems: { idx: number; patch: AhwpPatch }[] = [];
+    patchesParsed.items.forEach((it, i) => {
+      if (it.ok && patchStatuses[i] === 'pending') {
+        pendingItems.push({ idx: i, patch: it.patch });
+      }
+    });
+    if (pendingItems.length === 0) return;
+    const results = onApplyPatches(pendingItems.map((x) => x.patch));
+    let okCount = 0;
+    setPatchStatusOverrides((prev) => {
+      const next = { ...prev };
+      pendingItems.forEach((it, k) => {
+        if (results[k]) okCount += 1;
+        next[it.idx] = results[k] ? 'accepted' : 'rejected';
+      });
+      return next;
+    });
+    showPatchToast(okCount);
   };
 
   // Tool-call dispatcher affordance — chunk 19. The model emits a
@@ -1804,6 +1723,40 @@ function Message({
         ) : (
           <MessageContent content={message.content} />
         )}
+        {/* Phase 3 — Agent 모드 tool 호출 inline 표시. running=spinner,
+          ok=✓, failed=✗ + reason 툴팁. */}
+        {!isUser && message.toolEntries && message.toolEntries.length > 0 ? (
+          <div
+            className="mt-2 flex flex-col gap-1 border-t border-border/50 pt-2 text-xs"
+            data-testid="chat-tool-entries"
+          >
+            {message.toolEntries.map((te) => (
+              <div
+                key={te.id}
+                className="flex items-center gap-2 font-mono"
+                data-testid="chat-tool-entry"
+                data-tool-name={te.name}
+                data-tool-status={te.status}
+                title={te.reason ?? ''}
+              >
+                <span className="text-muted-foreground">
+                  {te.status === 'running'
+                    ? '⏳'
+                    : te.status === 'ok'
+                      ? '✓'
+                      : '✗'}
+                </span>
+                <span className="font-semibold">🔧 {te.name}</span>
+                <span className="truncate text-muted-foreground">
+                  {te.argsPreview}
+                </span>
+                {te.status === 'failed' && te.reason ? (
+                  <span className="text-destructive">{te.reason}</span>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
         {htmlPayload ? (
           <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2">
             <Button
@@ -1829,6 +1782,51 @@ function Message({
                 되돌리기
               </Button>
             ) : null}
+          </div>
+        ) : null}
+        {/* Q5 Diff Viewer — render patches block as Accept/Reject cards. */}
+        {patchesParsed && patchesParsed.ok && patchCount > 0 ? (
+          <div
+            className="mt-2 border-t border-border pt-2"
+            data-testid="chat-patches-block"
+          >
+            <MultiPatchStack
+              items={patchesParsed.items}
+              statuses={patchStatuses}
+              onAccept={handlePatchAcceptIdx}
+              onReject={handlePatchRejectIdx}
+              onAcceptAll={handlePatchAcceptAll}
+              onPreview={onPreviewPatch}
+            />
+            {patchToast ? (
+              <div
+                className="mt-2 flex items-center gap-3 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs"
+                data-testid="diff-applied-toast"
+              >
+                <Check className="size-3.5 text-emerald-600" />
+                <span className="flex-1 font-medium text-foreground">
+                  {patchToast.appliedCount}개 적용됨
+                </span>
+                {onUndoApply ? (
+                  <button
+                    type="button"
+                    onClick={handlePatchUndo}
+                    className="text-[11px] font-medium text-emerald-700 hover:underline dark:text-emerald-300"
+                    data-testid="diff-applied-undo"
+                  >
+                    되돌리기
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        {patchesParsed && !patchesParsed.ok ? (
+          <div
+            className="mt-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+            data-testid="chat-patches-error"
+          >
+            패치 블록 파싱 실패: {patchesParsed.reason}
           </div>
         ) : null}
         {toolsParsed ? (
@@ -1966,7 +1964,7 @@ function ActionButton({
       aria-label={label}
       title={label}
       data-testid={testid}
-      className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
     >
       {children}
     </button>

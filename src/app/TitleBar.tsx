@@ -10,6 +10,7 @@
  * left padding is conditional via getDragPaddingLeft.
  */
 import { Moon, Settings as SettingsIcon, Sun } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { useTheme } from './use-theme';
 
 export interface TitleBarProps {
@@ -30,6 +31,7 @@ export function TitleBar({
   onOpenSettings,
 }: TitleBarProps): JSX.Element {
   const { resolvedTheme, setTheme } = useTheme();
+  const { t } = useTranslation();
   const isDark = resolvedTheme === 'dark';
   return (
     <div
@@ -57,18 +59,18 @@ export function TitleBar({
           {dirty ? (
             <span
               className="inline-block size-1 rounded-full bg-primary"
-              aria-label="저장 안 됨"
+              aria-label={t('titlebar.unsaved') || '저장 안 됨'}
             />
           ) : null}
         </div>
       ) : (
-        <span className="text-muted-foreground/70">열린 문서 없음</span>
+        <span className="text-muted-foreground/70">{t('titlebar.no_doc')}</span>
       )}
       <div className="flex-1" />
       <button
         type="button"
         onClick={() => setTheme(isDark ? 'light' : 'dark')}
-        title={isDark ? '라이트 모드' : '다크 모드'}
+        title={isDark ? t('titlebar.theme.light') : t('titlebar.theme.dark')}
         className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         data-testid="titlebar-theme"
@@ -78,7 +80,7 @@ export function TitleBar({
       <button
         type="button"
         onClick={onOpenSettings}
-        title="설정"
+        title={t('titlebar.settings')}
         className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         data-testid="titlebar-settings"
@@ -90,17 +92,45 @@ export function TitleBar({
 }
 
 /** ahwp 로고 마크 — "9 · ㅏ Flag" 컨셉의 squircle SVG. 양쪽 테마에서
- * 같은 색 (배경 #2b6a6b 브랜드 틸 + 글리프 #f6f4ef 페이퍼) 사용. */
+ * 같은 색 (배경 #2b6a6b 브랜드 틸 + 글리프 #f6f4ef 페이퍼) 사용.
+ *
+ * chunk 77 — `<img src="/icon.svg">` 는 packaged Electron 에서
+ * `file:///icon.svg` 로 resolve 되어 404. inline SVG 로 교체. */
 function Logo(): JSX.Element {
   return (
-    <img
-      src="/icon.svg"
-      alt=""
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 64 64"
       width={18}
       height={18}
       className="rounded-[5px]"
-      draggable={false}
       data-testid="titlebar-logo"
-    />
+      aria-hidden="true"
+    >
+      <defs>
+        <clipPath id="ahwp-logo-squircle">
+          <path d="M 14.3168 0 L 49.6832 0 Q 64 0 64 14.3168 L 64 49.6832 Q 64 64 49.6832 64 L 14.3168 64 Q 0 64 0 49.6832 L 0 14.3168 Q 0 0 14.3168 0 Z" />
+        </clipPath>
+      </defs>
+      <g clipPath="url(#ahwp-logo-squircle)">
+        <rect width="64" height="64" fill="#2b6a6b" />
+        <rect
+          x="26.88"
+          y="10.24"
+          width="6.4"
+          height="43.52"
+          rx="0.768"
+          fill="#f6f4ef"
+        />
+        <rect
+          x="33.28"
+          y="29.44"
+          width="20.48"
+          height="6.4"
+          rx="0.768"
+          fill="#f6f4ef"
+        />
+      </g>
+    </svg>
   );
 }

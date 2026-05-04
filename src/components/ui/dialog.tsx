@@ -43,6 +43,12 @@ export const DialogContent = forwardRef<
       ref={ref}
       className={cn(
         'fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border border-border bg-background p-6 shadow-lg duration-200',
+        // chunk 68 — viewport-aware bounds. Without these the dialog
+        // grows past the screen and the overflowing form fields are
+        // unreachable. Consumers that want a custom size (Settings'
+        // 620×900 grid layout) override via twMerge — `h-[...]` and
+        // `overflow-hidden` always win when present.
+        'max-h-[calc(100vh-4rem)] overflow-y-auto',
         'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
         'sm:rounded-lg',
         className,
@@ -51,7 +57,7 @@ export const DialogContent = forwardRef<
     >
       {children}
       <DialogPrimitive.Close
-        className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring disabled:pointer-events-none"
+        className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-hidden focus:ring-2 focus:ring-ring disabled:pointer-events-none"
         aria-label="닫기"
       >
         <X className="h-4 w-4" />
@@ -91,6 +97,10 @@ export function DialogFooter({
   );
 }
 
+// Q8 — Settings header 와 동일한 typography 톤. 전체 dialog 가 이 토큰
+// 을 통해 일관된 헤더를 갖는다 (PageSetup / HeaderFooter / Bookmark /
+// Footnote / Equation / TableProps / CellProps / PictureProps / Shape /
+// StyleManager / VersionHistory / FormulaEditor 모두 영향).
 export const DialogTitle = forwardRef<
   ElementRef<typeof DialogPrimitive.Title>,
   ComponentPropsWithoutRef<typeof DialogPrimitive.Title>
@@ -98,7 +108,7 @@ export const DialogTitle = forwardRef<
   <DialogPrimitive.Title
     ref={ref}
     className={cn(
-      'text-lg font-semibold leading-none tracking-tight',
+      'text-[17px] font-bold leading-tight tracking-tight',
       className,
     )}
     {...props}
@@ -112,7 +122,7 @@ export const DialogDescription = forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Description
     ref={ref}
-    className={cn('text-sm text-muted-foreground', className)}
+    className={cn('text-xs leading-relaxed text-muted-foreground', className)}
     {...props}
   />
 ));

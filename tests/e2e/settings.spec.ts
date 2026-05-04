@@ -39,24 +39,30 @@ test.describe('settings dialog — flow', () => {
     await expect(page.getByTestId('settings-dialog')).toBeVisible();
   });
 
-  test('save key → indicator flips ○ → ●; chat panel input becomes enabled', async () => {
+  test('save key → indicator flips 미연결 → 연결됨; chat panel input becomes enabled', async () => {
     const { page } = launched;
     await page.getByTestId('chat-open-settings').click();
-    await expect(page.getByTestId('settings-indicator-openai')).toHaveText('○');
+    // UI/UX align — indicator 는 ● / ○ 대신 pill ("연결됨" / "미연결").
+    await expect(page.getByTestId('settings-indicator-openai')).toContainText(
+      '미연결',
+    );
 
     await page.getByTestId('settings-input-openai').fill('sk-fake');
     await page.getByTestId('settings-save-openai').click();
-    await expect(page.getByTestId('settings-indicator-openai')).toHaveText('●');
+    await expect(page.getByTestId('settings-indicator-openai')).toContainText(
+      '연결됨',
+    );
     // Input clears after save.
     await expect(page.getByTestId('settings-input-openai')).toHaveValue('');
 
-    // Close dialog → ChatPanel re-checks key on next provider effect.
-    // The has-check is bound to `provider` changes, not external secret writes,
-    // so we round-trip the provider select to refresh.
-    await page.getByTestId('settings-close').click();
+    // Close via Esc → ChatPanel re-checks key on next provider effect.
+    await page.keyboard.press('Escape');
     await page.getByTestId('chat-provider-select').selectOption('nvidia');
     await page.getByTestId('chat-provider-select').selectOption('openai');
-    await expect(page.getByTestId('chat-key-indicator')).toHaveText(/●/);
+    await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
+      'data-state',
+      'ok',
+    );
     await expect(page.getByTestId('chat-input')).toBeEnabled();
   });
 
@@ -96,11 +102,15 @@ test.describe('settings dialog — flow', () => {
       await window.api.secrets.set('openai', 'sk-fake');
     });
     await page.getByTestId('chat-open-settings').click();
-    await expect(page.getByTestId('settings-indicator-openai')).toHaveText('●');
+    await expect(page.getByTestId('settings-indicator-openai')).toContainText(
+      '연결됨',
+    );
     await expect(page.getByTestId('settings-delete-openai')).toBeVisible();
 
     await page.getByTestId('settings-delete-openai').click();
-    await expect(page.getByTestId('settings-indicator-openai')).toHaveText('○');
+    await expect(page.getByTestId('settings-indicator-openai')).toContainText(
+      '미연결',
+    );
     // Delete button hides once there's no stored key.
     await expect(page.getByTestId('settings-delete-openai')).toHaveCount(0);
   });
@@ -111,8 +121,12 @@ test.describe('settings dialog — flow', () => {
 
     await page.getByTestId('settings-input-nvidia').fill('nvapi-fake');
     await page.getByTestId('settings-save-nvidia').click();
-    await expect(page.getByTestId('settings-indicator-nvidia')).toHaveText('●');
+    await expect(page.getByTestId('settings-indicator-nvidia')).toContainText(
+      '연결됨',
+    );
     // openai untouched.
-    await expect(page.getByTestId('settings-indicator-openai')).toHaveText('○');
+    await expect(page.getByTestId('settings-indicator-openai')).toContainText(
+      '미연결',
+    );
   });
 });

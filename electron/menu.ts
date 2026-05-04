@@ -15,31 +15,6 @@ function send(window: BrowserWindow | null, action: MenuAction): void {
   }
 }
 
-/**
- * Application menu의 cut/copy/paste accelerator는 같은 BrowserWindow의
- * DevTools webContents에도 적용돼서, DevTools console에서 텍스트 선택 후
- * Cmd+C 누르면 메뉴가 가로채 에디터 IPC로 라우팅 → 클립보드 복사 실패.
- * DevTools에 포커스가 있을 때만 DevTools 자체 cut/copy/paste를 호출하고,
- * 그 외엔 기존처럼 에디터로 IPC 송신.
- */
-function devOrEdit(
-  window: BrowserWindow | null,
-  action: MenuAction,
-  devOp: 'cut' | 'copy' | 'paste',
-): void {
-  if (window && !window.isDestroyed()) {
-    const wc = window.webContents;
-    if (wc.isDevToolsFocused()) {
-      const dev = wc.devToolsWebContents;
-      if (dev) {
-        dev[devOp]();
-        return;
-      }
-    }
-  }
-  send(window, action);
-}
-
 export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
   const fileMenu: MenuItemConstructorOptions = {
     label: '파일',
@@ -100,21 +75,18 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
         click: () => send(getWindow(), 'edit:redo'),
       },
       { type: 'separator' },
-      {
-        label: '잘라내기',
-        accelerator: 'CmdOrCtrl+X',
-        click: () => devOrEdit(getWindow(), 'edit:cut', 'cut'),
-      },
-      {
-        label: '복사',
-        accelerator: 'CmdOrCtrl+C',
-        click: () => devOrEdit(getWindow(), 'edit:copy', 'copy'),
-      },
-      {
-        label: '붙여넣기',
-        accelerator: 'CmdOrCtrl+V',
-        click: () => devOrEdit(getWindow(), 'edit:paste', 'paste'),
-      },
+      // chunk 71 — role-based cut/copy/paste. 기존 click handler 는
+      // `edit:copy` IPC 로 라우팅 → 렌더러가 `document.execCommand` 로
+      // 폴백했지만, password input (Settings API key 등) 은 보안상
+      // execCommand 가 silently no-op 한다. role: 'copy' 등은 Chromium
+      // 의 clipboard 파이프라인을 직접 호출해서 password input + 일반
+      // input + DevTools focus 모두 정상 동작. 뷰어의 IR copy 는
+      // useKeyboardShortcuts 의 자체 onKeyDown 이 ⌘C/X/V 를 잡아서
+      // navigator.clipboard.writeText 로 덮어쓰기 때문에 viewer focus
+      // 일 때도 IR 데이터가 클립보드에 들어간다.
+      { role: 'cut', label: '잘라내기', accelerator: 'CmdOrCtrl+X' },
+      { role: 'copy', label: '복사', accelerator: 'CmdOrCtrl+C' },
+      { role: 'paste', label: '붙여넣기', accelerator: 'CmdOrCtrl+V' },
       { role: 'selectAll', label: '전체 선택' },
       { type: 'separator' },
       {
@@ -251,7 +223,10 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
           void shell.openExternal('https://github.com/YEUNU/ahwp/issues'),
       },
       { type: 'separator' },
-      { role: 'about', label: 'ahwp 정보' },
+      {
+        label: 'ahwp 정보',
+        click: () => send(getWindow(), 'view:about'),
+      },
     ],
   };
 
@@ -260,7 +235,10 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
         {
           label: app.name,
           submenu: [
-            { role: 'about', label: 'ahwp 정보' },
+            {
+              label: 'ahwp 정보',
+              click: () => send(getWindow(), 'view:about'),
+            },
             { type: 'separator' },
             {
               label: '설정…',

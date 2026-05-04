@@ -134,7 +134,7 @@ const TreeNode = memo(function TreeNode({
     'flex w-full items-center gap-1 px-2 py-0.5 text-left text-xs hover:bg-muted ' +
     (isActive ? 'bg-muted font-medium ' : isSelected ? 'bg-muted ' : '') +
     (isDropTarget
-      ? 'outline outline-2 outline-offset-[-2px] outline-ring '
+      ? 'outline-solid outline-2 -outline-offset-2 outline-ring '
       : '') +
     (isBeingDragged ? 'opacity-50 ' : '');
 
@@ -158,6 +158,7 @@ const TreeNode = memo(function TreeNode({
       ) : (
         <button
           type="button"
+          aria-selected={isSelected}
           onClick={handleClick}
           onContextMenu={(e) => onContextMenu(e, entry)}
           draggable
@@ -394,7 +395,7 @@ function TreeContextMenu({
     <div
       ref={menuRef}
       role="menu"
-      className="fixed z-50 min-w-[10rem] rounded-md border border-border bg-popover py-1 text-xs shadow-md"
+      className="fixed z-50 min-w-40 rounded-md border border-border bg-popover py-1 text-xs shadow-md"
       style={{ left: state.x, top: state.y }}
       data-testid="folder-tree-context-menu"
     >
@@ -1014,7 +1015,7 @@ export function FolderTree({
 
   return (
     <div
-      className="flex h-full flex-col overflow-auto outline-none"
+      className="flex h-full flex-col overflow-auto outline-hidden"
       data-testid="folder-tree"
       tabIndex={0}
       onKeyDown={handleKeyDown}

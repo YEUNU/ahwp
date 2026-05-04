@@ -14,6 +14,16 @@ describe('App', () => {
       }),
       onMenuAction: vi.fn().mockReturnValue(() => {}),
       newWindow: vi.fn().mockResolvedValue(undefined),
+      logError: vi.fn().mockResolvedValue(undefined),
+      getVersions: vi.fn().mockResolvedValue({
+        app: '0.0.0-test',
+        electron: '33.0.0',
+        chrome: '120.0.0',
+        node: '20.0.0',
+        platform: 'darwin',
+        arch: 'arm64',
+        rhwpCore: '0.7.9',
+      }),
       file: {
         new: vi.fn().mockResolvedValue({ path: '/tmp/new.hwp' }),
         open: vi.fn().mockResolvedValue(null),
@@ -67,6 +77,7 @@ describe('App', () => {
         delete: vi.fn().mockResolvedValue(undefined),
         has: vi.fn().mockResolvedValue(false),
         list: vi.fn().mockResolvedValue([]),
+        onChanged: vi.fn().mockReturnValue(() => {}),
       },
       ai: {
         chat: vi.fn().mockReturnValue({ abort: vi.fn() }),
@@ -75,6 +86,8 @@ describe('App', () => {
           .fn()
           .mockResolvedValue({ status: 'ok', models: [], fetchedAt: 0 }),
         clearModelsCache: vi.fn().mockResolvedValue(undefined),
+        getProviderConfig: vi.fn().mockResolvedValue({}),
+        setProviderConfig: vi.fn().mockResolvedValue({ ok: true }),
       },
       chatHistory: {
         list: vi.fn().mockResolvedValue([]),

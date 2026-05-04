@@ -10,18 +10,28 @@ import { getProviderMeta } from '../../../shared/ai';
  * env in main (see registry.ts). Behavior is encoded in the *last user
  * message content* so each e2e case stays self-contained:
  *
- *   "ECHO:hello"   → emit each char of "hello" as a text-delta, then done
- *   "ERROR:msg"    → emit a single error event with `msg`
- *   "SLOW:abc"     → echo with 50ms gap between chars (for abort tests)
+ *   "ECHO:hello"        → emit each char of "hello" as a text-delta, then done
+ *   "ERROR:msg"         → emit a single error event with `msg`
+ *   "SLOW:abc"          → echo with 50ms gap between chars (for abort tests)
+ *   "TOOL:<name>:<json>" → emit a single tool-use event {name, args=JSON.parse(json)},
+ *                          finishReason='tool_calls'. Used by chunk 38+ Agent tests.
+ *                          Example: TOOL:applyAlignment:{"align":"center"}
+ *   "TOOL_DONE:text"    → echo `text` and finishReason='stop' (used as the
+ *                          "agent done" terminal turn after tool results).
  *
  * The fake never calls fetch — no network involvement, no API key actually
  * required. We still pretend to be 'openai' so the IPC layer's
  * `requiresApiKey` branch exercises the same path as production.
  */
-function decodeScript(text: string): {
-  mode: 'echo' | 'error' | 'slow';
-  payload: string;
-} {
+type FakeMode = 'echo' | 'error' | 'slow' | 'tool' | 'tool_done';
+
+function decodeScript(text: string): { mode: FakeMode; payload: string } {
+  if (text.includes('TOOL_DONE:')) {
+    return { mode: 'tool_done', payload: text.split('TOOL_DONE:')[1].trim() };
+  }
+  if (text.includes('TOOL:')) {
+    return { mode: 'tool', payload: text.split('TOOL:')[1].trim() };
+  }
   if (text.includes('ERROR:')) {
     return { mode: 'error', payload: text.split('ERROR:')[1].trim() };
   }
@@ -47,6 +57,48 @@ export const fakeProvider: Provider = {
 
     if (mode === 'error') {
       yield { type: 'error', message: payload };
+      return;
+    }
+
+    if (mode === 'tool') {
+      // payload format: "<toolName>:<argsJson>"
+      const colonIdx = payload.indexOf(':');
+      const name = colonIdx < 0 ? payload : payload.slice(0, colonIdx);
+      const argsRaw = colonIdx < 0 ? '{}' : payload.slice(colonIdx + 1);
+      let args: unknown;
+      try {
+        args = JSON.parse(argsRaw);
+      } catch {
+        args = { __rawArguments: argsRaw };
+      }
+      yield {
+        type: 'tool-use',
+        id: `call_${Date.now().toString(36)}`,
+        name,
+        args,
+      };
+      yield {
+        type: 'done',
+        usage: { inputTokens: last.length, outputTokens: 0 },
+        finishReason: 'tool_calls',
+      };
+      return;
+    }
+
+    // tool_done: echo payload as text-delta then finishReason='stop'.
+    if (mode === 'tool_done') {
+      for (const ch of payload) {
+        if (opts.signal?.aborted) {
+          yield { type: 'error', message: 'aborted' };
+          return;
+        }
+        yield { type: 'text-delta', text: ch };
+      }
+      yield {
+        type: 'done',
+        usage: { inputTokens: last.length, outputTokens: payload.length },
+        finishReason: 'stop',
+      };
       return;
     }
 
@@ -77,6 +129,7 @@ export const fakeProvider: Provider = {
     yield {
       type: 'done',
       usage: { inputTokens: last.length, outputTokens: payload.length },
+      finishReason: 'stop',
     };
   },
 

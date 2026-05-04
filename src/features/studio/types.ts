@@ -143,6 +143,248 @@ export interface ViewerHandle {
    *  - indent: HWPUNIT (positive = first-line indent, negative = hanging)
    */
   applyParaProps: (props: Record<string, unknown>) => void;
+  /**
+   * Phase 3 chunk 45 — 본문 편집 primitive. Agent tool 카탈로그용 thin
+   * wrapper. 모두 selection-aware 가 아니라 명시적 좌표 받음. lib API
+   * (insertText / deleteRange / insertParagraph / deleteParagraph /
+   * mergeParagraph) 1:1 매핑. 셀 안 편집은 별도 *InCell variant 후속.
+   */
+  irInsertText: (
+    sectionIdx: number,
+    paraIdx: number,
+    charOffset: number,
+    text: string,
+  ) => boolean;
+  irDeleteRange: (
+    sectionIdx: number,
+    startParaIdx: number,
+    startOffset: number,
+    endParaIdx: number,
+    endOffset: number,
+  ) => boolean;
+  irInsertParagraph: (sectionIdx: number, paraIdx: number) => boolean;
+  irDeleteParagraph: (sectionIdx: number, paraIdx: number) => boolean;
+  irMergeParagraph: (sectionIdx: number, paraIdx: number) => boolean;
+  /**
+   * Phase 3 chunk 45 — 글자/단락 서식 통합. lib `applyCharFormat` 의 props_json
+   * 을 그대로 받음 — bold/italic/underline 외에 폰트(name), 크기 (size_hu),
+   * 글자색(color), 배경색(shadeColor), 취소선(strikeThrough), 첨자
+   * (subscript/superscript), 밑줄 종류(underlineLine), 그림자/외곽선 등
+   * 모두 한 호출로. Selection 없으면 caret 단락 전체.
+   */
+  irApplyCharFormat: (
+    sectionIdx: number,
+    paraIdx: number,
+    startOffset: number,
+    endOffset: number,
+    props: Record<string, unknown>,
+  ) => boolean;
+  /**
+   * Phase 3 chunk 45 — 명명된 스타일 적용. `applyStyle` lib 호출. styleId 는
+   * `getStyleListJson()` 에서 조회. 활성 단락에 적용되며 selection 시 모든
+   * 단락에 적용 (lib 가 처리).
+   */
+  irApplyStyle: (
+    sectionIdx: number,
+    paraIdx: number,
+    styleId: number,
+  ) => boolean;
+  /**
+   * Phase 3 chunk 46 — 표 구조 ops. lib API thin wrapper. Agent 가 직접
+   * 호출 — undo group 처리는 dispatcher 가 wrap.
+   */
+  irCreateTable: (
+    sectionIdx: number,
+    paraIdx: number,
+    charOffset: number,
+    rowCount: number,
+    colCount: number,
+  ) => boolean;
+  irInsertTableRow: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+    rowIdx: number,
+    below: boolean,
+  ) => boolean;
+  irInsertTableColumn: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+    colIdx: number,
+    right: boolean,
+  ) => boolean;
+  irDeleteTableRow: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+    rowIdx: number,
+  ) => boolean;
+  irDeleteTableColumn: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+    colIdx: number,
+  ) => boolean;
+  irMergeTableCells: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+    startRow: number,
+    startCol: number,
+    endRow: number,
+    endCol: number,
+  ) => boolean;
+  irSplitTableCellInto: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+    row: number,
+    col: number,
+    nRows: number,
+    mCols: number,
+    equalRowHeight: boolean,
+    mergeFirst: boolean,
+  ) => boolean;
+  irUnmergeCell: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+    row: number,
+    col: number,
+  ) => boolean;
+  irDeleteTableControl: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+  ) => boolean;
+  /**
+   * Phase 3 chunk 47 — 이미지/도형. lib *Properties / delete*Control thin wrap.
+   * insertPicture 는 base64 → Uint8Array 변환 후 호출.
+   */
+  irSetShapeProperties: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+    props: Record<string, unknown>,
+  ) => boolean;
+  irDeleteShapeControl: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+  ) => boolean;
+  irChangeShapeZOrder: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+    operation: 'top' | 'bottom' | 'forward' | 'backward',
+  ) => boolean;
+  irInsertPicture: (
+    sectionIdx: number,
+    paraIdx: number,
+    charOffset: number,
+    base64Data: string,
+    widthHwpunit: number,
+    heightHwpunit: number,
+    naturalWidthPx: number,
+    naturalHeightPx: number,
+    extension: string,
+    description: string,
+  ) => boolean;
+  /**
+   * Phase 3 chunk 48 — 페이지/섹션. break + 다단 layout + 페이지 숨김.
+   */
+  irInsertPageBreak: (
+    sectionIdx: number,
+    paraIdx: number,
+    charOffset: number,
+  ) => boolean;
+  irInsertColumnBreak: (
+    sectionIdx: number,
+    paraIdx: number,
+    charOffset: number,
+  ) => boolean;
+  irSetColumnDef: (
+    sectionIdx: number,
+    columnCount: number,
+    columnType: number,
+    sameWidth: number,
+    spacingHu: number,
+  ) => boolean;
+  irSetSectionDef: (
+    sectionIdx: number,
+    props: Record<string, unknown>,
+  ) => boolean;
+  irSetPageHide: (
+    sectionIdx: number,
+    paraIdx: number,
+    hideHeader: boolean,
+    hideFooter: boolean,
+    hideMaster: boolean,
+    hideBorder: boolean,
+    hideFill: boolean,
+    hidePageNum: boolean,
+  ) => boolean;
+  /**
+   * Phase 3 chunk 49 — 머리/꼬리말 고급 + 책갈피.
+   */
+  irApplyHfTemplate: (
+    sectionIdx: number,
+    isHeader: boolean,
+    applyTo: number,
+    templateId: number,
+  ) => boolean;
+  irCreateHeaderFooter: (
+    sectionIdx: number,
+    isHeader: boolean,
+    applyTo: number,
+  ) => boolean;
+  irDeleteHeaderFooter: (
+    sectionIdx: number,
+    isHeader: boolean,
+    applyTo: number,
+  ) => boolean;
+  /**
+   * Phase 3 chunk 51 — read-only Agent tools. Mutation 0. Agent 가 양식
+   * 매칭 / 위치 결정 / 본문 검색 등을 turn 안에서 능동적으로 수행할 수
+   * 있게 함. 모든 read 는 lib API 직결 + JSON 결과 그대로 반환.
+   * 실패 시 null/[].
+   */
+  irGetStyleAt: (
+    sectionIdx: number,
+    paraIdx: number,
+  ) => Record<string, unknown> | null;
+  irGetCharPropertiesAt: (
+    sectionIdx: number,
+    paraIdx: number,
+    charOffset: number,
+  ) => Record<string, unknown> | null;
+  irGetParaPropertiesAt: (
+    sectionIdx: number,
+    paraIdx: number,
+  ) => Record<string, unknown> | null;
+  irGetTextRange: (
+    sectionIdx: number,
+    startParaIdx: number,
+    startOffset: number,
+    endParaIdx: number,
+    endOffset: number,
+  ) => string | null;
+  irGetCaretPosition: () => Record<string, unknown> | null;
+  irFindInDocument: (
+    query: string,
+    maxResults?: number,
+  ) => {
+    sectionIdx: number;
+    paragraphIdx: number;
+    charOffset: number;
+  }[];
+  irGetCellInfo: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+    cellIdx: number,
+  ) => Record<string, unknown> | null;
   /** Whether the doc has unsaved changes (mirrors internal dirtyRef). */
   isDirty: () => boolean;
   /** Read the active cell context — chunk 38. Returns the table+cell

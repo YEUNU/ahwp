@@ -15,6 +15,8 @@ import type {
 
 const api: AhwpApi = {
   ping: (req: PingRequest) => ipcRenderer.invoke('ipc:ping', req),
+  getVersions: () => ipcRenderer.invoke('app:get-versions'),
+  logError: (req) => ipcRenderer.invoke('app:log-error', req),
   onMenuAction: (handler) => {
     const listener = (_event: IpcRendererEvent, action: MenuAction) =>
       handler(action);
@@ -92,6 +94,13 @@ const api: AhwpApi = {
     delete: (providerId) => ipcRenderer.invoke('secrets:delete', providerId),
     has: (providerId) => ipcRenderer.invoke('secrets:has', providerId),
     list: () => ipcRenderer.invoke('secrets:list'),
+    onChanged: (handler) => {
+      const listener = () => handler();
+      ipcRenderer.on('secrets:changed', listener);
+      return () => {
+        ipcRenderer.off('secrets:changed', listener);
+      };
+    },
   },
   ai: {
     chat: (request, callbacks) => {
@@ -133,6 +142,10 @@ const api: AhwpApi = {
       ipcRenderer.invoke('ai:list-models', { providerId, ...opts }),
     clearModelsCache: (providerId) =>
       ipcRenderer.invoke('ai:clear-models-cache', { providerId }),
+    getProviderConfig: (providerId) =>
+      ipcRenderer.invoke('ai:provider-config-get', providerId),
+    setProviderConfig: (params) =>
+      ipcRenderer.invoke('ai:provider-config-set', params),
   },
   chatHistory: {
     list: (docPath) => ipcRenderer.invoke('chat-history:list', { docPath }),

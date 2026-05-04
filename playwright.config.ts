@@ -1,4 +1,29 @@
+import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import { defineConfig } from '@playwright/test';
+
+// Local-only .env loader (gitignored). Live smoke tests (nvidia-live,
+// gemini-live) read provider API keys from process.env. Loading once here
+// means individual specs don't need a per-file loader. dependency-free —
+// just KEY=VALUE lines, # comments, blanks ignored. Existing process.env
+// vars win over .env (CI / shell can override).
+function loadDotEnv(): void {
+  const envPath = path.resolve(__dirname, '.env');
+  if (!existsSync(envPath)) return;
+  const text = readFileSync(envPath, 'utf8');
+  for (const rawLine of text.split('\n')) {
+    const line = rawLine.trim();
+    if (line.length === 0 || line.startsWith('#')) continue;
+    const eq = line.indexOf('=');
+    if (eq < 0) continue;
+    const key = line.slice(0, eq).trim();
+    const value = line.slice(eq + 1).trim();
+    if (key.length === 0) continue;
+    if (process.env[key] !== undefined) continue;
+    process.env[key] = value;
+  }
+}
+loadDotEnv();
 
 /**
  * Each spec file launches its own Electron process with an isolated

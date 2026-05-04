@@ -1,7 +1,9 @@
 import { app, BrowserWindow, ipcMain, Menu } from 'electron';
+import { existsSync, readFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { PingRequest, PingResponse } from '../shared/api';
+import { appendErrorLog, initCrashReporter } from './crash-reporter';
 import { registerAiIpc } from './ipc/ai';
 import { registerChatHistoryIpc } from './ipc/chat-history';
 import { registerClipboardIpc } from './ipc/clipboard';
@@ -10,6 +12,11 @@ import { registerFolderIpc, shutdownFolderIpc } from './ipc/folder';
 import { registerSecretsIpc } from './ipc/secrets';
 import { registerSessionIpc } from './ipc/session';
 import { buildAppMenu } from './menu';
+
+// chunk 63 — initialize crash reporter as early as possible. Native
+// minidumps are wired before any window opens; the JS handlers catch
+// errors that fire during startup.
+initCrashReporter();
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
 
@@ -75,6 +82,69 @@ function registerIpcHandlers(): void {
   ipcMain.handle('app:new-window', (): void => {
     createWindow();
   });
+  // chunk 52 — About 창에서 사용. app/electron/node/chrome 버전 일괄 노출.
+  // package.json 의 version 은 app.getVersion() 으로 읽음.
+  // chunk 79 — `@rhwp/core` package.json 에서 version 읽어 About pane
+  // 에 노출. cwd / __dirname 두 후보 path 시도 (packaged 와 dev 모두
+  // 커버). asar 의 readFileSync 도 투명하게 동작.
+  let rhwpCoreVersion = '?';
+  try {
+    const candidates = [
+      path.join(process.cwd(), 'node_modules', '@rhwp', 'core', 'package.json'),
+      path.join(
+        __dirname,
+        '..',
+        'node_modules',
+        '@rhwp',
+        'core',
+        'package.json',
+      ),
+    ];
+    for (const p of candidates) {
+      if (!existsSync(p)) continue;
+      const pkg = JSON.parse(readFileSync(p, 'utf8')) as { version?: string };
+      if (typeof pkg.version === 'string') {
+        rhwpCoreVersion = pkg.version;
+        break;
+      }
+    }
+  } catch {
+    /* fallback "?" — UI 에서도 "?" 로 표시. */
+  }
+  ipcMain.handle(
+    'app:get-versions',
+    (): {
+      app: string;
+      electron: string;
+      chrome: string;
+      node: string;
+      platform: string;
+      arch: string;
+      rhwpCore: string;
+    } => ({
+      app: app.getVersion(),
+      electron: process.versions.electron ?? '?',
+      chrome: process.versions.chrome ?? '?',
+      node: process.versions.node ?? '?',
+      platform: process.platform,
+      arch: process.arch,
+      rhwpCore: rhwpCoreVersion,
+    }),
+  );
+  // chunk 63 — renderer-side error bridge. window.onerror /
+  // onunhandledrejection in the renderer call this IPC so JS errors
+  // land in `userData/error.log` alongside main-process errors.
+  ipcMain.handle(
+    'app:log-error',
+    async (
+      _event,
+      req: { origin?: string; message: string },
+    ): Promise<void> => {
+      if (!req || typeof req.message !== 'string') return;
+      const origin = typeof req.origin === 'string' ? req.origin : 'renderer';
+      await appendErrorLog(origin, req.message);
+    },
+  );
   registerFileIpc();
   registerSessionIpc();
   registerClipboardIpc();
@@ -102,7 +172,52 @@ void app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+
+  // chunk 53 — electron-updater + GitHub Releases. Packaged 빌드 만 활성
+  // (dev 모드에선 latest.yml 도 없고 publish 채널도 미설정). 5초 후
+  // checkForUpdatesAndNotify — sandbox renderer 와 무관하게 main 에서
+  // background fetch + 사용자에게 OS native notification 으로 알림.
+  // 다운로드는 사용자가 직접 트리거 (UpdateAvailable 이벤트는 dialog 로
+  // 보여주고 OK 시 downloadUpdate). install 은 next launch 시 자동.
+  if (app.isPackaged && process.env.AHWP_DISABLE_UPDATER !== '1') {
+    void initAutoUpdater();
+  }
 });
+
+async function initAutoUpdater(): Promise<void> {
+  try {
+    const { autoUpdater } = await import('electron-updater');
+    autoUpdater.autoDownload = false; // 사용자 확인 후 download
+    autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.on('error', (err: Error) => {
+      console.warn('[updater] error:', err.message);
+    });
+    autoUpdater.on('update-available', (info: { version: string }) => {
+      console.log('[updater] update available:', info.version);
+    });
+    autoUpdater.on('update-not-available', () => {
+      console.log('[updater] no update available');
+    });
+    autoUpdater.on(
+      'download-progress',
+      (p: { percent: number; bytesPerSecond: number }) => {
+        console.log(
+          `[updater] download ${p.percent.toFixed(1)}% (${(p.bytesPerSecond / 1024).toFixed(0)} KB/s)`,
+        );
+      },
+    );
+    autoUpdater.on('update-downloaded', () => {
+      console.log('[updater] downloaded — will install on next quit');
+    });
+    setTimeout(() => {
+      void autoUpdater.checkForUpdates().catch((err) => {
+        console.warn('[updater] checkForUpdates failed:', err);
+      });
+    }, 5000);
+  } catch (err) {
+    console.warn('[updater] init failed:', err);
+  }
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

@@ -5,6 +5,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { localizeShortcutPublic } from '@/lib/hancom-tooltips';
 import { cn } from '@/lib/utils';
 
 /**
@@ -175,7 +176,7 @@ export function CommandPalette({
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKeyDown}
           placeholder="명령 검색 — 메뉴, 파일, 단축키…"
-          className="w-full border-b border-border bg-transparent px-4 py-3 text-sm outline-none"
+          className="w-full border-b border-border bg-transparent px-4 py-3 text-sm outline-hidden"
           data-testid="command-palette-input"
         />
         <div
@@ -217,7 +218,7 @@ export function CommandPalette({
                 </span>
                 {item.hint ? (
                   <span className="shrink-0 text-[10px] text-muted-foreground">
-                    {item.hint}
+                    {localizeShortcutPublic(item.hint)}
                   </span>
                 ) : null}
               </button>

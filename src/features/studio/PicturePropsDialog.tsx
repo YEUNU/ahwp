@@ -1,25 +1,21 @@
+import { ImageIcon } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { cn } from '@/lib/utils';
 
 /**
  * Picture properties dialog — chunk 39 (UI for chunk 24 IR).
  *
- * IR has no first-class image picker because pictures live as Control
- * objects scattered across paragraphs. We enumerate via
- * `enumeratePictures()` (provided by AppShell, which walks
- * `getControlTextPositions` per paragraph in section 0). When the doc
- * has 0 pictures the dialog shows an empty state; with 1 we auto-pick;
- * with 2+ a select lists them by paragraph + index. The form edits
- * width/height (mm) + treatAsChar.
+ * Sidebar-detail layout (chunk 57, Q8 align): left pane lists every
+ * picture in the doc, right pane edits width/height/treatAsChar of the
+ * selected one. Picture enumeration is provided by AppShell which
+ * walks `getControlTextPositions` per paragraph in section 0.
+ *
+ * Empty doc → sidebar shows "그림이 없습니다" message and right pane
+ * stays disabled. The dialog is always opened by user action (menu /
+ * cmd palette), so we don't auto-close on empty.
  */
 
 const HWPUNIT_PER_MM = 567 / 2;
@@ -69,36 +65,30 @@ export function PicturePropsDialog({
   const [pictures, setPictures] = useState<PictureRef[]>([]);
   const [activeIdx, setActiveIdx] = useState(0);
   const [form, setForm] = useState<PicForm>(EMPTY_FORM);
-  const [error, setError] = useState<string | null>(null);
 
   // Re-enumerate every time the dialog opens — image list can change
   // between sessions / after Save As.
   useEffect(() => {
     if (!open) return;
     const list = enumeratePictures();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPictures(list);
     if (list.length === 0) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setError('이 문서에 그림이 없습니다.');
-      setPictures([]);
       setForm(EMPTY_FORM);
       return;
     }
-    setError(null);
-    setPictures(list);
     setActiveIdx(0);
-    const props = getProps(list[0]);
-    setForm(propsToForm(props));
+    setForm(propsToForm(getProps(list[0])));
   }, [open, enumeratePictures, getProps]);
 
-  // When the user picks a different picture in the dropdown, reseed
-  // the form. This is intentionally a separate effect so the open-side
-  // initial seed and the picker-change reseed are clean.
+  // When the user picks a different picture in the sidebar, reseed the
+  // form. Separate effect so the open-side initial seed and the picker
+  // change reseed are clean.
   useEffect(() => {
     if (!open || pictures.length === 0) return;
     if (activeIdx < 0 || activeIdx >= pictures.length) return;
-    const props = getProps(pictures[activeIdx]);
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setForm(propsToForm(props));
+    setForm(propsToForm(getProps(pictures[activeIdx])));
   }, [open, activeIdx, pictures, getProps]);
 
   const onSubmit = (e: FormEvent<HTMLFormElement>): void => {
@@ -123,85 +113,121 @@ export function PicturePropsDialog({
   const updateForm = (patch: Partial<PicForm>): void =>
     setForm((prev) => ({ ...prev, ...patch }));
 
+  const hasPictures = pictures.length > 0;
+  const activePic = hasPictures ? pictures[activeIdx] : null;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         data-testid="picture-props-dialog"
-        className="max-w-md gap-4"
+        className="grid h-[min(520px,82vh)] max-w-[min(760px,92vw)] grid-cols-[220px_1fr] gap-0 overflow-hidden p-0"
       >
-        <DialogHeader>
-          <DialogTitle>그림 속성</DialogTitle>
-          <DialogDescription>
-            문서의 그림 컨트롤을 선택해 너비·높이 / 글자처럼 취급 설정 변경.
-            단위: mm
-          </DialogDescription>
-        </DialogHeader>
-        {error ? (
-          <div
-            role="alert"
-            className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
-          >
-            {error}
+        {/* Sidebar — picture list */}
+        <div className="flex flex-col border-r border-border bg-muted/40">
+          <div className="flex items-center gap-2 px-4 pb-2.5 pt-3.5">
+            <ImageIcon className="size-4 text-muted-foreground" />
+            <span className="text-[13px] font-bold tracking-tight">
+              그림 속성
+            </span>
           </div>
-        ) : (
-          <form onSubmit={onSubmit} className="space-y-3">
-            {pictures.length > 1 ? (
-              <Field label="그림 선택">
-                <select
-                  value={activeIdx}
-                  onChange={(e) =>
-                    setActiveIdx(Number.parseInt(e.target.value, 10))
-                  }
-                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-xs"
-                  data-testid="picture-props-picker"
-                >
-                  {pictures.map((p, i) => (
-                    <option
-                      key={`${p.parentParaIdx}-${p.controlIdx}`}
-                      value={i}
-                    >
-                      {p.label}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            ) : null}
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="너비">
-                <NumInput
-                  value={form.widthMm}
-                  onChange={(v) => updateForm({ widthMm: v })}
-                  testid="picture-props-width"
-                />
-              </Field>
-              <Field label="높이">
-                <NumInput
-                  value={form.heightMm}
-                  onChange={(v) => updateForm({ heightMm: v })}
-                  testid="picture-props-height"
-                />
-              </Field>
-            </div>
-            <label className="flex items-center gap-2 text-xs text-muted-foreground">
-              <input
-                type="checkbox"
-                checked={form.treatAsChar}
-                onChange={(e) => updateForm({ treatAsChar: e.target.checked })}
-                data-testid="picture-props-treat-as-char"
-              />
-              <span>글자처럼 취급 (문단 흐름 안에 배치)</span>
-            </label>
-            <DialogFooter className="gap-2 sm:justify-between">
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={onDeleteClick}
-                className="text-destructive hover:text-destructive"
-                data-testid="picture-props-delete"
+          <div className="flex-1 overflow-auto px-2 pb-3">
+            {hasPictures ? (
+              <ul
+                className="flex flex-col gap-px"
+                data-testid="picture-props-list"
               >
-                삭제
-              </Button>
-              <div className="flex gap-2">
+                {pictures.map((p, i) => (
+                  <li key={`${p.parentParaIdx}-${p.controlIdx}`}>
+                    <button
+                      type="button"
+                      onClick={() => setActiveIdx(i)}
+                      data-testid="picture-props-item"
+                      data-active={i === activeIdx ? 'true' : 'false'}
+                      className={cn(
+                        'flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[12px] transition',
+                        i === activeIdx
+                          ? 'bg-card font-semibold text-foreground shadow-xs'
+                          : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                      )}
+                    >
+                      <span className="flex size-5 shrink-0 items-center justify-center rounded bg-primary/10 text-[10px] font-semibold text-primary">
+                        {i + 1}
+                      </span>
+                      <span className="truncate">{p.label}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div
+                className="px-2 py-3 text-[11.5px] text-muted-foreground"
+                data-testid="picture-props-empty"
+              >
+                이 문서에 그림이 없습니다.
+              </div>
+            )}
+          </div>
+          <div className="border-t border-border px-4 py-2.5 text-[10.5px] text-muted-foreground/70">
+            {hasPictures ? `${pictures.length}개` : 'ahwp'}
+          </div>
+        </div>
+
+        {/* Detail */}
+        <div className="flex min-w-0 flex-col">
+          {activePic ? (
+            <form
+              onSubmit={onSubmit}
+              className="flex h-full min-h-0 flex-col"
+              data-testid="picture-props-form"
+            >
+              <div className="border-b border-border px-7 pb-3.5 pt-4">
+                <h2 className="text-[17px] font-bold tracking-tight">
+                  {activePic.label}
+                </h2>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  너비·높이 / 글자처럼 취급 설정 (단위: mm)
+                </p>
+              </div>
+              <div className="flex-1 space-y-4 overflow-auto px-7 py-5">
+                <div className="grid grid-cols-2 gap-4">
+                  <Field label="너비">
+                    <NumInput
+                      value={form.widthMm}
+                      onChange={(v) => updateForm({ widthMm: v })}
+                      testid="picture-props-width"
+                    />
+                  </Field>
+                  <Field label="높이">
+                    <NumInput
+                      value={form.heightMm}
+                      onChange={(v) => updateForm({ heightMm: v })}
+                      testid="picture-props-height"
+                    />
+                  </Field>
+                </div>
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={form.treatAsChar}
+                    onChange={(e) =>
+                      updateForm({ treatAsChar: e.target.checked })
+                    }
+                    data-testid="picture-props-treat-as-char"
+                  />
+                  <span>글자처럼 취급 (문단 흐름 안에 배치)</span>
+                </label>
+              </div>
+              <div className="flex items-center gap-2 border-t border-border bg-muted/40 px-7 py-3">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={onDeleteClick}
+                  className="text-destructive hover:text-destructive"
+                  data-testid="picture-props-delete"
+                >
+                  삭제
+                </Button>
+                <div className="flex-1" />
                 <Button
                   type="button"
                   variant="ghost"
@@ -213,9 +239,33 @@ export function PicturePropsDialog({
                   적용
                 </Button>
               </div>
-            </DialogFooter>
-          </form>
-        )}
+            </form>
+          ) : (
+            <div className="flex h-full flex-col">
+              <div className="border-b border-border px-7 pb-3.5 pt-4">
+                <h2 className="text-[17px] font-bold tracking-tight">
+                  그림 속성
+                </h2>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  편집할 그림이 없습니다.
+                </p>
+              </div>
+              <div className="flex flex-1 items-center justify-center px-7 text-xs text-muted-foreground">
+                그림을 삽입한 뒤 다시 시도하세요.
+              </div>
+              <div className="flex items-center gap-2 border-t border-border bg-muted/40 px-7 py-3">
+                <div className="flex-1" />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => onOpenChange(false)}
+                >
+                  닫기
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -240,7 +290,7 @@ function Field({
 }): JSX.Element {
   return (
     <label className="block">
-      <span className="mb-1 block text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground">
+      <span className="mb-1.5 block text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground">
         {label}
       </span>
       {children}
