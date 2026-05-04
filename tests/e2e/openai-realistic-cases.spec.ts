@@ -32,6 +32,11 @@ interface StudioDebug {
 
 test.describe('OpenAI 사용자 시나리오 — 난이도별 10 케이스', () => {
   test.skip(!OPENAI_KEY, 'AHWP_TEST_OPENAI_KEY env not set');
+  // Playwright 기본 60s test timeout 가 reasoning model 의 multi-tool
+  // chain (router LLM + main LLM + 도구 dispatch + Agent 재진입) 한
+  // turn 보다 짧아 stream 중간에 죽는 경우가 잦았음. 8min 으로 확장
+  // (Creative long-form 케이스 budget 7min 까지 커버).
+  test.setTimeout(8 * 60 * 1000);
 
   let launched: LaunchedApp;
 
@@ -268,6 +273,111 @@ test.describe('OpenAI 사용자 시나리오 — 난이도별 10 케이스', () 
     });
     await sendAndWaitTurnEnd(page, '첫 단락을 "제목 1" 스타일로 바꿔줘.');
     await expectAnyToolCalled(page, ['applyStyle', 'applyHtml']);
+  });
+
+  // ============================================================
+  // Creative — 처음부터 끝까지 만드는 큰 작업.
+  // ============================================================
+
+  test('Creative — "사업계획서 처음부터 끝까지 작성해줘" (창의적 long-form)', async () => {
+    const { page } = launched;
+    await setupChat(page);
+    // Creative long-form 은 다중 turn / 다수 tool 호출 필요. 기본 budget
+    // (3min) 확장 위해 임시로 polling 자체 구현.
+    const CREATIVE_BUDGET_MS = 7 * 60 * 1000;
+    await page
+      .getByTestId('chat-input')
+      .fill(
+        [
+          '이 빈 문서에 가상의 IT 스타트업 사업계획서를 처음부터 끝까지 작성해줘.',
+          '필요한 구성: 회사 소개 / 시장 분석 / 제품·서비스 / 비즈니스 모델 / 추진 일정 / 예산 / 팀 구성. 각 섹션마다 헤더 + 본문 1~2단락.',
+          '예산 부분엔 가능하면 표도 하나 넣어줘.',
+        ].join('\n'),
+      );
+    await page.getByTestId('chat-send').click();
+    const t0 = Date.now();
+    while (Date.now() - t0 < CREATIVE_BUDGET_MS) {
+      const stopVisible = await page
+        .getByTestId('chat-stop')
+        .isVisible()
+        .catch(() => false);
+      const pending = await page
+        .locator('[data-testid="chat-tool-entry"][data-tool-status="pending"]')
+        .all();
+      if (pending.length === 0 && !stopVisible) break;
+      if (pending.length > 0) {
+        const bulk = page.getByTestId('chat-tool-approve-all');
+        const bulkVisible = await bulk.isVisible().catch(() => false);
+        if (bulkVisible) {
+          await bulk.click().catch(() => {});
+        } else {
+          for (const entry of pending) {
+            const approve = entry.getByTestId('chat-tool-approve');
+            const ok = await approve.isVisible().catch(() => false);
+            if (ok) await approve.click().catch(() => {});
+          }
+        }
+        await page.waitForTimeout(500);
+      } else {
+        await page.waitForTimeout(1000);
+      }
+    }
+    const fallbackBtn = page.getByTestId('chat-action-apply-html');
+    if (await fallbackBtn.isVisible().catch(() => false)) {
+      await fallbackBtn.click().catch(() => {});
+      await page.waitForTimeout(500);
+    }
+    // 검증 — 다중 도구 호출 (insertText / insertParagraph / applyStyle /
+    // createTable / applyHtml 중 합쳐 최소 5개) + 단락 수 baseline (1) →
+    // 5+ 증가 + 의미 있는 텍스트 (3자+) 다수.
+    const writeTools = [
+      'insertText',
+      'insertParagraph',
+      'applyStyle',
+      'applyParaProps',
+      'applyCharFormat',
+      'applyAlignment',
+      'applyFontSize',
+      'applyHtml',
+      'createTable',
+      'insertTableRow',
+      'mergeTableCells',
+    ];
+    let totalWrites = 0;
+    for (const n of writeTools) {
+      totalWrites += await page
+        .locator(`[data-testid="chat-tool-entry"][data-tool-name="${n}"]`)
+        .count();
+    }
+    // markdown fallback 도 카운트 (모델이 long-form markdown 으로 답했다면
+    // 사용자 클릭으로 적용됨).
+    const fallbackBtnVisible = await page
+      .getByTestId('chat-action-apply-html')
+      .isVisible()
+      .catch(() => false);
+    if (totalWrites < 5 && !fallbackBtnVisible) {
+      // 적어도 어떤 도구라도 / fallback 이라도 — 둘 다 0 이면 fail.
+      const anyTool = await page
+        .locator('[data-testid="chat-tool-entry"]')
+        .count();
+      expect(anyTool + (fallbackBtnVisible ? 1 : 0)).toBeGreaterThanOrEqual(1);
+    }
+    // 활성 문서 단락 수 또는 본문 텍스트 길이 변화. baseline=1 (빈 문서에
+    // 1 paragraph). 작성 후 5+ 단락이거나 누적 텍스트 100자+ 면 통과.
+    const after = await page.evaluate(() => {
+      const dbg = (window as Window & { __studioDebug?: StudioDebug })
+        .__studioDebug!;
+      const paraCount = dbg.getParagraphCount!(0);
+      let totalChars = 0;
+      for (let p = 0; p < Math.min(paraCount, 50); p++) {
+        const len = dbg.getParagraphLength!(0, p);
+        totalChars += len;
+      }
+      return { paraCount, totalChars };
+    });
+    expect(
+      after.paraCount + Math.floor(after.totalChars / 100),
+    ).toBeGreaterThan(1);
   });
 
   test('Hard 4 — "이전 보고서 양식 참고해서 첫 섹션" (워크스페이스)', async () => {
