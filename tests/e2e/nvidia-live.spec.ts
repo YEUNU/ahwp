@@ -456,4 +456,155 @@ test.describe('NVIDIA NIM — live smoke', () => {
       rmSync(workspaceDir, { recursive: true, force: true });
     }
   });
+
+  // chunk 97 — Manual/Agent 통합 + 자동 승인 토글. 검토 모드 (default
+  // off) 일 때 NIM 이 write tool 호출 → tool-entry status='pending' +
+  // 승인/거절 버튼. 승인 클릭 시 dispatch → ok. 실제 LLM 으로 검토 게이트
+  // 가 실제 production tool-use 흐름에 통합돼 동작하는지 검증.
+  test('chunk 97 — 검토 모드: NIM write tool 호출 → pending → 승인 → ok', async () => {
+    const { page } = launched;
+    test.skip(!existsSync(FIXTURE), 'tests/e2e/fixtures/blank.hwpx missing');
+
+    await page.evaluate(async (p) => {
+      await window.api.session.set({ lastActivePath: p });
+    }, FIXTURE);
+    await page.reload();
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForFunction(
+      () =>
+        Boolean(
+          (window as Window & { __studioDebug?: StudioDebug }).__studioDebug,
+        ),
+      { timeout: 30_000 },
+    );
+
+    await page.getByTestId('chat-provider-select').selectOption('nvidia');
+    await expect(page.getByTestId('chat-model-input')).toBeEnabled({
+      timeout: 30_000,
+    });
+    // 자동 승인 OFF 명시적 확인 (default).
+    await expect(
+      page.getByTestId('chat-auto-approve-toggle'),
+    ).not.toBeChecked();
+    await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
+      'data-state',
+      'ok',
+    );
+
+    // write tool 호출을 강하게 유도. applyAlignment 가 selection 없어도
+    // 호출은 발생 (실패해도 dispatcher 가 reason 캡처) — 핵심은 pending
+    // 게이트 통과 후 dispatch 가 발생하는지.
+    await page
+      .getByTestId('chat-input')
+      .fill(
+        '활성 문서의 첫 단락을 가운데 정렬해줘. applyAlignment(align="center") 도구를 한 번만 호출. 다른 설명 없이 도구 호출만.',
+      );
+    await page.getByTestId('chat-send').click();
+
+    // tool-entry 가 pending 으로 잡힐 때까지 대기.
+    const entry = page
+      .locator(
+        '[data-testid="chat-tool-entry"][data-tool-name="applyAlignment"]',
+      )
+      .first();
+    await expect(entry).toBeVisible({ timeout: 60_000 });
+    await expect
+      .poll(async () => entry.getAttribute('data-tool-status'), {
+        timeout: 60_000,
+      })
+      .toBe('pending');
+
+    // 승인 버튼 가시 → 클릭 → dispatch → status pending 탈출.
+    await expect(entry.getByTestId('chat-tool-approve')).toBeVisible();
+    await entry.getByTestId('chat-tool-approve').click();
+    await expect
+      .poll(async () => entry.getAttribute('data-tool-status'), {
+        timeout: 30_000,
+      })
+      .toBe('ok');
+
+    // IR 검증 — 첫 단락 alignment 가 'center' 로 실제 변경됐는지. 검토
+    // 게이트가 단순 UI flag 변경이 아니라 dispatcher 까지 도달해서 실제
+    // applyAlignment 가 호출됐음을 확인.
+    const align = await page.evaluate(() => {
+      const dbg = (window as Window & { __studioDebug?: StudioDebug })
+        .__studioDebug!;
+      return dbg.getParaProps(0, 0).alignment as string;
+    });
+    expect(align).toBe('center');
+  });
+
+  // chunk 97 — 거절 경로. NIM 이 write tool 호출 → pending → 거절 클릭
+  // → status='rejected' + IR 미변경 검증.
+  test('chunk 97 — 검토 모드: NIM write tool → 거절 → IR 미변경', async () => {
+    const { page } = launched;
+    test.skip(!existsSync(FIXTURE), 'tests/e2e/fixtures/blank.hwpx missing');
+
+    await page.evaluate(async (p) => {
+      await window.api.session.set({ lastActivePath: p });
+    }, FIXTURE);
+    await page.reload();
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForFunction(
+      () =>
+        Boolean(
+          (window as Window & { __studioDebug?: StudioDebug }).__studioDebug,
+        ),
+      { timeout: 30_000 },
+    );
+
+    await page.getByTestId('chat-provider-select').selectOption('nvidia');
+    await expect(page.getByTestId('chat-model-input')).toBeEnabled({
+      timeout: 30_000,
+    });
+    await expect(
+      page.getByTestId('chat-auto-approve-toggle'),
+    ).not.toBeChecked();
+    await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
+      'data-state',
+      'ok',
+    );
+
+    // 첫 단락 align baseline 캡처.
+    const baselineAlign = await page.evaluate(() => {
+      const dbg = (window as Window & { __studioDebug?: StudioDebug })
+        .__studioDebug!;
+      return dbg.getParaProps(0, 0).alignment as string;
+    });
+
+    await page
+      .getByTestId('chat-input')
+      .fill(
+        '활성 문서의 첫 단락을 오른쪽 정렬해줘. applyAlignment(align="right") 도구를 한 번만 호출. 다른 설명 없이.',
+      );
+    await page.getByTestId('chat-send').click();
+
+    const entry = page
+      .locator(
+        '[data-testid="chat-tool-entry"][data-tool-name="applyAlignment"]',
+      )
+      .first();
+    await expect(entry).toBeVisible({ timeout: 60_000 });
+    await expect
+      .poll(async () => entry.getAttribute('data-tool-status'), {
+        timeout: 60_000,
+      })
+      .toBe('pending');
+
+    // 거절 클릭 → rejected.
+    await entry.getByTestId('chat-tool-reject').click();
+    await expect
+      .poll(async () => entry.getAttribute('data-tool-status'), {
+        timeout: 10_000,
+      })
+      .toBe('rejected');
+
+    // IR 미변경 — alignment baseline 그대로.
+    const afterAlign = await page.evaluate(() => {
+      const dbg = (window as Window & { __studioDebug?: StudioDebug })
+        .__studioDebug!;
+      return dbg.getParaProps(0, 0).alignment as string;
+    });
+    expect(afterAlign).toBe(baselineAlign);
+  });
 });
