@@ -14,6 +14,11 @@ test.beforeEach(async () => {
   launched = await launchApp({ env: { AHWP_E2E_FAKE_AI: '1' } });
   await launched.page.evaluate(async () => {
     await window.api.secrets.set('openai', 'test-key');
+    // chunk 99 follow-up — plan mode default ON 시 모든 assistant 응답에
+    // "이 계획대로 실행" 버튼이 chat-message-content 안에 렌더되어
+    // textContent 비교 테스트가 깨짐. 이 spec 은 plan mode 비관련이라
+    // 명시적 OFF.
+    localStorage.setItem('ahwp:chat:plan-mode-default', '0');
   });
   await launched.page.reload();
   await launched.page.waitForLoadState('domcontentloaded');

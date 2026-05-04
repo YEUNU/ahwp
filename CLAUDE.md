@@ -4,7 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-ahwp — Electron + React desktop app for viewing/editing Korean HWP/HWPX documents with AI assistance (OpenAI / NVIDIA NIM live; Anthropic / Google / custom OpenAI-compatible endpoints scaffolded but blocked on maintainer keys — `custom` covers any /v1-compatible endpoint including self-hosted Ollama, vLLM, LM Studio). **Phase 1 + Phase 2 + 1차 UX 라운드 완료** (current `0.2.55`, chunks 1~55 + UX rounds): full editor with visual-line caret nav (ArrowUp/Down) / shift+click selection / drag auto-scroll / ⌘A IR-scoped, table cell editing v3 + table props + cell props + cell style + table formula evaluator, multi-line headers/footers with odd/even/both templates, image insert + picture props, control clipboard (⌘⇧C/V), HTML export, **Manual AI mode** (HTML round-trip + `ahwp-tools` JSON dispatcher + 11 whitelisted tools + grouped undo per turn + "되돌리기" toast + multi-paragraph excerpts + multi-doc context + chat history with inline rename + per-tab dirty + 60s `.ahwp-draft` autosave + `.bak` sidecar), VS Code-style folder tree with chokidar + cross-tab external-change detection, browser-style tabs with **pinning + drag reorder + context menu**, command palette (⌘K) + shortcut cheatsheet (⌘/) + status bar counters, BYOK Settings with model dropdown auto-fetched from provider `/v1/models` + 24h cache. See `docs/PROGRESS.md` for the up-to-date phase status — never assume features named in the README are implemented yet.
+ahwp — Electron + React desktop app for viewing/editing Korean HWP/HWPX documents with AI assistance. **Phase 1~5 대부분 완료** (current `0.3.37`, chunks 1~99 + chunk 99 follow-up batch). 라이브 provider: OpenAI / NVIDIA NIM / Google Gemini / custom OpenAI-호환 (Ollama/vLLM/LM Studio/on-prem). Anthropic 어댑터만 키 결정 대기.
+
+핵심 능력:
+
+- 풀 편집기 — visual-line caret nav / shift+click selection / drag auto-scroll, table cell editing v4 (cell-block TSV copy/paste) + table·cell·picture props + cell style + table formula, multi-line headers/footers + odd/even/both 템플릿, image insert, control clipboard (⌘⇧C/V), HTML export, find/replace, undo·redo (snapshot 100 cap), 페이지 설정 / 책갈피 / 각주 / 스타일 / 도형 / 수식 미리보기.
+- AI 어시스턴트 — provider native tool calling + read 9 / write 45 / cross-doc + 라우팅 1 = **55 tools**. Outline-aware section replace (chunk 99 follow-up — `### 2.7.4 ...` 응답이 기존 섹션 자동 교체, 중복 X). **Plan mode 기본 ON** (Claude Code 식 dry-run, write 차단, "이 계획대로 실행" 버튼 / "건너뛰기" / 같은 prompt 재전송으로 1회 우회). Agent turn cap 50 (Settings 1~200), parallel read dispatch (IPC `searchWorkspaceOutlines` / `readParagraphByPath` 동시), grouped undo per turn, "되돌리기" 토스트, multi-paragraph 발췌, multi-doc context (target + reference + auto-open via `switchTargetDoc`), Diff Viewer (Q5 — Accept/Reject 카드), 자동 제목 요약, 채팅 히스토리 SQLite + 인라인 rename.
+- VS Code-style 폴더 트리 + chokidar + cross-tab external-change detection, browser-style 탭 (pin + drag reorder + context menu), command palette (⌘K) + shortcut cheatsheet, BYOK Settings 4탭 (일반 / AI 공급자 / 단축키 / 정보), provider 모델 드롭다운 (provider `/v1/models` 24h 캐시 + 시작 시 키-등록된 provider 병렬 pre-fetch), 자체 호스팅 crash reporter (chunk 63), i18next ko/en + 한컴 한글 매뉴얼 명칭 호버 툴팁 + 플랫폼 단축키 표기.
+
+See `docs/PROGRESS.md` for the up-to-date phase status — never assume features named in the README are implemented yet.
 
 ## Commands
 

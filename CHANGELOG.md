@@ -6,6 +6,20 @@
 
 ## [Unreleased]
 
+### Added / Changed — chunk 99 follow-up: agentic 파이프라인 + Plan mode + Section replace (0.3.37)
+
+chunk 99 의 markdown fallback 후속 — Claude Code 식 자율 흐름으로 다음 7개 묶음 진화. NIM gemma4 31b it 류 도구 호출률 낮은 모델에서도 사업계획서 작성 같은 long-form 이 안정적으로 완주하도록.
+
+- **Outline-aware section replace** — AI 응답 첫 heading 의 섹션 번호 ("2.7.4") 가 outline 매칭되면 기존 섹션 영역을 delete-and-replace (중복 X). `applyHtmlReplaceSection` 신규 IR 메서드 + `findSectionToReplace` 매처. ⌘Z 한 번에 롤백. 매칭 실패 시 paste-at-caret fallback.
+- **System prompt 의 섹션 heading 가이드** — Manual / Agent 양쪽 prompt 에 "사용자가 특정 섹션 작성 요청 시 첫 줄을 `### {번호} {제목}` markdown heading 으로 시작" 박제. 매칭 정확도 ↑.
+- **Agentic 파이프라인 강화** — Turn cap 10 → 50 (Settings 1~200 조절). 도구 결과 truncation 차등 (read 16k / write 4k). 실패 reason 에 retry hint 자동 추가. Stop 버튼이 mid-loop turn 진입 차단 (이전엔 abort 만 → 다음 turn 자동 진입). Step counter UI ("Turn 12/50"). 시스템 prompt 의 `Agentic loop discipline` 6개 원칙 (verify / retry / signal completion / etc).
+- **Plan mode (Claude Code 식 dry-run)** — 기본 ON. 매 새 prompt 마다 AI 가 read tool 만 호출하고 변경 계획만 작성 (write 차단). 사용자 검토 후 (a) "이 계획대로 실행" 버튼 / (b) "건너뛰기" 인라인 / (c) 같은 prompt 재전송 — 모두 next-send 1회만 plan 우회. 영속 상태는 default (Settings → AI 공급자 → "Plan mode 기본 활성화") 한 가지뿐, turn-by-turn active 는 메모리 ref 로 관리. ChatPanel 의 토글 UI 는 Settings 로 이동, 채팅창엔 default ON 일 때 indicator + 건너뛰기 버튼만.
+- **Cross-doc write routing** — 신규 `switchTargetDoc({path})` 도구. 한 turn 에서 여러 문서를 순차 편집. 닫힌 탭 path 도 자동 `file:open-by-path` 로 mount 후 라우팅 (chunk 50 docId-aware 와 결합).
+- **Parallel read dispatch** — read-only / auto-approved 도구들을 한 turn 안에서 `Promise.allSettled` 로 동시 발사. IPC 경로 read (`searchWorkspaceOutlines` / `readParagraphByPath`) 가 진짜 동시성 획득. write 는 기존대로 직렬.
+- **휴리스틱 정리** — `SYSTEM_PROMPT_AGENT_GUIDE` 의 keyword→tool 매핑 표 (10+ 줄), few-shot (A)/(B)/(C) verbose 예시, "워크스페이스 / 폴더 / 양식 / ..." keyword 트리거 일괄 삭제. 도구 catalog description 만으로 LLM 이 결정. tool router 의 keyword 리스트도 일반화. ~100 → ~60 줄.
+
+신규 e2e 9 케이스 — chat-section-replace 3 + chat-plan-mode 3 + 기존 회귀 가드. typecheck / lint (0 errors) / vitest 21/21 / 폭넓은 e2e 49/49 통과.
+
 ### Added — chunk 100: Settings "캐시 비우기" (0.3.36)
 
 - **새 IPC `app:clear-caches`** — `userData/outline-cache.json` (chunk 96 워크스페이스 outline) + `userData/model-cache.json` (chunk 48/70 provider 모델 목록 24h 캐시) 만 삭제. 채팅 히스토리 / 세션 / API 키 / recent.json 등 사용자 데이터는 절대 건드리지 않음 (실수로 날리면 손실 큰 데이터). 결과는 `{removed: string[], failed: string[]}`.

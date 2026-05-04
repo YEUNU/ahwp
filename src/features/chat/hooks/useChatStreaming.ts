@@ -99,23 +99,37 @@ export function saveAgentMaxTurns(n: number): void {
 
 /**
  * Plan mode — Claude Code 식 dry-run. 활성 시 모델은 read tool 만 호출
- * 가능하고, 본문엔 "이렇게 할 계획" 의 bullet plan 만 작성. 사용자가
- * plan 검토 후 "이 계획대로 실행" 클릭 → plan mode off + 동일 prompt
- * 재발사. localStorage 영속.
+ * 가능하고, 본문엔 "이렇게 할 계획" 의 bullet plan 만 작성. 사용자
+ * 검토 후 (a) "이 계획대로 실행" 버튼 / (b) "건너뛰기" 인라인 버튼 /
+ * (c) 같은 prompt 재전송 — 모두 next-send 1회만 plan 우회.
+ *
+ * 기본 ON (안전 우선) — 큰 변경 전 매 prompt 마다 검토 강제. Settings
+ * → AI 공급자 → "Plan mode 기본 활성화" 에서 OFF 가능.
+ *
+ * 영속 상태 = "default" 한 가지뿐 (localStorage). turn-by-turn active
+ * 값은 메모리 ref (`planSkipNextRef`) 로만 관리 — 한 번 소비되면
+ * default 로 복귀. 이렇게 해야 "매 prompt 마다 dry-run" 패턴이 자동
+ * 유지됨.
  */
-const PLAN_MODE_KEY = 'ahwp:chat:plan-mode';
+const PLAN_MODE_DEFAULT_KEY = 'ahwp:chat:plan-mode-default';
 
-export function loadPlanMode(): boolean {
+export function loadPlanModeDefault(): boolean {
   try {
-    return localStorage.getItem(PLAN_MODE_KEY) === '1';
+    const raw = localStorage.getItem(PLAN_MODE_DEFAULT_KEY);
+    return raw === null ? true : raw === '1';
   } catch {
-    return false;
+    return true;
   }
 }
 
-export function savePlanMode(on: boolean): void {
+export const PLAN_MODE_DEFAULT_CHANGED_EVENT = 'ahwp:plan-mode-default-changed';
+
+export function savePlanModeDefault(on: boolean): void {
   try {
-    localStorage.setItem(PLAN_MODE_KEY, on ? '1' : '0');
+    localStorage.setItem(PLAN_MODE_DEFAULT_KEY, on ? '1' : '0');
+    // Same-tab subscribers (ChatPanel indicator) listen for this — the
+    // browser 'storage' event only fires across tabs, so we synthesize.
+    window.dispatchEvent(new Event(PLAN_MODE_DEFAULT_CHANGED_EVENT));
   } catch {
     /* silent */
   }
@@ -203,6 +217,9 @@ export interface ChatStreamingHandle {
    *  dispatch + tool_result 'ok', false 면 'user-rejected'. 모든 pending
    *  이 resolve 되면 자동으로 다음 turn 진입. */
   resolveApproval: (toolUseId: string, accept: boolean) => Promise<void>;
+  /** chunk 99 follow-up — plan mode 를 next send 1회만 우회. "이 계획
+   *  대로 실행" 버튼 / "건너뛰기" 버튼이 호출. fireChat 가 1회 소비. */
+  requestPlanSkip: () => void;
 }
 
 export function useChatStreaming(
@@ -266,6 +283,9 @@ export function useChatStreaming(
   // 매 send / sendDirect / regenerate / acceptDirect 시작 시 false 로
   // reset.
   const agentStoppedRef = useRef(false);
+  // chunk 99 follow-up — plan mode 1회 우회 ref. ChatPanel 의 "이 계획
+  // 대로 실행" / "건너뛰기" 액션이 set, fireChat 가 1회 소비 후 false.
+  const planSkipNextRef = useRef(false);
 
   // Phase 5 chunk 97 — Manual/Agent 통합. autoApprove=false 일 때 write
   // tool 호출은 즉시 dispatch 하지 않고 사용자 Accept/Reject 를 기다린다.
@@ -667,14 +687,14 @@ export function useChatStreaming(
       handleRef.current = null;
       assistantIdRef.current = null;
       // chunk 99 follow-up — Plan mode auto-disengage. plan 응답 1턴은
-      // 의도상 "다음 turn dry-run"; 응답 완료 후 자동으로 토글 off 해
-      // 사용자가 다음 메시지를 보낼 때 정상 모드로 진행. 의도적으로
-      // 한 번 더 plan 을 받으려면 사용자가 토글 재활성화. NLU 기반
-      // "yes 자동 실행" heuristic 회피 (사용자 명시 액션만 plan 종결).
-      if (loadPlanMode()) {
-        savePlanMode(false);
-        opts.onPlanModeAutoDisengage?.();
-      }
+      // 의도상 "다음 turn dry-run"; 응답 완료 후 자동으로 토글 off.
+      // 사용자가 다음 메시지를 보내면 한 번은 정상 모드로 (검토 결과
+      // 반영). 그 다음 turn 부터는 default 값에 따라 다시 on (default
+      // chunk 99 follow-up — plan turn 종료 후 자동 disengage 는 더
+      // 이상 필요 없음 (active 키 폐기). default 가 ON 이라도 사용자가
+      // "이 계획대로 실행" 버튼 / "건너뛰기" 클릭 시 planSkipNextRef
+      // 를 set, fireChat 가 1회 소비. 그 외에는 매 turn 이 자동으로
+      // dry-run 으로 시작됨 (default=ON 시).
     },
     [maybeAutoTitle],
   );
@@ -694,9 +714,14 @@ export function useChatStreaming(
       verifiedExcerpts: ExcerptAttachment[] = [],
     ) => {
       setError(null);
-      // chunk 99 follow-up — plan mode flag 를 messsage 에 박제. UI 가
-      // assistant 메시지 옆에 "이 계획대로 실행" 버튼 노출 여부 결정.
-      const planModeNow = loadPlanMode();
+      // chunk 99 follow-up — plan mode 결정. planSkipNextRef 가 set 이면
+      // 1회 소비하고 false. 아니면 default 사용. flag 를 message 에 박제
+      // 해 UI 가 assistant 메시지 옆에 "이 계획대로 실행" 버튼 노출 여부
+      // 결정.
+      const planModeNow = planSkipNextRef.current
+        ? false
+        : loadPlanModeDefault();
+      planSkipNextRef.current = false;
       const assistantMsg: UiMessage = {
         id: newId(),
         role: 'assistant',
@@ -1265,5 +1290,8 @@ export function useChatStreaming(
     agentTurnDepthRef,
     agentVerifiedExcerptsRef,
     resolveApproval,
+    requestPlanSkip: () => {
+      planSkipNextRef.current = true;
+    },
   };
 }

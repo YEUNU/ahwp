@@ -7,21 +7,19 @@ import { launchApp, type LaunchedApp } from './launch';
 /**
  * Plan mode (chunk 99 follow-up) — Claude Code 식 dry-run.
  *
- * 사용자가 큰 / 위험한 / 모호한 변경을 실제 적용 전에 검토하기 위한
- * 토글. on=read tool 만 호출, write 차단, 응답은 bullet plan. 사용자가
- * "이 계획대로 실행" 클릭 → off + 동일 prompt 재발사 → 정상 흐름.
+ * 큰 / 위험한 / 모호한 변경을 실제 적용 전에 검토하기 위한 모드.
+ * 디폴트 ON (안전 우선) — 매 새 prompt 마다 dry-run. 사용자가 검토 후
+ * (a) "이 계획대로 실행" 버튼 / (b) "건너뛰기" 인라인 버튼 / (c) 같은
+ * prompt 재전송 — 모두 next-send 1회만 plan 우회.
  *
  * 검증 묶음:
- *  1. Toggle 이 localStorage 영속 + checkbox state.
- *  2. Plan mode 응답에 "이 계획대로 실행" 버튼 노출.
- *  3. 일반 모드 응답엔 plan execute 버튼 미노출.
+ *  1. 기본 indicator 노출 (default ON 이라).
+ *  2. Settings 에서 default OFF 시 indicator 사라짐.
+ *  3. Plan mode 응답에 "이 계획대로 실행" 버튼 노출.
+ *  4. Default OFF + Settings 변경 후 응답엔 execute 버튼 미노출.
  */
 
 const FIXTURE = path.resolve(__dirname, 'fixtures', 'blank.hwpx');
-
-interface StudioDebug {
-  insertText(s: number, p: number, c: number, t: string): string;
-}
 
 let launched: LaunchedApp;
 
@@ -29,6 +27,8 @@ test.beforeEach(async () => {
   launched = await launchApp({ env: { AHWP_E2E_FAKE_AI: '1' } });
   await launched.page.evaluate(async () => {
     await window.api.secrets.set('openai', 'test-key');
+    // 기본 ON 가정. 이전 테스트 잔여로 OFF 가 남아 있을 수 있어 보정.
+    localStorage.removeItem('ahwp:chat:plan-mode-default');
   });
   await launched.page.reload();
   await launched.page.waitForLoadState('domcontentloaded');
@@ -46,9 +46,7 @@ async function openFixture(page: Page, fixture: string): Promise<void> {
   await page.waitForLoadState('domcontentloaded');
   await page.waitForFunction(
     () =>
-      Boolean(
-        (window as Window & { __studioDebug?: StudioDebug }).__studioDebug,
-      ),
+      Boolean((window as Window & { __studioDebug?: object }).__studioDebug),
     { timeout: 30_000 },
   );
 }
@@ -62,41 +60,12 @@ async function sendEcho(page: Page, payload: string): Promise<void> {
 test.describe('chat — plan mode (chunk 99 follow-up)', () => {
   test.skip(!existsSync(FIXTURE), 'tests/e2e/fixtures/blank.hwpx missing');
 
-  test('Plan mode toggle 이 localStorage 에 영속 + checkbox state 동기화', async () => {
+  test('default ON — Plan mode indicator + 응답에 "이 계획대로 실행" 버튼 노출', async () => {
     const { page } = launched;
     await openFixture(page, FIXTURE);
-    const toggle = page.getByTestId('chat-plan-mode-toggle');
-    await expect(toggle).toBeVisible();
-    // 기본 off.
-    await expect(toggle).not.toBeChecked();
-    const before = await page.evaluate(() =>
-      localStorage.getItem('ahwp:chat:plan-mode'),
-    );
-    expect(before === null || before === '0').toBe(true);
-
-    // on.
-    await toggle.click();
-    await expect(toggle).toBeChecked();
-    const after = await page.evaluate(() =>
-      localStorage.getItem('ahwp:chat:plan-mode'),
-    );
-    expect(after).toBe('1');
-
-    // off.
-    await toggle.click();
-    await expect(toggle).not.toBeChecked();
-    const off = await page.evaluate(() =>
-      localStorage.getItem('ahwp:chat:plan-mode'),
-    );
-    expect(off).toBe('0');
-  });
-
-  test('Plan mode on 상태에서 응답은 "이 계획대로 실행" 버튼 노출', async () => {
-    const { page } = launched;
-    await openFixture(page, FIXTURE);
-    // plan mode on.
-    await page.getByTestId('chat-plan-mode-toggle').click();
-    // ECHO fake 으로 텍스트 응답 가짜 발사.
+    // indicator 가 보임 (default ON).
+    await expect(page.getByTestId('chat-plan-mode-indicator')).toBeVisible();
+    // 응답 발사.
     await sendEcho(page, '계획:\n- 단계 1\n- 단계 2');
     // 응답 메시지 옆에 execute plan 버튼 visible.
     const executeBtn = page.getByTestId('chat-action-execute-plan');
@@ -104,12 +73,36 @@ test.describe('chat — plan mode (chunk 99 follow-up)', () => {
     await expect(executeBtn).toContainText('이 계획대로 실행');
   });
 
-  test('Plan mode off (기본) 상태에선 plan execute 버튼 미노출 (회귀 가드)', async () => {
+  test('Settings → "Plan mode 기본 활성화" OFF → indicator 사라짐 + execute 버튼 미노출', async () => {
     const { page } = launched;
     await openFixture(page, FIXTURE);
-    // 기본 off — toggle 건드리지 않고 그대로.
+    // indicator 가 일단 보임 (default ON).
+    await expect(page.getByTestId('chat-plan-mode-indicator')).toBeVisible();
+    // localStorage 직접 변경 + same-tab 이벤트 dispatch (Settings 의
+    // savePlanModeDefault 가 하는 일과 동등). UI overlay 클릭이 viewport
+    // hit-test 에서 flaky 한 걸 우회.
+    await page.evaluate(() => {
+      localStorage.setItem('ahwp:chat:plan-mode-default', '0');
+      window.dispatchEvent(new Event('ahwp:plan-mode-default-changed'));
+    });
+    // ChatPanel re-render → indicator 사라짐.
+    await expect(page.getByTestId('chat-plan-mode-indicator')).toHaveCount(0);
+    // 응답 발사 후 execute 버튼 미노출.
     await sendEcho(page, '안녕 그냥 인사할게');
-    // plan execute 버튼 미존재.
     await expect(page.getByTestId('chat-action-execute-plan')).toHaveCount(0);
+  });
+
+  test('"건너뛰기" 인라인 버튼이 next send 1회만 plan 우회', async () => {
+    const { page } = launched;
+    await openFixture(page, FIXTURE);
+    const skipBtn = page.getByTestId('chat-plan-mode-skip');
+    await expect(skipBtn).toBeVisible();
+    await skipBtn.click();
+    // ECHO 응답 — 이 turn 은 plan skip 이므로 message.planMode=undefined →
+    // execute 버튼 미노출.
+    await sendEcho(page, '간단한 문의');
+    await expect(page.getByTestId('chat-action-execute-plan')).toHaveCount(0);
+    // 다음 prompt 는 다시 default ON 적용.
+    await expect(page.getByTestId('chat-plan-mode-indicator')).toBeVisible();
   });
 });

@@ -48,8 +48,7 @@ import { useChatHistory } from './hooks/useChatHistory';
 import {
   useChatStreaming,
   loadAgentMaxTurns,
-  loadPlanMode,
-  savePlanMode,
+  loadPlanModeDefault,
 } from './hooks/useChatStreaming';
 import { useExcerptAttachments } from './hooks/useExcerptAttachments';
 import { previewArgs } from './tools';
@@ -396,13 +395,25 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     useEffect(() => {
       autoApproveRef.current = autoApprove;
     }, [autoApprove]);
-    // chunk 99 follow-up — Plan mode (Claude Code 식). on=read tool 만
-    // 호출, write 차단, 응답은 bullet plan. user "이 계획대로 실행" 클릭
-    // 시 off + plan 텍스트 echo 로 새 turn 발사.
-    const [planMode, setPlanMode] = useState<boolean>(() => loadPlanMode());
+    // chunk 99 follow-up — Plan mode 표시 상태. 영속 상태는 default
+    // (Settings) 만. 매 turn 마다 default 가 자동 적용되므로 ChatPanel
+    // 은 default 를 미러링 + Settings 변경 이벤트 listen.
+    const [planModeDefault, setPlanModeDefault] = useState<boolean>(() =>
+      loadPlanModeDefault(),
+    );
     useEffect(() => {
-      savePlanMode(planMode);
-    }, [planMode]);
+      const onChange = () => setPlanModeDefault(loadPlanModeDefault());
+      window.addEventListener('ahwp:plan-mode-default-changed', onChange);
+      // 다른 탭 변경도 listen (storage event 는 cross-tab).
+      const onStorage = (e: StorageEvent) => {
+        if (e.key === 'ahwp:chat:plan-mode-default') onChange();
+      };
+      window.addEventListener('storage', onStorage);
+      return () => {
+        window.removeEventListener('ahwp:plan-mode-default-changed', onChange);
+        window.removeEventListener('storage', onStorage);
+      };
+    }, []);
     // 옛 chunk 18 호환을 위한 chatModeRef stub — useChatStreaming 의 옵션
     // 시그니처 호환용. 실제 분기는 autoApproveRef 가 담당.
     const chatModeRef = useRef<'manual' | 'agent'>('agent');
@@ -698,6 +709,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       onKeyDown,
       stop,
       resolveApproval,
+      requestPlanSkip,
     } = useChatStreaming({
       conversationIdRef,
       autoTitledConvIdsRef,
@@ -748,7 +760,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       // plan 응답 turn 종료 시 React state 동기화 (localStorage 는 이미
       // hook 안에서 갱신). 미동기화 시 사용자 다음 메시지 보낼 때까지
       // 토글 ON 으로 보임 (혼란).
-      onPlanModeAutoDisengage: () => setPlanMode(false),
+      // chunk 99 follow-up — auto-disengage 폐기 (active key 폐기와 함께).
+      // default 가 매 turn 자동 적용되므로 disengage 도 별도 동기화 불필요.
     });
 
     // The ChatPanelHandle imperative — chunk 56. Provides prefillAndSend
@@ -780,14 +793,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           }
         }
         if (!userText) return;
-        setPlanMode(false);
-        // 다음 마이크로태스크에 발사 — savePlanMode effect 가 먼저 실행되어
-        // localStorage 가 false 로 갱신된 뒤 fireChat 가 그 값을 읽도록.
-        queueMicrotask(() => {
-          void sendDirect(userText);
-        });
+        // chunk 99 follow-up — next-send 1회만 plan 우회. default 는
+        // 그대로 유지되어 *다음 새* prompt 부터 다시 dry-run 으로 시작.
+        requestPlanSkip();
+        void sendDirect(userText);
       },
-      [messages, sendDirect],
+      [messages, sendDirect, requestPlanSkip],
     );
 
     const providerLabel = useMemo(
@@ -949,29 +960,32 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               className="h-4 w-4 cursor-pointer accent-primary"
             />
           </label>
-          <label
-            className="flex cursor-pointer items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-1.5"
-            title="on=AI 가 read tool 로 정보만 모으고 변경 계획만 작성. 사용자 검토 후 'Plan 실행' 클릭 시 off + 동일 prompt 재발사 → 실제 적용. 큰 변경을 dry-run 으로 검토할 때 사용."
-          >
-            <div className="flex flex-col">
-              <span className="text-xs font-medium">
-                Plan mode (변경 미리보기)
+          {/* chunk 99 follow-up — Plan mode toggle 은 Settings 의
+            "Agent 동작" 으로 이동. 매 turn 마다 토글하기엔 호흡이 길고,
+            기본값 (default ON) 으로 충분히 dry-run 사이클이 잡힘. 활성
+            상태일 때만 indicator 노출해 사용자에게 "이번 turn 은 dry-
+            run" 임을 알림. */}
+          {planModeDefault ? (
+            <div
+              className="flex items-center justify-between gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-1.5"
+              data-testid="chat-plan-mode-indicator"
+              title="Plan mode 활성 — AI 가 변경 계획만 작성합니다. 응답 후 자동 해제. 기본 동작은 Settings → AI 공급자 → 'Plan mode 기본 활성화' 에서 조절."
+            >
+              <span className="text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                ⏸ Plan mode (다음 turn dry-run)
               </span>
-              <span className="text-[10px] text-muted-foreground">
-                {planMode
-                  ? 'AI 가 변경 계획만 작성 (write 차단)'
-                  : '바로 실행 모드'}
-              </span>
+              <button
+                type="button"
+                onClick={() => requestPlanSkip()}
+                disabled={streaming}
+                className="text-[10px] font-medium text-muted-foreground hover:text-foreground"
+                data-testid="chat-plan-mode-skip"
+                title="이번 turn 은 plan 없이 바로 실행. 다음 새 prompt 부터 다시 default 적용."
+              >
+                건너뛰기
+              </button>
             </div>
-            <input
-              type="checkbox"
-              checked={planMode}
-              disabled={streaming}
-              onChange={(e) => setPlanMode(e.target.checked)}
-              data-testid="chat-plan-mode-toggle"
-              className="h-4 w-4 cursor-pointer accent-primary"
-            />
-          </label>
+          ) : null}
         </div>
         {historyOpen ? (
           <div

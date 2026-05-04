@@ -35,6 +35,8 @@ import {
   AGENT_MAX_TURNS_HARD_CAP,
   loadAgentMaxTurns,
   saveAgentMaxTurns,
+  loadPlanModeDefault,
+  savePlanModeDefault,
 } from '@/features/chat/hooks/useChatStreaming';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/app/use-theme';
@@ -361,11 +363,12 @@ function AiProvidersPane(): JSX.Element {
             <ProviderCard key={meta.id} meta={meta} />
           ))}
         </div>
-        <div className="mt-5 border-t border-border pt-4">
-          <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <div className="mt-5 space-y-3 border-t border-border pt-4">
+          <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
             Agent 동작
           </h3>
           <AgentSettingsRow />
+          <PlanModeDefaultRow />
         </div>
       </PaneBody>
       <PaneFooter hint="변경사항은 저장 버튼으로 반영됩니다. 키를 변경하려면 새 값을 입력하세요." />
@@ -418,6 +421,46 @@ function AgentSettingsRow(): JSX.Element {
         className="w-20 rounded border border-input bg-background px-2 py-1 text-right tabular-nums focus:outline-hidden focus:ring-2 focus:ring-ring"
       />
     </div>
+  );
+}
+
+/**
+ * Plan mode 기본 활성화 토글 — chunk 99 follow-up. on=새 prompt 마다
+ * AI 가 변경 계획만 작성 (write 차단), 응답 후 자동 disengage. 사용자
+ * 검토 후 같은 prompt 재전송 또는 "이 계획대로 실행" 버튼으로 실제
+ * 적용. 큰 / 위험한 / 모호한 변경의 dry-run 검토를 매번 강제.
+ *
+ * off=즉시 실행 (전통적 Agent 흐름). 빠른 반복 / 간단 명령에 적합.
+ */
+function PlanModeDefaultRow(): JSX.Element {
+  const [planDefault, setPlanDefault] = useState<boolean>(() =>
+    loadPlanModeDefault(),
+  );
+  const onChange = (next: boolean) => {
+    setPlanDefault(next);
+    savePlanModeDefault(next);
+  };
+  return (
+    <label
+      className="flex cursor-pointer items-start justify-between gap-3 rounded-md border border-input bg-background px-3 py-2"
+      data-testid="settings-plan-mode-default-row"
+    >
+      <div className="flex flex-col gap-0.5">
+        <span className="text-xs font-medium">Plan mode 기본 활성화</span>
+        <span className="text-[10px] text-muted-foreground">
+          on=새 prompt 마다 dry-run (변경 계획 작성, write 차단). 응답 후 자동
+          해제 → 같은 prompt 재전송 또는 “이 계획대로 실행” 버튼으로 적용.
+          off=즉시 실행 (전통적 Agent 흐름).
+        </span>
+      </div>
+      <input
+        type="checkbox"
+        checked={planDefault}
+        onChange={(e) => onChange(e.target.checked)}
+        data-testid="settings-plan-mode-default-toggle"
+        className="mt-0.5 h-4 w-4 cursor-pointer accent-primary"
+      />
+    </label>
   );
 }
 
