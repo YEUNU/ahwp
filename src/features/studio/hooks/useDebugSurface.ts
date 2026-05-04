@@ -212,6 +212,8 @@ export interface UseDebugSurfaceOptions {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   applyHtmlAtCaret: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  applyHtmlReplaceSection: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   refreshCellBlockHighlights: any;
 }
 
@@ -307,6 +309,7 @@ export function useDebugSurface(opts: UseDebugSurfaceOptions): void {
     exportSelectionHtmlAt,
     pasteHtmlAt,
     applyHtmlAtCaret,
+    applyHtmlReplaceSection,
     refreshCellBlockHighlights,
   } = opts;
 
@@ -834,6 +837,11 @@ export function useDebugSurface(opts: UseDebugSurfaceOptions): void {
         applyPageDef(props, sectionIdx),
       // HTML export + paste with paragraph-shape decomposition — chunk 18.
       applyHtmlAtCaret: (html: string): void => applyHtmlAtCaret(html),
+      // chunk 99 follow-up — outline-aware section replace.
+      applyHtmlReplaceSection: (
+        html: string,
+        target: { startParaIdx: number; endParaIdxExclusive: number },
+      ): void => applyHtmlReplaceSection(html, target),
       // chunk 20 — excerpt capture + stale verify mirror the
       // ViewerHandle entries so e2e specs can drive the chip flow
       // without needing to script real selection drags.
@@ -862,14 +870,15 @@ export function useDebugSurface(opts: UseDebugSurfaceOptions): void {
         const doc = docRef.current;
         if (!doc) return [];
         // Resolve heading styles by name. HWP convention is "제목 1",
-        // "제목 2", "제목 3" — we also accept "Heading N" for HWPX
-        // imports of foreign docs. Body styles ("바탕글" / "본문")
-        // are skipped.
+        // "제목 2", "제목 3"; "개요 N" 도 공통 outline 스타일 (blank.hwpx
+        // 기본 + 사업계획서 양식에서 채용); "Heading N" 은 HWPX import.
+        // Body styles ("바탕글" / "본문") 는 skip.
         const headingByStyleId = new Map<number, number>();
         for (const s of styleList) {
           const koMatch = s.name.match(/^제목\s*(\d+)?/);
+          const koOutline = s.name.match(/^개요\s*(\d+)?/);
           const enMatch = s.englishName?.match(/^Heading\s*(\d+)?/i);
-          const m = koMatch ?? enMatch;
+          const m = koMatch ?? koOutline ?? enMatch;
           if (m) {
             const level = m[1] ? Math.min(6, parseInt(m[1], 10)) : 1;
             headingByStyleId.set(s.id, level);
@@ -1352,5 +1361,6 @@ export function useDebugSurface(opts: UseDebugSurfaceOptions): void {
     exportSelectionHtmlAt,
     pasteHtmlAt,
     applyHtmlAtCaret,
+    applyHtmlReplaceSection,
   ]);
 }

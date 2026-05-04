@@ -1098,6 +1098,17 @@ export default function AppShell() {
                     v.applyHtmlAtCaret(html);
                     v.markChangedParagraphsSince(before);
                   }}
+                  applyHtmlReplaceSection={(html, target) => {
+                    // chunk 99 follow-up — outline-aware section replace.
+                    // Same snapshot-bracket as applyHtml for the changed-
+                    // paragraph stripe.
+                    const v = activeViewerRef();
+                    if (!v) return;
+                    const before = v.snapshotParagraphs();
+                    v.applyHtmlReplaceSection(html, target);
+                    v.markChangedParagraphsSince(before);
+                  }}
+                  getOutline={() => activeViewerRef()?.getOutline() ?? []}
                   runTools={async (items, targetPath) => {
                     // Phase 3 chunk 50 — docId-aware routing. If the
                     // chat turn pinned a target path, look up the

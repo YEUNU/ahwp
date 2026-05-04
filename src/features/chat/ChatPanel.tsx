@@ -33,6 +33,7 @@ import {
 import { parsePatchBlock, type AhwpPatch } from '@shared/ai-patches';
 import { MultiPatchStack, type PatchStatus } from './DiffCard';
 import { markdownToHtml } from './markdownToHtml';
+import { findSectionToReplace } from './sectionMatcher';
 import {
   EXCERPT_SOFT_CHAR_LIMIT,
   type ExcerptAttachment,
@@ -193,6 +194,33 @@ export interface ChatPanelProps {
    */
   applyHtml?: (html: string) => void;
   /**
+   * Replace an existing outline section's body with the AI-authored
+   * HTML — chunk 99 follow-up. Surfaced as "기존 X.Y.Z 섹션 교체"
+   * button when the AI's heading matches an outline section number.
+   * Avoids the duplicate-section bug where pasteHtml-at-caret left
+   * the old heading + body intact next to the new one.
+   */
+  applyHtmlReplaceSection?: (
+    html: string,
+    target: { startParaIdx: number; endParaIdxExclusive: number },
+  ) => void;
+  /**
+   * Read the active document outline (heading paragraphs). Used by
+   * the apply button to detect when the AI heading matches an existing
+   * section so we can offer the replace path instead of paste-at-caret.
+   */
+  getOutline?: () => readonly {
+    paragraphIndex: number;
+    level: number;
+    text: string;
+  }[];
+  /**
+   * Active doc paragraph count cap — passed to `findSectionToReplace`
+   * so the matcher can compute end-of-document for the last outline
+   * entry. Optional; falls back to outline-end when missing.
+   */
+  getActiveParagraphCount?: () => number;
+  /**
    * Run a pre-flighted ahwp-tools op list against a target doc — chunk 19,
    * extended in chunk 59 to be docId-aware. `targetPath` is the absolute
    * path of the doc the turn was started on; AppShell looks up the matching
@@ -304,6 +332,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       onOpenSettings,
       getDocHtml,
       applyHtml,
+      applyHtmlReplaceSection,
+      getOutline,
       runTools,
       captureExcerpt,
       activeDocPath,
@@ -991,6 +1021,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   onRegenerate={regenerate}
                   onDelete={deleteMessage}
                   onApplyHtml={applyHtml}
+                  onApplyHtmlReplaceSection={applyHtmlReplaceSection}
+                  getOutline={getOutline}
                   onRunTools={runTools}
                   onUndoApply={undoLastApply}
                   onApplyPatches={applyPatches}
@@ -1314,6 +1346,17 @@ interface MessageProps {
   onDelete: (id: string) => void;
   /** Apply an HTML fragment to the active document (chunk 18). */
   onApplyHtml?: (html: string) => void;
+  /** Replace an existing outline section's body with HTML (chunk 99 follow-up). */
+  onApplyHtmlReplaceSection?: (
+    html: string,
+    target: { startParaIdx: number; endParaIdxExclusive: number },
+  ) => void;
+  /** Read active document outline — used to detect section-replace candidate. */
+  getOutline?: () => readonly {
+    paragraphIndex: number;
+    level: number;
+    text: string;
+  }[];
   /** Run an `ahwp-tools` op list against the active document (chunk 19). */
   onRunTools?: (
     items: AhwpPreflightItem[],
@@ -1411,6 +1454,8 @@ function Message({
   onRegenerate,
   onDelete,
   onApplyHtml,
+  onApplyHtmlReplaceSection,
+  getOutline,
   onRunTools,
   onUndoApply,
   onApplyPatches,
@@ -1481,9 +1526,33 @@ function Message({
       if (appliedTimerRef.current) clearTimeout(appliedTimerRef.current);
     };
   }, []);
+  // chunk 99 follow-up — outline-aware section replace detection. When
+  // the AI's HTML starts with a heading whose section number ("2.7.4")
+  // matches an existing outline entry, we offer a replace path instead
+  // of paste-at-caret. Avoids duplicate sections.
+  const sectionMatch = useMemo(() => {
+    if (!htmlPayload || !onApplyHtmlReplaceSection || !getOutline) return null;
+    try {
+      const outline = getOutline();
+      if (!outline || outline.length === 0) return null;
+      return findSectionToReplace(outline, htmlPayload);
+    } catch (err) {
+      console.warn('[chat] findSectionToReplace failed:', err);
+      return null;
+    }
+  }, [htmlPayload, onApplyHtmlReplaceSection, getOutline]);
   const handleApply = () => {
-    if (!htmlPayload || !onApplyHtml) return;
-    onApplyHtml(htmlPayload);
+    if (!htmlPayload) return;
+    if (sectionMatch && onApplyHtmlReplaceSection) {
+      onApplyHtmlReplaceSection(htmlPayload, {
+        startParaIdx: sectionMatch.startParaIdx,
+        endParaIdxExclusive: sectionMatch.endParaIdxExclusive,
+      });
+    } else if (onApplyHtml) {
+      onApplyHtml(htmlPayload);
+    } else {
+      return;
+    }
     setApplied(true);
     setUndone(false);
     if (appliedTimerRef.current) clearTimeout(appliedTimerRef.current);
@@ -1795,20 +1864,27 @@ function Message({
               onClick={handleApply}
               data-testid="chat-action-apply-html"
               data-markdown-fallback={markdownFallback ? 'true' : 'false'}
+              data-section-match={
+                sectionMatch ? sectionMatch.sectionNumber : ''
+              }
               className="text-xs"
               title={
-                markdownFallback
-                  ? '응답의 마크다운 형식을 HTML 로 변환해서 활성 문서에 적용합니다.'
-                  : '응답에 포함된 HTML 블록을 활성 문서에 적용합니다.'
+                sectionMatch
+                  ? `기존 "${sectionMatch.headingText}" 섹션 (${sectionMatch.startParaIdx + 1}~${sectionMatch.endParaIdxExclusive}번째 단락) 을 응답 내용으로 교체합니다.`
+                  : markdownFallback
+                    ? '응답의 마크다운 형식을 HTML 로 변환해서 활성 문서에 적용합니다.'
+                    : '응답에 포함된 HTML 블록을 활성 문서에 적용합니다.'
               }
             >
               {applied
                 ? undone
                   ? '✓ 되돌림'
                   : '✓ 적용됨'
-                : markdownFallback
-                  ? '마크다운 적용'
-                  : '문서에 적용'}
+                : sectionMatch
+                  ? `기존 ${sectionMatch.sectionNumber} 섹션 교체`
+                  : markdownFallback
+                    ? '마크다운 적용'
+                    : '문서에 적용'}
             </Button>
             {applied && !undone && onUndoApply ? (
               <Button

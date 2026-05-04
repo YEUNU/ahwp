@@ -1946,6 +1946,83 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
      * 1px ≈ 75 HWPUNIT (96 DPI: 25.4/96 mm × 283.5 HWPUNIT/mm ≈ 75).
      * line-height: 1.5 → lineSpacing: 150 (percent of single).
      */
+    /** DOM-walk for paragraph-level styles `pasteHtml` drops — extracted
+     *  helper so applyHtmlAtCaret + applyHtmlReplaceSection share. */
+    const applyParaFormatsFromHtml = useCallback(
+      (
+        doc: NonNullable<typeof docRef.current>,
+        sec: number,
+        startParaIdx: number,
+        html: string,
+      ) => {
+        const dom = new DOMParser().parseFromString(html, 'text/html');
+        const blocks = Array.from(
+          dom.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li'),
+        );
+        let paraIdx = startParaIdx;
+        for (const el of blocks) {
+          const props: Record<string, unknown> = {};
+          const style = (el as HTMLElement).style;
+          const align = style.textAlign;
+          if (
+            align === 'left' ||
+            align === 'center' ||
+            align === 'right' ||
+            align === 'justify'
+          ) {
+            props.alignment = align;
+          }
+          const lh = style.lineHeight;
+          if (lh) {
+            let percent: number | null = null;
+            if (lh.endsWith('%')) percent = parseFloat(lh);
+            else {
+              const ratio = parseFloat(lh);
+              if (Number.isFinite(ratio) && ratio > 0)
+                percent = Math.round(ratio * 100);
+            }
+            if (percent != null && Number.isFinite(percent)) {
+              props.lineSpacing = percent;
+              props.lineSpacingType = 'Percent';
+            }
+          }
+          const pxToHu = (raw: string): number | null => {
+            const m = raw.match(/^(-?\d+(?:\.\d+)?)(px|pt)?$/);
+            if (!m) return null;
+            const n = parseFloat(m[1]);
+            if (!Number.isFinite(n)) return null;
+            const unit = m[2] || 'px';
+            // 1pt ≈ 100, 1px ≈ 75 HWPUNIT (96 DPI).
+            const k = unit === 'pt' ? 100 : 75;
+            return Math.round(n * k);
+          };
+          const ml = pxToHu(style.marginLeft);
+          if (ml != null) props.marginLeft = ml;
+          const mr = pxToHu(style.marginRight);
+          if (mr != null) props.marginRight = mr;
+          const ti = pxToHu(style.textIndent);
+          if (ti != null) props.indent = ti;
+          const mt = pxToHu(style.marginTop);
+          if (mt != null) props.spacingBefore = mt;
+          const mb = pxToHu(style.marginBottom);
+          if (mb != null) props.spacingAfter = mb;
+
+          if (Object.keys(props).length > 0) {
+            try {
+              doc.applyParaFormat(sec, paraIdx, JSON.stringify(props));
+            } catch (err) {
+              console.warn(
+                '[studio] applyParaFormatsFromHtml applyParaFormat failed:',
+                err,
+              );
+            }
+          }
+          paraIdx += 1;
+        }
+      },
+      [],
+    );
+
     const applyHtmlAtCaret = useCallback(
       (html: string): void => {
         const doc = docRef.current;
@@ -1955,80 +2032,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           // 1. Native paste — body text + char-level styles only.
           doc.pasteHtml(c.sectionIndex, c.paragraphIndex, c.charOffset, html);
           // 2. DOM-walk for paragraph-level styles `pasteHtml` ignores.
-          //    Each <p>/<h*>/<li> becomes a paragraph in IR order
-          //    starting at the caret's paragraph index.
-          const dom = new DOMParser().parseFromString(html, 'text/html');
-          const blocks = Array.from(
-            dom.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li'),
-          );
-          let paraIdx = c.paragraphIndex;
-          for (const el of blocks) {
-            const props: Record<string, unknown> = {};
-            const style = (el as HTMLElement).style;
-            // Alignment.
-            const align = style.textAlign;
-            if (
-              align === 'left' ||
-              align === 'center' ||
-              align === 'right' ||
-              align === 'justify'
-            ) {
-              props.alignment = align;
-            }
-            // Line height — accept "1.5" / "150%" / "200%".
-            const lh = style.lineHeight;
-            if (lh) {
-              let percent: number | null = null;
-              if (lh.endsWith('%')) percent = parseFloat(lh);
-              else {
-                const ratio = parseFloat(lh);
-                if (Number.isFinite(ratio) && ratio > 0)
-                  percent = Math.round(ratio * 100);
-              }
-              if (percent != null && Number.isFinite(percent)) {
-                props.lineSpacing = percent;
-                props.lineSpacingType = 'Percent';
-              }
-            }
-            // Left/right indent — only handle px / pt for now.
-            const pxToHu = (raw: string): number | null => {
-              const m = raw.match(/^(-?\d+(?:\.\d+)?)(px|pt)?$/);
-              if (!m) return null;
-              const n = parseFloat(m[1]);
-              if (!Number.isFinite(n)) return null;
-              const unit = m[2] || 'px';
-              // 1pt = 1/72 in × 25.4 mm × 283.5 HWPUNIT/mm ≈ 100
-              // 1px = 1/96 in × 25.4 mm × 283.5 HWPUNIT/mm ≈ 75
-              const k = unit === 'pt' ? 100 : 75;
-              return Math.round(n * k);
-            };
-            const ml = pxToHu(style.marginLeft);
-            if (ml != null) props.marginLeft = ml;
-            const mr = pxToHu(style.marginRight);
-            if (mr != null) props.marginRight = mr;
-            const ti = pxToHu(style.textIndent);
-            if (ti != null) props.indent = ti;
-            const mt = pxToHu(style.marginTop);
-            if (mt != null) props.spacingBefore = mt;
-            const mb = pxToHu(style.marginBottom);
-            if (mb != null) props.spacingAfter = mb;
-
-            if (Object.keys(props).length > 0) {
-              try {
-                doc.applyParaFormat(
-                  c.sectionIndex,
-                  paraIdx,
-                  JSON.stringify(props),
-                );
-              } catch (err) {
-                console.warn(
-                  '[studio] applyHtmlAtCaret applyParaFormat failed:',
-                  err,
-                );
-              }
-            }
-            paraIdx += 1;
-          }
+          applyParaFormatsFromHtml(doc, c.sectionIndex, c.paragraphIndex, html);
           dirtyRef.current = true;
           setDirty(true);
           refreshAfterMutation({ syncCaret: false });
@@ -2036,7 +2040,67 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           console.warn('[studio] applyHtmlAtCaret failed:', err);
         }
       },
-      [refreshAfterMutation],
+      [applyParaFormatsFromHtml, refreshAfterMutation],
+    );
+
+    /**
+     * Replace an outline section's body with HTML — chunk 99 follow-up.
+     *
+     * Avoids the "duplicate section" issue where the markdown-fallback
+     * apply pasted at caret leaving the existing X.Y.Z heading + body
+     * intact. Strategy:
+     *  1. `insertParagraph` at `startParaIdx` to mint an empty placeholder
+     *     (existing heading + body shift down by 1).
+     *  2. Delete the original span (now at `[startParaIdx+1, endParaIdxExclusive+1)`)
+     *     by repeatedly calling `deleteParagraph(sec, startParaIdx + 1)` —
+     *     each delete shifts the next paragraph back to that index.
+     *  3. `pasteHtml` into the placeholder at `(startParaIdx, 0)`.
+     *  4. Walk DOM for para-level styles, same as applyHtmlAtCaret.
+     *
+     * Wrapped in `beginUndoGroup`/`endUndoGroup` so ⌘Z rolls back the
+     * whole replace as one entry.
+     */
+    const applyHtmlReplaceSection = useCallback(
+      (
+        html: string,
+        target: { startParaIdx: number; endParaIdxExclusive: number },
+      ): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        const sec = caretRef.current.sectionIndex;
+        const { startParaIdx, endParaIdxExclusive } = target;
+        if (endParaIdxExclusive <= startParaIdx) return;
+
+        beginUndoGroup();
+        try {
+          // 1. Mint placeholder at startParaIdx (heading + body shift +1).
+          doc.insertParagraph(sec, startParaIdx);
+          // 2. Delete original span at startParaIdx+1 (now contains the
+          //    old heading + body). Each delete shifts the next paragraph
+          //    back to that same index.
+          const paraToDelete = endParaIdxExclusive - startParaIdx;
+          for (let i = 0; i < paraToDelete; i++) {
+            doc.deleteParagraph(sec, startParaIdx + 1);
+          }
+          // 3. Paste new HTML into the placeholder.
+          doc.pasteHtml(sec, startParaIdx, 0, html);
+          // 4. DOM-walk for paragraph-level styles.
+          applyParaFormatsFromHtml(doc, sec, startParaIdx, html);
+          dirtyRef.current = true;
+          setDirty(true);
+          refreshAfterMutation({ syncCaret: false });
+        } catch (err) {
+          console.warn('[studio] applyHtmlReplaceSection failed:', err);
+        } finally {
+          endUndoGroup();
+        }
+      },
+      [
+        applyParaFormatsFromHtml,
+        beginUndoGroup,
+        endUndoGroup,
+        refreshAfterMutation,
+      ],
     );
 
     /**
@@ -3240,6 +3304,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       renderEquationSvg,
       createRectShapeAtCaret,
       applyHtmlAtCaret,
+      applyHtmlReplaceSection,
     });
 
     /**
@@ -3864,6 +3929,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       exportSelectionHtmlAt,
       pasteHtmlAt,
       applyHtmlAtCaret,
+      applyHtmlReplaceSection,
     });
 
     // Effect 2: page indicator + mount window. On every scroll (rAF-
