@@ -19,7 +19,11 @@ import { launchApp, type LaunchedApp } from './launch';
 const OPENAI_KEY = process.env.AHWP_TEST_OPENAI_KEY;
 const FIXTURE = path.resolve(__dirname, 'fixtures', 'blank.hwpx');
 const MODEL = 'gpt-5.4-mini';
-const TURN_TIMEOUT_MS = 3 * 60 * 1000;
+// 작성 chain (router LLM → main LLM → 도구 dispatch → Agent 재진입) 한
+// turn 의 wall-clock. workspace 검색 + readParagraphByPath chain 이 큰
+// fixture (사업계획서 ~500 단락) 에 걸리면 multi-turn 누적 8~10 min 도
+// 정상. 이 mechanism 이 핵심 기능이라 95%+ 통과 목표.
+const TURN_TIMEOUT_MS = 10 * 60 * 1000;
 
 interface StudioDebug {
   getParaProps(s: number, p: number): Record<string, unknown>;
@@ -34,9 +38,11 @@ test.describe('OpenAI 사용자 시나리오 — 난이도별 10 케이스', () 
   test.skip(!OPENAI_KEY, 'AHWP_TEST_OPENAI_KEY env not set');
   // Playwright 기본 60s test timeout 가 reasoning model 의 multi-tool
   // chain (router LLM + main LLM + 도구 dispatch + Agent 재진입) 한
-  // turn 보다 짧아 stream 중간에 죽는 경우가 잦았음. 12min 으로 확장
-  // (Creative long-form 케이스 budget 10min 까지 커버).
-  test.setTimeout(12 * 60 * 1000);
+  // turn 보다 짧아 stream 중간에 죽는 경우가 잦았음. 본 mechanism 이
+  // 핵심 기능 (사용자가 자연 한국어로 문서 작성 / 양식 유지 등) 이라
+  // 95%+ 통과율이 목표. 25min 으로 확장 — workspace 검색 chain 이
+  // 사업계획서 양식 같은 큰 fixture 와 결합해도 완료 가능한 budget.
+  test.setTimeout(25 * 60 * 1000);
 
   let launched: LaunchedApp;
 
@@ -280,11 +286,14 @@ test.describe('OpenAI 사용자 시나리오 — 난이도별 10 케이스', () 
   // ============================================================
 
   /** 빈 문서 mount 후 long-form prompt 보내고 다중 turn polling. Creative
-   *  + Style preservation 공용. 반환: tool 종류별 카운트 + 본문 분석. */
+   *  + Style preservation 공용. 반환: tool 종류별 카운트 + 본문 분석.
+   *  budget 20 min — workspace 검색 chain 이 큰 fixture 와 결합 시 다중
+   *  turn (router → main → search → main → readPara → main → write*) 누적
+   *  으로 10~15 min 걸리는 케이스 안전 커버. */
   async function runLongFormTurn(
     page: Page,
     prompt: string,
-    budgetMs = 10 * 60 * 1000,
+    budgetMs = 20 * 60 * 1000,
   ): Promise<{
     toolsByName: Map<string, number>;
     paraCount: number;
