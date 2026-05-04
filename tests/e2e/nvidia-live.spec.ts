@@ -39,6 +39,9 @@ interface StudioDebug {
     focusPara: number,
     focusOff: number,
   ): void;
+  getParagraphCount?(s: number): number;
+  getParagraphLength?(s: number, p: number): number;
+  getTextRange?(s: number, p: number, start: number, end: number): string;
 }
 
 test.describe('NVIDIA NIM — live smoke', () => {
@@ -606,5 +609,159 @@ test.describe('NVIDIA NIM — live smoke', () => {
       return dbg.getParaProps(0, 0).alignment as string;
     });
     expect(afterAlign).toBe(baselineAlign);
+  });
+
+  // chunks 96 + 97 + 98 종단간 — 자연 한국어 컨셉 질의로 워크스페이스
+  // 검색 + 검토 모드 승인 + 실제 IR 변경. chunk 98 휴리스틱 라우터로
+  // tool catalog 사전 필터링 → request 크기 감소 → NIM 일부 모델의
+  // stall 회피 가설 검증.
+  test('chunks 96+97+98 종단간 — 자연 컨셉 질의 + 휴리스틱 라우터 + tool-use 모델', async () => {
+    const { page } = launched;
+    test.skip(!existsSync(FIXTURE), 'tests/e2e/fixtures/blank.hwpx missing');
+
+    const ALPHA = path.resolve(
+      __dirname,
+      '..',
+      '..',
+      'examples',
+      '4. [사업계획서] 제조AI특화 스마트공장 사업계획서_양식_260326_01_데이터수집검증 중복화.hwp',
+    );
+    test.skip(!existsSync(ALPHA), 'examples/사업계획서 fixture missing');
+
+    const workspaceDir = mkdtempSync(path.join(tmpdir(), 'ahwp-ws-e2e-'));
+    try {
+      const targetPath = path.join(workspaceDir, 'target.hwpx');
+      copyFileSync(FIXTURE, targetPath);
+      copyFileSync(ALPHA, path.join(workspaceDir, '사업계획서_양식.hwp'));
+
+      await page.evaluate(
+        async ({ folder, active }) => {
+          await window.api.session.set({
+            lastFolderPath: folder,
+            lastActivePath: active,
+            openTabPaths: [active],
+          });
+        },
+        { folder: workspaceDir, active: targetPath },
+      );
+      await page.reload();
+      await page.waitForLoadState('domcontentloaded');
+      await page.waitForFunction(
+        () =>
+          Boolean(
+            (window as Window & { __studioDebug?: StudioDebug }).__studioDebug,
+          ),
+        { timeout: 30_000 },
+      );
+
+      const baseline = await page.evaluate(() => {
+        const dbg = (window as Window & { __studioDebug?: StudioDebug })
+          .__studioDebug!;
+        const paraCount = dbg.getParagraphCount!(0);
+        const collected: string[] = [];
+        for (let p = 0; p < Math.min(paraCount, 10); p++) {
+          const len = dbg.getParagraphLength!(0, p);
+          if (len > 0)
+            collected.push(dbg.getTextRange!(0, p, 0, Math.min(len, 200)));
+        }
+        return { paraCount, paragraphs: collected };
+      });
+
+      await page.getByTestId('chat-provider-select').selectOption('nvidia');
+      await expect(page.getByTestId('chat-model-input')).toBeEnabled({
+        timeout: 30_000,
+      });
+      // 사용 가능한 tool-use 모델 중 NIM 에서 stable 한 것 선택. fallback
+      // 순으로 시도. (qwen3.5-122b 는 stall 패턴 확인됨, llama-3.3 / kimi-k2
+      // 가 더 안정.)
+      const PREFER = [
+        'meta/llama-3.3-70b-instruct',
+        'moonshotai/kimi-k2-instruct',
+        'meta/llama-3.1-70b-instruct',
+        'qwen/qwen3.5-122b-a10b',
+      ];
+      const modelSel = page.getByTestId('chat-model-input');
+      const availableModels = await modelSel.evaluate((el) =>
+        Array.from((el as HTMLSelectElement).options).map((o) => o.value),
+      );
+      const pickedModel =
+        PREFER.find((m) => availableModels.includes(m)) ?? PREFER[0];
+      await modelSel.selectOption(pickedModel);
+      console.log(`[chunk96+97+98 e2e] model=${pickedModel}`);
+      await expect(
+        page.getByTestId('chat-auto-approve-toggle'),
+      ).not.toBeChecked();
+      await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
+        'data-state',
+        'ok',
+      );
+
+      // 자연 한국어 — 사용자가 그대로 칠 만한 한 줄. 키워드 (워크스페이스 /
+      // 양식 / 참고 / 사업계획서 / 추가 / 섹션) 가 휴리스틱 라우터의 두
+      // 그룹 (workspace + editing) 활성. tool catalog 가 ~25개로 좁혀짐.
+      await page
+        .getByTestId('chat-input')
+        .fill(
+          '워크스페이스에 있는 사업계획서 양식을 참고해서 이 빈 문서에 첫 섹션 제목 한 줄 추가해줘.',
+        );
+      await page.getByTestId('chat-send').click();
+
+      const TURN_TIMEOUT_MS = 4 * 60 * 1000;
+      const t0 = Date.now();
+      while (Date.now() - t0 < TURN_TIMEOUT_MS) {
+        const stopVisible = await page
+          .getByTestId('chat-stop')
+          .isVisible()
+          .catch(() => false);
+        const pendingEntries = await page
+          .locator(
+            '[data-testid="chat-tool-entry"][data-tool-status="pending"]',
+          )
+          .all();
+        if (pendingEntries.length === 0 && !stopVisible) break;
+        if (pendingEntries.length > 0) {
+          const bulk = page.getByTestId('chat-tool-approve-all');
+          const bulkVisible = await bulk.isVisible().catch(() => false);
+          if (bulkVisible) {
+            await bulk.click().catch(() => {});
+          } else {
+            for (const entry of pendingEntries) {
+              const approve = entry.getByTestId('chat-tool-approve');
+              const ok = await approve.isVisible().catch(() => false);
+              if (ok) await approve.click().catch(() => {});
+            }
+          }
+          await page.waitForTimeout(500);
+        } else {
+          await page.waitForTimeout(1000);
+        }
+      }
+
+      const searchEntries = page.locator(
+        '[data-testid="chat-tool-entry"][data-tool-name="searchWorkspaceOutlines"]',
+      );
+      expect(await searchEntries.count()).toBeGreaterThanOrEqual(1);
+
+      const after = await page.evaluate(() => {
+        const dbg = (window as Window & { __studioDebug?: StudioDebug })
+          .__studioDebug!;
+        const paraCount = dbg.getParagraphCount!(0);
+        const collected: string[] = [];
+        for (let p = 0; p < Math.min(paraCount, 10); p++) {
+          const len = dbg.getParagraphLength!(0, p);
+          if (len > 0)
+            collected.push(dbg.getTextRange!(0, p, 0, Math.min(len, 500)));
+        }
+        return { paraCount, paragraphs: collected };
+      });
+      const changed =
+        after.paraCount > baseline.paraCount ||
+        JSON.stringify(after.paragraphs) !==
+          JSON.stringify(baseline.paragraphs);
+      expect(changed).toBe(true);
+      expect(after.paragraphs.some((t) => t.trim().length >= 3)).toBe(true);
+    } finally {
+      rmSync(workspaceDir, { recursive: true, force: true });
+    }
   });
 });

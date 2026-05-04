@@ -36,6 +36,7 @@ import {
   buildReferenceSystemBlock,
   buildExcerptSystemPrompt,
 } from '../prompts';
+import { selectToolsForHistory } from '../toolRouter';
 
 interface UiToolEntry {
   id: string;
@@ -583,12 +584,26 @@ export function useChatStreaming(
       });
 
       const request: ChatRequest = { provider, model, messages };
-      request.tools = getAhwpToolCatalog().map((d) => ({
-        name: d.name,
-        description: d.description,
-        inputSchema: d.inputSchema,
-      }));
+      // chunk 98 — 휴리스틱 라우터로 tool catalog 사전 필터. 사용자 query
+      // 의 키워드 매칭만 (router LLM 없음, 사용자 모델 그대로). 60+ tool
+      // 카탈로그 전체를 모델에 매번 노출하지 않으니 (a) NIM 일부 모델의
+      // request body 너무 커서 stall 하는 이슈 회피, (b) 모델이 결정해야
+      // 하는 tool 후보가 줄어 호출 정확도 향상.
+      const selection = selectToolsForHistory(history);
+      const allowed = new Set(selection.tools);
+      request.tools = getAhwpToolCatalog()
+        .filter((d) => allowed.has(d.name))
+        .map((d) => ({
+          name: d.name,
+          description: d.description,
+          inputSchema: d.inputSchema,
+        }));
       request.toolChoice = 'auto';
+      console.info(
+        `[chunk98 tool-router] groups=${
+          selection.matchedGroups.length
+        } isFull=${selection.isFullCatalog} tools=${request.tools.length}`,
+      );
       // Agent 루프 재진입에서도 verifiedExcerpts를 유지하려면 ref 에
       // stash. 첫 turn 만 진짜 "사용자 의도"라 다음 turn 부터는 보통
       // [] 로 진행해도 OK 지만 일관성을 위해 같은 칩을 그대로 유지.

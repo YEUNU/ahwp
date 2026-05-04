@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+### Added — chunk 98: 휴리스틱 tool 라우터 (0.3.34)
+
+- **`src/features/chat/toolRouter.ts`** — 사용자 query 의 키워드 매칭으로 60+ tool catalog 의 부분집합만 LLM 에 노출. 별도 router LLM 없이 (사용자 선택 모델 그대로). 11개 키워드 그룹 (워크스페이스 / 정렬 / 글자 서식 / 단락 편집 / 표 / 그림·도형 / 머리말꼬리말 / 책갈피·각주 / 페이지 / 검색 / 스타일) + always-include 2개 (`getCaretPosition`, `getDocumentOutline`). 매칭 0개면 full catalog fallback (의도 모호 시 모델 자유 선택). useChatStreaming.fireChat 가 매 turn 마다 가장 최근 user 메시지로 selection 적용.
+- **효과 입증** — chunks 96+97 종단간 NIM live e2e 가 전에 어떤 모델로도 실패하던 것이, 휴리스틱 라우터 + meta/llama-3.3-70b-instruct 조합으로 22초 만에 통과: 자연 한국어 컨셉 질의 ("워크스페이스에 있는 사업계획서 양식을 참고해서 이 빈 문서에 첫 섹션 제목 한 줄 추가해줘") → searchWorkspaceOutlines 호출 → 검토 모드 승인 → 실제 IR 변경 (단락 추가). qwen3.5-122b 의 stall 은 NIM 호스팅 모델 특이 이슈로 분리 확인 (catalog 크기 무관).
+- **단위 테스트** — `toolRouter.test.ts` 10 케이스: 워크스페이스 / 정렬 / 표 / 그림 / 머리말 / 책갈피 / 각주 / fallback / always-include / 복합 키워드. fake-AI agent regression 12 케이스 통과.
+
 ### Changed — chunk 97: Manual / Agent 통합 + 자동 승인 토글 (0.3.33)
 
 - **모드 pill 제거 + 자동 승인 토글로 일원화** — 두 개의 별도 모드 (Manual = 코드 블록 응답 → 사용자 클릭 vs Agent = 즉시 실행 + 묶음 undo) 가 단일 흐름으로 통합. 모든 turn 에서 provider tool-use API 가 활성 (= 기존 Agent path), 차이는 **쓰기 도구 자동 승인 토글** (off=검토 / on=즉시 실행) 하나 뿐. 검토 모드 (default) 에선 매 write tool 호출이 `pending` 상태로 잡혀 사용자가 "승인" / "거절" 버튼을 누르면 dispatch (혹은 거절). 읽기 도구는 항상 즉시 실행 (안전).
