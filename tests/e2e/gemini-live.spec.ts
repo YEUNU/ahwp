@@ -80,7 +80,7 @@ test.describe('Google Gemini — live smoke', () => {
     const { page } = launched;
     await page.getByTestId('chat-provider-select').selectOption('google');
     await page.getByTestId('chat-model-input').fill('gemini-2.5-flash');
-    await page.getByTestId('chat-mode-agent').click();
+    await page.getByTestId('chat-auto-approve-toggle').check();
     await expect(page.getByTestId('chat-key-indicator')).toHaveText(/●/);
 
     await page

@@ -89,7 +89,7 @@ test.describe('chat — chunk 50 docId-aware Agent dispatch', () => {
     await openBoth(page);
 
     // Activate Agent and fire a single insertText turn.
-    await page.getByTestId('chat-mode-agent').click();
+    await page.getByTestId('chat-auto-approve-toggle').check();
     await page
       .getByTestId('chat-input')
       .fill(
@@ -149,7 +149,7 @@ test.describe('chat — chunk 50 docId-aware Agent dispatch', () => {
       .locator('button:not([data-testid="studio-tab-close"])');
 
     // Turn 1: target.hwpx active. Insert "TURN1_TARGET".
-    await page.getByTestId('chat-mode-agent').click();
+    await page.getByTestId('chat-auto-approve-toggle').check();
     await page
       .getByTestId('chat-input')
       .fill(
@@ -223,7 +223,7 @@ test.describe('chat — chunk 50 docId-aware Agent dispatch', () => {
     const { page } = launched;
     await openBoth(page);
 
-    await page.getByTestId('chat-mode-agent').click();
+    await page.getByTestId('chat-auto-approve-toggle').check();
     // sectionIdx=99 is out of range — dispatcher should mark tool as
     // failed and NOT mutate either doc.
     await page

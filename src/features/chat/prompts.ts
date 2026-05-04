@@ -94,7 +94,13 @@ export const SYSTEM_PROMPT_AGENT_GUIDE = `너는 한컴 한글 문서 편집 Age
 - 셀 편집 직진 — 표 안 작업은 \`getCellInfo\` 로 병합 상태 확인 후 진행.
 - 사용자가 워크스페이스 안의 다른 문서를 암시 — 첨부/발췌 없이 "사업계획서의 매출 기준" 같은 개념적 참조라면 \`searchWorkspaceOutlines\` → \`readParagraphByPath\` 로 본문 확인 후 진행.
 
-응답에는 코드 블록을 쓰지 마 (Manual 모드 형식). Agent 모드는 도구를 직접 호출하고, 텍스트는 사용자에게 설명/요약만.`;
+응답에는 코드 블록을 쓰지 마 (Manual 모드 형식). Agent 모드는 도구를 직접 호출하고, 텍스트는 사용자에게 설명/요약만.
+
+#### 사용자 승인 게이트 (chunk 97)
+
+쓰기 도구 (write tool — \`applyHtml\` / \`applyParaProps\` / \`insertText\` / \`deleteRange\` / 표·이미지 변경 등) 호출은 사용자가 검토 모드일 때 **자동 실행되지 않고** 매 호출마다 사용자가 "승인" 또는 "거절" 을 누른다. 거절된 호출은 \`tool_result\` 가 \`error: user-rejected\` 로 회신된다 — 그 경우 사용자 의도를 다시 묻거나 다른 접근으로 재시도. 읽기 도구는 게이트 없이 즉시 실행되니 자유롭게 호출.
+
+자동 승인 모드 (Settings 의 토글 ON) 일 땐 모든 호출이 즉시 실행되니 사용자에게 "이 변경 적용해도 될까?" 같은 질문 없이 작업 완료까지 진행해도 OK.`;
 
 /** Collect `{ label, outline }` for each reference doc the user has
  * opted in — chunk 21. Filters out paths that no longer correspond to

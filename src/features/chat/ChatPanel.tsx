@@ -31,7 +31,6 @@ import {
   type AhwpToolResult,
 } from '@shared/ai-tools';
 import { parsePatchBlock, type AhwpPatch } from '@shared/ai-patches';
-import { hancomTitle } from '@/lib/hancom-tooltips';
 import { MultiPatchStack, type PatchStatus } from './DiffCard';
 import {
   EXCERPT_SOFT_CHAR_LIMIT,
@@ -70,6 +69,8 @@ const DEFAULT_MODELS: Record<ChatProviderId, string> = {
 const STORAGE_PROVIDER = 'ahwp:chat:provider';
 const STORAGE_MODELS = 'ahwp:chat:models';
 const STORAGE_CHAT_MODE = 'ahwp:chat:mode';
+// chunk 97 — Manual/Agent 통합. 옛 chat:mode 마이그레이션 후 새 키.
+const STORAGE_AUTO_APPROVE = 'ahwp:chat:auto-approve';
 const STORAGE_ATTACH_DOC = 'ahwp:chat:attach-doc';
 
 // chunk 77 — module-scope so helper components below (ModelRefreshButton)
@@ -94,7 +95,9 @@ interface UiToolEntry {
   id: string;
   name: string;
   argsPreview: string;
-  status: 'running' | 'ok' | 'failed';
+  /** chunk 97 — pending: write tool 사용자 승인 대기. rejected: 사용자가
+   *  거절 (dispatch 안 됨, tool_result 는 'user-rejected' 로 모델에 회신). */
+  status: 'running' | 'ok' | 'failed' | 'pending' | 'rejected';
   reason?: string;
 }
 
@@ -114,14 +117,29 @@ function loadProvider(): ChatProviderId {
   return 'openai';
 }
 
-function loadChatMode(): ChatMode {
+// chunk 97 — Manual/Agent 통합. 새 토글 영속. 옛 'ahwp:chat:mode' 에
+// 'agent' 가 저장돼 있었으면 autoApprove=true 로 마이그레이션 + 옛 키 제거.
+function loadAutoApprove(): boolean {
   try {
-    const raw = localStorage.getItem(STORAGE_CHAT_MODE);
-    if (raw === 'agent') return 'agent';
+    const fresh = localStorage.getItem(STORAGE_AUTO_APPROVE);
+    if (fresh === 'true') return true;
+    if (fresh === 'false') return false;
+    // 마이그레이션 — 옛 키.
+    const legacy = localStorage.getItem(STORAGE_CHAT_MODE);
+    if (legacy === 'agent') {
+      localStorage.setItem(STORAGE_AUTO_APPROVE, 'true');
+      localStorage.removeItem(STORAGE_CHAT_MODE);
+      return true;
+    }
+    if (legacy === 'manual') {
+      localStorage.setItem(STORAGE_AUTO_APPROVE, 'false');
+      localStorage.removeItem(STORAGE_CHAT_MODE);
+      return false;
+    }
   } catch {
     /* no-op */
   }
-  return 'manual';
+  return false;
 }
 
 function loadModels(): Record<ChatProviderId, string> {
@@ -305,22 +323,34 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [provider, setProvider] = useState<ChatProviderId>(() =>
       loadProvider(),
     );
-    // Phase 3 — Manual / Agent 모드. Manual 은 기존 chunk 18+19 (HTML/
-    // ahwp-tools 텍스트 dispatcher) — 사용자가 "도구 실행" 버튼을 눌러야
-    // 변경 적용. Agent 는 provider native tool-use API 로 자동 루프 +
-    // 묶음 undo. 기본 manual.
-    const [chatMode, setChatMode] = useState<ChatMode>(() => loadChatMode());
+    // chunk 97 — Manual/Agent 통합. 단일 mode (provider tool-use 항상
+    // 활성) + write tool 자동 승인 토글. autoApprove=false 면 사용자가 매
+    // write 호출을 Accept/Reject (기존 Manual 의 검토 UX 와 동일 효과).
+    // autoApprove=true 면 즉시 실행 (기존 Agent). read tool 은 항상 즉시
+    // 실행. 기본은 검토 모드 (안전).
+    //
+    // 마이그레이션: localStorage 의 옛 'ahwp:chat:mode' 가 있으면
+    // 'agent' → autoApprove=true, 그 외 → false 로 변환 후 옛 키 제거.
+    const [autoApprove, setAutoApprove] = useState<boolean>(() =>
+      loadAutoApprove(),
+    );
     useEffect(() => {
       try {
-        localStorage.setItem(STORAGE_CHAT_MODE, chatMode);
+        localStorage.setItem(
+          STORAGE_AUTO_APPROVE,
+          autoApprove ? 'true' : 'false',
+        );
       } catch {
         /* no-op */
       }
-    }, [chatMode]);
-    const chatModeRef = useRef(chatMode);
+    }, [autoApprove]);
+    const autoApproveRef = useRef(autoApprove);
     useEffect(() => {
-      chatModeRef.current = chatMode;
-    }, [chatMode]);
+      autoApproveRef.current = autoApprove;
+    }, [autoApprove]);
+    // 옛 chunk 18 호환을 위한 chatModeRef stub — useChatStreaming 의 옵션
+    // 시그니처 호환용. 실제 분기는 autoApproveRef 가 담당.
+    const chatModeRef = useRef<'manual' | 'agent'>('agent');
     const [models, setModels] = useState<Record<ChatProviderId, string>>(() =>
       loadModels(),
     );
@@ -612,12 +642,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       onSubmit,
       onKeyDown,
       stop,
+      resolveApproval,
     } = useChatStreaming({
       conversationIdRef,
       autoTitledConvIdsRef,
       providerRef,
       modelRef,
       chatModeRef,
+      autoApproveRef,
       handleRef,
       scrollerRef,
       assistantIdRef,
@@ -632,7 +664,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       hasKey,
       provider,
       model,
-      chatMode,
+      chatMode: 'agent' as const,
       modelList,
       attachDoc,
       setAttachDoc,
@@ -796,68 +828,31 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             />
           </div>
         </div>
-        {/* Phase 3 — Manual / Agent 모드 pill 토글 (style_example). Manual:
-          AI 응답의 도구 블록을 사용자가 직접 적용. Agent: provider native
-          tool-use API + 자동 루프 + 묶음 undo. */}
+        {/* chunk 97 — Manual/Agent 통합. 자동 승인 토글로 교체. off=쓰기
+          도구 호출마다 사용자 Accept/Reject (기존 Manual 검토 UX). on=즉시
+          실행 + 묶음 undo (기존 Agent). 읽기 도구는 항상 즉시 실행. */}
         <div className="shrink-0 px-3 pb-2 pt-3" data-testid="chat-mode-bar">
-          <div
-            className="flex gap-0.5 rounded-md bg-muted p-0.5"
-            role="tablist"
+          <label
+            className="flex cursor-pointer items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-1.5"
+            title="off=쓰기 도구 호출마다 Accept/Reject 검토. on=즉시 실행 (묶음 undo 가능)."
           >
-            <ModePill
-              active={chatMode === 'manual'}
+            <div className="flex flex-col">
+              <span className="text-xs font-medium">쓰기 도구 자동 승인</span>
+              <span className="text-[10px] text-muted-foreground">
+                {autoApprove
+                  ? '즉시 실행 (⌘Z 묶음 undo)'
+                  : 'Accept/Reject 검토'}
+              </span>
+            </div>
+            <input
+              type="checkbox"
+              checked={autoApprove}
               disabled={streaming}
-              onClick={() => setChatMode('manual')}
-              testId="chat-mode-manual"
-              title={hancomTitle('chat-mode-manual')}
-              icon={
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0" />
-                  <path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2" />
-                  <path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8" />
-                  <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />
-                </svg>
-              }
-              label="Manual"
-              sub="제안 → 승인"
+              onChange={(e) => setAutoApprove(e.target.checked)}
+              data-testid="chat-auto-approve-toggle"
+              className="h-4 w-4 cursor-pointer accent-primary"
             />
-            <ModePill
-              active={chatMode === 'agent'}
-              disabled={streaming}
-              onClick={() => setChatMode('agent')}
-              testId="chat-mode-agent"
-              title={hancomTitle('chat-mode-agent')}
-              icon={
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <rect x="3" y="11" width="18" height="10" rx="2" />
-                  <circle cx="12" cy="5" r="2" />
-                  <path d="M12 7v4" />
-                  <line x1="8" y1="16" x2="8" y2="16" />
-                  <line x1="16" y1="16" x2="16" y2="16" />
-                </svg>
-              }
-              label="Agent"
-              sub="자동 실행"
-            />
-          </div>
+          </label>
         </div>
         {historyOpen ? (
           <div
@@ -999,6 +994,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   onUndoApply={undoLastApply}
                   onApplyPatches={applyPatches}
                   onPreviewPatch={previewPatch}
+                  onResolveApproval={resolveApproval}
                 />
               ))
           )}
@@ -1332,62 +1328,8 @@ interface MessageProps {
   onApplyPatches?: (patches: AhwpPatch[]) => boolean[];
   /** Scroll the editor to a patch's location (Q5 확장). */
   onPreviewPatch?: (patch: AhwpPatch) => void;
-}
-
-/** Manual / Agent mode pill (style_example). Two-state segmented toggle
- * with icon + label + sub-label, 5px radius pill containing a 6px-radius
- * inner pill for the active button. */
-function ModePill({
-  active,
-  disabled,
-  onClick,
-  testId,
-  title,
-  icon,
-  label,
-  sub,
-}: {
-  active: boolean;
-  disabled: boolean;
-  onClick: () => void;
-  testId: string;
-  title: string;
-  icon: JSX.Element;
-  label: string;
-  sub: string;
-}): JSX.Element {
-  return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={active}
-      disabled={disabled}
-      onClick={onClick}
-      title={title}
-      data-testid={testId}
-      className={cn(
-        'flex flex-1 items-center justify-center gap-1.5 rounded px-2 py-1.5 text-[11.5px] transition disabled:opacity-50',
-        active
-          ? 'bg-card font-semibold text-foreground shadow-xs'
-          : 'text-muted-foreground hover:text-foreground',
-      )}
-    >
-      <span className="flex size-3.5 items-center justify-center opacity-90">
-        {icon}
-      </span>
-      <span className="flex flex-col items-start leading-tight">
-        <span className="tracking-tight">{label}</span>
-        <span
-          className={cn(
-            'text-[9.5px] font-normal',
-            active ? 'text-muted-foreground' : 'text-muted-foreground/70',
-          )}
-        >
-          {sub}
-        </span>
-      </span>
-    </button>
-  );
+  /** chunk 97 — pending write tool 의 사용자 결정 콜백. */
+  onResolveApproval?: (toolUseId: string, accept: boolean) => Promise<void>;
 }
 
 /** Multi-doc chip strip — chunk 21. Reads `getOpenDocs` each render so
@@ -1472,6 +1414,7 @@ function Message({
   onUndoApply,
   onApplyPatches,
   onPreviewPatch,
+  onResolveApproval,
 }: MessageProps): JSX.Element {
   const isUser = message.role === 'user';
   const isAssistantStreaming =
@@ -1746,7 +1689,11 @@ function Message({
                     ? '⏳'
                     : te.status === 'ok'
                       ? '✓'
-                      : '✗'}
+                      : te.status === 'pending'
+                        ? '⏸'
+                        : te.status === 'rejected'
+                          ? '↩'
+                          : '✗'}
                 </span>
                 <span className="font-semibold">🔧 {te.name}</span>
                 <span className="truncate text-muted-foreground">
@@ -1755,8 +1702,72 @@ function Message({
                 {te.status === 'failed' && te.reason ? (
                   <span className="text-destructive">{te.reason}</span>
                 ) : null}
+                {te.status === 'pending' && onResolveApproval ? (
+                  <span className="ml-auto flex shrink-0 gap-1">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="default"
+                      onClick={() => void onResolveApproval(te.id, true)}
+                      data-testid="chat-tool-approve"
+                      className="h-6 px-2 text-[10px]"
+                    >
+                      승인
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void onResolveApproval(te.id, false)}
+                      data-testid="chat-tool-reject"
+                      className="h-6 px-2 text-[10px]"
+                    >
+                      거절
+                    </Button>
+                  </span>
+                ) : null}
               </div>
             ))}
+            {/* 모두 승인 / 거절 — pending 이 둘 이상일 때만 보임. */}
+            {(() => {
+              const pendingIds = (message.toolEntries ?? [])
+                .filter((te) => te.status === 'pending')
+                .map((te) => te.id);
+              if (pendingIds.length < 2 || !onResolveApproval) return null;
+              return (
+                <div
+                  className="mt-1 flex gap-1"
+                  data-testid="chat-tool-bulk-approve-bar"
+                >
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => {
+                      for (const id of pendingIds)
+                        void onResolveApproval(id, true);
+                    }}
+                    data-testid="chat-tool-approve-all"
+                    className="h-6 px-2 text-[10px]"
+                  >
+                    모두 승인 ({pendingIds.length})
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      for (const id of pendingIds)
+                        void onResolveApproval(id, false);
+                    }}
+                    data-testid="chat-tool-reject-all"
+                    className="h-6 px-2 text-[10px]"
+                  >
+                    모두 거절
+                  </Button>
+                </div>
+              );
+            })()}
           </div>
         ) : null}
         {htmlPayload ? (

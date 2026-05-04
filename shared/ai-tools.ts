@@ -85,6 +85,30 @@ export const AHWP_TOOL_NAMES = [
 export type AhwpToolName = (typeof AHWP_TOOL_NAMES)[number];
 
 /**
+ * Phase 5 chunk 97 — Manual/Agent 통합. 읽기 전용 도구 set. 활성 doc /
+ * 워크스페이스 의 IR 을 변경하지 않으니 사용자 승인 없이 즉시 실행해도
+ * 안전하다. 쓰기 도구는 기본 검토 게이트 통과 후 실행 (Settings 의
+ * "쓰기 도구 자동 승인" 토글로 우회 가능).
+ */
+export const READONLY_TOOL_NAMES = new Set<AhwpToolName>([
+  'getDocumentOutline',
+  'getStyleListJson',
+  'getStyleAt',
+  'getCharPropertiesAt',
+  'getParaPropertiesAt',
+  'getTextRange',
+  'getCaretPosition',
+  'findInDocument',
+  'getCellInfo',
+  'searchWorkspaceOutlines',
+  'readParagraphByPath',
+]);
+
+export function isReadOnlyTool(name: string): boolean {
+  return READONLY_TOOL_NAMES.has(name as AhwpToolName);
+}
+
+/**
  * Phase 3 — provider tool-use API 용 카탈로그. `getAhwpToolCatalog()` 가
  * 반환하는 `ChatTool[]` 을 `ChatRequest.tools` 에 주입. JSON Schema (draft-07
  * 호환) 는 각 tool 의 `validateArgs` switch 분기와 lockstep이라 변경 시

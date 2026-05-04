@@ -6,6 +6,16 @@
 
 ## [Unreleased]
 
+### Changed — chunk 97: Manual / Agent 통합 + 자동 승인 토글 (0.3.33)
+
+- **모드 pill 제거 + 자동 승인 토글로 일원화** — 두 개의 별도 모드 (Manual = 코드 블록 응답 → 사용자 클릭 vs Agent = 즉시 실행 + 묶음 undo) 가 단일 흐름으로 통합. 모든 turn 에서 provider tool-use API 가 활성 (= 기존 Agent path), 차이는 **쓰기 도구 자동 승인 토글** (off=검토 / on=즉시 실행) 하나 뿐. 검토 모드 (default) 에선 매 write tool 호출이 `pending` 상태로 잡혀 사용자가 "승인" / "거절" 버튼을 누르면 dispatch (혹은 거절). 읽기 도구는 항상 즉시 실행 (안전).
+- **Pending 상태 + Accept/Reject UI** — `chat-tool-entry` 가 `pending` / `rejected` 상태 추가. pending 항목엔 인라인 "승인" / "거절" 버튼. 한 turn 에 pending 이 둘 이상이면 "모두 승인 / 모두 거절" bulk 버튼 노출.
+- **Tool 분류 (`READONLY_TOOL_NAMES`)** — `shared/ai-tools.ts` 가 read-only tool 11개 (getCaretPosition / getDocumentOutline / getStyleAt / getCharPropertiesAt / getParaPropertiesAt / getStyleListJson / getTextRange / findInDocument / getCellInfo / searchWorkspaceOutlines / readParagraphByPath) 를 명시 set 으로 export. `isReadOnlyTool(name)` helper 가 dispatcher 의 즉시 실행 분기 결정.
+- **`useChatStreaming` 두 단계 dispatch** — Phase 1: validate + 즉시 실행 (read / autoApprove write). Phase 2: pending write 가 있으면 turn 일시 중지 + 사용자 결정 대기. 모든 pending resolve 되면 `advanceAgentLoop` 가 tool_results 합성 + next turn 진입. 새 export `resolveApproval(toolUseId, accept)`.
+- **System prompt 보강** — `SYSTEM_PROMPT_AGENT_GUIDE` 에 검토 모드 안내 추가. 거절된 호출은 `tool_result: error: user-rejected` 로 회신되니 모델이 다시 묻거나 다른 접근으로 재시도해야 함을 명시.
+- **마이그레이션** — 옛 `localStorage['ahwp:chat:mode']` ('manual' / 'agent') 가 새 `localStorage['ahwp:chat:auto-approve']` (boolean) 로 자동 변환. 'agent' → true, 'manual'/없음 → false. 옛 키는 제거.
+- **e2e**: `chat-agent.spec.ts` 에 검토-모드 3 케이스 추가 (write pending → 승인 → ok / 거절 → rejected / read tool 자동 실행). 기존 모드 pill 토글 케이스는 제거. fake-AI 9 케이스 통과. full e2e 403 통과 / 0 회귀.
+
 ### Added — chunk 96: outline-as-router 워크스페이스 검색 (0.3.32)
 
 - **`searchWorkspaceOutlines` / `readParagraphByPath` 신규 read tool** — 사용자가 첨부 / 발췌 없이 개념적 질의 ("사업계획서의 매출 항목 기준으로 ~~ 수정해줘") 만 했을 때 Agent 가 워크스페이스 (`session.lastFolderPath`) 를 직접 검색하도록 지원. (a) `searchWorkspaceOutlines` 가 BFS (max depth 5, max docs 200) 로 폴더 안 모든 .hwp/.hwpx 의 파일명 + 제목 단락 outline 만 회수 (heading-styled paragraphs only — `제목 N` / `Heading N`). 응답은 본문 미포함 라우팅용 인벤토리. (b) `readParagraphByPath` 가 임의 path + paragraphIdx 로 단락 본문 + 주변 context (default 2개) 회수. 활성 문서 IR 변경 없음.

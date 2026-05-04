@@ -34,34 +34,33 @@ test.afterEach(async () => {
 });
 
 test.describe('chat — Phase 3 Agent 모드', () => {
-  test('toggle Manual/Agent 모드 — pill 시각 활성', async () => {
+  // chunk 97 — Manual/Agent 통합 후 모드 pill 제거. 자동 승인 토글로
+  // 대체. 기존 Agent 모드 동작 재현하려면 토글 ON (체크) 으로 시작.
+  async function enableAutoApprove(page: typeof launched.page): Promise<void> {
+    const toggle = page.getByTestId('chat-auto-approve-toggle');
+    await toggle.check();
+    await expect(toggle).toBeChecked();
+  }
+
+  test('자동 승인 토글 — UI on/off 전환', async () => {
     const { page } = launched;
-    const manual = page.getByTestId('chat-mode-manual');
-    const agent = page.getByTestId('chat-mode-agent');
-    // 기본 Manual 활성.
-    await expect(manual).toBeVisible();
-    await expect(agent).toBeVisible();
-
-    // UI/UX align — pill 토글. 활성 버튼은 aria-selected=true.
-    await expect(manual).toHaveAttribute('aria-selected', 'true');
-    await expect(agent).toHaveAttribute('aria-selected', 'false');
-
-    // Agent 클릭.
-    await agent.click();
-    await expect(agent).toHaveAttribute('aria-selected', 'true');
-    await expect(manual).toHaveAttribute('aria-selected', 'false');
-
-    // 다시 Manual.
-    await manual.click();
-    await expect(manual).toHaveAttribute('aria-selected', 'true');
-    await expect(agent).toHaveAttribute('aria-selected', 'false');
+    const toggle = page.getByTestId('chat-auto-approve-toggle');
+    await expect(toggle).toBeVisible();
+    // 기본 off (검토 모드).
+    await expect(toggle).not.toBeChecked();
+    // ON 으로 전환 (즉시 실행).
+    await toggle.check();
+    await expect(toggle).toBeChecked();
+    // 다시 OFF.
+    await toggle.uncheck();
+    await expect(toggle).not.toBeChecked();
   });
 
   test('Agent: tool-use 응답 → tool-entry 표시 + ok 결과', async () => {
     const { page } = launched;
 
-    // Agent 모드 활성.
-    await page.getByTestId('chat-mode-agent').click();
+    // 자동 승인 ON (write tool 즉시 실행).
+    await enableAutoApprove(page);
 
     // TOOL: 프리픽스 — fake provider가 단일 tool-use 이벤트 emit.
     // applyAlignment(center) 는 selection 없이도 호출은 발생 (실패해도
@@ -97,7 +96,7 @@ test.describe('chat — Phase 3 Agent 모드', () => {
 
   test('Agent: chunk 45 insertText — 신규 본문 편집 primitive 호출', async () => {
     const { page } = launched;
-    await page.getByTestId('chat-mode-agent').click();
+    await enableAutoApprove(page);
     await page
       .getByTestId('chat-input')
       .fill(
@@ -132,7 +131,7 @@ test.describe('chat — Phase 3 Agent 모드', () => {
       { timeout: 30_000 },
     );
 
-    await page.getByTestId('chat-mode-agent').click();
+    await enableAutoApprove(page);
     await page.getByTestId('chat-input').fill('TOOL:getCaretPosition:{}');
     await page.getByTestId('chat-send').click();
     const entry = page
@@ -148,7 +147,7 @@ test.describe('chat — Phase 3 Agent 모드', () => {
 
   test('Agent: chunk 46 createTable — 표 구조 도구 호출', async () => {
     const { page } = launched;
-    await page.getByTestId('chat-mode-agent').click();
+    await enableAutoApprove(page);
     await page
       .getByTestId('chat-input')
       .fill(
@@ -164,10 +163,109 @@ test.describe('chat — Phase 3 Agent 모드', () => {
       .not.toBe('running');
   });
 
+  // chunk 97 — 검토 모드 (autoApprove=off, 기본). write tool 은 pending
+  // 으로 잡혀 사용자 결정 대기. 승인 클릭 시 dispatch + ok, 거절 시
+  // dispatch 안 하고 rejected 로 마킹.
+  test('검토 모드 — write tool pending → 승인 → ok', async () => {
+    const { page } = launched;
+    // 토글 OFF (기본). 명시적 확인.
+    const toggle = page.getByTestId('chat-auto-approve-toggle');
+    await expect(toggle).not.toBeChecked();
+
+    await page
+      .getByTestId('chat-input')
+      .fill('TOOL:applyAlignment:{"align":"center"}');
+    await page.getByTestId('chat-send').click();
+
+    const entry = page
+      .locator(
+        '[data-testid="chat-tool-entry"][data-tool-name="applyAlignment"]',
+      )
+      .first();
+    await expect(entry).toBeVisible({ timeout: 5000 });
+    // pending 상태 + 승인/거절 버튼 가시.
+    await expect
+      .poll(async () => entry.getAttribute('data-tool-status'))
+      .toBe('pending');
+    await expect(entry.getByTestId('chat-tool-approve')).toBeVisible();
+    await expect(entry.getByTestId('chat-tool-reject')).toBeVisible();
+
+    // 승인 클릭 → dispatch → ok (혹은 IR throw 로 failed). 핵심: pending
+    // 탈출.
+    await entry.getByTestId('chat-tool-approve').click();
+    await expect
+      .poll(async () => entry.getAttribute('data-tool-status'))
+      .not.toBe('pending');
+  });
+
+  test('검토 모드 — 거절 → rejected (dispatch 안 됨)', async () => {
+    const { page } = launched;
+    const toggle = page.getByTestId('chat-auto-approve-toggle');
+    await expect(toggle).not.toBeChecked();
+
+    await page
+      .getByTestId('chat-input')
+      .fill(
+        'TOOL:insertText:{"sectionIdx":0,"paragraphIdx":0,"charOffset":0,"text":"REJECT_ME"}',
+      );
+    await page.getByTestId('chat-send').click();
+
+    const entry = page
+      .locator('[data-testid="chat-tool-entry"][data-tool-name="insertText"]')
+      .first();
+    await expect(entry).toBeVisible({ timeout: 5000 });
+    await expect
+      .poll(async () => entry.getAttribute('data-tool-status'))
+      .toBe('pending');
+
+    await entry.getByTestId('chat-tool-reject').click();
+    await expect
+      .poll(async () => entry.getAttribute('data-tool-status'))
+      .toBe('rejected');
+  });
+
+  test('검토 모드 — read tool 은 자동 실행 (pending 안 거침)', async () => {
+    const { page } = launched;
+    const FIXTURE = path.resolve(__dirname, 'fixtures', 'blank.hwpx');
+    if (!existsSync(FIXTURE)) {
+      test.skip(true, 'blank.hwpx fixture missing');
+      return;
+    }
+    await page.evaluate(async (p) => {
+      await window.api.session.set({ lastActivePath: p });
+    }, FIXTURE);
+    await page.reload();
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForFunction(
+      () =>
+        Boolean((window as Window & { __studioDebug?: unknown }).__studioDebug),
+      { timeout: 30_000 },
+    );
+
+    // autoApprove off (기본).
+    await expect(
+      page.getByTestId('chat-auto-approve-toggle'),
+    ).not.toBeChecked();
+
+    await page.getByTestId('chat-input').fill('TOOL:getCaretPosition:{}');
+    await page.getByTestId('chat-send').click();
+
+    const entry = page
+      .locator(
+        '[data-testid="chat-tool-entry"][data-tool-name="getCaretPosition"]',
+      )
+      .first();
+    await expect(entry).toBeVisible({ timeout: 5000 });
+    // read tool 은 pending 안 거치고 곧장 ok.
+    await expect
+      .poll(async () => entry.getAttribute('data-tool-status'))
+      .toBe('ok');
+  });
+
   test('Agent: unknown tool — failed 표시 + 에러 reason', async () => {
     const { page } = launched;
 
-    await page.getByTestId('chat-mode-agent').click();
+    await enableAutoApprove(page);
     await page.getByTestId('chat-input').fill('TOOL:notARealTool:{}');
     await page.getByTestId('chat-send').click();
 

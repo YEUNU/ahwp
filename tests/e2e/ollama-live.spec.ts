@@ -87,7 +87,7 @@ test.describe('Ollama (Custom OpenAI-compat) — live smoke', () => {
     const { page } = launched;
     await page.getByTestId('chat-provider-select').selectOption('custom');
     await page.getByTestId('chat-model-input').fill(OLLAMA_MODEL!);
-    await page.getByTestId('chat-mode-agent').click();
+    await page.getByTestId('chat-auto-approve-toggle').check();
 
     await page
       .getByTestId('chat-input')

@@ -416,7 +416,7 @@ test.describe('NVIDIA NIM — live smoke', () => {
       await expect(page.getByTestId('chat-model-input')).toBeEnabled({
         timeout: 30_000,
       });
-      await page.getByTestId('chat-mode-agent').click();
+      await page.getByTestId('chat-auto-approve-toggle').check();
       // Key-indicator UI: data-state='ok' once secrets:set settled.
       await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
         'data-state',
