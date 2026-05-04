@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+### Fixed — chunk 99 follow-up: 세션 복원 시 폴더 트리 / 탭 다중 복원 (0.3.39)
+
+- **`getSession()` 파싱 버그 fix** — `setSession()` 은 `lastActivePath` / `lastFolderPath` / `openTabPaths` 전체 스냅샷을 disk 에 쓰는데 `getSession()` 은 `lastActivePath` 만 파싱하고 나머지는 무시하던 버그. 결과적으로 (a) 앱 재시작 시 폴더 트리가 항상 비어있고 (b) 다중 탭 복원이 legacy `else if (lastActivePath)` 단일 탭 fallback 으로만 작동. 이제 세 필드 모두 round-trip.
+- **사용자 영향** — 재시작 후 좌측 폴더 트리에 직전 작업 폴더가 그대로 복원. 다중 탭도 정상 복원 (heretofore 마지막 활성 탭만 복원되던 것).
+- **신규 unit test** — `electron/store/session.test.ts` 4 케이스: 라운드트립, 파일 부재 시 default, 손상된 array 엔트리 drop, legacy 단일-필드 호환.
+
 ### Changed — chunk 99 follow-up: Diff cards 를 가운데 (Studio) 패널로 이동 (0.3.38)
 
 - **`react-dom` createPortal 로 ahwp-patches 카드 라우팅** — 기존엔 chat 메시지 버블 안에 inline 렌더되어 (a) 좁은 우측 패널에서 카드 가독성 ↓, (b) 본문 옆에 변경 제안이 있는데도 시선이 chat 으로 이동해야 하는 비효율. AppShell 의 center pane (TabBar 아래) 에 새 portal target `#ahwp-editor-diff-overlay` 추가 — sticky 우측 상단에 max-width 420px / max-height calc(100%-3.5rem-1rem). ChatPanel 의 Message 가 자기 패치 카드를 이 컨테이너로 portal.
