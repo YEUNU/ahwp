@@ -299,6 +299,11 @@ export interface ChatPanelProps {
    * "✓ 적용됨" / "도구 실행" affordances for ~15 seconds after apply.
    */
   undoLastApply?: () => boolean;
+  /** chunk 99 follow-up — switchTargetDoc 가 닫힌 탭 path 를 받았을 때
+   *  자동으로 file:open-by-path → tab 추가 → mount. true=성공.
+   *  AppShell 가 IPC + tabsState 갱신 책임. 미제공 시 닫힌 path 는
+   *  reject 되고 모델은 다른 접근으로 회피 (기존 동작). */
+  openDocByPath?: (path: string) => Promise<boolean>;
   /**
    * Diff Viewer apply (Q5 UI/UX align). Apply a batch of patches as a
    * single grouped-undo turn. Returns per-patch success/failure (parallel
@@ -349,6 +354,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       getOpenDocs,
       getDocOutline,
       undoLastApply,
+      openDocByPath,
       applyPatches,
       previewPatch,
     },
@@ -735,6 +741,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       getOpenDocs,
       getDocOutline,
       undoLastApply,
+      // chunk 99 follow-up — switchTargetDoc 의 cross-doc auto-open
+      // path. AppShell 이 prop 으로 주입 (file:open-by-path IPC + tab
+      // mount 책임). 미주입 시 hook 은 단순 reject (현재 동작).
+      openDocByPath,
+      // plan 응답 turn 종료 시 React state 동기화 (localStorage 는 이미
+      // hook 안에서 갱신). 미동기화 시 사용자 다음 메시지 보낼 때까지
+      // 토글 ON 으로 보임 (혼란).
+      onPlanModeAutoDisengage: () => setPlanMode(false),
     });
 
     // The ChatPanelHandle imperative — chunk 56. Provides prefillAndSend

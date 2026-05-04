@@ -175,6 +175,15 @@ export interface UseChatStreamingOptions {
   getOpenDocs?: () => Array<{ path: string; label: string; isActive: boolean }>;
   getDocOutline?: (path: string) => string;
   undoLastApply?: () => boolean;
+  /** chunk 99 follow-up — switchTargetDoc 가 닫힌 탭 path 를 받았을 때
+   *  자동으로 file:open-by-path → tab 추가 → mount 까지 처리. true =
+   *  성공 (탭이 mount 되어 후속 lookup 가능). caller (AppShell) 가
+   *  실제 IPC + tabsState 갱신 책임. */
+  openDocByPath?: (path: string) => Promise<boolean>;
+  /** chunk 99 follow-up — plan 응답 turn 종료 시 자동 호출. ChatPanel
+   *  이 React state 의 planMode 를 false 로 동기화 (localStorage 는
+   *  hook 안에서 이미 갱신). */
+  onPlanModeAutoDisengage?: () => void;
 }
 
 export interface ChatStreamingHandle {
@@ -467,7 +476,19 @@ export function useChatStreaming(
         const partialResults = new Map<string, PartialToolResult>();
         const pendingCalls = new Map<string, AhwpToolCall>();
 
-        // Phase 1 — validate + dispatch read/auto-approve, queue writes.
+        // chunk 99 follow-up — Phase 1 (validate + immediate-dispatch
+        // routing) split into 3 buckets:
+        //   (a) immediate sync resolves: validation fail / dispatcher
+        //       unavailable / switchTargetDoc (chat-ref mutation only) /
+        //       cross-doc auto-open (file:open IPC chain)
+        //   (b) read-only or auto-approved writes  → parallel dispatch
+        //       via Promise.all (IPC reads — searchWorkspaceOutlines /
+        //       readParagraphByPath — get true concurrency)
+        //   (c) write tools in 검토 모드 → pendingCalls (사용자 승인 대기)
+        const parallelBatch: {
+          tu: { id: string; name: string };
+          call: AhwpToolCall;
+        }[] = [];
         for (const tu of toolUses) {
           const v = validateToolCall({ tool: tu.name, args: tu.args });
           if (!v.ok) {
@@ -488,13 +509,25 @@ export function useChatStreaming(
             });
             continue;
           }
-          // chunk 99 follow-up — switchTargetDoc 는 viewer dispatch 가
-          // 아니라 chat 라우팅 ref mutation. 열린 탭 중 path 매치하는
-          // 게 있으면 turnTargetPathRef 갱신 → 후속 write 가 새 target.
+          // switchTargetDoc — viewer dispatch 우회, 즉시 처리 (chat
+          // 라우팅 ref 갱신). 닫힌 탭이면 자동 열기 시도.
           if (tu.name === 'switchTargetDoc') {
             const path = (v.value as { args: { path: string } }).args.path;
             const openDocsLocal = getOpenDocs?.() ?? [];
-            const matched = openDocsLocal.find((d) => d.path === path);
+            let matched = openDocsLocal.find((d) => d.path === path);
+            if (!matched && opts.openDocByPath) {
+              try {
+                const ok = await opts.openDocByPath(path);
+                if (ok) {
+                  // 새 탭이 mount 되도록 마이크로태스크 잠시 양보 후 재조회.
+                  await new Promise((r) => setTimeout(r, 50));
+                  const fresh = getOpenDocs?.() ?? [];
+                  matched = fresh.find((d) => d.path === path);
+                }
+              } catch (err) {
+                console.warn('[chat] openDocByPath threw:', err);
+              }
+            }
             if (!matched) {
               partialResults.set(tu.id, {
                 id: tu.id,
@@ -519,29 +552,58 @@ export function useChatStreaming(
           const isReadOnly = isReadOnlyTool(tu.name);
           const autoApprove = !!autoApproveRef.current;
           if (isReadOnly || autoApprove) {
-            const out = await dispatcher(
-              [{ ok: true, call: v.value }],
-              turnTargetPathRef.current,
-            );
-            const first = out[0];
+            parallelBatch.push({
+              tu: { id: tu.id, name: tu.name },
+              call: v.value,
+            });
+          } else {
+            // write tool + 검토 모드 — 사용자 결정 대기.
+            pendingCalls.set(tu.id, v.value);
+          }
+        }
+
+        // Phase 1.5 — Parallel dispatch of read/auto-approved items.
+        // Each item gets its own dispatcher round-trip (true concurrency
+        // for IPC reads); writes within the same batch run sequentially
+        // inside dispatcher (tools.ts:runTools uses begin/endUndoGroup
+        // per call). turnTargetPathRef is captured per-item so a
+        // switchTargetDoc that ran above already has effect on writes
+        // sent in the same Promise.all (the batch sees the new ref).
+        if (parallelBatch.length > 0 && dispatcher) {
+          const dispatch = dispatcher;
+          const settled = await Promise.allSettled(
+            parallelBatch.map((b) =>
+              dispatch([{ ok: true, call: b.call }], turnTargetPathRef.current),
+            ),
+          );
+          for (let i = 0; i < parallelBatch.length; i++) {
+            const b = parallelBatch[i];
+            const s = settled[i];
+            if (s.status === 'rejected') {
+              partialResults.set(b.tu.id, {
+                id: b.tu.id,
+                name: b.tu.name,
+                ok: false,
+                reason: `dispatch-threw:${String(s.reason).slice(0, 100)}`,
+              });
+              continue;
+            }
+            const first = s.value[0];
             if (first && first.ok) {
-              partialResults.set(tu.id, {
-                id: tu.id,
-                name: tu.name,
+              partialResults.set(b.tu.id, {
+                id: b.tu.id,
+                name: b.tu.name,
                 ok: true,
                 data: first.data,
               });
             } else {
-              partialResults.set(tu.id, {
-                id: tu.id,
-                name: tu.name,
+              partialResults.set(b.tu.id, {
+                id: b.tu.id,
+                name: b.tu.name,
                 ok: false,
                 reason: first?.ok === false ? first.reason : 'unknown',
               });
             }
-          } else {
-            // write tool + 검토 모드 — 사용자 결정 대기.
-            pendingCalls.set(tu.id, v.value);
           }
         }
 
@@ -604,6 +666,15 @@ export function useChatStreaming(
       setStreaming(false);
       handleRef.current = null;
       assistantIdRef.current = null;
+      // chunk 99 follow-up — Plan mode auto-disengage. plan 응답 1턴은
+      // 의도상 "다음 turn dry-run"; 응답 완료 후 자동으로 토글 off 해
+      // 사용자가 다음 메시지를 보낼 때 정상 모드로 진행. 의도적으로
+      // 한 번 더 plan 을 받으려면 사용자가 토글 재활성화. NLU 기반
+      // "yes 자동 실행" heuristic 회피 (사용자 명시 액션만 plan 종결).
+      if (loadPlanMode()) {
+        savePlanMode(false);
+        opts.onPlanModeAutoDisengage?.();
+      }
     },
     [maybeAutoTitle],
   );

@@ -1109,6 +1109,23 @@ export default function AppShell() {
                     v.markChangedParagraphsSince(before);
                   }}
                   getOutline={() => activeViewerRef()?.getOutline() ?? []}
+                  openDocByPath={async (path) => {
+                    // chunk 99 follow-up — switchTargetDoc 가 닫힌 path
+                    // 받았을 때 자동 open + tab mount + viewer ref 등록.
+                    // useSaveFlow.openByPath 재사용 (file:open-by-path
+                    // IPC + openTab). 새 viewer 가 mount 되어 다음
+                    // viewerRefsRef lookup 에 잡히면 true.
+                    try {
+                      await openByPath(path);
+                      // tab + viewer mount 가 React 렌더 사이클에 의존
+                      // 하므로 hook 측에서 setTimeout(50) 으로 양보.
+                      // 여기선 단순 ack.
+                      return true;
+                    } catch (err) {
+                      console.warn('[appshell] openDocByPath threw:', err);
+                      return false;
+                    }
+                  }}
                   runTools={async (items, targetPath) => {
                     // Phase 3 chunk 50 — docId-aware routing. If the
                     // chat turn pinned a target path, look up the

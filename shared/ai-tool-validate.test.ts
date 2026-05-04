@@ -28,8 +28,7 @@ describe('switchTargetDoc validator (chunk 99 follow-up)', () => {
   it('rejects non-string path', () => {
     const r = validateToolCall({
       tool: 'switchTargetDoc',
-      // @ts-expect-error — testing runtime guard for non-string input
-      args: { path: 123 },
+      args: { path: 123 } as unknown as { path: string },
     });
     expect(r.ok).toBe(false);
   });
