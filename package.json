@@ -1,6 +1,6 @@
 {
   "name": "ahwp",
-  "version": "0.3.30",
+  "version": "0.3.31",
   "private": true,
   "description": "AI-powered HWP/HWPX desktop editor",
   "author": "ahwp contributors",
@@ -111,7 +111,8 @@
         "deb"
       ],
       "artifactName": "${productName}-${version}.${ext}",
-      "category": "Office"
+      "category": "Office",
+      "maintainer": "ahwp contributors <61678329+YEUNU@users.noreply.github.com>"
     },
     "nsis": {
       "oneClick": false,
