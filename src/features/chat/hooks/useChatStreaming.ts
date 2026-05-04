@@ -116,9 +116,12 @@ const PLAN_MODE_DEFAULT_KEY = 'ahwp:chat:plan-mode-default';
 export function loadPlanModeDefault(): boolean {
   try {
     const raw = localStorage.getItem(PLAN_MODE_DEFAULT_KEY);
-    return raw === null ? true : raw === '1';
+    // chunk 99 follow-up — default OFF (자동 적용 흐름이 main). Plan
+    // mode 는 큰 변경 / 불확실한 작업에 opt-in 하는 검토 모드. Settings
+    // 에서 사용자가 켜야 함.
+    return raw === '1';
   } catch {
-    return true;
+    return false;
   }
 }
 
@@ -142,10 +145,6 @@ export interface UseChatStreamingOptions {
   providerRef: MutableRefObject<any>;
   modelRef: MutableRefObject<any>;
   chatModeRef: MutableRefObject<any>;
-  /** chunk 97 — true: write tool 즉시 실행 (기존 Agent). false: 사용자
-   *  Accept/Reject 게이트 통과 후 실행 (기존 Manual review 유사). read tool
-   *  은 항상 즉시 실행. */
-  autoApproveRef: MutableRefObject<boolean>;
   handleRef: MutableRefObject<any>;
   scrollerRef: MutableRefObject<HTMLDivElement | null>;
   assistantIdRef: MutableRefObject<string | null>;
@@ -230,7 +229,6 @@ export function useChatStreaming(
     autoTitledConvIdsRef,
     providerRef,
     modelRef,
-    autoApproveRef,
     handleRef,
     assistantIdRef,
     refreshHistoryRef,
@@ -569,18 +567,16 @@ export function useChatStreaming(
             });
             continue;
           }
-          const isReadOnly = isReadOnlyTool(tu.name);
-          const autoApprove = !!autoApproveRef.current;
-          if (isReadOnly || autoApprove) {
-            parallelBatch.push({
-              tu: { id: tu.id, name: tu.name },
-              call: v.value,
-            });
-          } else {
-            // write tool + 검토 모드 — 사용자 결정 대기.
-            pendingCalls.set(tu.id, v.value);
-          }
+          // chunk 99 follow-up — 사용자 승인 게이트 폐기 (autoApprove
+          // 토글 제거). 모든 도구가 즉시 dispatch. 사용자가 만족 못하면
+          // stop / undo (⌘Z) 로 롤백 — 명시적 confirm 대신 옵트아웃.
+          parallelBatch.push({
+            tu: { id: tu.id, name: tu.name },
+            call: v.value,
+          });
         }
+        // pendingCalls 는 더 이상 채워지지 않음 (legacy 호환 — 빈 Map
+        // 유지해 아래 size>0 분기가 자연 dead code).
 
         // Phase 1.5 — Parallel dispatch of read/auto-approved items.
         // Each item gets its own dispatcher round-trip (true concurrency

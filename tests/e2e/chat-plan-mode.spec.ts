@@ -27,8 +27,9 @@ test.beforeEach(async () => {
   launched = await launchApp({ env: { AHWP_E2E_FAKE_AI: '1' } });
   await launched.page.evaluate(async () => {
     await window.api.secrets.set('openai', 'test-key');
-    // 기본 ON 가정. 이전 테스트 잔여로 OFF 가 남아 있을 수 있어 보정.
-    localStorage.removeItem('ahwp:chat:plan-mode-default');
+    // chunk 99 follow-up — default OFF 가 새 기본 (자동 적용 흐름이
+    // main). plan-mode 검증 spec 은 명시적 ON 으로 시작.
+    localStorage.setItem('ahwp:chat:plan-mode-default', '1');
   });
   await launched.page.reload();
   await launched.page.waitForLoadState('domcontentloaded');
@@ -60,7 +61,7 @@ async function sendEcho(page: Page, payload: string): Promise<void> {
 test.describe('chat — plan mode (chunk 99 follow-up)', () => {
   test.skip(!existsSync(FIXTURE), 'tests/e2e/fixtures/blank.hwpx missing');
 
-  test('default ON — Plan mode indicator + 응답에 "이 계획대로 실행" 버튼 노출', async () => {
+  test('명시적 ON — Plan mode indicator + 응답에 "이 계획대로 실행" 버튼 노출', async () => {
     const { page } = launched;
     await openFixture(page, FIXTURE);
     // indicator 가 보임 (default ON).

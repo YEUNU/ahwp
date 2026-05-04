@@ -134,7 +134,7 @@ Don't include code blocks in your text response (those are Manual mode). In Agen
 
 Write tools (\`applyHtml\` / \`applyParaProps\` / \`insertText\` / \`deleteRange\` / table / image edits etc.) do NOT auto-execute when the user is in review mode. Each call enters \`pending\` and the user clicks "승인" (approve) or "거절" (reject). Rejected calls return \`tool_result: error: user-rejected\` — in that case ask the user to clarify or try a different approach. Read tools have no gate and run immediately.
 
-When auto-approve mode is on (Settings toggle), all calls execute immediately, so complete the task without asking permission mid-flow.`;
+All write tools execute immediately (no per-call user gate) — assistant 응답에서 도구 호출과 텍스트 설명을 같이 보내면 사용자는 텍스트 보면서 변경이 자동 적용됨을 본다. 만족하지 않으면 사용자가 stop / undo (⌘Z) 한다.`;
 
 /**
  * Plan mode suffix — chunk 99 follow-up. Activated when the user toggles

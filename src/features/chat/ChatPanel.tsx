@@ -75,10 +75,9 @@ const DEFAULT_MODELS: Record<ChatProviderId, string> = {
 
 const STORAGE_PROVIDER = 'ahwp:chat:provider';
 const STORAGE_MODELS = 'ahwp:chat:models';
-const STORAGE_CHAT_MODE = 'ahwp:chat:mode';
-// chunk 97 — Manual/Agent 통합. 옛 chat:mode 마이그레이션 후 새 키.
-const STORAGE_AUTO_APPROVE = 'ahwp:chat:auto-approve';
-const STORAGE_ATTACH_DOC = 'ahwp:chat:attach-doc';
+// chunk 99 follow-up — autoApprove 토글 폐기. 모든 도구 즉시 dispatch.
+// 컨텍스트 자동 첨부도 폐기 (attachDoc / referencePaths) — 사용자가
+// 매뉴얼 발췌 chip 으로만 컨텍스트 추가.
 
 // chunk 77 — module-scope so helper components below (ModelRefreshButton)
 // can declare prop types referencing it without crossing the React
@@ -125,31 +124,6 @@ function loadProvider(): ChatProviderId {
     /* no-op */
   }
   return 'openai';
-}
-
-// chunk 97 — Manual/Agent 통합. 새 토글 영속. 옛 'ahwp:chat:mode' 에
-// 'agent' 가 저장돼 있었으면 autoApprove=true 로 마이그레이션 + 옛 키 제거.
-function loadAutoApprove(): boolean {
-  try {
-    const fresh = localStorage.getItem(STORAGE_AUTO_APPROVE);
-    if (fresh === 'true') return true;
-    if (fresh === 'false') return false;
-    // 마이그레이션 — 옛 키.
-    const legacy = localStorage.getItem(STORAGE_CHAT_MODE);
-    if (legacy === 'agent') {
-      localStorage.setItem(STORAGE_AUTO_APPROVE, 'true');
-      localStorage.removeItem(STORAGE_CHAT_MODE);
-      return true;
-    }
-    if (legacy === 'manual') {
-      localStorage.setItem(STORAGE_AUTO_APPROVE, 'false');
-      localStorage.removeItem(STORAGE_CHAT_MODE);
-      return false;
-    }
-  } catch {
-    /* no-op */
-  }
-  return false;
 }
 
 function loadModels(): Record<ChatProviderId, string> {
@@ -371,31 +345,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [provider, setProvider] = useState<ChatProviderId>(() =>
       loadProvider(),
     );
-    // chunk 97 — Manual/Agent 통합. 단일 mode (provider tool-use 항상
-    // 활성) + write tool 자동 승인 토글. autoApprove=false 면 사용자가 매
-    // write 호출을 Accept/Reject (기존 Manual 의 검토 UX 와 동일 효과).
-    // autoApprove=true 면 즉시 실행 (기존 Agent). read tool 은 항상 즉시
-    // 실행. 기본은 검토 모드 (안전).
-    //
-    // 마이그레이션: localStorage 의 옛 'ahwp:chat:mode' 가 있으면
-    // 'agent' → autoApprove=true, 그 외 → false 로 변환 후 옛 키 제거.
-    const [autoApprove, setAutoApprove] = useState<boolean>(() =>
-      loadAutoApprove(),
-    );
-    useEffect(() => {
-      try {
-        localStorage.setItem(
-          STORAGE_AUTO_APPROVE,
-          autoApprove ? 'true' : 'false',
-        );
-      } catch {
-        /* no-op */
-      }
-    }, [autoApprove]);
-    const autoApproveRef = useRef(autoApprove);
-    useEffect(() => {
-      autoApproveRef.current = autoApprove;
-    }, [autoApprove]);
+    // chunk 99 follow-up — autoApprove 토글 폐기. 모든 도구 즉시
+    // dispatch (read + write 동등). 사용자가 만족 못하면 stop / undo
+    // (⌘Z) 로 옵트아웃. 명시적 confirm UX 제거 (사용자 요청).
     // chunk 99 follow-up — Plan mode 표시 상태. 영속 상태는 default
     // (Settings) 만. 매 turn 마다 default 가 자동 적용되므로 ChatPanel
     // 은 default 를 미러링 + Settings 변경 이벤트 listen.
@@ -441,21 +393,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // ChatPanel with an active doc is "AI knows what I'm looking at".
     // Toggling off is for very long docs where token cost is a concern.
     // Persisted via localStorage so the user's preference sticks.
-    const [attachDoc, setAttachDoc] = useState<boolean>(() => {
-      try {
-        const raw = localStorage.getItem(STORAGE_ATTACH_DOC);
-        return raw === null ? true : raw === '1';
-      } catch {
-        return true;
-      }
-    });
-    useEffect(() => {
-      try {
-        localStorage.setItem(STORAGE_ATTACH_DOC, attachDoc ? '1' : '0');
-      } catch {
-        /* no-op */
-      }
-    }, [attachDoc]);
+    // chunk 99 follow-up — 컨텍스트 자동 첨부 폐기 (사용자 요청).
+    // attachDoc 토글 UI 제거. 사용자가 매뉴얼로 발췌 chip 으로 첨부.
+    // attachDoc state 는 false 로 고정 — getDocHtml 자동 호출 차단.
+    // hook signature 호환을 위해 setter stub 유지.
+    const attachDoc = false;
+    const setAttachDoc = (): void => {};
     // chunk 20 — excerpt chips. When non-empty, the system message
     // injects a structured `[발췌]:` block instead of the whole-doc
     // HTML (the toggle still appears but the docHtml path is suppressed).
@@ -482,7 +425,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // chunk 21 — paths the user opted in as references. Active tab is
     // implicit target (always included) and never appears in this set.
     // Stored as an array (not Set) so React equality is straightforward.
-    const [referencePaths, setReferencePaths] = useState<string[]>([]);
+    // chunk 99 follow-up — 멀티 문서 chip UI 폐기 (사용자 요청). 빈
+    // 배열 고정 — useChatStreaming 의 reference outline 자동 주입 차단.
+    const referencePaths: string[] = [];
     const handleRef = useRef<AiChatHandle | null>(null);
     const scrollerRef = useRef<HTMLDivElement>(null);
     const assistantIdRef = useRef<string | null>(null);
@@ -717,7 +662,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       providerRef,
       modelRef,
       chatModeRef,
-      autoApproveRef,
       handleRef,
       scrollerRef,
       assistantIdRef,
@@ -931,36 +875,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             />
           </div>
         </div>
-        {/* chunk 97 — Manual/Agent 통합. 자동 승인 토글로 교체. off=쓰기
-          도구 호출마다 사용자 Accept/Reject (기존 Manual 검토 UX). on=즉시
-          실행 + 묶음 undo (기존 Agent). 읽기 도구는 항상 즉시 실행.
-          chunk 99 follow-up — Plan mode 토글 추가. on=read tool 만 호출,
-          write 차단, 응답은 bullet plan. */}
+        {/* chunk 99 follow-up — 쓰기 도구 자동 승인 토글 폐기 (사용자
+          요청). 모든 도구 즉시 dispatch. UI 는 Plan mode indicator
+          하나만. */}
         <div
           className="flex shrink-0 flex-col gap-1.5 px-3 pb-2 pt-3"
           data-testid="chat-mode-bar"
         >
-          <label
-            className="flex cursor-pointer items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-1.5"
-            title="off=쓰기 도구 호출마다 Accept/Reject 검토. on=즉시 실행 (묶음 undo 가능)."
-          >
-            <div className="flex flex-col">
-              <span className="text-xs font-medium">쓰기 도구 자동 승인</span>
-              <span className="text-[10px] text-muted-foreground">
-                {autoApprove
-                  ? '즉시 실행 (⌘Z 묶음 undo)'
-                  : 'Accept/Reject 검토'}
-              </span>
-            </div>
-            <input
-              type="checkbox"
-              checked={autoApprove}
-              disabled={streaming}
-              onChange={(e) => setAutoApprove(e.target.checked)}
-              data-testid="chat-auto-approve-toggle"
-              className="h-4 w-4 cursor-pointer accent-primary"
-            />
-          </label>
           {/* chunk 99 follow-up — Plan mode toggle 은 Settings 의
             "Agent 동작" 으로 이동. 매 turn 마다 토글하기엔 호흡이 길고,
             기본값 (default ON) 으로 충분히 dry-run 사이클이 잡힘. 활성
@@ -1152,55 +1073,24 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           className="shrink-0 border-t border-border bg-card p-3"
           data-testid="chat-input-form"
         >
-          {getOpenDocs ? (
-            <MultiDocChips
-              getOpenDocs={getOpenDocs}
-              referencePaths={referencePaths}
-              onToggleReference={(path) =>
-                setReferencePaths((prev) =>
-                  prev.includes(path)
-                    ? prev.filter((p) => p !== path)
-                    : [...prev, path],
-                )
-              }
-              disabled={streaming}
-            />
-          ) : null}
-          {getDocHtml ? (
+          {/* chunk 99 follow-up — 멀티 문서 자동 chip 폐기 (사용자
+            요청, 매뉴얼만). MultiDocChips 컴포넌트는 keep — 향후 사용자
+            매뉴얼 토글 / cmd-K 같은 곳에서 재활용 가능. */}
+          {/* chunk 99 follow-up — 자동 첨부 토글 폐기 (사용자 요청).
+            컨텍스트는 사용자가 매뉴얼 발췌 chip 으로만 추가. captureExcerpt
+            버튼은 그대로 노출. */}
+          {captureExcerpt ? (
             <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
-              <label
-                className={cn(
-                  'flex cursor-pointer items-center gap-2',
-                  excerpts.length > 0 && 'opacity-50',
-                )}
-                data-testid="chat-attach-toggle"
-                title={
-                  excerpts.length > 0
-                    ? '발췌 첨부가 있을 때는 통째 첨부 대신 발췌가 사용됩니다.'
-                    : '체크하면 현재 문서 전체 HTML 을 시스템 프롬프트에 첨부 (긴 문서는 토큰 사용량 주의)'
-                }
+              <button
+                type="button"
+                onClick={onCaptureExcerpt}
+                disabled={streaming}
+                data-testid="chat-capture-excerpt"
+                className="rounded-md border border-input px-2 py-0.5 hover:bg-muted disabled:opacity-50"
+                title="에디터에서 선택한 텍스트를 칩으로 첨부 (selection rect 를 채팅 입력란으로 드래그해도 동일)"
               >
-                <input
-                  type="checkbox"
-                  checked={attachDoc}
-                  onChange={(e) => setAttachDoc(e.target.checked)}
-                  data-testid="chat-attach-checkbox"
-                  disabled={streaming || excerpts.length > 0}
-                />
-                <span>📎 현재 문서를 컨텍스트로 첨부</span>
-              </label>
-              {captureExcerpt ? (
-                <button
-                  type="button"
-                  onClick={onCaptureExcerpt}
-                  disabled={streaming}
-                  data-testid="chat-capture-excerpt"
-                  className="rounded-md border border-input px-2 py-0.5 hover:bg-muted disabled:opacity-50"
-                  title="에디터에서 선택한 텍스트를 칩으로 첨부 (selection rect 를 채팅 입력란으로 드래그해도 동일)"
-                >
-                  📌 발췌 첨부
-                </button>
-              ) : null}
+                📌 발췌 첨부
+              </button>
             </div>
           ) : null}
           {excerpts.length > 0 ? (
@@ -1499,72 +1389,9 @@ interface MessageProps {
  * we always reflect the latest tab list (close/open events mutate the
  * source of truth in AppShell, not here). The active tab is shown as
  * a locked target chip; everything else is a reference checkbox. */
-function MultiDocChips({
-  getOpenDocs,
-  referencePaths,
-  onToggleReference,
-  disabled,
-}: {
-  getOpenDocs: () => { path: string; label: string; isActive: boolean }[];
-  referencePaths: string[];
-  onToggleReference: (path: string) => void;
-  disabled: boolean;
-}): JSX.Element | null {
-  const docs = getOpenDocs();
-  if (docs.length === 0) return null;
-  return (
-    <div
-      className="mb-2 flex flex-wrap items-center gap-1.5 text-[10px]"
-      data-testid="chat-multidoc-chips"
-    >
-      <span className="text-muted-foreground">컨텍스트:</span>
-      {docs.map((d) => {
-        const isReference = referencePaths.includes(d.path);
-        return (
-          <span
-            key={d.path}
-            data-testid="chat-multidoc-chip"
-            data-role={
-              d.isActive ? 'target' : isReference ? 'reference' : 'unused'
-            }
-            className={cn(
-              'flex items-center gap-1 rounded-full border px-2 py-0.5',
-              d.isActive && 'border-primary/40 bg-primary/10 text-foreground',
-              !d.isActive &&
-                isReference &&
-                'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400',
-              !d.isActive &&
-                !isReference &&
-                'border-input bg-background text-muted-foreground',
-            )}
-            title={d.path}
-          >
-            {d.isActive ? (
-              <span className="font-medium">🎯 {d.label}</span>
-            ) : (
-              <label
-                className={cn(
-                  'flex cursor-pointer items-center gap-1',
-                  disabled && 'cursor-not-allowed opacity-50',
-                )}
-                data-testid="chat-multidoc-toggle"
-              >
-                <input
-                  type="checkbox"
-                  checked={isReference}
-                  onChange={() => onToggleReference(d.path)}
-                  disabled={disabled}
-                  data-testid="chat-multidoc-checkbox"
-                />
-                <span>📚 {d.label}</span>
-              </label>
-            )}
-          </span>
-        );
-      })}
-    </div>
-  );
-}
+// chunk 99 follow-up — MultiDocChips (auto multi-doc 컨텍스트 chip)
+// 폐기 (사용자 요청). 사용자가 매뉴얼로 발췌 chip 만 추가. 향후 재
+// 활용 시 git history 에서 복구 가능 (chunk 21 이력).
 
 function Message({
   message,
@@ -1661,7 +1488,7 @@ function Message({
       return null;
     }
   }, [htmlPayload, onApplyHtmlReplaceSection, getOutline]);
-  const handleApply = () => {
+  const handleApply = useCallback(() => {
     if (!htmlPayload) return;
     if (sectionMatch && onApplyHtmlReplaceSection) {
       onApplyHtmlReplaceSection(htmlPayload, {
@@ -1680,7 +1507,27 @@ function Message({
       () => setApplied(false),
       APPLIED_TOAST_MS,
     );
-  };
+  }, [
+    htmlPayload,
+    sectionMatch,
+    onApplyHtmlReplaceSection,
+    onApplyHtml,
+    appliedTimerRef,
+    APPLIED_TOAST_MS,
+  ]);
+  // chunk 99 follow-up — 자동 적용. plan mode 가 아닌 일반 응답에서
+  // ```html``` / markdown fallback / sectionMatch 가 결정되면 한 번만
+  // dispatch. 사용자가 만족 못하면 stop / undo (⌘Z).
+  const autoAppliedRef = useRef(false);
+  useEffect(() => {
+    if (autoAppliedRef.current) return;
+    if (isUser || streaming) return;
+    if (message.planMode) return;
+    if (!htmlPayload) return;
+    autoAppliedRef.current = true;
+    // microtask 양보 — setState 가 effect 본체에서 직접 발생하지 않게.
+    queueMicrotask(handleApply);
+  }, [isUser, streaming, message.planMode, htmlPayload, handleApply]);
   const handleUndoApply = () => {
     if (!onUndoApply || undone) return;
     const ok = onUndoApply();
@@ -1770,7 +1617,7 @@ function Message({
   const handlePatchRejectIdx = (idx: number): void => {
     setPatchStatusAt(idx, 'rejected');
   };
-  const handlePatchAcceptAll = (): void => {
+  const handlePatchAcceptAll = useCallback((): void => {
     if (!patchesParsed?.ok || !onApplyPatches) return;
     const pendingItems: { idx: number; patch: AhwpPatch }[] = [];
     patchesParsed.items.forEach((it, i) => {
@@ -1790,7 +1637,26 @@ function Message({
       return next;
     });
     showPatchToast(okCount);
-  };
+  }, [patchesParsed, onApplyPatches, patchStatuses, showPatchToast]);
+  // chunk 99 follow-up — patches 자동 acceptAll. plan mode 가 아닌
+  // 일반 응답에서 ahwp-patches 블록이 도착하고 처음 mount 될 때 한 번
+  // 만 dispatch. Diff 카드는 기록 + 되돌리기 용도로 노출 유지.
+  const autoAcceptedPatchesRef = useRef(false);
+  useEffect(() => {
+    if (autoAcceptedPatchesRef.current) return;
+    if (isUser || streaming) return;
+    if (message.planMode) return;
+    if (!patchesParsed?.ok || patchCount === 0) return;
+    autoAcceptedPatchesRef.current = true;
+    queueMicrotask(handlePatchAcceptAll);
+  }, [
+    isUser,
+    streaming,
+    message.planMode,
+    patchesParsed,
+    patchCount,
+    handlePatchAcceptAll,
+  ]);
 
   // Tool-call dispatcher affordance — chunk 19. The model emits a
   // ```ahwp-tools``` JSON block when it needs to mutate controls (footnote,
@@ -1883,13 +1749,22 @@ function Message({
             {message.toolEntries.map((te) => (
               <div
                 key={te.id}
-                className="flex items-center gap-2 font-mono"
+                className={cn(
+                  'flex items-center gap-2 font-mono',
+                  te.status === 'failed' && 'text-destructive',
+                )}
                 data-testid="chat-tool-entry"
                 data-tool-name={te.name}
                 data-tool-status={te.status}
                 title={te.reason ?? ''}
               >
-                <span className="text-muted-foreground">
+                <span
+                  className={cn(
+                    te.status === 'failed'
+                      ? 'text-destructive'
+                      : 'text-muted-foreground',
+                  )}
+                >
                   {te.status === 'running'
                     ? '⏳'
                     : te.status === 'ok'
@@ -1901,7 +1776,14 @@ function Message({
                           : '✗'}
                 </span>
                 <span className="font-semibold">🔧 {te.name}</span>
-                <span className="truncate text-muted-foreground">
+                <span
+                  className={cn(
+                    'truncate',
+                    te.status === 'failed'
+                      ? 'text-destructive/80'
+                      : 'text-muted-foreground',
+                  )}
+                >
                   {te.argsPreview}
                 </span>
                 {te.status === 'failed' && te.reason ? (
@@ -1997,7 +1879,43 @@ function Message({
             </span>
           </div>
         ) : null}
-        {htmlPayload ? (
+        {/* chunk 99 follow-up — 자동 적용. plan mode 가 아니면 useEffect
+          가 한 번 자동 dispatch (no-op button). plan mode 에선 인디케이터
+          + execute button 으로 수동 흐름 유지. 자동 적용 후 ✓ 토스트만
+          간략히 표시 — 사용자가 ⌘Z 로 undo 가능. */}
+        {htmlPayload && !message.planMode ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2 text-[11px] text-muted-foreground">
+            {applied && !undone ? (
+              <>
+                <span data-testid="chat-action-applied-toast">
+                  ✓{' '}
+                  {sectionMatch
+                    ? `기존 ${sectionMatch.sectionNumber} 섹션 교체 적용됨`
+                    : markdownFallback
+                      ? '마크다운 자동 적용됨'
+                      : 'HTML 자동 적용됨'}
+                </span>
+                {onUndoApply ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={handleUndoApply}
+                    data-testid="chat-action-undo-apply"
+                    className="text-xs"
+                    title="방금 적용한 변경을 한 번에 되돌립니다 (⌘Z 묶음 undo)"
+                  >
+                    되돌리기
+                  </Button>
+                ) : null}
+              </>
+            ) : (
+              <span>적용 중…</span>
+            )}
+          </div>
+        ) : null}
+        {htmlPayload && message.planMode ? (
+          /* plan mode 일 때만 명시적 버튼 — 사용자가 검토 후 적용. */
           <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2">
             <Button
               type="button"
@@ -2012,7 +1930,7 @@ function Message({
               className="text-xs"
               title={
                 sectionMatch
-                  ? `기존 "${sectionMatch.headingText}" 섹션 (${sectionMatch.startParaIdx + 1}~${sectionMatch.endParaIdxExclusive}번째 단락) 을 응답 내용으로 교체합니다.`
+                  ? `기존 "${sectionMatch.headingText}" 섹션 을 응답 내용으로 교체합니다.`
                   : markdownFallback
                     ? '응답의 마크다운 형식을 HTML 로 변환해서 활성 문서에 적용합니다.'
                     : '응답에 포함된 HTML 블록을 활성 문서에 적용합니다.'

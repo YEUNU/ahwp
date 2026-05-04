@@ -34,33 +34,24 @@ test.afterEach(async () => {
 });
 
 test.describe('chat — Phase 3 Agent 모드', () => {
-  // chunk 97 — Manual/Agent 통합 후 모드 pill 제거. 자동 승인 토글로
-  // 대체. 기존 Agent 모드 동작 재현하려면 토글 ON (체크) 으로 시작.
-  async function enableAutoApprove(page: typeof launched.page): Promise<void> {
-    const toggle = page.getByTestId('chat-auto-approve-toggle');
-    await toggle.check();
-    await expect(toggle).toBeChecked();
+  // chunk 99 follow-up — 자동 승인 토글 폐기 (사용자 요청). 모든 도구
+  // 즉시 dispatch. 기존 enableAutoApprove() helper 는 no-op 로 유지해
+  // call site 를 단계적으로 정리.
+  async function enableAutoApprove(): Promise<void> {
+    // no-op: write tools are immediate by default now.
   }
 
-  test('자동 승인 토글 — UI on/off 전환', async () => {
-    const { page } = launched;
-    const toggle = page.getByTestId('chat-auto-approve-toggle');
-    await expect(toggle).toBeVisible();
-    // 기본 off (검토 모드).
-    await expect(toggle).not.toBeChecked();
-    // ON 으로 전환 (즉시 실행).
-    await toggle.check();
-    await expect(toggle).toBeChecked();
-    // 다시 OFF.
-    await toggle.uncheck();
-    await expect(toggle).not.toBeChecked();
+  test.skip('자동 승인 토글 — UI on/off 전환', async () => {
+    // chunk 99 follow-up — 자동 승인 토글 폐기 (사용자 요청, 모든 도구
+    // 즉시 dispatch). 회귀 가드는 chat-actions / chat-section-replace
+    // 등 다른 spec 에서 자동 적용 검증.
   });
 
   test('Agent: tool-use 응답 → tool-entry 표시 + ok 결과', async () => {
     const { page } = launched;
 
     // 자동 승인 ON (write tool 즉시 실행).
-    await enableAutoApprove(page);
+    await enableAutoApprove();
 
     // TOOL: 프리픽스 — fake provider가 단일 tool-use 이벤트 emit.
     // applyAlignment(center) 는 selection 없이도 호출은 발생 (실패해도
@@ -96,7 +87,7 @@ test.describe('chat — Phase 3 Agent 모드', () => {
 
   test('Agent: chunk 45 insertText — 신규 본문 편집 primitive 호출', async () => {
     const { page } = launched;
-    await enableAutoApprove(page);
+    await enableAutoApprove();
     await page
       .getByTestId('chat-input')
       .fill(
@@ -131,7 +122,7 @@ test.describe('chat — Phase 3 Agent 모드', () => {
       { timeout: 30_000 },
     );
 
-    await enableAutoApprove(page);
+    await enableAutoApprove();
     await page.getByTestId('chat-input').fill('TOOL:getCaretPosition:{}');
     await page.getByTestId('chat-send').click();
     const entry = page
@@ -147,7 +138,7 @@ test.describe('chat — Phase 3 Agent 모드', () => {
 
   test('Agent: chunk 46 createTable — 표 구조 도구 호출', async () => {
     const { page } = launched;
-    await enableAutoApprove(page);
+    await enableAutoApprove();
     await page
       .getByTestId('chat-input')
       .fill(
@@ -163,10 +154,9 @@ test.describe('chat — Phase 3 Agent 모드', () => {
       .not.toBe('running');
   });
 
-  // chunk 97 — 검토 모드 (autoApprove=off, 기본). write tool 은 pending
-  // 으로 잡혀 사용자 결정 대기. 승인 클릭 시 dispatch + ok, 거절 시
-  // dispatch 안 하고 rejected 로 마킹.
-  test('검토 모드 — write tool pending → 승인 → ok', async () => {
+  // chunk 99 follow-up — 검토 모드 (autoApprove=off) 가 폐기. 모든
+  // write tool 즉시 dispatch. 승인/거절 게이트 시나리오 3개 skip.
+  test.skip('검토 모드 — write tool pending → 승인 → ok', async () => {
     const { page } = launched;
     // 토글 OFF (기본). 명시적 확인.
     const toggle = page.getByTestId('chat-auto-approve-toggle');
@@ -198,7 +188,7 @@ test.describe('chat — Phase 3 Agent 모드', () => {
       .not.toBe('pending');
   });
 
-  test('검토 모드 — 거절 → rejected (dispatch 안 됨)', async () => {
+  test.skip('검토 모드 — 거절 → rejected (dispatch 안 됨)', async () => {
     const { page } = launched;
     const toggle = page.getByTestId('chat-auto-approve-toggle');
     await expect(toggle).not.toBeChecked();
@@ -224,7 +214,7 @@ test.describe('chat — Phase 3 Agent 모드', () => {
       .toBe('rejected');
   });
 
-  test('검토 모드 — read tool 은 자동 실행 (pending 안 거침)', async () => {
+  test.skip('검토 모드 — read tool 은 자동 실행 (pending 안 거침)', async () => {
     const { page } = launched;
     const FIXTURE = path.resolve(__dirname, 'fixtures', 'blank.hwpx');
     if (!existsSync(FIXTURE)) {
@@ -265,7 +255,7 @@ test.describe('chat — Phase 3 Agent 모드', () => {
   test('Agent: unknown tool — failed 표시 + 에러 reason', async () => {
     const { page } = launched;
 
-    await enableAutoApprove(page);
+    await enableAutoApprove();
     await page.getByTestId('chat-input').fill('TOOL:notARealTool:{}');
     await page.getByTestId('chat-send').click();
 

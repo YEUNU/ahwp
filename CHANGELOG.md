@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+### Changed — chunk 99 follow-up: confirm UI 폐기 + 자동 적용 + 컨텍스트 매뉴얼화 (0.3.40)
+
+사용자 요청 — 채팅 흐름의 모든 explicit confirm 버튼 제거, 자동 적용을 main flow 로. 만족 못하면 stop / undo (⌘Z) 로 옵트아웃.
+
+- **자동 승인 토글 폐기** — `chat-auto-approve-toggle` UI / `loadAutoApprove` / `STORAGE_AUTO_APPROVE` / `autoApproveRef` / `pendingCalls` 사용자 승인 게이트 모두 제거. 모든 도구 (read + write) 즉시 dispatch. 검토 모드 e2e 3개 skip + helper `enableAutoApprove` no-op 화.
+- **자동 적용** — assistant 응답이 `html` 블록 / markdown fallback / outline-aware section 을 포함하면 useEffect 가 한 번 자동 dispatch. `chat-action-apply-html` 버튼은 plan mode 일 때만 노출. 자동 적용 후 `chat-action-applied-toast` ✓ 표시 + 되돌리기 버튼.
+- **Patches 자동 acceptAll** — `ahwp-patches` 블록 도착 시 useEffect 가 한 번 자동 acceptAll. plan mode 가 아니면 클릭 없이 즉시 적용. Diff 카드는 portal overlay 에 변경 기록 + 되돌리기 용도로 잔류.
+- **Plan mode default OFF** — 자동 적용이 main flow 라 default false. Plan mode 는 큰 / 위험한 변경에 opt-in 하는 검토 모드 (Settings → AI 공급자 → "Plan mode 기본 활성화" ON).
+- **컨텍스트 자동 첨부 폐기** — `chat-attach-toggle` (`📎 현재 문서를 컨텍스트로 첨부`) UI / `STORAGE_ATTACH_DOC` / `MultiDocChips` (auto multi-doc reference) 모두 제거. 사용자가 매뉴얼로 `📌 발췌 첨부` 버튼 또는 selection rect 드래그로만 컨텍스트 추가. 응답마다 토큰 비용 예측 가능.
+- **Tool entry 실패 시각 강조** — `chat-tool-entry` 의 status='failed' 일 때 컨테이너 + 아이콘 + argsPreview 모두 destructive 색상 (이전엔 reason 텍스트만). switchTargetDoc 의 `target-not-open:` 같은 실패가 시각적으로 명확.
+
+신규 / 수정 e2e: chat-html-apply 자동 적용 회귀 가드, chat-plan-mode default ON 명시 set, chat-actions / chat-agent-multidoc / nvidia-live / gemini-live / ollama-live 의 auto-approve 호출 정리. 폭넓은 회귀 40/40 + 5 skipped (검토 모드 의도적). typecheck / lint (0 errors).
+
 ### Fixed — chunk 99 follow-up: 세션 복원 시 폴더 트리 / 탭 다중 복원 (0.3.39)
 
 - **`getSession()` 파싱 버그 fix** — `setSession()` 은 `lastActivePath` / `lastFolderPath` / `openTabPaths` 전체 스냅샷을 disk 에 쓰는데 `getSession()` 은 `lastActivePath` 만 파싱하고 나머지는 무시하던 버그. 결과적으로 (a) 앱 재시작 시 폴더 트리가 항상 비어있고 (b) 다중 탭 복원이 legacy `else if (lastActivePath)` 단일 탭 fallback 으로만 작동. 이제 세 필드 모두 round-trip.

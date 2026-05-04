@@ -419,7 +419,7 @@ test.describe('NVIDIA NIM — live smoke', () => {
       await expect(page.getByTestId('chat-model-input')).toBeEnabled({
         timeout: 30_000,
       });
-      await page.getByTestId('chat-auto-approve-toggle').check();
+      // chunk 99 follow-up — 자동 승인 토글 폐기.
       // Key-indicator UI: data-state='ok' once secrets:set settled.
       await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
         'data-state',
@@ -485,10 +485,7 @@ test.describe('NVIDIA NIM — live smoke', () => {
     await expect(page.getByTestId('chat-model-input')).toBeEnabled({
       timeout: 30_000,
     });
-    // 자동 승인 OFF 명시적 확인 (default).
-    await expect(
-      page.getByTestId('chat-auto-approve-toggle'),
-    ).not.toBeChecked();
+    // chunk 99 follow-up — 자동 승인 토글 폐기. write 즉시 dispatch.
     await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
       'data-state',
       'ok',
@@ -560,9 +557,6 @@ test.describe('NVIDIA NIM — live smoke', () => {
     await expect(page.getByTestId('chat-model-input')).toBeEnabled({
       timeout: 30_000,
     });
-    await expect(
-      page.getByTestId('chat-auto-approve-toggle'),
-    ).not.toBeChecked();
     await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
       'data-state',
       'ok',
@@ -688,9 +682,6 @@ test.describe('NVIDIA NIM — live smoke', () => {
         PREFER.find((m) => availableModels.includes(m)) ?? PREFER[0];
       await modelSel.selectOption(pickedModel);
       console.log(`[chunk96+97+98 e2e] model=${pickedModel}`);
-      await expect(
-        page.getByTestId('chat-auto-approve-toggle'),
-      ).not.toBeChecked();
       await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
         'data-state',
         'ok',

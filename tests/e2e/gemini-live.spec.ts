@@ -80,7 +80,7 @@ test.describe('Google Gemini — live smoke', () => {
     const { page } = launched;
     await page.getByTestId('chat-provider-select').selectOption('google');
     await page.getByTestId('chat-model-input').fill('gemini-2.5-flash');
-    await page.getByTestId('chat-auto-approve-toggle').check();
+    // chunk 99 follow-up — 자동 승인 토글 폐기 (모든 도구 즉시 dispatch).
     await expect(page.getByTestId('chat-key-indicator')).toHaveText(/●/);
 
     await page
