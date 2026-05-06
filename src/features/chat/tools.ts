@@ -102,6 +102,25 @@ async function runOne(
       // === Phase 3 chunk 45 — body edit primitives + char/para format ===
       case 'insertText': {
         const a = call.args;
+        // 0.4.12 hard guard — `insertText(0, 0, 0, "<multi-paragraph>")` 는
+        // 양식 / 보고서 doc 의 표지 표 cell 안에 dump 되어 layout 파손.
+        // 0.4.9 prompt 가이드만으론 일부 model 이 무시 (반복 보고). 다중
+        // paragraph (\n 포함) + 문서 시작 위치 조합은 거의 100% 의도와
+        // 다른 결과 → 거절. AI 는 error 받고 다음 turn 에 applyHtml 또는
+        // verified anchor (findInDocument) 로 재시도.
+        if (
+          a.sectionIdx === 0 &&
+          a.paragraphIdx === 0 &&
+          a.charOffset === 0 &&
+          a.text.includes('\n')
+        ) {
+          return {
+            ok: false,
+            tool: call.tool,
+            reason:
+              'insertText-at-doc-start-with-multiline-rejected: doc 의 첫 단락은 양식 표지 cell 인 경우가 흔해 multi-paragraph dump 시 layout 파손. applyHtml (heading + body 자동 마크업) 또는 findInDocument 로 적절한 anchor paragraph 를 먼저 찾고 그 위치에 insertText 하라. 단일 paragraph (no \\n) 짧은 텍스트면 위치 변경 없이 재호출 OK.',
+          };
+        }
         const ok = viewer.irInsertText(
           a.sectionIdx,
           a.paragraphIdx,

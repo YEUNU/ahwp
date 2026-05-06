@@ -6,6 +6,16 @@
 
 ## [Unreleased]
 
+### Fixed — `insertText(0,0,0,multiline)` dispatcher hard guard (0.4.12)
+
+증상: 0.4.9 의 prompt 가이드 추가 후에도 일부 LLM (gpt-5.x) 이 사업계획서 양식 doc 에서 또 `insertText(0,0,0,"...100+ 줄...")` 호출 → 표지 layout 파손 재발 (사용자 두 번째 보고).
+
+원인: prompt 만으로는 강제력 부족. router LLM 이 catalog subset 만 통과시키면 AI 가 applyHtml 옵션 자체 못 보는 경우도 있음.
+
+수정: dispatcher (`tools.ts:runOne`) 의 `insertText` 케이스에 hard guard. `sectionIdx === 0 && paragraphIdx === 0 && charOffset === 0 && text.includes('\\n')` 조합이면 IR mutation 없이 `{ ok: false, reason: 'insertText-at-doc-start-with-multiline-rejected: ...' }` 반환. AI 가 다음 turn 에 error 보고 applyHtml 또는 findInDocument anchor 로 재시도.
+
+회귀 가드: `tools.test.ts` 5 단위 테스트 — guard 거절 / single-line allow / non-(0,0,0) allow / (0,0,N>0) allow / undo group 일관성.
+
 ### Changed — Tool 호출 UI 한 줄 truncate + 결과 확장 패널 (0.4.11)
 
 요청: AI 도구 호출 표시를 한 줄로, 결과는 확장 버튼 클릭 시에만 노출.
