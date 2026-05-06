@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+### Fixed — Read-only 의도 query 가 markdown fallback 자동 적용으로 doc mutate (0.4.6)
+
+증상: "사업계획서 읽고, 다 채워졌는지 확인해줘" 같은 read-only 의도 요청 시 AI 가 read tool 호출 후 informational 텍스트 (옵션 나열 / 질문) 로 응답. Agent loop 의 final text 메시지는 `toolEntries` 가 비어있어 `markdownToHtml` fallback 이 발동, 변환된 HTML 이 active doc 에 자동 insert. 사용자 입장: "조회한 건데 문서 내용이 바뀌었네."
+
+원인: `ChatPanel.tsx` 의 auto-apply useEffect 가 `htmlPayload` 만 보고 dispatch. markdown fallback 의 출처 (사용자 의도) 무관. agent loop 의 마무리 conversational 응답이 markdown 패턴 (목록 / 강조 / 표) 만 가지면 그대로 적용.
+
+수정: markdown fallback 자동 적용은 `sectionMatch` (응답이 `### N.N.N ...` 같은 섹션 번호 heading 으로 시작) 가 매칭됐을 때만. 그 외 markdown 응답은 chat 안에 conversational 로 표시, 적용 X. 명시적 ` ```html``` ` 블록은 의도적 payload 라 기존 동작 유지 (sectionMatch 무관 적용).
+
 ### Added — `getDocumentSummary` AI read tool — heading 없는 doc 의 "채워졌는지" 판정 (0.4.5)
 
 증상: 사용자가 사업계획서 양식 (heading 스타일 미사용 — 본문 / 표 셀로만 구성) 을 활성 탭으로 두고 "다 채워졌는지 확인해줘" 요청 시 AI 가 `getDocumentOutline` → `[]` → `getTextRange(0,0,0,0,...)` 첫 단락만 보고 "doc is empty" 결론. AI 가 paragraphCount / sectionCount 를 알 수단이 카탈로그에 없어 blind probe 실패.

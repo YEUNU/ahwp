@@ -1525,16 +1525,33 @@ function Message({
   // chunk 99 follow-up — 자동 적용. plan mode 가 아닌 일반 응답에서
   // ```html``` / markdown fallback / sectionMatch 가 결정되면 한 번만
   // dispatch. 사용자가 만족 못하면 stop / undo (⌘Z).
+  //
+  // 0.4.6 fix: markdown fallback 은 sectionMatch (`### N.N.N ...` 같은
+  // 섹션 번호 heading) 가 매칭됐을 때만 자동 적용. read-only agent loop
+  // 의 informational 마무리 (옵션 나열 / 질문 / 안내 같은 conversational
+  // 답변) 가 markdownToHtml 변환을 통과해도 sectionMatch 가 없으면
+  // 적용되지 않음. 사용자 의도가 "조회" 였는데 doc 이 mutate 되던 회귀
+  // (사업계획서 "다 채워졌는지 확인해줘" 류) fix. 명시적 ```html``` 블록
+  // 은 의도적 payload 라 이전 동작 유지.
   const autoAppliedRef = useRef(false);
   useEffect(() => {
     if (autoAppliedRef.current) return;
     if (isUser || streaming) return;
     if (message.planMode) return;
     if (!htmlPayload) return;
+    if (markdownFallback && !sectionMatch) return;
     autoAppliedRef.current = true;
     // microtask 양보 — setState 가 effect 본체에서 직접 발생하지 않게.
     queueMicrotask(handleApply);
-  }, [isUser, streaming, message.planMode, htmlPayload, handleApply]);
+  }, [
+    isUser,
+    streaming,
+    message.planMode,
+    htmlPayload,
+    markdownFallback,
+    sectionMatch,
+    handleApply,
+  ]);
   const handleUndoApply = () => {
     if (!onUndoApply || undone) return;
     const ok = onUndoApply();
