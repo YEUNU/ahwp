@@ -269,7 +269,7 @@
 
 - [x] **chunk 100** — Phase 6.0: WasmBridge 추상 ✅: `src/lib/rhwp-core/` 디렉토리 분할 (index/init/wasm-bridge/types). `WasmBridge.create(bytes)` / `.dispose()` 가 lifecycle 소유. `RhwpDoc` 타입 8 곳 중복 → 1 곳. `docRef.current` 호출 지점 ~136 곳 변경 0 (bridge.doc 미러링). 동작 변화 0건. studio 회귀 e2e 통과
 - [x] **chunk 101** — Phase 6.1: coordinate-system.ts ✅: 5 좌표 공간 (Client / Scroller / Page-CSS / Page / Canvas-px) 변환 유틸 6개 단일 모듈. StudioViewer hitTestAt + usePageMouseHandlers 4개 inline 변환 지점 함수 호출로 교체. pageDimsToCanvasSize 는 Phase 6.3 Canvas swap prep. 동작 변화 0건. studio-input/viewer/cells e2e 22 케이스 통과
-- [ ] **chunk 102** — Phase 6.2: canvas-pool + dual-mode (`localStorage.ahwp:render-mode`) 인프라
+- [x] **chunk 102** — Phase 6.2: canvas-pool + dual-mode 인프라 ✅: `CanvasPool` (rhwp-studio 포팅 — acquire/release/releaseAll, viewport 스크롤 시 GC 완화). `getRenderMode()`/`setRenderMode()` (`localStorage.ahwp:render-mode`, fail-safe `'svg'`). 7 단위 테스트 신규. renderPageInto 분기는 chunk 103 본질로 deferred. 동작 변화 0건
 - [ ] **chunks 103a~b** — Phase 6.3: Canvas 본문 렌더 + L-004 tooltip 대체 + 비동기 이미지 재렌더 스케줄러
 - [ ] **chunk 104** — Phase 6.4: behind/front overlay (`getPageLayerTree` 파싱) + 효과 CSS + 워터마크 multiply
 - [ ] **chunk 105** — Phase 6.5: find / changed-paragraph 하이라이트 mode 정합

@@ -27,6 +27,8 @@ export type {
   ClientCoord,
   ScrollerCoord,
 } from './coordinate-system';
+export { CanvasPool } from './canvas-pool';
+export { getRenderMode, setRenderMode, type RenderMode } from './render-mode';
 
 // Direct lib re-exports — kept for back-compat with existing import sites
 // that construct `new HwpDocument(bytes)` directly (`useDebugSurface`'s

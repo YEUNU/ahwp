@@ -6,6 +6,15 @@
 
 ## [Unreleased]
 
+### Changed — chunk 102: Phase 6.2 canvas-pool + render-mode 인프라 (0.3.43)
+
+Phase 6 세 번째 chunk. 동작 변화 0건 인프라만 — chunk 103 의 Canvas 본문 렌더 swap 이 사용할 토대.
+
+- **`canvas-pool.ts`** — `<canvas>` element 풀링 (rhwp-studio reference 포팅). `acquire(idx)` / `release(idx)` / `releaseAll()` / `has` / `getCanvas` / `activePages` / `totalCount`. viewport 스크롤 시 GC 압박 완화 — viewport buffer 11 페이지에 풀이 stable 11 elements 로 수렴
+- **`render-mode.ts`** — `localStorage.ahwp:render-mode` (`'svg' | 'canvas'`) 읽기/쓰기. 인식 못 하는 값은 fail-safe `'svg'`. e2e 가 `page.evaluate` 로 spec 별 set 가능
+- **`canvas-pool.test.ts`** 7 단위 테스트 — acquire/release 순환, 재사용, releaseAll, 미존재 페이지 release no-op
+- 본 chunk 에서 renderPageInto 분기 X — chunk 103 가 mode 별 path 분기 + Canvas 본문 렌더 도입
+
 ### Changed — chunk 101: Phase 6.1 coordinate-system.ts (0.3.42)
 
 `src/lib/rhwp-core/coordinate-system.ts` 신설 — DPR-aware 좌표계 변환 유틸. 5 좌표 공간 (Client / Scroller / Page-CSS / Page / Canvas-px) 의 변환 함수 6개 (`clientToPage`, `clientToPageWithRect`, `pageYToClientY`, `clientToScroller`, `pageToScroller`, `pageDimsToCanvasSize`) 를 단일 모듈로 통합. `StudioViewer.tsx:hitTestAt` + `usePageMouseHandlers.ts` 4개 inline 변환 지점을 함수 호출로 교체. `pageDimsToCanvasSize` 는 Phase 6.3 Canvas swap 의 `scale = zoom × DPR` 정합용 prep — 현재 path 미사용. 동작 변화 0건.
