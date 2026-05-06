@@ -6,6 +6,32 @@
 
 ## [Unreleased]
 
+### Changed — prompt 휴리스틱 일괄 제거 + insertTextInCell 도구 추가 + 양식 채움 live 검증 (0.4.16)
+
+목표: 양식 doc 의 write-intent query 가 (a) layout 파손 X (b) 실제로 채움 (c) 휴리스틱 enumeration 없는 prompt. 사용자 지시 — "프롬프트 휴리스틱하게 쓰지마" + "양식에 맞게 내용 채울 때까지 시도".
+
+휴리스틱 sweep (모델로 가는 prompt surface 한정):
+
+- `prompts.ts SYSTEM_PROMPT_DOC_CONTEXT` — 도구 args few-shot 예시 (section name, color 값, specific Korean text 등) 일괄 제거. JSON args schema shape 만 남김
+- `prompts.ts SYSTEM_PROMPT_AGENT_GUIDE` — specific section number example / 한국어 field name enumeration / multi-position writes 의 wrong/right 코드 예시 모두 제거. 원칙 ("structured documents", "anchored writes", "cell context detection") 만 남김
+- `prompts.ts SYSTEM_PROMPT_PLAN_MODE_SUFFIX` — specific tool args 예시 제거
+- `ai-tool-catalog.ts` 도구 description 의 한국어 field name / 가상 시나리오 예시 제거 (`insertTextInCell` / `getDocumentSummary` / `switchTargetDoc`). 구조적 의미만 남김
+- `tools.ts insertText guard reason` — "양식 표지" specific 표현 제거. 구조적 패턴만 명시
+
+신규 도구 — cell-level write:
+
+- `insertTextInCell(sectionIdx, parentParaIdx, controlIdx, cellIdx, cellParaIdx, charOffset, text)` AI 도구 추가. 4 surface (catalog / validator / types / dispatcher) 정합 — 도구 카운트 60→61
+- `useViewerHandle.irInsertTextInCell` lib 의 `doc.insertTextInCell` thin wrapper
+
+Live 검증 (gemma-4 + 사업계획서 fixture + write-intent query):
+
+- 정리 전: paraCount 315→315, para0 len 0→0 (AI 가 아무 것도 안 함)
+- 정리 후: paraCount 315→325 (+10), para0 len 0→25 (+25), destructive insertText entries 0
+- 일관된 behavior — 연속 두 번 실행 모두 채움 + layout 보존
+- live test 에 "AI 가 실제 채웠는지" assertion 추가 (filled = paraCount 증가 OR para0 len 증가)
+
+메모리 박제: `feedback_no_heuristic_prompts.md` — system prompt 에 keyword enumeration / few-shot / 특정 양식·필드명 list 금지 원칙
+
 ### Test — write-intent live regression (양식 layout 파손 가드) (0.4.15)
 
 목적: 사용자 두 번째 보고 케이스 — "양식에 내용 채워넣는 것" — live NIM 으로 검증. 가상 업체명 (테크플로우 / TechFlow) + 예지보전 사업으로 사업계획서 양식 채워달라는 query 후 표지 layout 보존 확인.

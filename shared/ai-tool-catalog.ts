@@ -167,6 +167,32 @@ const TOOL_DESCRIPTORS: AhwpToolDescriptor[] = [
   },
   // === Phase 3 chunk 45 — body edit primitives + char/para format ===
   {
+    name: 'insertTextInCell',
+    description:
+      '표 control 안의 특정 cell + cellParagraph + charOffset 에 텍스트 삽입. body-level insertText 가 표 layout 을 깨는 위치에서도 cell-scoped 로 안전. 사전 단계: getCellInfo 로 cellParaCount 확인 후 cellParaIdx 가 그 범위 안인지 검증. 빈 cell 에 첫 텍스트 넣을 땐 cellParaIdx=0, charOffset=0. cellParaIdx 가 범위 밖이면 out-of-range. 한 cell 에 여러 paragraph 필요 시 \\n 으로 분할.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sectionIdx: { type: 'integer', minimum: 0 },
+        parentParaIdx: { type: 'integer', minimum: 0 },
+        controlIdx: { type: 'integer', minimum: 0 },
+        cellIdx: { type: 'integer', minimum: 0 },
+        cellParaIdx: { type: 'integer', minimum: 0 },
+        charOffset: { type: 'integer', minimum: 0 },
+        text: { type: 'string', maxLength: 4096 },
+      },
+      required: [
+        'sectionIdx',
+        'parentParaIdx',
+        'controlIdx',
+        'cellIdx',
+        'cellParaIdx',
+        'charOffset',
+        'text',
+      ],
+    },
+  },
+  {
     name: 'insertText',
     description:
       '특정 위치 (sectionIdx, paragraphIdx, charOffset) 에 raw 텍스트 삽입. **양식 / 보고서 doc 의 (0,0,0) 호출 금지** — 표지 표 cell 안에 dump 되어 layout 파손. 인접 paragraph 의 char-shape 만 상속, 새 스타일·heading 적용 안 됨. 다중 paragraph + heading + 본문 혼합 시 applyHtml 사용. 표 cell 내부면 insertTextInCell / insertTextInCellByPath 사용. 안전 사용처: 빈 문서·빈 단락·verified 위치의 plain text 추가.',
@@ -783,7 +809,7 @@ const TOOL_DESCRIPTORS: AhwpToolDescriptor[] = [
   {
     name: 'getDocumentSummary',
     description:
-      '문서 구조 개요 — sectionCount + 각 section 의 paragraphCount / 비어있지 않은 단락 수 / 첫·마지막 채워진 단락 샘플 (text, 200자 cap). heading 스타일 없는 doc (사업계획서 양식 다수가 그러함) 의 "비어있는지 / 채워졌는지" 판정에 사용. read-only, 매 turn 1~2번 비용 미미.',
+      '문서 구조 개요 — sectionCount + 각 section 의 paragraphCount / 비어있지 않은 단락 수 / 첫·마지막 채워진 단락 샘플 (text, 200자 cap). heading 스타일이 없는 doc 의 채움 비율 판정 / 위치 결정에 사용. read-only, 매 turn 1~2번 비용 미미.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -918,7 +944,7 @@ const TOOL_DESCRIPTORS: AhwpToolDescriptor[] = [
   {
     name: 'switchTargetDoc',
     description:
-      'Cross-doc write routing (chunk 99 follow-up). 후속 write tool 들의 활성 target 을 다른 열린 문서로 전환. path 는 절대 경로 (현재 열린 탭 중 하나 — `searchWorkspaceOutlines` 응답이나 chat 시스템 메시지의 `[참조 문서]` path 와 동일). 닫힌 / 미열린 파일은 reject. 한 turn 안에서 여러 번 호출 가능 (예: 보고서 A 의 요약 작성 후 보고서 B 의 결론으로 이동). turn 종료 시점에 자동으로 원래 active doc 으로 복귀하지는 않으니, 작업 완료 후 명시적으로 다시 switchTargetDoc 으로 돌아가거나 그대로 마무리. read tool 은 이 라우팅과 무관하게 explicit path arg 를 받으니 영향 없음.',
+      'Cross-doc write routing. 후속 write tool 들의 활성 target 을 다른 열린 문서로 전환. path 는 절대 경로 (현재 열린 탭 중 하나 — `searchWorkspaceOutlines` 응답이나 chat 시스템 메시지의 `[참조 문서]` path 와 동일). 닫힌 / 미열린 파일은 reject. 한 turn 안에서 여러 번 호출 가능. turn 종료 시점에 자동으로 원래 active doc 으로 복귀하지는 않으니, 작업 완료 후 명시적으로 다시 switchTargetDoc 으로 돌아가거나 그대로 마무리. read tool 은 이 라우팅과 무관하게 explicit path arg 를 받으니 영향 없음.',
     inputSchema: {
       type: 'object',
       properties: {

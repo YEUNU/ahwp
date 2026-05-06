@@ -245,6 +245,24 @@ function validateArgs<T extends AhwpToolName>(
         return { ok: false, reason: 'text-too-large' };
       return { ok: true, value: { ...v.value, text } as AhwpToolArgs[T] };
     }
+    // 0.4.16 — cell-level text insert
+    case 'insertTextInCell': {
+      const v = nonNegInts(args, [
+        'sectionIdx',
+        'parentParaIdx',
+        'controlIdx',
+        'cellIdx',
+        'cellParaIdx',
+        'charOffset',
+      ]);
+      if (!v.ok) return v;
+      const text = args.text;
+      if (typeof text !== 'string')
+        return { ok: false, reason: 'text-not-string' };
+      if (byteLen(text) > AHWP_TOOL_LIMITS.maxTextBytes)
+        return { ok: false, reason: 'text-too-large' };
+      return { ok: true, value: { ...v.value, text } as AhwpToolArgs[T] };
+    }
     case 'deleteRange': {
       const v = nonNegInts(args, [
         'sectionIdx',

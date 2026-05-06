@@ -99,6 +99,22 @@ async function runOne(
           };
         return { ok: true, tool: call.tool };
       }
+      // === 0.4.16 — cell-level text insert (양식 표지 cell 채우기) ===
+      case 'insertTextInCell': {
+        const a = call.args;
+        const ok = viewer.irInsertTextInCell(
+          a.sectionIdx,
+          a.parentParaIdx,
+          a.controlIdx,
+          a.cellIdx,
+          a.cellParaIdx,
+          a.charOffset,
+          a.text,
+        );
+        return ok
+          ? { ok: true, tool: call.tool }
+          : { ok: false, tool: call.tool, reason: 'insertTextInCell-failed' };
+      }
       // === Phase 3 chunk 45 — body edit primitives + char/para format ===
       case 'insertText': {
         const a = call.args;
@@ -118,7 +134,7 @@ async function runOne(
             ok: false,
             tool: call.tool,
             reason:
-              'insertText-at-doc-start-with-multiline-rejected: doc 의 첫 단락은 양식 표지 cell 인 경우가 흔해 multi-paragraph dump 시 layout 파손. applyHtml (heading + body 자동 마크업) 또는 findInDocument 로 적절한 anchor paragraph 를 먼저 찾고 그 위치에 insertText 하라. 단일 paragraph (no \\n) 짧은 텍스트면 위치 변경 없이 재호출 OK.',
+              'insertText-at-doc-start-with-multiline-rejected: (sectionIdx=0, paragraphIdx=0, charOffset=0) + multi-paragraph 조합은 거부. 다중 paragraph + heading 혼합은 applyHtml 사용. 위치 한정 raw 텍스트면 findInDocument 로 anchor 먼저 식별. 단일 paragraph (no \\n) 짧은 텍스트는 동일 위치 재호출 OK.',
           };
         }
         const ok = viewer.irInsertText(
@@ -769,6 +785,10 @@ export function previewArgs(call: AhwpToolCall): string {
     case 'insertText': {
       const t = call.args.text.replace(/\s+/g, ' ').trim();
       return `(${call.args.paragraphIdx},${call.args.charOffset}) "${t.length > 30 ? t.slice(0, 30) + '…' : t}"`;
+    }
+    case 'insertTextInCell': {
+      const t = call.args.text.replace(/\s+/g, ' ').trim();
+      return `cell=${call.args.cellIdx} "${t.length > 30 ? t.slice(0, 30) + '…' : t}"`;
     }
     case 'deleteRange':
       return `(${call.args.startParagraphIdx},${call.args.startOffset})~(${call.args.endParagraphIdx},${call.args.endOffset})`;

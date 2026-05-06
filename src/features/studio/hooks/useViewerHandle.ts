@@ -970,6 +970,29 @@ export function useViewerHandle(
         irMutate('irInsertText', (doc) =>
           doc.insertText(sec, para, charOffset, text),
         ),
+      // 0.4.16 — AI 양식 채우기용 cell-level write. parent paragraph 가
+      // 표 control 인 경우 그 안의 특정 cell + 특정 cellPara + offset 에
+      // 텍스트 삽입. body-level insertText 와 달리 표 layout 보존.
+      irInsertTextInCell: (
+        sec,
+        parentPara,
+        ctrl,
+        cellIdx,
+        cellPara,
+        charOff,
+        text,
+      ) =>
+        irMutate('irInsertTextInCell', (doc) =>
+          doc.insertTextInCell(
+            sec,
+            parentPara,
+            ctrl,
+            cellIdx,
+            cellPara,
+            charOff,
+            text,
+          ),
+        ),
       irDeleteRange: (sec, sp, so, ep, eo) =>
         irMutate('irDeleteRange', (doc) =>
           doc.deleteRange(sec, sp, so, ep, eo),

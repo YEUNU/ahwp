@@ -934,6 +934,14 @@ test.describe('NVIDIA NIM — live smoke', () => {
       baseline.para0Head.length + 100,
     );
 
+    // 활동 검증 — AI 가 실제로 doc 을 채웠는지. paragraphCount 증가
+    // 또는 para0 길이 증가 둘 중 하나는 있어야 함 (informational 응답
+    // 만 하고 끝나면 둘 다 0). 모두 무변경이면 prompt regression 신호.
+    const filled =
+      after.paraCount > baseline.paraCount ||
+      after.para0Head.length > baseline.para0Head.length;
+    expect(filled).toBe(true);
+
     // 핵심 검증 2 — `insertText(0,0,0,multiline)` 호출이 있었다면 0.4.12
     // hard guard 가 fail 시켰어야. tool entry 중 status=failed +
     // reason matching guard 메시지 검색.

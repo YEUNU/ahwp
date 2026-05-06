@@ -170,6 +170,19 @@ export interface ViewerHandle {
     charOffset: number,
     text: string,
   ) => boolean;
+  /** 0.4.16 — cell-level text insert. 표 control 안의 특정 cell + cell-
+   *  paragraph + offset 에 raw 텍스트 삽입. AI 양식 채우기 시 표지 cell
+   *  의 빈 value 항목 (도입기업명 / 과제번호 등) 채울 때 사용. body-level
+   *  insertText 와 달리 표 layout 영향 없음. */
+  irInsertTextInCell: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+    cellIdx: number,
+    cellParaIdx: number,
+    charOffset: number,
+    text: string,
+  ) => boolean;
   irDeleteRange: (
     sectionIdx: number,
     startParaIdx: number,

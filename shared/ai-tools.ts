@@ -67,6 +67,8 @@ export const AHWP_TOOL_NAMES = [
   'createHeaderFooter',
   'deleteHeaderFooter',
   'deleteBookmark',
+  // 0.4.16 — cell-level write (양식 표지 cell 채우기)
+  'insertTextInCell',
   // Phase 3 chunk 51 — read-only Agent tools (양식 매칭 / 위치 결정)
   'getDocumentOutline',
   'getDocumentSummary',
@@ -398,6 +400,16 @@ export interface AhwpToolArgs {
     sectionIdx: number;
     paragraphIdx: number;
     controlIdx: number;
+  };
+  // 0.4.16 — cell-level write
+  insertTextInCell: {
+    sectionIdx: number;
+    parentParaIdx: number;
+    controlIdx: number;
+    cellIdx: number;
+    cellParaIdx: number;
+    charOffset: number;
+    text: string;
   };
   // Phase 3 chunk 51 — read-only Agent tools
   getDocumentOutline: Record<string, never>;
