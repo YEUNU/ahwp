@@ -6,6 +6,17 @@
 
 ## [Unreleased]
 
+### Fixed — workspace outline 추출 가 `개요 N` 스타일 누락 — AI cross-doc 읽기 실패 (0.4.4)
+
+증상: AI 에 "이 문서 확인해서 정합성 확인해줘" 같은 cross-doc 분석 요청 시 "파일 읽기 시도 했으나 못함". 사업계획서 / 보고서 양식 다수가 영향.
+
+원인: `electron/ipc/folder.ts:extractOutline()` 가 heading 매칭 시 `^제목\s*N` / `^Heading\s*N` 만 픽업, **`^개요\s*N`** (한컴 한국어 outline 스타일, 사업계획서 양식 다수 채용) 누락. 같은 모듈인 `useViewerHandle.ts:getOutline()` 은 `개요` 매칭 포함하던 게 cross-doc 측에 미반영. AI 가 `searchWorkspaceOutlines` 호출 → 양식 doc 의 outline = `[]` → "navigatable 항목 없음" 으로 인식해 read 시도 자체 포기.
+
+수정:
+
+- `extractOutline()` 의 heading 매칭에 `koOutline = s.name?.match(/^개요\s*(\d+)?/)` 추가. 셋 다 (제목 / 개요 / Heading) 픽업하도록 `useViewerHandle.ts:getOutline()` 와 정합
+- `outline-cache.json` schema 에 `version` 필드 추가 (`OUTLINE_CACHE_VERSION = 2`). v1 캐시는 자동 무시 → 다음 scan 시 fresh 추출. 사용자가 캐시 파일 수동 삭제 안 해도 됨
+
 ### Fixed — ChatPanel hasKey 가 secrets 변경 broadcast 미구독 (0.4.3)
 
 Settings 에서 API 키 입력 후에도 채팅 패널이 "키 설정 필요" 상태로 stale 했던 버그. `hasKey` state effect 가 deps `[provider]` 만 가지고 있어 같은 provider 의 키가 추가/삭제될 때 갱신 안 됐음. chunk 70 의 `secrets:changed` IPC broadcast 는 model prefetch 에만 hooked 되어 있었음.
