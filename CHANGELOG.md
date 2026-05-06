@@ -6,7 +6,29 @@
 
 ## [Unreleased]
 
-### Fixed — OpenAI streaming tool args concat 버그 + getDocumentOutline 진단 (0.4.18)
+### Changed — Phase-aware tool router + 모든 LLM-facing prompt 영어 (0.4.19)
+
+목표: tool router 가 "정보 부족 → 검색 / 정보 충분 → 작성" 흐름을 자동 판단해 매 turn subset 을 phase 에 맞춰 좁힘. 사용자 지시: "정보가 부족하면 검색, 정보가 다 있으면 작성 이런식으로 알아서 되게 하고 싶은데" + "llm에 제공하는 프롬프트 다 영어로 사용해".
+
+router phase-aware (ⓑ):
+
+- `selectToolsViaLlm` signature 에 `recentToolCalls: { name; ok; summary? }[]` 추가. 비어있으면 turn 1 신호 → 사용자 query 만 보고 결정. 있으면 phase 판단.
+- router system prompt 에 phase 원칙 추가 (휴리스틱 X — 원칙만):
+  - 이력 빔 → query 만 보고 결정 / 좌표 모호하면 read 위주
+  - read 위주 + 좌표·구조 충분히 모임 → write 위주로 전환
+  - 직전 write 포함 → verify read 위주 (동일 write 반복 회피)
+  - read 결과 빔 / 부족 → 다른 read 시도
+  - same tool 여러번 fail → 다른 접근
+- `useChatStreaming` 에 `agentToolHistoryRef` 신설. tool dispatch 결과를 매번 push (name + ok + 결과/reason 의 120자 요약). send/regenerate/stop/turn-end 시 reset.
+- router cache (`cachedKey + cachedResult`) — 같은 query + 같은 history 면 LLM 호출 생략. phase 가 변하지 않은 turn 이 둘 이상이어도 추가 비용 0. `resetRouterCache()` 가 user message 시작 + turn 종료 시 호출.
+
+LLM-facing prompt 영어 변환:
+
+- `prompts.ts` — `SYSTEM_PROMPT_DOC_CONTEXT` 전체 영어 (output language directive 포함 — 사용자 응답 언어는 user 메시지 언어). `buildReferenceSystemBlock` / `buildExcerptSystemPrompt` 영어. `[현재 문서]:` → `[Active doc]:`, `[참조 문서]:` → `[Reference docs]:`, `[발췌]:` → `[Excerpts]:`.
+- `useChatStreaming` 의 doc context label 도 동기화.
+- `toolRouter.ts buildRouterSystemPrompt` / `buildRouterUserPrompt` 영어.
+- `shared/ai-tool-catalog.ts` 60+ tool description 모두 영어. 한컴 스타일 이름 (`제목 N` / `개요 N`) 만 매칭 식별자로 그대로 유지.
+- `feedback_english_prompts` memory 추가 — 향후 prompt 작성 시 영어 default.
 
 증상 1 — `findInDocument {"query":"도입기업명"}{"query":"과제번호"}{"query":"사업기간"...}` invalid JSON 으로 query-not-string 에러. 사용자 보고: "이것도 맨날 이렇고".
 

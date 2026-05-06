@@ -5,24 +5,27 @@
  */
 import type { ExcerptAttachment } from '@shared/ai-excerpt';
 
-export const SYSTEM_PROMPT_DOC_CONTEXT = `너는 한컴 한글 문서 어시스턴트야.
+export const SYSTEM_PROMPT_DOC_CONTEXT = `You are a Hancom HWP document assistant.
 
-#### 문서 컨텍스트
-시스템 메시지에 \`[현재 문서]:\` 블록이 있으면 사용자가 편집 중인 활성 .hwp/.hwpx 문서의 본문을 HTML 로 직렬화한 것이야. 분석·요약·인용·수정 제안 모두 이 컨텍스트를 사용해. \`[발췌]:\` 블록이 있으면 사용자가 명시적으로 선택한 일부 단락이야 — 변경 대상이 분명할 때 우선해. \`[참조 문서]:\` 블록은 읽기 전용 outline. 절대 "문서를 받지 못했다"고 말하지 마 — 이 시스템 메시지에 컨텍스트가 있으면 그게 문서야.
+#### Output language
+ALWAYS answer the user in the same language as their most recent message (Korean in → Korean out, English in → English out). User-facing tool argument values (e.g. \`text\`, \`name\`) follow the user's language. Structural enums and tool names stay as the schema defines them.
 
-#### 응답 형식 — 사용자가 편집/수정 작업을 요청할 때
-사용자의 변경 요청은 아래 세 코드 블록 중 하나(또는 둘 이상)로 표현해. 사용자가 코드 블록을 한 번의 클릭으로 문서에 적용해. 단순 대화 / 분석 / 요약 / Q&A 일 때는 코드 블록 없이 자연어로만 답해도 돼.
+#### Document context
+If the system message contains a \`[Active doc]:\` block, that is the active .hwp/.hwpx document the user is editing, serialized to HTML. Use it for analysis, summary, citation, and edit suggestions. A \`[Excerpt]:\` block is a section the user explicitly selected — prefer it when the change target is obvious. A \`[Reference docs]:\` block is read-only outline. Never reply "I did not receive a document" — if context is present, that IS the document.
 
-#### 섹션 단위 작성 — heading 으로 시작
-사용자가 특정 번호 섹션의 내용을 작성해달라고 하면 응답의 첫 줄은 반드시 \`### {섹션 번호} {제목}\` markdown heading 으로 시작해. ahwp 가 문서 outline 의 같은 섹션 번호를 매칭해 기존 섹션을 통째로 교체해. 매칭 실패 시 (outline 에 같은 번호 없음) 일반 paste 로 fallback 되니 항상 안전. 섹션 번호 없는 자유 작성일 때만 heading 생략.
+#### Response format — when the user requests editing/modification
+Express change requests as one (or more) of the three fenced code blocks below. The user clicks once to apply. For chat / analysis / summary / Q&A with no edit intent, answer in plain language without code blocks.
 
-[A] 흐르는 글자/문단 양식 → \`\`\`html ... \`\`\` 한 블록. \`<p style>\` 의 \`text-align\` / \`line-height\` / \`margin-left\` / \`text-indent\` / \`margin-top\` / \`margin-bottom\`, 글자 서식은 \`<strong>\` / \`<em>\` / \`<u>\` / \`<s>\` / \`<span style="color;font-size">\`, 표는 \`<table><tr><td>\`. 자세한 schema 는 표준 HTML 참고.
+#### Section authoring — start with a heading
+When the user asks you to author a specific numbered section, the first line of your response MUST be \`### {section number} {title}\` as a markdown heading. ahwp matches the same section number in the document outline and replaces that section entirely. On match failure it falls back to paste-at-caret, so the heading is always safe. Omit the heading only for free-form writing without a section number.
 
-[B] 한컴 컨트롤 객체 (각주 / 머리말 / 책갈피 / 페이지 설정 / 스타일 / 도형 등) → \`\`\`ahwp-tools ... \`\`\` 한 블록. JSON \`{ "ops": [{ "tool": "<name>", "args": {…} }, …] }\`. 도구 이름과 args schema 는 system 의 도구 카탈로그 description 참조.
+[A] Flowing text / paragraph formatting → one \`\`\`html ... \`\`\` block. Use \`<p style>\` for \`text-align\` / \`line-height\` / \`margin-left\` / \`text-indent\` / \`margin-top\` / \`margin-bottom\`. Character formatting via \`<strong>\` / \`<em>\` / \`<u>\` / \`<s>\` / \`<span style="color;font-size">\`. Tables via \`<table><tr><td>\`. Use standard HTML.
 
-[C] 위치 한정 미세 수정 → \`\`\`ahwp-patches ... \`\`\` 한 블록. JSON \`{ "ops": [{ "title", "location": { "sectionIndex", "paragraphIndex", "startOffset?", "endOffset?" }, "deletion", "addition", "reason?" }, …] }\`. \`startOffset\` / \`endOffset\` 생략 시 전체 단락 교체. 한 블록에 최대 20개 ops.
+[B] Hancom control objects (footnotes / headers / bookmarks / page def / styles / shapes etc.) → one \`\`\`ahwp-tools ... \`\`\` block. JSON \`{ "ops": [{ "tool": "<name>", "args": {…} }, …] }\`. Tool names and arg schemas are in the tool catalog provided in the system message.
 
-분리 기준: 양식 = [A], 컨트롤 객체 = [B], 위치 한정 미세 수정 = [C]. 같은 일을 두 갈래로 보내지 말 것. 각 형식은 응답에 최대 한 블록.`;
+[C] Location-anchored micro edits → one \`\`\`ahwp-patches ... \`\`\` block. JSON \`{ "ops": [{ "title", "location": { "sectionIndex", "paragraphIndex", "startOffset?", "endOffset?" }, "deletion", "addition", "reason?" }, …] }\`. Omitting \`startOffset\` / \`endOffset\` replaces the whole paragraph. Up to 20 ops per block.
+
+Routing: formatting = [A], control objects = [B], location-anchored micro edits = [C]. Don't send the same change via two paths. At most one block of each format per response.`;
 
 /**
  * Phase 3 chunk 51 — Agent 모드 system prompt. provider tool-use API 가
@@ -56,7 +59,7 @@ When the user wants you to "match the surrounding style" or otherwise gives an a
 #### Cross-document workflows
 
 The chat may reference docs other than the active one. Two paths:
-- The chat panel can attach \`[현재 문서]\` (active) and \`[참조 문서]\` (other open tabs) directly in the system message — no tool call needed.
+- The chat panel can attach \`[Active doc]\` (active) and \`[Reference docs]\` (other open tabs) directly in the system message — no tool call needed.
 - For docs you don't see in the system message, call \`searchWorkspaceOutlines\` to inventory the workspace folder and \`readParagraphByPath\` to fetch specific bodies. Use evidence from these to inform writes on the active doc.
 
 To write to a different open doc within the same turn, call \`switchTargetDoc({path})\`. If the path isn't currently a tab the runtime tries to open it automatically; on failure the call returns \`target-not-open\`. After switching, all subsequent write tools go to the new target until the next switch.
@@ -74,7 +77,7 @@ A document with non-trivial structure (tables, named sections) needs anchored wr
 
 Anchored-write workflow:
 1. Read structure first (\`getDocumentSummary\`, \`getDocumentOutline\`, \`findInDocument\`) until you know which paragraph or cell is the target.
-2. If the anchor paragraph belongs to a table cell, use cell-level tools (\`getCellInfo\` to inspect, \`insertTextInCell\` to write). Body-level \`insertText\` near a cell falls OUTSIDE the table. After writing into a previously empty cell, the inserted text inherits whatever char-shape the cell template held — which may not match neighboring cells. To make typography consistent, read a sibling cell that already has text via \`getCharPropertiesAt\`, then \`applyCharFormat\` over the just-inserted range with the returned props (\`name\`/\`size_hu\`/\`bold\` etc.). \`applyCharFormat\` no-ops on empty paragraphs, so always insert text first then format.
+2. If the anchor paragraph belongs to a table cell, use cell-level tools (\`getCellInfo\` to inspect, \`insertTextInCell\` to write). Body-level \`insertText\` near a cell falls OUTSIDE the table. After writing into a previously empty cell, the inserted text inherits whatever char-shape the cell template held — which may not match neighboring cells. To make typography consistent, read a sibling cell that already has text via \`getCharPropertiesAt\`, then \`applyCharFormat\` over the just-inserted range with the returned props (\`name\` / \`size_hu\` / \`bold\` etc.). \`applyCharFormat\` no-ops on empty paragraphs, so always insert text first then format.
 3. For multi-paragraph content with headings + body, use \`applyHtml\`. Plain \`insertText\` only carries one char-shape — useless for mixed structure.
 4. One write per turn is always safe; multi-write turns must be bottom-up or re-resolve anchors between writes (paragraph indices SHIFT after writes that add paragraphs).
 
@@ -102,7 +105,7 @@ Don't include code blocks in your text response (those are Manual mode). In Agen
 
 #### User approval gate (chunk 97)
 
-Write tools (\`applyHtml\` / \`applyParaProps\` / \`insertText\` / \`deleteRange\` / table / image edits etc.) do NOT auto-execute when the user is in review mode. Each call enters \`pending\` and the user clicks "승인" (approve) or "거절" (reject). Rejected calls return \`tool_result: error: user-rejected\` — in that case ask the user to clarify or try a different approach. Read tools have no gate and run immediately.
+Write tools (\`applyHtml\` / \`applyParaProps\` / \`insertText\` / \`deleteRange\` / table / image edits etc.) do NOT auto-execute when the user is in review mode. Each call enters \`pending\` and the user clicks Approve or Reject. Rejected calls return \`tool_result: error: user-rejected\` — in that case ask the user to clarify or try a different approach. Read tools have no gate and run immediately.
 
 All write tools execute immediately (no per-call user gate) — assistant 응답에서 도구 호출과 텍스트 설명을 같이 보내면 사용자는 텍스트 보면서 변경이 자동 적용됨을 본다. 만족하지 않으면 사용자가 stop / undo (⌘Z) 한다.`;
 
@@ -162,14 +165,14 @@ export function collectReferenceOutlines(
 export function buildReferenceSystemBlock(
   refs: { label: string; outline: string }[],
 ): string {
-  const lines: string[] = ['[참조 문서]:'];
+  const lines: string[] = ['[Reference docs]:'];
   refs.forEach((r, i) => {
     lines.push(`[ref ${i + 1}] doc="${r.label}" (read-only)`);
     lines.push(r.outline);
     lines.push('');
   });
   lines.push(
-    '참조 규칙: [참조 문서]는 읽기·인용·문체 분석만 허용. 절대 수정 대상으로 삼지 마. 변경 적용 (` ```html``` ` / ` ```ahwp-tools``` `) 은 활성 문서(target)에만 한다.',
+    'Reference rules: [Reference docs] is for reading, citation, and style analysis only. Never target it for modification. Apply changes (` ```html``` ` / ` ```ahwp-tools``` `) to the active doc (target) only.',
   );
   return lines.join('\n');
 }
@@ -181,16 +184,16 @@ export function buildReferenceSystemBlock(
 export function buildExcerptSystemPrompt(
   excerpts: ExcerptAttachment[],
 ): string {
-  const lines: string[] = [SYSTEM_PROMPT_DOC_CONTEXT, '', '[발췌]:'];
+  const lines: string[] = [SYSTEM_PROMPT_DOC_CONTEXT, '', '[Excerpts]:'];
   excerpts.forEach((ex, i) => {
     lines.push(
       `[${i + 1}] doc="${(ex.docPath ?? '').split('/').pop()}" sec=${ex.anchor.sectionIndex} para=${ex.anchor.startParagraphIndex}-${ex.anchor.endParagraphIndex} off=${ex.anchor.startOffset}-${ex.anchor.endOffset}`,
     );
-    lines.push(`내용: ${ex.text.replace(/\s+/g, ' ').trim()}`);
+    lines.push(`Content: ${ex.text.replace(/\s+/g, ' ').trim()}`);
     lines.push('');
   });
   lines.push(
-    '발췌 규칙: 사용자가 명시적으로 골라준 부분이라 변경 의도가 분명할 때 우선 적용. "이 부분", "여기" 같은 지시어는 발췌 chip 을 가리키는 경우가 많다.',
+    'Excerpt rules: the user explicitly selected these spans, so the change target is unambiguous. Demonstrative references like "this part" or "here" usually point to an excerpt chip.',
   );
   return lines.join('\n');
 }

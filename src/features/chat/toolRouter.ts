@@ -65,20 +65,52 @@ function buildRouterSystemPrompt(): string {
     return `- ${d.name}: ${trimmed}`;
   });
   return [
-    '너는 한컴 한글 문서 편집 Agent 의 tool router 야. 사용자 질의를 보고 다음 turn 에 필요한 도구 이름들의 부분집합만 골라.',
+    'You are the tool router for a Hancom HWP document-editing Agent. Given the user query plus the tool-call history so far, pick the subset of tool names needed for the *next* turn.',
     '',
-    '응답 규칙:',
-    '- 응답에 JSON 배열 한 개만 포함. 다른 텍스트 / 마크다운 / 설명 절대 추가 금지.',
-    '- 예: ["searchWorkspaceOutlines","insertText","applyHtml"]',
-    '- 사용자 의도가 모호하면 빈 배열 [] 반환 (full catalog 으로 fallback).',
-    '- 도구 이름은 아래 목록에 있는 그대로만 사용. 이름 추측 / 변형 금지.',
-    '- 의도가 분명한 turn 에선 5~15 개로 좁혀. 너무 많이 골라도 오히려 모델이 헷갈려.',
-    '- 사용자가 첨부되지 않은 다른 문서를 참조하는 의도면 검색/읽기 도구를 함께 골라.',
-    '- 좌표가 명시되지 않은 편집 의도면 위치 / 문서 구조 read 도구도 baseline 으로 포함.',
+    'Response rules:',
+    '- Reply with a single JSON array, nothing else. No prose, no markdown, no explanation.',
+    '- Example: ["searchWorkspaceOutlines","insertText","applyHtml"]',
+    '- If user intent is ambiguous, return [] (full-catalog fallback).',
+    '- Use tool names exactly as listed below. Do not invent or transform names.',
+    '- For clear-intent turns, narrow to 5-15 names. Picking too many hurts main-model accuracy.',
+    '- If the user references a doc that is not attached, include search/read tools.',
     '',
-    '도구 목록 (이름: 설명):',
+    '#### Phase principles (when tool history is provided)',
+    '- Empty history (turn 1): decide from the user query alone. If coordinates / structure are unknown, lean toward read tools.',
+    '- Recent history is mostly reads and enough coordinate / structure info has been gathered: shift toward write tools.',
+    '- Recent history contains writes: prefer verify reads (getTextRange / getCharPropertiesAt etc.). Avoid repeating the same write.',
+    '- A read returned empty or insufficient: try a different read (e.g. getDocumentOutline empty → getDocumentSummary).',
+    '- Same tool failed multiple times in history: recommend an alternative approach.',
+    '',
+    'Tool catalog (name: description):',
     ...lines,
   ].join('\n');
+}
+
+/** Tool call history entry — Agent loop 누적. router 가 phase 판단에 사용. */
+export interface RouterToolHistoryEntry {
+  name: string;
+  ok: boolean;
+  /** 결과 또는 reason 의 짧은 요약 (≤120 chars). null 가능. */
+  summary?: string;
+}
+
+/** Build the user-side prompt — query + (optional) tool call history.
+ *  History 가 있으면 router 가 phase 판단을 할 수 있게 도와. */
+function buildRouterUserPrompt(
+  userText: string,
+  history: readonly RouterToolHistoryEntry[],
+): string {
+  if (history.length === 0) return userText;
+  const lines: string[] = [`User query: ${userText}`, '', 'Tool-call history:'];
+  // Tail-only — older calls are weak signal. Saves tokens.
+  const tail = history.slice(-12);
+  for (const e of tail) {
+    const status = e.ok ? '✓' : '✗';
+    const summary = e.summary ? ` — ${e.summary.slice(0, 120)}` : '';
+    lines.push(`${status} ${e.name}${summary}`);
+  }
+  return lines.join('\n');
 }
 
 /** Parse the router's response — expect a JSON array of tool names.
@@ -191,15 +223,40 @@ function callRouterChat(request: ChatRequest): Promise<string> {
 const FULL_CATALOG = (): AhwpToolName[] =>
   Array.from(AHWP_TOOL_NAMES) as AhwpToolName[];
 
+/** Phase-aware cache — 같은 user query + 같은 tool history 면 router LLM 호출
+ *  생략. fireChat 가 Agent loop 안에서 같은 입력으로 반복 호출되는 일은
+ *  드물지만 (history 는 매 turn 누적), 동일 phase 가 둘 이상 turn 이어질
+ *  때 (예: write 만 연속) cache 가 효과적. */
+let cachedKey: string | null = null;
+let cachedResult: ToolSelectionResult | null = null;
+
+function cacheKey(
+  userText: string,
+  history: readonly RouterToolHistoryEntry[],
+): string {
+  return `${userText}\n${history.map((e) => `${e.name}:${e.ok ? '1' : '0'}`).join(',')}`;
+}
+
+/** 외부에서 turn 종료 시 호출 가능 — 다음 user message 시작 시 stale cache 제거. */
+export function resetRouterCache(): void {
+  cachedKey = null;
+  cachedResult = null;
+}
+
 /**
  * LLM 기반 tool selection. 사용자 query 가 비어있거나 키가 없거나 router
  * 호출이 실패하면 full catalog fallback.
+ *
+ * 0.4.19 — phase-aware. recentToolCalls 인자가 있으면 router 가 호출 phase
+ * (정보 수집 vs 작성 vs 검증) 를 판단해 subset 을 좁힘. 같은 input cache.
  */
 export async function selectToolsViaLlm(opts: {
   history: ChatMessage[];
   provider: string;
   model: string;
   hasKey: boolean;
+  /** 0.4.19 — Agent loop 가 누적한 도구 호출 이력. 비어있으면 turn 1 신호. */
+  recentToolCalls?: readonly RouterToolHistoryEntry[];
 }): Promise<ToolSelectionResult> {
   const t0 = performance.now();
   const userText = lastUserText(opts.history);
@@ -219,12 +276,21 @@ export async function selectToolsViaLlm(opts: {
       latencyMs: 0,
     };
   }
+  const recent = opts.recentToolCalls ?? [];
+  const key = cacheKey(userText, recent);
+  if (cachedKey === key && cachedResult) {
+    return {
+      ...cachedResult,
+      reason: `${cachedResult.reason}+cache`,
+      latencyMs: 0,
+    };
+  }
   const request: ChatRequest = {
     provider: opts.provider as ChatRequest['provider'],
     model: opts.model,
     messages: [
       { role: 'system', content: buildRouterSystemPrompt() },
-      { role: 'user', content: userText },
+      { role: 'user', content: buildRouterUserPrompt(userText, recent) },
     ],
     // OpenAI reasoning 모델 (o1/o3/gpt-5.x) 의 경우 router 는 짧은 JSON
     // 만 응답하면 되니 reasoning_effort='low' 로 thinking 단계 최소화.
@@ -261,10 +327,13 @@ export async function selectToolsViaLlm(opts: {
     };
   }
   const normalized = normalizeSelection(parsed);
-  return {
+  const result: ToolSelectionResult = {
     tools: normalized,
     isFullCatalog: false,
     reason: 'router-ok',
     latencyMs: Math.round(performance.now() - t0),
   };
+  cachedKey = key;
+  cachedResult = result;
+  return result;
 }

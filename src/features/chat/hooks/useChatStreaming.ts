@@ -37,7 +37,7 @@ import {
   buildReferenceSystemBlock,
   buildExcerptSystemPrompt,
 } from '../prompts';
-import { selectToolsViaLlm } from '../toolRouter';
+import { selectToolsViaLlm, resetRouterCache } from '../toolRouter';
 
 interface UiToolEntry {
   id: string;
@@ -281,6 +281,11 @@ export function useChatStreaming(
   // 재귀 호출 사이를 잇는다. chatMode='agent' 진입 시 reset.
   const agentToolUsesRef = useRef<
     { id: string; name: string; args: unknown }[]
+  >([]);
+  /** 0.4.19 — Agent loop 가 누적하는 도구 호출 이력. router phase-aware
+   *  결정에 사용. send/regenerate/stop 시 reset. ok/fail + 짧은 summary. */
+  const agentToolHistoryRef = useRef<
+    { name: string; ok: boolean; summary?: string }[]
   >([]);
   const agentTurnDepthRef = useRef(0);
   const agentVerifiedExcerptsRef = useRef<ExcerptAttachment[]>([]);
@@ -661,6 +666,24 @@ export function useChatStreaming(
             }
           }
         }
+        // 0.4.19 — 도구 이력 누적. router 가 phase 판단에 사용.
+        for (const r of partialResults.values()) {
+          let summary: string | undefined;
+          if (!r.ok) summary = r.reason;
+          else if (r.data !== undefined) {
+            try {
+              const j = JSON.stringify(r.data);
+              summary = j.length > 120 ? `${j.slice(0, 120)}…` : j;
+            } catch {
+              /* ignore */
+            }
+          }
+          agentToolHistoryRef.current.push({
+            name: r.name,
+            ok: r.ok,
+            summary,
+          });
+        }
 
         // UI 갱신 — 즉시 처리된 entries 는 ok/failed 로, write pending 은
         // 'pending' 으로 마킹.
@@ -732,6 +755,8 @@ export function useChatStreaming(
       agentTurnDepthRef.current = 0;
       setAgentTurn?.(0);
       agentToolUsesRef.current = [];
+      agentToolHistoryRef.current = [];
+      resetRouterCache();
       agentVerifiedExcerptsRef.current = [];
       assistantBufferRef.current = '';
       setStreaming(false);
@@ -818,7 +843,7 @@ export function useChatStreaming(
       } else if (attachDoc && getDocHtml) {
         const docHtml = getDocHtml();
         if (docHtml.length > 0) {
-          systemContent = `${SYSTEM_PROMPT_DOC_CONTEXT}\n\n[현재 문서]:\n${docHtml}`;
+          systemContent = `${SYSTEM_PROMPT_DOC_CONTEXT}\n\n[Active doc]:\n${docHtml}`;
         }
       }
       if (refOutlines.length > 0) {
@@ -856,6 +881,7 @@ export function useChatStreaming(
         provider,
         model,
         hasKey: !!opts.hasKey,
+        recentToolCalls: agentToolHistoryRef.current,
       });
       const allowed = new Set(selection.tools);
       request.tools = getAhwpToolCatalog()
@@ -905,6 +931,9 @@ export function useChatStreaming(
     if (text.length === 0 || streaming) return;
     // chunk 99 follow-up — 매 턴 시작 시 stop flag clear.
     agentStoppedRef.current = false;
+    // 0.4.19 — 새 user turn 시작 시 router 이력 + cache reset.
+    agentToolHistoryRef.current = [];
+    resetRouterCache();
 
     // Per-chip stale verification — chunk 20. Each chip's anchor is
     // re-read from the IR. Fresh = pass through. Relocated = update
