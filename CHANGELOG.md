@@ -6,6 +6,20 @@
 
 ## [Unreleased]
 
+### Fixed — OpenAI streaming tool args concat 버그 + getDocumentOutline 진단 (0.4.18)
+
+증상 1 — `findInDocument {"query":"도입기업명"}{"query":"과제번호"}{"query":"사업기간"...}` invalid JSON 으로 query-not-string 에러. 사용자 보고: "이것도 맨날 이렇고".
+
+근본 원인: `electron/ai/providers/openai.ts` 의 tool_calls SSE 누적이 `tc.index` 만 key 로 사용. NVIDIA NIM gemma-4 는 parallel tool calls 를 모두 같은 `index=0` 으로 emit (id 만 다름) — 이전 코드가 같은 슬롯에 args 를 무한 concat → JSON.parse 실패 → `__rawArguments` fallback → validator 가 `query` 필드 없다고 거절.
+
+수정: id 기반 dedup. `slotById` 맵 추가, `tc.id` 가 있으면 id 우선 lookup, 없으면 마지막으로 활성이었던 index slot continuation 으로 처리. 표준 OpenAI 스펙 (index unique per call) 도 backward compat — id 가 처음 나타날 때 indexToSlot 도 함께 갱신.
+
+증상 2 — `getDocumentOutline` 항상 `[]`. 사용자 보고: "왜 맨날 비어있어?".
+
+근본 원인 (버그 X — 데이터 미스매치): 사업계획서 양식 같은 일부 한글 doc 은 heading 스타일 (`제목 N` / `개요 N` / `Heading N`) 을 안 쓰고 본문 + 표 만으로 구성. `getOutline` 의 styleId → level 매핑이 빈 채로 시작 → 항상 빈 결과.
+
+진단 추가: outline 결과가 빈 경우 `console.info` 로 doc 의 styleList 전체 (`id:name/englishName, ...`) dump. 사용자 / 개발자가 어떤 스타일 이름이 있는지 즉시 확인 가능. 모델은 catalog description 에 이미 명시된 fallback (`getDocumentSummary`) 으로 우회.
+
 ### Changed — Claude Code 식 chat tool UI + 양식 cell 채움 시 char-shape 매칭 가이드 (0.4.17)
 
 목표: chat panel 의 tool 호출 표시를 (a) read = 자료 수집 / write = 실제 작업 으로 시각 분리 (b) 인접 read 들을 하나의 접힘 그룹으로 묶기 (c) 양식 cell 채울 때 AI 가 인접 cell 의 글꼴/사이즈 를 명시 매칭 하도록 prompt 강화.

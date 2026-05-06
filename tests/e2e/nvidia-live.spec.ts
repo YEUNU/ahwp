@@ -974,4 +974,76 @@ test.describe('NVIDIA NIM — live smoke', () => {
       `[live] form fill: paraCount ${baseline.paraCount}→${after.paraCount}, para0 len ${baseline.para0Head.length}→${after.para0Head.length}, insertText entries=${failedInsertEntries.length}`,
     );
   });
+
+  // 0.4.17 관찰 — 양식 채울 때 prompt §Anchored-write workflow §2 의
+  // char-shape 매칭 절차 (sibling cell 의 getCharPropertiesAt → 삽입 →
+  // applyCharFormat) 가 실제로 LLM 출력에 나타나는지. gemma-4 의
+  // 비결정성 때문에 hard assert 대신 informational. 시퀀스가 보이지 않
+  // 으면 prompt 강화 회의가 필요하단 신호.
+  test('0.4.17 관찰 — 양식 cell 채움 시 char-shape 매칭 시퀀스', async () => {
+    test.setTimeout(300_000);
+    const { page } = launched;
+    const ALPHA = path.resolve(
+      __dirname,
+      '..',
+      '..',
+      'examples',
+      '4. [사업계획서] 제조AI특화 스마트공장 사업계획서_양식_260326_01_데이터수집검증 중복화 복사본.hwp',
+    );
+    test.skip(!existsSync(ALPHA), 'examples/사업계획서 fixture missing');
+
+    await page.evaluate(async (p) => {
+      await window.api.session.set({ lastActivePath: p });
+    }, ALPHA);
+    await page.reload();
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForFunction(
+      () =>
+        Boolean(
+          (window as Window & { __studioDebug?: StudioDebug }).__studioDebug,
+        ),
+      { timeout: 30_000 },
+    );
+    await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
+      'data-state',
+      'ok',
+    );
+
+    await page
+      .getByTestId('chat-input')
+      .fill(
+        '테크플로우(TechFlow)라는 가상의 업체의 예지보전(Predictive Maintenance) 솔루션 사업으로 양식의 표지 부분 (도입기업명/과제번호/사업기간 등) 을 채워줘. 인접한 cell 의 글꼴/사이즈를 그대로 따라가도록.',
+      );
+    await page.getByTestId('chat-send').click();
+    await expect(page.getByTestId('chat-send')).toBeVisible({
+      timeout: 240_000,
+    });
+    await page.waitForTimeout(2000);
+
+    interface ObservedTool {
+      name: string;
+      status: string;
+    }
+    const tools: ObservedTool[] = await page
+      .locator('[data-testid="chat-tool-entry"]')
+      .evaluateAll((nodes): ObservedTool[] =>
+        nodes.map((n) => ({
+          name: (n as HTMLElement).dataset.toolName ?? '',
+          status: (n as HTMLElement).dataset.toolStatus ?? '',
+        })),
+      );
+    const counts = tools.reduce<Record<string, number>>((acc, t) => {
+      acc[t.name] = (acc[t.name] ?? 0) + 1;
+      return acc;
+    }, {});
+    const seqHas = (name: string): boolean =>
+      tools.some((t) => t.name === name && t.status === 'ok');
+    console.log(
+      `[live 0.4.17] tools observed: ${JSON.stringify(counts)} | insertTextInCell=${seqHas('insertTextInCell')} getCharPropertiesAt=${seqHas('getCharPropertiesAt')} applyCharFormat=${seqHas('applyCharFormat')}`,
+    );
+    // soft: cell-level write 가 나타났으면 양식 fill 흐름에 진입한 것.
+    // char-shape 매칭 시퀀스 (gCpA + aCF) 는 informational — 미발생이면
+    // prompt 가이드 강화 회의 트리거.
+    expect(seqHas('insertTextInCell') || seqHas('applyHtml')).toBe(true);
+  });
 });

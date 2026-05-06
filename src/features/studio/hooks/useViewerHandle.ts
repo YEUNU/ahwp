@@ -745,7 +745,27 @@ export function useViewerHandle(
             headingByStyleId.set(s.id, level);
           }
         }
-        if (headingByStyleId.size === 0) return [];
+        if (headingByStyleId.size === 0) {
+          // 0.4.18 — 진단. doc 의 styleList 에 heading 스타일이 하나도
+          // 없다는 신호 — 사업계획서 양식 / 본문-only 문서 등에서 흔하다.
+          // catalog description 이 모델에게 "outline 비면 getDocumentSummary
+          // fallback" 을 안내하지만, 사용자가 의아해할 때 콘솔에서 어떤
+          // 스타일이 있었는지 즉시 확인할 수 있도록 names dump.
+          if (styleList.length > 0) {
+            const names = styleList
+              .map(
+                (s) =>
+                  `${s.id}:${s.name}${s.englishName ? `/${s.englishName}` : ''}`,
+              )
+              .join(', ');
+            console.info(
+              `[studio] getOutline: heading-style 미발견 (제목 N / 개요 N / Heading N 매칭 없음). 문서 스타일 목록: ${names}`,
+            );
+          } else {
+            console.info('[studio] getOutline: styleList 가 비어있음.');
+          }
+          return [];
+        }
         const items: {
           paragraphIndex: number;
           level: number;
