@@ -6,6 +6,16 @@
 
 ## [Unreleased]
 
+### Fixed — macOS Keychain prompt 가 매 채팅 turn 마다 반복 (0.4.8)
+
+증상: API 키 저장 후 채팅마다 macOS Keychain 인증 prompt 발생. 사용자 입장 — Settings 한 번 + 첫 채팅 한 번 = 최소 2회.
+
+원인: `getSecret` 이 매 호출마다 `safeStorage.decryptString` 호출. Keychain ACL = "Allow once" (사용자가 "Always Allow" 안 누름) 시 매 decrypt 가 새 access 로 간주되어 prompt. main-process 가 이미 trusted 인데도 매번 키 chain 재방문.
+
+수정: `electron/store/secrets.ts` 에 main-process plaintext 캐시 (`plaintextCache: Map<ProviderId, string>`) 추가. 첫 decrypt 후 캐시 — 같은 session 내 후속 `getSecret` 은 silent. `setSecret` 은 plaintext 그대로 캐시 warm-up. `deleteSecret` 는 캐시 invalidate. **renderer 노출 0** — `secrets:get` IPC 는 여전히 없음, 캐시는 main-process 메모리 한정.
+
+사용자 측 추가 권장: Keychain prompt 첫 등장 시 **"Always Allow"** 클릭 — 이후 모든 access 가 silent (이번 fix 포함 / 미포함 무관 효과).
+
 ### Fixed — OpenAI Responses API 다중 tool 호출 turn 직렬화 시 `type:'list'` 400 에러 (0.4.7)
 
 증상: 한 turn 에 다중 tool call (예: `findInDocument` 12회 연속) 한 후 다음 turn 진입 시 OpenAI / NVIDIA NIM / Custom (OpenAI 호환) 모두 400 — `Invalid value: 'list'. Supported values are: 'function_call', 'function_call_output', 'message', 'reasoning', ...`. agent loop 가 도중에 stuck.

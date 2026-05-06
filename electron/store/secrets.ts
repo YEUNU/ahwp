@@ -11,6 +11,13 @@ interface Persisted {
 }
 
 let cache: Map<ProviderId, string> | null = null;
+// 0.4.8: main-process plaintext cache for decrypted keys. macOS Keychain
+// ACL = "Allow once" (not "Always Allow") triggers a prompt every
+// `safeStorage.decryptString` call. Caching the decrypted value in
+// main-process memory consolidates prompts to ONCE per (providerId, app
+// session). Renderer never sees the plaintext (no `secrets:get` IPC).
+// Invalidated on `setSecret` / `deleteSecret`.
+const plaintextCache = new Map<ProviderId, string>();
 let writeChain: Promise<void> = Promise.resolve();
 
 function storePath(): string {
@@ -86,22 +93,32 @@ export async function setSecret(
   const map = await load();
   const encrypted = safeStorage.encryptString(plaintext).toString('base64');
   map.set(providerId, encrypted);
+  // 0.4.8: warm the plaintext cache so the next getSecret in this
+  // session is silent (no extra Keychain decrypt prompt).
+  plaintextCache.set(providerId, plaintext);
   persist();
 }
 
 /**
  * Decrypt and return the stored key. Main-process only — never expose this
  * over IPC. Adapters call this just before issuing a request.
+ *
+ * 0.4.8: caches the plaintext after first decrypt so repeated calls in
+ * the same app session don't re-trigger macOS Keychain ACL prompts.
  */
 export async function getSecret(
   providerId: ProviderId,
 ): Promise<string | null> {
+  const cached = plaintextCache.get(providerId);
+  if (cached !== undefined) return cached;
   const map = await load();
   const enc = map.get(providerId);
   if (!enc) return null;
   ensureSafeStorage();
   try {
-    return safeStorage.decryptString(Buffer.from(enc, 'base64'));
+    const plaintext = safeStorage.decryptString(Buffer.from(enc, 'base64'));
+    plaintextCache.set(providerId, plaintext);
+    return plaintext;
   } catch (err) {
     console.error(`[secrets] failed to decrypt key for ${providerId}:`, err);
     return null;
@@ -110,7 +127,10 @@ export async function getSecret(
 
 export async function deleteSecret(providerId: ProviderId): Promise<void> {
   const map = await load();
-  if (map.delete(providerId)) persist();
+  if (map.delete(providerId)) {
+    plaintextCache.delete(providerId);
+    persist();
+  }
 }
 
 export async function hasSecret(providerId: ProviderId): Promise<boolean> {
