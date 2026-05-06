@@ -110,6 +110,8 @@ interface UiToolEntry {
   reason?: string;
   /** 0.4.11 — JSON-stringified tool 결과 (확장 버튼 노출). */
   resultPreview?: string;
+  /** 0.4.17 — read 는 dim 한 줄, write 는 카드. */
+  kind: 'read' | 'write';
 }
 
 function loadProvider(): ChatProviderId {
@@ -1772,13 +1774,21 @@ function Message({
             className="mt-2 flex flex-col gap-1 border-t border-border/50 pt-2 text-xs"
             data-testid="chat-tool-entries"
           >
-            {message.toolEntries.map((te) => (
-              <ToolEntryRow
-                key={te.id}
-                entry={te}
-                onResolveApproval={onResolveApproval ?? null}
-              />
-            ))}
+            {groupToolEntries(message.toolEntries).map((g) =>
+              g.kind === 'read-group' ? (
+                <ReadGroup
+                  key={g.id}
+                  entries={g.entries}
+                  onResolveApproval={onResolveApproval ?? null}
+                />
+              ) : (
+                <ToolEntryRow
+                  key={g.entry.id}
+                  entry={g.entry}
+                  onResolveApproval={onResolveApproval ?? null}
+                />
+              ),
+            )}
             {/* 모두 승인 / 거절 — pending 이 둘 이상일 때만 보임. */}
             {(() => {
               const pendingIds = (message.toolEntries ?? [])
@@ -2119,10 +2129,104 @@ function Message({
 }
 
 /**
+ * 0.4.17 — Claude Code 식 tool entry grouping. 인접한 read entries 는
+ * 하나의 ReadGroup 으로 접고, write entries 는 카드로 단독 렌더.
+ * 정렬 보존 + write 가 read run 을 끊는 동작 보장.
+ */
+type ToolEntryGroup =
+  | { kind: 'read-group'; id: string; entries: UiToolEntry[] }
+  | { kind: 'write'; entry: UiToolEntry };
+
+function groupToolEntries(entries: UiToolEntry[]): ToolEntryGroup[] {
+  const out: ToolEntryGroup[] = [];
+  let buffer: UiToolEntry[] = [];
+  const flush = (): void => {
+    if (buffer.length === 0) return;
+    out.push({ kind: 'read-group', id: `rg-${buffer[0].id}`, entries: buffer });
+    buffer = [];
+  };
+  for (const e of entries) {
+    if (e.kind === 'read') {
+      buffer.push(e);
+    } else {
+      flush();
+      out.push({ kind: 'write', entry: e });
+    }
+  }
+  flush();
+  return out;
+}
+
+/**
+ * 0.4.17 — 인접한 read tool 호출들을 하나의 접힘 row 로 표시.
+ * 진행중: "🔍 자료 수집 중 (n)". 완료: "✓ 자료 수집 (n)" + 펼치기.
+ * 펼치면 개별 ToolEntryRow (read 스타일).
+ */
+function ReadGroup({
+  entries,
+  onResolveApproval,
+}: {
+  entries: UiToolEntry[];
+  onResolveApproval: ((id: string, accept: boolean) => void) | null;
+}): JSX.Element {
+  const [expanded, setExpanded] = useState(false);
+  const running = entries.some((e) => e.status === 'running');
+  const failed = entries.filter((e) => e.status === 'failed').length;
+  const total = entries.length;
+  const summary = running
+    ? `자료 수집 중 (${total})`
+    : failed > 0
+      ? `자료 수집 (${total - failed}/${total} 성공)`
+      : `자료 수집 (${total})`;
+  return (
+    <div
+      data-testid="chat-tool-read-group"
+      data-tool-status={running ? 'running' : failed > 0 ? 'failed' : 'ok'}
+      data-count={total}
+    >
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        data-testid="chat-tool-read-group-toggle"
+        data-expanded={expanded ? 'true' : 'false'}
+        className={cn(
+          'flex w-full min-w-0 items-center gap-2 rounded px-1 py-0.5 text-left text-[11px] text-muted-foreground/80 hover:bg-muted/40 hover:text-muted-foreground',
+          failed > 0 && 'text-destructive/80',
+        )}
+        aria-label={expanded ? '읽기 그룹 접기' : '읽기 그룹 펼치기'}
+      >
+        <span className="shrink-0">
+          {running ? '⏳' : failed > 0 ? '⚠' : '✓'}
+        </span>
+        <span className="shrink-0">🔍</span>
+        <span className="min-w-0 flex-1 truncate italic">{summary}</span>
+        <span className="shrink-0 text-[10px]">{expanded ? '▼' : '▶'}</span>
+      </button>
+      {expanded ? (
+        <div
+          className="mt-1 flex flex-col gap-0.5 border-l border-border/40 pl-2"
+          data-testid="chat-tool-read-group-detail"
+        >
+          {entries.map((e) => (
+            <ToolEntryRow
+              key={e.id}
+              entry={e}
+              onResolveApproval={onResolveApproval}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
  * 0.4.11 — 한 줄 tool 호출 row + 확장 가능한 result 패널.
  * 한 row 에 status icon / 🔧 / name / argsPreview (truncate) / chevron.
  * chevron 클릭 시 result preview (JSON or status string) 가 monospace
  * panel 로 펼쳐짐. 결과가 없으면 (running / pending) chevron 숨김.
+ *
+ * 0.4.17 — kind='read' 는 dim한 muted 한 줄, kind='write' 는 강조 카드.
  */
 function ToolEntryRow({
   entry,
@@ -2144,16 +2248,23 @@ function ToolEntryRow({
           : entry.status === 'rejected'
             ? '↩'
             : '✗';
+  const isWrite = entry.kind === 'write';
   return (
     <div
       data-testid="chat-tool-entry"
       data-tool-name={entry.name}
       data-tool-status={entry.status}
+      data-tool-kind={entry.kind}
       title={entry.reason ?? ''}
+      className={cn(
+        isWrite &&
+          'rounded border border-border/60 bg-muted/30 px-2 py-1.5 shadow-xs',
+      )}
     >
       <div
         className={cn(
-          'flex min-w-0 items-center gap-2 font-mono',
+          'flex min-w-0 items-center gap-2',
+          isWrite ? 'font-mono' : 'font-mono text-[11px]',
           entry.status === 'failed' && 'text-destructive',
         )}
       >
@@ -2162,18 +2273,29 @@ function ToolEntryRow({
             'shrink-0',
             entry.status === 'failed'
               ? 'text-destructive'
-              : 'text-muted-foreground',
+              : isWrite
+                ? 'text-foreground/80'
+                : 'text-muted-foreground/70',
           )}
         >
           {statusGlyph}
         </span>
-        <span className="shrink-0 font-semibold">🔧 {entry.name}</span>
+        <span
+          className={cn(
+            'shrink-0',
+            isWrite ? 'font-semibold' : 'font-medium text-muted-foreground/80',
+          )}
+        >
+          {isWrite ? '✏️' : '🔍'} {entry.name}
+        </span>
         <span
           className={cn(
             'min-w-0 flex-1 truncate',
             entry.status === 'failed'
               ? 'text-destructive/80'
-              : 'text-muted-foreground',
+              : isWrite
+                ? 'text-muted-foreground'
+                : 'text-muted-foreground/60',
           )}
         >
           {entry.argsPreview}

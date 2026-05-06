@@ -49,6 +49,10 @@ interface UiToolEntry {
    *  tools 의 ok/error). chat UI 의 확장 버튼 클릭 시 노출. read tools
    *  는 16k cap, write tools 는 4k cap (advanceAgentLoop 정합). */
   resultPreview?: string;
+  /** 0.4.17 — Claude Code 식 시각 분리. read tools 는 muted, write
+   *  tools 는 강조 카드. isReadOnlyTool(name) 의 boolean 을 캐싱 — UI
+   *  단계에서 catalog import 안 하도록. */
+  kind: 'read' | 'write';
 }
 
 interface UiMessage extends ChatMessage {
@@ -433,6 +437,7 @@ export function useChatStreaming(
             name: evt.name,
             argsPreview,
             status: 'running',
+            kind: isReadOnlyTool(evt.name) ? 'read' : 'write',
           };
           setMessages((prev: any) =>
             prev.map((m: any) =>

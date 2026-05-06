@@ -6,6 +6,28 @@
 
 ## [Unreleased]
 
+### Changed — Claude Code 식 chat tool UI + 양식 cell 채움 시 char-shape 매칭 가이드 (0.4.17)
+
+목표: chat panel 의 tool 호출 표시를 (a) read = 자료 수집 / write = 실제 작업 으로 시각 분리 (b) 인접 read 들을 하나의 접힘 그룹으로 묶기 (c) 양식 cell 채울 때 AI 가 인접 cell 의 글꼴/사이즈 를 명시 매칭 하도록 prompt 강화.
+
+UI A — read/write 시각 분리:
+
+- `UiToolEntry` 에 `kind: 'read' | 'write'` 필드 추가. `useChatStreaming` 의 entry 생성부에서 `isReadOnlyTool(name)` 으로 채움
+- `ToolEntryRow` 가 kind 기반 분기 — write 는 bordered 카드 (`bg-muted/30` + `shadow-xs` + `font-mono`), read 는 dim 한 줄 (`text-muted-foreground/60` + `text-[11px]`)
+- 아이콘 분리: write=`✏️`, read=`🔍` (이전 통일 `🔧` 폐기)
+
+UI B — 연속 read 묶음 처리:
+
+- `groupToolEntries(entries)` 가 인접 read entries 를 단일 `read-group` 으로 fold, write 는 run 을 끊음
+- `ReadGroup` 컴포넌트 — 진행중: "🔍 자료 수집 중 (n)" / 완료: "✓ 자료 수집 (n)" / 일부 실패: "⚠ 자료 수집 (k/n 성공)". 클릭 펼치면 개별 row
+- testid: `chat-tool-read-group` / `chat-tool-read-group-toggle` / `chat-tool-read-group-detail`. data-tool-kind=read|write
+
+(b1) — cell 채움 시 char-shape 명시 매칭:
+
+- `prompts.ts` Anchored-write workflow §2 에 cell 채움 후 sibling cell 의 `getCharPropertiesAt` → `applyCharFormat` 절차 추가. `applyCharFormat` 의 lib quirk (empty paragraph no-op) 도 같이 명시 — 텍스트 삽입 후에 format
+- `useDebugSurface.getCharProps(sec, para, off)` 노출 — deterministic e2e 검증용. 이전엔 lib 메서드만 있고 debug surface 없어 fixture 단위 검증 불가능했음
+- 인프라 확인: `getCharPropertiesAt` 는 이미 6 surface (이름/READONLY/Args/catalog/validator/dispatcher/ViewerHandle) 모두 wired — 추가 작업 X. 변경은 prompt + debug 만
+
 ### Changed — prompt 휴리스틱 일괄 제거 + insertTextInCell 도구 추가 + 양식 채움 live 검증 (0.4.16)
 
 목표: 양식 doc 의 write-intent query 가 (a) layout 파손 X (b) 실제로 채움 (c) 휴리스틱 enumeration 없는 prompt. 사용자 지시 — "프롬프트 휴리스틱하게 쓰지마" + "양식에 맞게 내용 채울 때까지 시도".

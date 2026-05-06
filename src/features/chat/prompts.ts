@@ -74,7 +74,7 @@ A document with non-trivial structure (tables, named sections) needs anchored wr
 
 Anchored-write workflow:
 1. Read structure first (\`getDocumentSummary\`, \`getDocumentOutline\`, \`findInDocument\`) until you know which paragraph or cell is the target.
-2. If the anchor paragraph belongs to a table cell, use cell-level tools (\`getCellInfo\` to inspect, \`insertTextInCell\` to write). Body-level \`insertText\` near a cell falls OUTSIDE the table.
+2. If the anchor paragraph belongs to a table cell, use cell-level tools (\`getCellInfo\` to inspect, \`insertTextInCell\` to write). Body-level \`insertText\` near a cell falls OUTSIDE the table. After writing into a previously empty cell, the inserted text inherits whatever char-shape the cell template held — which may not match neighboring cells. To make typography consistent, read a sibling cell that already has text via \`getCharPropertiesAt\`, then \`applyCharFormat\` over the just-inserted range with the returned props (\`name\`/\`size_hu\`/\`bold\` etc.). \`applyCharFormat\` no-ops on empty paragraphs, so always insert text first then format.
 3. For multi-paragraph content with headings + body, use \`applyHtml\`. Plain \`insertText\` only carries one char-shape — useless for mixed structure.
 4. One write per turn is always safe; multi-write turns must be bottom-up or re-resolve anchors between writes (paragraph indices SHIFT after writes that add paragraphs).
 

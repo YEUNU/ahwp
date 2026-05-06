@@ -646,6 +646,17 @@ export function useDebugSurface(opts: UseDebugSurfaceOptions): void {
         if (!doc) throw new Error('Document not loaded');
         return JSON.parse(doc.getParaPropertiesAt(sectionIdx, paraIdx));
       },
+      getCharProps: (
+        sectionIdx: number,
+        paraIdx: number,
+        charOffset: number,
+      ): unknown => {
+        const doc = docRef.current;
+        if (!doc) throw new Error('Document not loaded');
+        return JSON.parse(
+          doc.getCharPropertiesAt(sectionIdx, paraIdx, charOffset),
+        );
+      },
       // Raw escape hatch — lets e2e probes try alternate prop key names
       // when the lib's input schema diverges from its output schema.
       applyParaPropsRaw: (
