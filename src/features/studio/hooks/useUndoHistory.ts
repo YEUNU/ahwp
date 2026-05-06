@@ -134,9 +134,15 @@ export function useUndoHistory(opts: UseUndoHistoryOptions): UndoHistoryHandle {
         /* ignore — older lib */
       }
       o.cacheRef.current.clear();
+      // chunk 103b: dual-mode aware. SVG mode requires innerHTML wipe
+      // (renderPageInto early-returns when an SVG child is present).
+      // Canvas mode re-renders in place onto the pooled canvas.
       o.pageRefsRef.current.forEach((el, idx) => {
-        if (el?.firstElementChild?.tagName.toLowerCase() === 'svg') {
-          el.innerHTML = '';
+        const tag = el?.firstElementChild?.tagName.toLowerCase();
+        if (tag === 'svg') {
+          el!.innerHTML = '';
+          o.renderPageInto(idx);
+        } else if (tag === 'canvas') {
           o.renderPageInto(idx);
         }
       });

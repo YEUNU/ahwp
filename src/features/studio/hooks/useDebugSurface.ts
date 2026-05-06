@@ -1246,10 +1246,16 @@ export function useDebugSurface(opts: UseDebugSurfaceOptions): void {
         doc.insertText(c.sectionIndex, c.paragraphIndex, c.charOffset, text);
         // Mirror what handleCompositionEnd would do post-doc-mutation.
         cacheRef.current.clear();
+        // chunk 103b: mode-agnostic — both 'svg' and 'canvas' children
+        // signal a mounted page. SVG path needs innerHTML wipe so the
+        // tagName check in renderPageInto re-fires; Canvas path can
+        // re-render in place.
         pageRefsRef.current.forEach((el, idx) => {
-          const target = el?.querySelector('svg');
+          const target = el?.querySelector('svg, canvas');
           if (target) {
-            el!.innerHTML = '';
+            if (target.tagName.toLowerCase() === 'svg') {
+              el!.innerHTML = '';
+            }
             renderPageInto(idx);
           }
         });
