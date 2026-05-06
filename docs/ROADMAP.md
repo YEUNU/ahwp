@@ -16,7 +16,7 @@
 - [x] `electron/main.ts`: BrowserWindow 생성, dev/prod 분기
 - [x] `electron/preload.ts`: `contextBridge`로 `window.api` 노출
 - [x] Tailwind CSS 셋업 (한글 폰트 폴백 포함)
-- [ ] ~~shadcn/ui CLI 초기화~~ → Phase 1-A에서 첫 컴포넌트 도입 시 같이 진행
+- [x] ~~shadcn/ui CLI 초기화~~ ✅ Phase 1-A 에서 자연스럽게 흡수 — `src/components/ui/{button,dialog,input,...}.tsx` 인스톨됨
 - [x] ESLint + Prettier + tsconfig (strict)
 - [x] Vitest 셋업 + dummy 테스트 1개 (App.test.tsx 2/2 passing)
 - [x] `ipc:ping` 핸들러 + 렌더러 호출 검증
@@ -139,8 +139,8 @@
 > **블록됨** — 아래 어댑터들은 메인테이너의 API 키/계정 준비를 기다리는 중. 코드 자체는 OpenAI/NVIDIA 패턴을 이미 확립해두었으므로 키만 확보되면 빠르게 진행 가능. 그 전까지는 `SHOWN_IDS`(SettingsDialog)에서 숨김 + `getProvider`에서 null 반환 유지.
 
 - [ ] Anthropic 어댑터 — 키 준비 대기 (`messages` API, `event:` line-prefixed SSE, Phase 3 `tool_use` 대비)
-- [ ] Google (Gemini) 어댑터 — 키 준비 대기
-- [ ] **Custom (OpenAI-compatible) 어댑터** — 키/baseUrl 입력 후 OpenAI 어댑터 재사용. 자체 호스팅 Ollama (`http://localhost:11434/v1`), vLLM, LM Studio, on-prem LLM 게이트웨이 등을 한 슬롯에 통합 (chunk 49에서 `ollama` provider 슬롯 제거하고 `custom`으로 통합)
+- [x] Google (Gemini) 어댑터 ✅ (chunks 53~54, 0.3.6+): native tool_use 통합 (`tools[].functionDeclarations[]` + `parts[].functionCall`). live e2e 2/2 통과 (`PROGRESS` 의 "live ... Gemini 2/2"). `electron/ai/providers/google.ts`
+- [x] **Custom (OpenAI-compatible) 어댑터** ✅ (chunk 49, 0.2.49): `electron/ai/registry.ts` 의 `customProvider` — OpenAI 어댑터 재사용 + meta swap (`id='custom'`, `requiresBaseUrl`). 자체 호스팅 Ollama / vLLM / LM Studio / on-prem LLM 한 슬롯 통합. 기존 `ollama` 슬롯은 흡수 후 제거
 
 ### 2-C. 채팅 UI
 
@@ -183,9 +183,9 @@
 
 ### 2-G. Phase 3 진입 정비 (chunk 37~)
 
-- [ ] provider tool-use API 바인딩 — Anthropic / OpenAI function calling 정식 통합. 현재 chunk 19는 응답-텍스트 dispatcher. 같은 도구 카탈로그를 양 진입점에서 공유
-- [ ] docId-aware 라우팅 — chunk 19 single-target dispatch를 `runTools(docId, items)`로 확장. reference write 시도는 거절 결과로 사용자에 알림
-- [ ] 다중 턴 자동 실행 + tool-result 응답 루프 (Phase 3 Agent 모드 핵심)
+- [x] provider tool-use API 바인딩 ✅ (chunks 27+): OpenAI / NVIDIA / Google native tool-use 통합. `m.toolUses` (assistant) → `tool_calls` / `functionCall` → `tool_result` (`m.toolResult`) 라운드 트립. chunk 19 응답-텍스트 dispatcher 는 fallback 으로 잔존. (Anthropic 만 chunk 42 — API 키 대기)
+- [x] docId-aware 라우팅 ✅ (chunk 50, 0.3.11) — 아래 chunk 50 항목 참조
+- [x] 다중 턴 자동 실행 + tool-result 응답 루프 ✅ (chunks 95+ Agent mode, 0.3.30+): `useChatStreaming` 의 advance loop, turn cap 기본 50 (Settings 1~200), grouped undo per turn, mid-loop stop, step counter UI, parallel read dispatch. chunk 99 follow-up 의 Plan mode + outline-aware section replace 까지 포함
 
 검증: 실제 문서를 열고 "이 단락 요약해서 다시 써줘" 같은 작업이 정상 동작.
 
