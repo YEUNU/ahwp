@@ -45,6 +45,10 @@ interface UiToolEntry {
   argsPreview: string;
   status: 'running' | 'ok' | 'failed';
   reason?: string;
+  /** 0.4.11 — JSON-stringified tool 결과 (read tools 의 data 또는 write
+   *  tools 의 ok/error). chat UI 의 확장 버튼 클릭 시 노출. read tools
+   *  는 16k cap, write tools 는 4k cap (advanceAgentLoop 정합). */
+  resultPreview?: string;
 }
 
 interface UiMessage extends ChatMessage {
@@ -664,10 +668,26 @@ export function useChatStreaming(
                 toolEntries: m.toolEntries.map((te: any) => {
                   if (partialResults.has(te.id)) {
                     const r = partialResults.get(te.id)!;
+                    let resultPreview: string | undefined;
+                    try {
+                      if (r.ok && r.data !== undefined) {
+                        let json = JSON.stringify(r.data, null, 2);
+                        const cap = isReadOnlyTool(r.name) ? 16384 : 4096;
+                        if (json.length > cap) json = json.slice(0, cap) + '…';
+                        resultPreview = json;
+                      } else if (r.ok) {
+                        resultPreview = `ok: ${r.name}`;
+                      } else {
+                        resultPreview = `error: ${r.reason ?? '?'}`;
+                      }
+                    } catch {
+                      resultPreview = '(non-serializable)';
+                    }
                     return {
                       ...te,
                       status: r.ok ? 'ok' : 'failed',
                       reason: r.reason,
+                      resultPreview,
                     };
                   }
                   if (pendingCalls.has(te.id)) {
@@ -1114,10 +1134,29 @@ export function useChatStreaming(
               if (r.reason === 'user-rejected') {
                 return { ...te, status: 'rejected', reason: r.reason };
               }
+              // 0.4.11 — 결과 JSON 미리 stringify 해 UI 의 확장 패널이
+              // 클릭 시 즉시 보여줄 수 있게. read tools 16k / write 4k cap
+              // (advanceAgentLoop 의 tool-result 메시지 cap 정합).
+              let resultPreview: string | undefined;
+              try {
+                if (r.ok && r.data !== undefined) {
+                  let json = JSON.stringify(r.data, null, 2);
+                  const cap = isReadOnlyTool(r.name) ? 16384 : 4096;
+                  if (json.length > cap) json = json.slice(0, cap) + '…';
+                  resultPreview = json;
+                } else if (r.ok) {
+                  resultPreview = `ok: ${r.name}`;
+                } else {
+                  resultPreview = `error: ${r.reason ?? '?'}`;
+                }
+              } catch {
+                resultPreview = '(non-serializable)';
+              }
               return {
                 ...te,
                 status: r.ok ? 'ok' : 'failed',
                 reason: r.reason,
+                resultPreview,
               };
             }),
           };

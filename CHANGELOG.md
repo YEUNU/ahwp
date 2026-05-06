@@ -6,6 +6,15 @@
 
 ## [Unreleased]
 
+### Changed — Tool 호출 UI 한 줄 truncate + 결과 확장 패널 (0.4.11)
+
+요청: AI 도구 호출 표시를 한 줄로, 결과는 확장 버튼 클릭 시에만 노출.
+
+- `chat-tool-entry` 행이 본격 single-line — 부모 flex 가 `min-w-0` + 자식 args span 이 `flex-1 truncate` 라 너비 안 넘김. 이전엔 truncate 가 있었지만 부모 min-w-0 부재로 wrap 발생 (스크린샷에서 "text-too-large" 가 두 줄 차지하던 이유)
+- 새 ▶ chevron 버튼 — 클릭 시 result panel (▼ 로 토글) 펼침. result 는 monospace `<pre>` (max-h-60, overflow-auto, JSON 2-space indent) 로 표시. result 없는 entry (running / pending) 는 chevron 숨김
+- `UiToolEntry.resultPreview` 필드 신규 — `useChatStreaming` 가 partialResults 도착 시 JSON.stringify 해 미리 저장. read tools 16k cap, write tools 4k cap (advanceAgentLoop 의 tool-result 메시지 cap 정합)
+- 새 `ToolEntryRow` 컴포넌트 — 행 + 확장 패널을 한 단위로 캡슐화. 기존 `data-testid` 모두 보존 (chat-tool-entry / chat-tool-approve / chat-tool-reject) + 신규 `chat-tool-expand`, `chat-tool-result`
+
 ### Fixed — 다중 write tool 병렬 dispatch race + bottom-up 가이드 (0.4.10)
 
 증상: AI 가 한 turn 에 다중 write tool (예: `insertText` × 5) batch 시 비결정적 interleaving + paragraph index shift 로 의도 안 된 위치에 적용. 사용자: "다중 위치에 동시 작업할 때도 동작하나?"

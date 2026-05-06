@@ -108,6 +108,8 @@ interface UiToolEntry {
    *  거절 (dispatch 안 됨, tool_result 는 'user-rejected' 로 모델에 회신). */
   status: 'running' | 'ok' | 'failed' | 'pending' | 'rejected';
   reason?: string;
+  /** 0.4.11 — JSON-stringified tool 결과 (확장 버튼 노출). */
+  resultPreview?: string;
 }
 
 function loadProvider(): ChatProviderId {
@@ -1771,73 +1773,11 @@ function Message({
             data-testid="chat-tool-entries"
           >
             {message.toolEntries.map((te) => (
-              <div
+              <ToolEntryRow
                 key={te.id}
-                className={cn(
-                  'flex items-center gap-2 font-mono',
-                  te.status === 'failed' && 'text-destructive',
-                )}
-                data-testid="chat-tool-entry"
-                data-tool-name={te.name}
-                data-tool-status={te.status}
-                title={te.reason ?? ''}
-              >
-                <span
-                  className={cn(
-                    te.status === 'failed'
-                      ? 'text-destructive'
-                      : 'text-muted-foreground',
-                  )}
-                >
-                  {te.status === 'running'
-                    ? '⏳'
-                    : te.status === 'ok'
-                      ? '✓'
-                      : te.status === 'pending'
-                        ? '⏸'
-                        : te.status === 'rejected'
-                          ? '↩'
-                          : '✗'}
-                </span>
-                <span className="font-semibold">🔧 {te.name}</span>
-                <span
-                  className={cn(
-                    'truncate',
-                    te.status === 'failed'
-                      ? 'text-destructive/80'
-                      : 'text-muted-foreground',
-                  )}
-                >
-                  {te.argsPreview}
-                </span>
-                {te.status === 'failed' && te.reason ? (
-                  <span className="text-destructive">{te.reason}</span>
-                ) : null}
-                {te.status === 'pending' && onResolveApproval ? (
-                  <span className="ml-auto flex shrink-0 gap-1">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="default"
-                      onClick={() => void onResolveApproval(te.id, true)}
-                      data-testid="chat-tool-approve"
-                      className="h-6 px-2 text-[10px]"
-                    >
-                      승인
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => void onResolveApproval(te.id, false)}
-                      data-testid="chat-tool-reject"
-                      className="h-6 px-2 text-[10px]"
-                    >
-                      거절
-                    </Button>
-                  </span>
-                ) : null}
-              </div>
+                entry={te}
+                onResolveApproval={onResolveApproval ?? null}
+              />
             ))}
             {/* 모두 승인 / 거절 — pending 이 둘 이상일 때만 보임. */}
             {(() => {
@@ -2174,6 +2114,119 @@ function Message({
           ) : null}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * 0.4.11 — 한 줄 tool 호출 row + 확장 가능한 result 패널.
+ * 한 row 에 status icon / 🔧 / name / argsPreview (truncate) / chevron.
+ * chevron 클릭 시 result preview (JSON or status string) 가 monospace
+ * panel 로 펼쳐짐. 결과가 없으면 (running / pending) chevron 숨김.
+ */
+function ToolEntryRow({
+  entry,
+  onResolveApproval,
+}: {
+  entry: UiToolEntry;
+  onResolveApproval: ((id: string, accept: boolean) => void) | null;
+}): JSX.Element {
+  const [expanded, setExpanded] = useState(false);
+  const hasDetail =
+    entry.resultPreview !== undefined && entry.resultPreview.length > 0;
+  const statusGlyph =
+    entry.status === 'running'
+      ? '⏳'
+      : entry.status === 'ok'
+        ? '✓'
+        : entry.status === 'pending'
+          ? '⏸'
+          : entry.status === 'rejected'
+            ? '↩'
+            : '✗';
+  return (
+    <div
+      data-testid="chat-tool-entry"
+      data-tool-name={entry.name}
+      data-tool-status={entry.status}
+      title={entry.reason ?? ''}
+    >
+      <div
+        className={cn(
+          'flex min-w-0 items-center gap-2 font-mono',
+          entry.status === 'failed' && 'text-destructive',
+        )}
+      >
+        <span
+          className={cn(
+            'shrink-0',
+            entry.status === 'failed'
+              ? 'text-destructive'
+              : 'text-muted-foreground',
+          )}
+        >
+          {statusGlyph}
+        </span>
+        <span className="shrink-0 font-semibold">🔧 {entry.name}</span>
+        <span
+          className={cn(
+            'min-w-0 flex-1 truncate',
+            entry.status === 'failed'
+              ? 'text-destructive/80'
+              : 'text-muted-foreground',
+          )}
+        >
+          {entry.argsPreview}
+          {entry.status === 'failed' && entry.reason
+            ? ` — ${entry.reason}`
+            : ''}
+        </span>
+        {hasDetail ? (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            data-testid="chat-tool-expand"
+            data-expanded={expanded ? 'true' : 'false'}
+            className="shrink-0 rounded px-1 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground"
+            aria-label={expanded ? '결과 접기' : '결과 펼치기'}
+            title={expanded ? '결과 접기' : '결과 펼치기'}
+          >
+            {expanded ? '▼' : '▶'}
+          </button>
+        ) : null}
+        {entry.status === 'pending' && onResolveApproval ? (
+          <span className="ml-auto flex shrink-0 gap-1">
+            <Button
+              type="button"
+              size="sm"
+              variant="default"
+              onClick={() => void onResolveApproval(entry.id, true)}
+              data-testid="chat-tool-approve"
+              className="h-6 px-2 text-[10px]"
+            >
+              승인
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => void onResolveApproval(entry.id, false)}
+              data-testid="chat-tool-reject"
+              className="h-6 px-2 text-[10px]"
+            >
+              거절
+            </Button>
+          </span>
+        ) : null}
+      </div>
+      {expanded && hasDetail ? (
+        <pre
+          data-testid="chat-tool-result"
+          className="mt-1 max-h-60 overflow-auto rounded border border-border/50 bg-muted/30 p-2 text-[10px] leading-relaxed"
+        >
+          {entry.resultPreview}
+        </pre>
+      ) : null}
     </div>
   );
 }
