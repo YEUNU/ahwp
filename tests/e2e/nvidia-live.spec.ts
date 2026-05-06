@@ -1073,6 +1073,110 @@ test.describe('NVIDIA NIM — live smoke', () => {
     // prompt 가이드 강화 회의 트리거.
     expect(seqHas('insertTextInCell') || seqHas('applyHtml')).toBe(true);
   });
+
+  // 0.4.21 — fill 정성적 검증. paraCount Δ 만 보는 0.4.14 회귀 보강.
+  // (a) 빈 cell 이 실제로 채워졌는지 (delta), (b) AI 가 patches block
+  // 으로 emit 했는지 (chat-patches-block 노드), (c) 두 query 로 재현성.
+  for (const round of [
+    {
+      label: 'round 1 — 가상 업체 fill',
+      prompt:
+        '테크플로우(TechFlow)라는 가상의 업체의 예지보전(Predictive Maintenance) 솔루션 사업으로 양식 표지 채워줘 — 도입기업명/공급기업명/과제번호/사업기간 등.',
+    },
+    {
+      label: 'round 2 — 다른 회사 fill',
+      prompt:
+        '회사명 "그린에너지" 의 태양광 모니터링 시스템 사업으로 양식 표지 정보를 채워줘. 비어 있는 곳에만 자연스럽게.',
+    },
+  ]) {
+    test(`0.4.21 fill 검증 — ${round.label}`, async () => {
+      test.setTimeout(300_000);
+      const { page } = launched;
+      const ALPHA = path.resolve(
+        __dirname,
+        '..',
+        '..',
+        'examples',
+        '4. [사업계획서] 제조AI특화 스마트공장 사업계획서_양식_260326_01_데이터수집검증 중복화 복사본.hwp',
+      );
+      test.skip(!existsSync(ALPHA), 'examples/사업계획서 fixture missing');
+
+      await page.evaluate(async (p) => {
+        await window.api.session.set({ lastActivePath: p });
+      }, ALPHA);
+      await page.reload();
+      await page.waitForLoadState('domcontentloaded');
+      await page.waitForFunction(
+        () =>
+          Boolean(
+            (window as Window & { __studioDebug?: StudioDebug }).__studioDebug
+              ?.getEmptyFormFields,
+          ),
+        { timeout: 30_000 },
+      );
+      await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
+        'data-state',
+        'ok',
+      );
+
+      const before = await page.evaluate(() => {
+        const dbg = (window as Window & { __studioDebug?: StudioDebug })
+          .__studioDebug!;
+        return {
+          paraCount: dbg.getParagraphCount!(0),
+          empty: dbg.getEmptyFormFields!({ sectionIdx: 0, maxResults: 200 })
+            .cellFields.length,
+        };
+      });
+
+      await page.getByTestId('chat-input').fill(round.prompt);
+      await page.getByTestId('chat-send').click();
+      await expect(page.getByTestId('chat-send')).toBeVisible({
+        timeout: 240_000,
+      });
+      await page.waitForTimeout(3000);
+
+      const after = await page.evaluate(() => {
+        const dbg = (window as Window & { __studioDebug?: StudioDebug })
+          .__studioDebug!;
+        return {
+          paraCount: dbg.getParagraphCount!(0),
+          empty: dbg.getEmptyFormFields!({ sectionIdx: 0, maxResults: 200 })
+            .cellFields.length,
+        };
+      });
+
+      interface ToolEntryInfo {
+        name: string;
+        status: string;
+      }
+      const tools: ToolEntryInfo[] = await page
+        .locator('[data-testid="chat-tool-entry"]')
+        .evaluateAll((nodes): ToolEntryInfo[] =>
+          nodes.map((n) => ({
+            name: (n as HTMLElement).dataset.toolName ?? '',
+            status: (n as HTMLElement).dataset.toolStatus ?? '',
+          })),
+        );
+      const usedDiscovery = tools.some(
+        (t) => t.name === 'getEmptyFormFields' && t.status === 'ok',
+      );
+      const usedCellWrite = tools.some(
+        (t) => t.name === 'insertTextInCell' && t.status === 'ok',
+      );
+      const patchesBlocks = await page
+        .locator('[data-testid="chat-patches-block"]')
+        .count();
+      const paraCountDelta = after.paraCount - before.paraCount;
+      const filledCellDelta = before.empty - after.empty;
+      console.log(
+        `[live 0.4.21 ${round.label}] paraΔ=${paraCountDelta}, emptyCells ${before.empty}→${after.empty} (filled=${filledCellDelta}), discovery=${usedDiscovery}, cellWrite=${usedCellWrite}, patchesBlocks=${patchesBlocks}`,
+      );
+      expect(paraCountDelta).toBeLessThan(20);
+      expect(filledCellDelta).toBeGreaterThan(0);
+      expect(patchesBlocks > 0 || usedCellWrite).toBe(true);
+    });
+  }
 });
 
 // 0.4.21 — deterministic: getEmptyFormFields 가 양식 fixture 에서

@@ -76,7 +76,7 @@ When the user asks to fill / populate / complete a form-style document (any doc 
 
 1. Call \`getEmptyFormFields\` first. It returns every empty cell coordinate plus a label hint (the adjacent left or top sibling cell's text) and the label's char-shape.
 2. For each field, pick a value based on the user's intent. Skip fields you cannot confidently determine — leaving them empty is better than guessing wrong.
-3. Emit ONE \`\`\`ahwp-patches\`\`\` block where each patch's \`location.cell\` matches a coordinate from step 1. Set \`additionFormat.lib\` to the field's \`labelCharShape\` so the inserted text matches the label's typography.
+3. Emit ONE \`\`\`ahwp-patches\`\`\` block where each patch's \`location.cell\` matches a coordinate from step 1. For empty cells \`deletion\` MUST be the empty string \`""\` — never omit it, never use null. Set \`additionFormat.lib\` to the field's \`labelCharShape\` so the inserted text matches the label's typography.
 4. Do NOT use \`applyHtml\` or body-level \`insertText\` for form-fill — both create new content and leave a duplicate form. Use those tools only when the user is asking for free-form authoring with no pre-existing target.
 
 Sanity check after fill: paragraphCount should stay roughly stable (within ~5). If you needed to grow paragraphCount, you were authoring not filling. Re-read structure and switch to patches.

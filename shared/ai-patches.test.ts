@@ -88,6 +88,65 @@ describe('parsePatchBlock — cell location', () => {
   });
 });
 
+describe('parsePatchBlock — deletion/addition coercion (0.4.22)', () => {
+  it('coerces missing deletion to empty string', () => {
+    const raw = JSON.stringify({
+      ops: [
+        {
+          title: 'fill empty',
+          location: { sectionIndex: 0, paragraphIndex: 0 },
+          addition: 'value',
+        },
+      ],
+    });
+    const r = ok(raw);
+    if (!r.ok) throw new Error('unreachable');
+    const item = r.items[0];
+    expect(item.ok).toBe(true);
+    if (!item.ok) return;
+    expect(item.patch.deletion).toBe('');
+    expect(item.patch.addition).toBe('value');
+  });
+
+  it('coerces null deletion to empty string', () => {
+    const raw = JSON.stringify({
+      ops: [
+        {
+          title: 'null del',
+          location: { sectionIndex: 0, paragraphIndex: 0 },
+          deletion: null,
+          addition: 'x',
+        },
+      ],
+    });
+    const r = ok(raw);
+    if (!r.ok) throw new Error('unreachable');
+    const item = r.items[0];
+    expect(item.ok).toBe(true);
+    if (!item.ok) return;
+    expect(item.patch.deletion).toBe('');
+  });
+
+  it('rejects array / object deletion', () => {
+    const raw = JSON.stringify({
+      ops: [
+        {
+          title: 'bad del',
+          location: { sectionIndex: 0, paragraphIndex: 0 },
+          deletion: ['a'],
+          addition: 'x',
+        },
+      ],
+    });
+    const r = ok(raw);
+    if (!r.ok) throw new Error('unreachable');
+    const item = r.items[0];
+    expect(item.ok).toBe(false);
+    if (item.ok) return;
+    expect(item.reason).toMatch(/deletion-not-string/);
+  });
+});
+
 describe('parsePatchBlock — additionFormat', () => {
   it('parses fontName + lib raw passthrough', () => {
     const raw = JSON.stringify({

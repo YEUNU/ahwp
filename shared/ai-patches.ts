@@ -130,12 +130,15 @@ function validatePatch(
       cellParagraphIndex: cp,
     };
   }
-  const del = raw.deletion;
-  const add = raw.addition;
-  if (typeof del !== 'string')
-    return { ok: false, reason: 'deletion-not-string' };
-  if (typeof add !== 'string')
-    return { ok: false, reason: 'addition-not-string' };
+  // 0.4.22 — empty cell fill 흔한 케이스 (deletion="") 친화. LLM 이
+  // null / undefined / omit 으로 보내도 빈 string 으로 coerce. addition
+  // 도 동일 (drop = "" addition).
+  const delRaw = raw.deletion;
+  const addRaw = raw.addition;
+  const del = typeof delRaw === 'string' ? delRaw : delRaw == null ? '' : null;
+  const add = typeof addRaw === 'string' ? addRaw : addRaw == null ? '' : null;
+  if (del === null) return { ok: false, reason: 'deletion-not-string' };
+  if (add === null) return { ok: false, reason: 'addition-not-string' };
   if (byteLen(del) > AHWP_PATCH_LIMITS.maxTextBytes)
     return { ok: false, reason: 'deletion-too-large' };
   if (byteLen(add) > AHWP_PATCH_LIMITS.maxTextBytes)
