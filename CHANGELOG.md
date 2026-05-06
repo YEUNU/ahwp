@@ -6,6 +6,20 @@
 
 ## [Unreleased]
 
+### Fixed — Phase 6 follow-up: L-004 Canvas-mode tooltip overlay (0.4.1)
+
+KNOWN_ISSUES L-004 (narrow-column 텍스트 잘림 hover tooltip) chunk 107 의 Canvas-only 전환 후 잠시 잃었던 affordance 복구. SVG `<text><title>` injection 의 직접 대체.
+
+- **`src/lib/rhwp-core/text-layout.ts` 신설** — `parsePageTextLayout` (`getPageTextLayout` JSON 의 `runs[].text/x/y/w/h` 추출, 빈 텍스트 / non-finite bbox 필터) + `applyTextTooltipOverlay` (run 별 transparent `<div title="...">` 마운트, z-index=1 layer, pointer-events: auto so 브라우저 native tooltip 작동, 마우스 이벤트 자연스럽게 페이지 컨테이너로 bubble). 6 단위 테스트
+- **`renderCanvasPage` 통합** — 본문 canvas 렌더 + behind/front overlay 직후 text-tooltip overlay 적용. `getPageTextLayout(idx)` → parse → applyTextTooltipOverlay
+- **`__studioDebug.getPageTextLayoutJson(idx)` 신규** — text layout JSON 노출 (e2e probe / debug 용)
+- **flaky e2e 정리** — chunk 105 의 `studio-canvas-overlays.spec.ts` 의 selection-rect regression 케이스 (focus + Cmd+A timing 의존, 검증 안 한 채 추가됐던 것) 삭제. find-match regression 케이스가 같은 invariant (DOM `<div>` overlay) 를 검증하므로 손실 없음
+
+검증:
+✓ typecheck (양 tsconfig)
+✓ unit (19/19 rhwp-core: 7 CanvasPool + 6 PageLayerTree + 6 TextLayout)
+✓ e2e 20 케이스 (canvas-mode + canvas-overlays + viewer + input) 통과
+
 ### Changed — chunk 107: Phase 6.7 SVG 경로 제거 + Phase 6 완료 (0.4.0)
 
 Phase 6 (rhwp-studio view 계층 정합) 마지막 chunk. SVG 렌더 path 일괄 제거, Canvas 가 유일한 path. minor 버전 bump (0.3 → 0.4) — Phase 단위 milestone.

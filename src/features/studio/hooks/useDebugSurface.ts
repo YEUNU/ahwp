@@ -425,6 +425,17 @@ export function useDebugSurface(opts: UseDebugSurfaceOptions): void {
           return '';
         }
       },
+      // Phase 6 follow-up: text-layout JSON access for L-004 tooltip
+      // overlay design + e2e probes.
+      getPageTextLayoutJson: (pageIdx: number): string => {
+        const doc = docRef.current;
+        if (!doc) return '';
+        try {
+          return doc.getPageTextLayout(pageIdx);
+        } catch {
+          return '';
+        }
+      },
       getCaret: (): {
         sectionIndex: number;
         paragraphIndex: number;

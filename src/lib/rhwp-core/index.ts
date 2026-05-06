@@ -34,6 +34,12 @@ export {
   type OverlayImageInfo,
   type PageOverlays,
 } from './page-layer-tree';
+export {
+  parsePageTextLayout,
+  applyTextTooltipOverlay,
+  type TextLayoutRun,
+  type PageTextLayout,
+} from './text-layout';
 
 // Direct lib re-exports — kept for back-compat with existing import sites
 // that construct `new HwpDocument(bytes)` directly (`useDebugSurface`'s

@@ -49,6 +49,8 @@ import {
   clientToPage,
   parsePageLayerTree,
   applyOverlayLayers,
+  parsePageTextLayout,
+  applyTextTooltipOverlay,
   type RhwpDoc,
 } from '@/lib/rhwp-core';
 import { type PageDims } from '@/features/studio/utils/page-dims';
@@ -1015,6 +1017,20 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           applyOverlayLayers(el, idx, overlays, z);
         } catch (err) {
           console.warn(`[studio] page ${idx} overlay apply failed:`, err);
+        }
+        // Phase 6 follow-up (L-004 mitigation): transparent text-tooltip
+        // overlay so narrow-column text (clipped by lib's column-width
+        // estimate) shows full content on hover. SVG mode used to inject
+        // `<title>` into each `<text>` — Canvas has no equivalent, so
+        // we mount one transparent `<div title="...">` per text run via
+        // `getPageTextLayout`. Z-index 1 keeps it between behind/front
+        // overlays. Mouse events bubble to the page container — caret
+        // placement / drag selection unchanged.
+        try {
+          const layout = parsePageTextLayout(doc.getPageTextLayout(idx));
+          applyTextTooltipOverlay(el, idx, layout, z);
+        } catch (err) {
+          console.warn(`[studio] page ${idx} text tooltip apply failed:`, err);
         }
         // Async <image> base64 decode may not complete on the first paint —
         // re-render at 200ms / 600ms covers most timings (rhwp-studio
