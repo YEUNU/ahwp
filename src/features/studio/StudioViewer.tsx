@@ -39,8 +39,9 @@ import { Button } from '@/components/ui/button';
 import { hancomTitle } from '@/lib/hancom-tooltips';
 // `ensureRhwpCore` 는 R1.1 에서 useDocumentLifecycle 로 이동. chunk 100
 // (Phase 6.0): `RhwpDoc` 타입은 `@/lib/rhwp-core` 에서 단일 정의 import,
-// `WasmBridge` 가 lifecycle 소유.
-import { WasmBridge, type RhwpDoc } from '@/lib/rhwp-core';
+// `WasmBridge` 가 lifecycle 소유. chunk 101 (Phase 6.1): `clientToPage`
+// 등 좌표 변환 유틸도 같은 모듈.
+import { WasmBridge, clientToPage, type RhwpDoc } from '@/lib/rhwp-core';
 import { type PageDims } from '@/features/studio/utils/page-dims';
 // `relocateExcerpt` 는 R1.8 에서 useViewerHandle 로 이동.
 import { callCellOp } from '@/features/studio/utils/cell-op';
@@ -3562,9 +3563,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       ): HitTestResult | null => {
         const doc = docRef.current;
         if (!doc) return null;
-        const rect = target.getBoundingClientRect();
-        const x = (clientX - rect.left) / zoom;
-        const y = (clientY - rect.top) / zoom;
+        const { x, y } = clientToPage(clientX, clientY, target, zoom);
         try {
           return JSON.parse(doc.hitTest(idx, x, y)) as HitTestResult;
         } catch (err) {

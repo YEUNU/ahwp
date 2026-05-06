@@ -14,6 +14,19 @@
 export { ensureRhwpCore } from './init';
 export { WasmBridge } from './wasm-bridge';
 export type { RhwpDoc, RhwpViewer } from './types';
+export {
+  clientToPage,
+  clientToPageWithRect,
+  pageYToClientY,
+  clientToScroller,
+  pageToScroller,
+  pageDimsToCanvasSize,
+} from './coordinate-system';
+export type {
+  PageCoord,
+  ClientCoord,
+  ScrollerCoord,
+} from './coordinate-system';
 
 // Direct lib re-exports — kept for back-compat with existing import sites
 // that construct `new HwpDocument(bytes)` directly (`useDebugSurface`'s

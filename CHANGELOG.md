@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### Changed — chunk 101: Phase 6.1 coordinate-system.ts (0.3.42)
+
+`src/lib/rhwp-core/coordinate-system.ts` 신설 — DPR-aware 좌표계 변환 유틸. 5 좌표 공간 (Client / Scroller / Page-CSS / Page / Canvas-px) 의 변환 함수 6개 (`clientToPage`, `clientToPageWithRect`, `pageYToClientY`, `clientToScroller`, `pageToScroller`, `pageDimsToCanvasSize`) 를 단일 모듈로 통합. `StudioViewer.tsx:hitTestAt` + `usePageMouseHandlers.ts` 4개 inline 변환 지점을 함수 호출로 교체. `pageDimsToCanvasSize` 는 Phase 6.3 Canvas swap 의 `scale = zoom × DPR` 정합용 prep — 현재 path 미사용. 동작 변화 0건.
+
 ### Changed — chunk 100: Phase 6.0 WasmBridge 추상화 + RhwpDoc 타입 단일화 (0.3.41)
 
 Phase 6 (rhwp-studio view 계층 정합) 시작. 동작 변화 0건 순수 refactor.
