@@ -6,7 +6,7 @@
 
 ## [Unreleased]
 
-### Changed — chunk 100: Phase 6.0 WasmBridge 추상화 + RhwpDoc 타입 단일화
+### Changed — chunk 100: Phase 6.0 WasmBridge 추상화 + RhwpDoc 타입 단일화 (0.3.41)
 
 Phase 6 (rhwp-studio view 계층 정합) 시작. 동작 변화 0건 순수 refactor.
 
