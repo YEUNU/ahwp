@@ -13,8 +13,16 @@ import type { ViewerHandle } from '@/features/studio/types';
 
 /** Run an op against the viewer. Returns a result describing what
  * happened — IR throws are caught and recorded as `ir-throw:<msg>` so
- * one bad op doesn't tear down the rest of the run. */
-function runOne(viewer: ViewerHandle, call: AhwpToolCall): AhwpToolResult {
+ * one bad op doesn't tear down the rest of the run.
+ *
+ * chunk 96 — async because the new `searchWorkspaceOutlines` /
+ * `readParagraphByPath` tools dispatch through main-process IPC.
+ * Existing IR-call tools wrap their sync result in Promise.resolve
+ * via the natural async function semantics. */
+async function runOne(
+  viewer: ViewerHandle,
+  call: AhwpToolCall,
+): Promise<AhwpToolResult> {
   try {
     switch (call.tool) {
       case 'applyHtml': {
@@ -592,6 +600,50 @@ function runOne(viewer: ViewerHandle, call: AhwpToolCall): AhwpToolResult {
           return { ok: false, tool: call.tool, reason: 'getCellInfo-failed' };
         return { ok: true, tool: call.tool, data };
       }
+      // === Phase 5 chunk 96 — outline-as-router workspace search ===
+      case 'searchWorkspaceOutlines': {
+        // Resolve workspace root through session.lastFolderPath. The
+        // IPC walks the tree + reuses the outline cache.
+        const session = await window.api.session.get();
+        const rootPath = session?.lastFolderPath ?? '';
+        if (!rootPath) {
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: 'no-workspace-folder',
+          };
+        }
+        const data = await window.api.folder.listOutlines({
+          rootPath,
+          maxDocs: call.args.maxDocs,
+        });
+        return { ok: true, tool: call.tool, data };
+      }
+      case 'readParagraphByPath': {
+        const a = call.args;
+        const data = await window.api.folder.readParagraph({
+          path: a.path,
+          sectionIdx: a.sectionIdx,
+          paragraphIdx: a.paragraphIdx,
+          contextParagraphs: a.contextParagraphs,
+        });
+        if (!data.ok) {
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: `readParagraphByPath-${data.reason ?? 'failed'}`,
+          };
+        }
+        return { ok: true, tool: call.tool, data };
+      }
+      case 'switchTargetDoc': {
+        // chunk 99 follow-up — switchTargetDoc 는 chat hook (advanceAgent
+        // Loop) 에서 가로채 turnTargetPathRef 만 갱신하므로 viewer
+        // dispatcher 로 도달하지 않는 게 정상. 회귀 가드 차원에서 분기만
+        // 남기고 ok 반환 (no-op). 만약 여기 도달했다면 hook intercept
+        // 누락 — 동작은 무해.
+        return { ok: true, tool: call.tool, data: { noop: true } };
+      }
       default: {
         // The pre-flight validator narrows AhwpToolCall to the union, so
         // this is unreachable without a registry/type drift.
@@ -620,10 +672,10 @@ function runOne(viewer: ViewerHandle, call: AhwpToolCall): AhwpToolResult {
  * so the user gets ONE undo entry for the whole AI-applied turn
  * (rather than N entries, one per op). The bracket holds even if some
  * ops throw — we always end the group in a finally. */
-export function runTools(
+export async function runTools(
   viewer: ViewerHandle,
   items: AhwpPreflightItem[],
-): AhwpToolResult[] {
+): Promise<AhwpToolResult[]> {
   const out: AhwpToolResult[] = [];
   viewer.beginUndoGroup();
   try {
@@ -632,7 +684,7 @@ export function runTools(
         out.push({ ok: false, tool: item.tool, reason: item.reason });
         continue;
       }
-      out.push(runOne(viewer, item.call));
+      out.push(await runOne(viewer, item.call));
     }
   } finally {
     viewer.endUndoGroup();
@@ -776,5 +828,15 @@ export function previewArgs(call: AhwpToolCall): string {
     }
     case 'getCellInfo':
       return `cell=${call.args.cellIdx}`;
+    case 'searchWorkspaceOutlines':
+      return call.args.maxDocs ? `max=${call.args.maxDocs}` : '';
+    case 'readParagraphByPath': {
+      const base = call.args.path.split(/[\\/]/).pop() ?? call.args.path;
+      return `${base}#${call.args.sectionIdx}/${call.args.paragraphIdx}`;
+    }
+    case 'switchTargetDoc': {
+      const base = call.args.path.split(/[\\/]/).pop() ?? call.args.path;
+      return `→ ${base}`;
+    }
   }
 }

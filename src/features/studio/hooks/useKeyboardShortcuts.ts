@@ -24,11 +24,9 @@ import {
   type SetStateAction,
 } from 'react';
 import { primaryModifier } from '@/lib/platform';
-import { HwpDocument } from '@/lib/rhwp-core';
+import type { RhwpDoc } from '@/lib/rhwp-core';
 import type { LifecycleCursorRect } from './useDocumentLifecycle';
 import type { RhwpHitTest } from '@shared/rhwp-types';
-
-type RhwpDoc = InstanceType<typeof HwpDocument>;
 
 export interface KeyboardCellRef {
   parentParaIndex: number;

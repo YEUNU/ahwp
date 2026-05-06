@@ -259,6 +259,42 @@ test.describe('chat — chunk 55 Diff Viewer (ahwp-patches)', () => {
     await preview.click();
   });
 
+  test('chunk 99 follow-up — Diff cards portal 이 가운데 패널 overlay 로 떠 있고 chat 엔 hint 만', async () => {
+    const { page } = launched;
+    await openFixture(page, FIXTURE);
+    await page.evaluate(() => {
+      const dbg = (window as Window & { __studioDebug?: StudioDebug })
+        .__studioDebug!;
+      dbg.insertText(0, 0, 0, '발맞추기 위해서 만들어졌고요');
+    });
+    const reply = [
+      '한 줄 톤만 다듬을게요:',
+      '```ahwp-patches',
+      '{"ops":[{"title":"톤","location":{"sectionIndex":0,"paragraphIndex":0},"deletion":"발맞추기 위해서 만들어졌고요","addition":"대응하기 위하여 수립되었다"}]}',
+      '```',
+    ].join('\n');
+    await sendEcho(page, reply);
+
+    // 가운데 패널의 overlay 컨테이너에 카드 portal 됨.
+    const overlay = page.getByTestId('editor-diff-overlay');
+    await expect(overlay).toBeVisible();
+    const portalCard = overlay.getByTestId('chat-patches-block');
+    await expect(portalCard).toBeVisible();
+    await expect(portalCard.getByTestId('diff-single-card')).toBeVisible();
+
+    // chat 안엔 hint 만 (full 카드 없음).
+    const hint = page.getByTestId('chat-patches-hint');
+    await expect(hint).toBeVisible();
+    await expect(hint).toContainText('변경 제안');
+    // chat 안에서 chat-patches-block 검색 시 portal 결과는 overlay 밑에
+    // 있고 chat 메시지 트리 안에는 없음 — chat-message 컨테이너로 scope 후
+    // count 0 검증.
+    const inChatBubble = page.locator(
+      '[data-testid="chat-message"][data-role="assistant"] [data-testid="chat-patches-block"]',
+    );
+    await expect(inChatBubble).toHaveCount(0);
+  });
+
   test('invalid patches block — error 표시', async () => {
     const { page } = launched;
     await openFixture(page, FIXTURE);

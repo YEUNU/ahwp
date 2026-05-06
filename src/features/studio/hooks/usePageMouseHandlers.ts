@@ -22,10 +22,14 @@ import {
   type SetStateAction,
   type MutableRefObject,
 } from 'react';
-import { HwpDocument } from '@/lib/rhwp-core';
+import {
+  clientToScroller,
+  clientToPageWithRect,
+  pageToScroller,
+  pageYToClientY,
+  type RhwpDoc,
+} from '@/lib/rhwp-core';
 import { primaryModifier } from '@/lib/platform';
-
-type RhwpDoc = InstanceType<typeof HwpDocument>;
 
 // 임의 shape — caller 가 보유한 useState/useRef 가 정확한 타입을 결정.
 
@@ -139,17 +143,15 @@ export function usePageMouseHandlers(
       if (marqueeMode) {
         const scroller = scrollRef.current;
         if (!scroller) return;
-        const sr = scroller.getBoundingClientRect();
-        const startX = e.clientX - sr.left + scroller.scrollLeft;
-        const startY = e.clientY - sr.top + scroller.scrollTop;
-        marqueeStartRef.current = { x: startX, y: startY };
-        setMarqueeRect({ x: startX, y: startY, w: 0, h: 0 });
+        const start = clientToScroller(e.clientX, e.clientY, scroller);
+        marqueeStartRef.current = { x: start.x, y: start.y };
+        setMarqueeRect({ x: start.x, y: start.y, w: 0, h: 0 });
         setSelectedControlBboxes({});
         const onMove = (ev: MouseEvent): void => {
           if (!marqueeStartRef.current || !scrollRef.current) return;
-          const sr2 = scrollRef.current.getBoundingClientRect();
-          const cx = ev.clientX - sr2.left + scrollRef.current.scrollLeft;
-          const cy = ev.clientY - sr2.top + scrollRef.current.scrollTop;
+          const m = clientToScroller(ev.clientX, ev.clientY, scrollRef.current);
+          const cx = m.x;
+          const cy = m.y;
           const sx = marqueeStartRef.current.x;
           const sy = marqueeStartRef.current.y;
           setMarqueeRect({
@@ -231,18 +233,15 @@ export function usePageMouseHandlers(
                   // 더해야 함. pageRefsRef를 사용.
                   const pageEl = pageRefsRef.current[bbox.pageIndex];
                   if (!pageEl || !scrollRef.current) continue;
-                  const pr = pageEl.getBoundingClientRect();
-                  const sr3 = scrollRef.current.getBoundingClientRect();
-                  const tableLeft =
-                    pr.left -
-                    sr3.left +
-                    scrollRef.current.scrollLeft +
-                    bbox.x * zoom;
-                  const tableTop =
-                    pr.top -
-                    sr3.top +
-                    scrollRef.current.scrollTop +
-                    bbox.y * zoom;
+                  const tableTL = pageToScroller(
+                    bbox.x,
+                    bbox.y,
+                    pageEl,
+                    scrollRef.current,
+                    zoom,
+                  );
+                  const tableLeft = tableTL.x;
+                  const tableTop = tableTL.y;
                   const tableRight = tableLeft + bbox.width * zoom;
                   const tableBottom = tableTop + bbox.height * zoom;
                   const overlap =
@@ -612,9 +611,14 @@ export function usePageMouseHandlers(
                 h: number;
               }[];
               // page-local x,y 계산 — applyPointerToSelection scope에 hitX/hitY 있음.
-              const localX =
-                (hitX - pageEl.getBoundingClientRect().left) / zoom;
-              const localY = (hitY - pageEl.getBoundingClientRect().top) / zoom;
+              const local = clientToPageWithRect(
+                hitX,
+                hitY,
+                pageEl.getBoundingClientRect(),
+                zoom,
+              );
+              const localX = local.x;
+              const localY = local.y;
               const correctCell = cells.find(
                 (c) =>
                   localX >= c.x &&
@@ -821,8 +825,7 @@ export function usePageMouseHandlers(
         if (resultRect) {
           const rectPageEl = pageRefsRef.current[resultRect.pageIndex];
           if (rectPageEl) {
-            const r = rectPageEl.getBoundingClientRect();
-            const hitClientY = r.top + resultRect.y * zoom;
+            const hitClientY = pageYToClientY(resultRect.y, rectPageEl, zoom);
             if (Math.abs(hitClientY - cy) > 80) {
               return;
             }

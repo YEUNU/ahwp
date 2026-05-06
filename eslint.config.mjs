@@ -15,6 +15,10 @@ export default tseslint.config(
       'coverage',
       'style_example',
       'examples',
+      // git worktrees live at .claude/worktrees/ and ship their own
+      // tsconfig — including them confuses typescript-eslint with
+      // duplicate TSConfigRootDirs (parsing error on every .ts file).
+      '.claude',
       'scripts/inspect-*.mjs',
       'scripts/check-*.mjs',
       '*.config.cjs',

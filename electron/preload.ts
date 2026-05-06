@@ -17,6 +17,7 @@ const api: AhwpApi = {
   ping: (req: PingRequest) => ipcRenderer.invoke('ipc:ping', req),
   getVersions: () => ipcRenderer.invoke('app:get-versions'),
   logError: (req) => ipcRenderer.invoke('app:log-error', req),
+  clearCaches: () => ipcRenderer.invoke('app:clear-caches'),
   onMenuAction: (handler) => {
     const listener = (_event: IpcRendererEvent, action: MenuAction) =>
       handler(action);
@@ -87,6 +88,8 @@ const api: AhwpApi = {
     trash: (path) => ipcRenderer.invoke('folder:trash', path),
     reveal: (path) => ipcRenderer.invoke('folder:reveal', path),
     copy: (src, destDir) => ipcRenderer.invoke('folder:copy', src, destDir),
+    listOutlines: (req) => ipcRenderer.invoke('folder:list-outlines', req),
+    readParagraph: (req) => ipcRenderer.invoke('folder:read-paragraph', req),
   },
   secrets: {
     set: (providerId, key) =>

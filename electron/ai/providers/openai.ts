@@ -98,6 +98,235 @@ async function* parseSseStream(
   if (tail.startsWith('data:')) yield tail.slice(5).trim();
 }
 
+/**
+ * Route reasoning-class models (gpt-5.x, o-series) to /v1/responses 인지
+ * 판별. /v1/chat/completions 는 reasoning model + function tools 의 동시
+ * 사용을 제한해 (function tools + reasoning_effort 미지원), responses
+ * API 가 유일한 정상 경로.
+ *
+ * https://developers.openai.com/api/docs/guides/reasoning
+ */
+function shouldUseResponsesApi(model: string): boolean {
+  if (model.startsWith('gpt-5')) return true;
+  // o1 / o1-mini / o1-preview / o3 / o3-mini 등.
+  if (/^o\d/.test(model)) return true;
+  return false;
+}
+
+/** /v1/responses 의 input 항목. messages → input 변환. */
+function toResponsesInputItem(m: ChatMessage): Record<string, unknown> {
+  if (m.role === 'tool' && m.toolResult) {
+    // 직전 turn 의 tool 호출 결과 회신 — function_call_output.
+    return {
+      type: 'function_call_output',
+      call_id: m.toolResult.id,
+      output: m.toolResult.content,
+    };
+  }
+  if (m.role === 'assistant' && m.toolUses && m.toolUses.length > 0) {
+    // assistant 가 도구 호출한 turn 은 function_call 항목들로 직렬화.
+    // assistant 메시지 본문이 있으면 별도 message 항목으로 추가 (caller
+    // 가 array 펼침은 안 해서, 본문 + 호출이 같은 turn 인 경우 호출만
+    // 직렬화하고 본문은 후속 turn 에서 다시 보내지 않으니 안전).
+    const calls = m.toolUses.map((u) => ({
+      type: 'function_call',
+      call_id: u.id,
+      name: u.name,
+      arguments: JSON.stringify(u.args ?? {}),
+    }));
+    return calls.length === 1 ? calls[0] : { type: 'list', items: calls };
+  }
+  return { role: m.role, content: m.content };
+}
+
+interface ResponsesEvent {
+  type: string;
+  delta?: string;
+  item_id?: string;
+  output_index?: number;
+  item?: {
+    id?: string;
+    type?: string;
+    call_id?: string;
+    name?: string;
+    arguments?: string;
+  };
+  response?: {
+    output?: { type?: string; content?: { type?: string; text?: string }[] }[];
+    usage?: {
+      input_tokens?: number;
+      output_tokens?: number;
+      output_tokens_details?: { reasoning_tokens?: number };
+    };
+    status?: string;
+  };
+  error?: { message?: string };
+}
+
+/** Parse /v1/responses SSE — events have `event: <name>` line then
+ *  `data: <json>` line. We only need the data; the event name is also in
+ *  data.type. Generator yields the parsed data objects. */
+async function* parseResponsesSse(
+  body: ReadableStream<Uint8Array>,
+): AsyncGenerator<ResponsesEvent> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buffer.indexOf('\n')) !== -1) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (line.length === 0) continue;
+      if (!line.startsWith('data:')) continue;
+      const json = line.slice(5).trim();
+      if (json === '[DONE]') continue;
+      try {
+        yield JSON.parse(json) as ResponsesEvent;
+      } catch {
+        /* skip malformed line */
+      }
+    }
+  }
+}
+
+async function* chatViaResponses(
+  req: Parameters<Provider['chat']>[0],
+  opts: ProviderRuntimeOptions,
+): AsyncIterable<ChatStreamEvent> {
+  const url = `${trimBaseUrl(opts.baseUrl)}/responses`;
+  const body: Record<string, unknown> = {
+    model: req.model,
+    input: req.messages.map(toResponsesInputItem),
+    stream: true,
+    store: false,
+  };
+  if (req.tools && req.tools.length > 0) {
+    body.tools = req.tools.map((t) => ({
+      type: 'function',
+      name: t.name,
+      description: t.description,
+      parameters: t.inputSchema,
+    }));
+    const tc = req.toolChoice;
+    if (tc === 'none') body.tool_choice = 'none';
+    else if (tc === 'auto') body.tool_choice = 'auto';
+    else if (tc && typeof tc === 'object' && 'name' in tc) {
+      body.tool_choice = { type: 'function', name: tc.name };
+    }
+  }
+  if (req.reasoningEffort) {
+    body.reasoning = { effort: req.reasoningEffort };
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${opts.apiKey ?? ''}`,
+      },
+      body: JSON.stringify(body),
+      signal: opts.signal,
+    });
+  } catch (err) {
+    yield {
+      type: 'error',
+      message: err instanceof Error ? err.message : String(err),
+    };
+    return;
+  }
+  if (!res.ok || !res.body) {
+    let msg = `${res.status} ${res.statusText}`;
+    try {
+      const errBody = await res.text();
+      if (errBody) msg += ` — ${errBody.slice(0, 1024)}`;
+    } catch {
+      /* ignore */
+    }
+    yield { type: 'error', message: msg };
+    return;
+  }
+
+  // Accumulate function_call args by item_id (each call has its own item).
+  const pending = new Map<string, { id: string; name: string; args: string }>();
+  let usage: ChatUsage | undefined;
+  let finishReason: ChatFinishReason | undefined;
+  let hasToolCalls = false;
+
+  try {
+    for await (const evt of parseResponsesSse(res.body)) {
+      const t = evt.type;
+      if (
+        t === 'response.output_item.added' &&
+        evt.item?.type === 'function_call'
+      ) {
+        const id =
+          evt.item.call_id ?? evt.item.id ?? `call_${Date.now().toString(36)}`;
+        pending.set(evt.item.id ?? id, {
+          id,
+          name: evt.item.name ?? '',
+          args: '',
+        });
+        hasToolCalls = true;
+        continue;
+      }
+      if (t === 'response.function_call_arguments.delta') {
+        const slot = evt.item_id ? pending.get(evt.item_id) : undefined;
+        if (slot && typeof evt.delta === 'string') slot.args += evt.delta;
+        continue;
+      }
+      if (t === 'response.output_text.delta') {
+        if (typeof evt.delta === 'string' && evt.delta.length > 0) {
+          yield { type: 'text-delta', text: evt.delta };
+        }
+        continue;
+      }
+      if (t === 'response.completed') {
+        const u = evt.response?.usage;
+        if (u) {
+          usage = {
+            inputTokens: u.input_tokens,
+            outputTokens: u.output_tokens,
+          };
+        }
+        finishReason = hasToolCalls ? 'tool_calls' : 'stop';
+        continue;
+      }
+      if (t === 'response.failed' || t === 'error') {
+        yield {
+          type: 'error',
+          message: evt.error?.message ?? 'responses-stream-error',
+        };
+        return;
+      }
+    }
+  } catch (err) {
+    yield {
+      type: 'error',
+      message: err instanceof Error ? err.message : String(err),
+    };
+    return;
+  }
+
+  // Emit accumulated tool calls.
+  for (const slot of pending.values()) {
+    if (slot.name.length === 0) continue;
+    let parsedArgs: unknown;
+    try {
+      parsedArgs = JSON.parse(slot.args || '{}');
+    } catch {
+      parsedArgs = { __rawArguments: slot.args };
+    }
+    yield { type: 'tool-use', id: slot.id, name: slot.name, args: parsedArgs };
+  }
+  yield { type: 'done', usage, finishReason };
+}
+
 export const openaiProvider: Provider = {
   meta: getProviderMeta('openai'),
 
@@ -105,6 +334,12 @@ export const openaiProvider: Provider = {
     req,
     opts: ProviderRuntimeOptions,
   ): AsyncIterable<ChatStreamEvent> {
+    // Reasoning-class 모델은 /v1/responses 로 라우팅 — chat completions 의
+    // tools + reasoning_effort 동시 사용 제한 우회.
+    if (shouldUseResponsesApi(req.model)) {
+      yield* chatViaResponses(req, opts);
+      return;
+    }
     const url = `${trimBaseUrl(opts.baseUrl)}/chat/completions`;
     const body: Record<string, unknown> = {
       model: req.model,
@@ -114,6 +349,11 @@ export const openaiProvider: Provider = {
       ...(typeof req.temperature === 'number'
         ? { temperature: req.temperature }
         : {}),
+      // chunk 99 — Reasoning models (o1/o3/gpt-5.x) 는 reasoning_effort 로
+      // thinking 깊이 조절. router 같은 빠른 응답이 필요한 호출은 'low' /
+      // 'minimal' 로 reasoning_tokens 최소화. non-reasoning 모델은 이
+      // 필드 무시 (OpenAI 가 silently 처리).
+      ...(req.reasoningEffort ? { reasoning_effort: req.reasoningEffort } : {}),
     };
     // Phase 3 — tool calling. ChatTool[] → OpenAI native format.
     if (req.tools && req.tools.length > 0) {

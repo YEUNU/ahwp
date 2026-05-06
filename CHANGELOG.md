@@ -6,6 +6,166 @@
 
 ## [Unreleased]
 
+### Fixed — Phase 6 follow-up: L-004 Canvas-mode tooltip overlay (0.4.1)
+
+KNOWN_ISSUES L-004 (narrow-column 텍스트 잘림 hover tooltip) chunk 107 의 Canvas-only 전환 후 잠시 잃었던 affordance 복구. SVG `<text><title>` injection 의 직접 대체.
+
+- **`src/lib/rhwp-core/text-layout.ts` 신설** — `parsePageTextLayout` (`getPageTextLayout` JSON 의 `runs[].text/x/y/w/h` 추출, 빈 텍스트 / non-finite bbox 필터) + `applyTextTooltipOverlay` (run 별 transparent `<div title="...">` 마운트, z-index=1 layer, pointer-events: auto so 브라우저 native tooltip 작동, 마우스 이벤트 자연스럽게 페이지 컨테이너로 bubble). 6 단위 테스트
+- **`renderCanvasPage` 통합** — 본문 canvas 렌더 + behind/front overlay 직후 text-tooltip overlay 적용. `getPageTextLayout(idx)` → parse → applyTextTooltipOverlay
+- **`__studioDebug.getPageTextLayoutJson(idx)` 신규** — text layout JSON 노출 (e2e probe / debug 용)
+- **flaky e2e 정리** — chunk 105 의 `studio-canvas-overlays.spec.ts` 의 selection-rect regression 케이스 (focus + Cmd+A timing 의존, 검증 안 한 채 추가됐던 것) 삭제. find-match regression 케이스가 같은 invariant (DOM `<div>` overlay) 를 검증하므로 손실 없음
+
+검증:
+✓ typecheck (양 tsconfig)
+✓ unit (19/19 rhwp-core: 7 CanvasPool + 6 PageLayerTree + 6 TextLayout)
+✓ e2e 20 케이스 (canvas-mode + canvas-overlays + viewer + input) 통과
+
+### Changed — chunk 107: Phase 6.7 SVG 경로 제거 + Phase 6 완료 (0.4.0)
+
+Phase 6 (rhwp-studio view 계층 정합) 마지막 chunk. SVG 렌더 path 일괄 제거, Canvas 가 유일한 path. minor 버전 bump (0.3 → 0.4) — Phase 단위 milestone.
+
+- **`renderPageInto` SVG 분기 제거** — `renderPageSvg` / `DOMParser` / `<svg>` mount / L-004 `<text><title>` injection / `__studioPageDiag` 모두 삭제. Canvas 전용 dispatch 1줄
+- **`useDocumentLifecycle` page-0 dims 추출** — `renderPageSvg(0)` + `<svg width/height>` regex → `getPageInfo(0)` JSON 직접 파싱. SVG WASM 호출 0건 in lifecycle
+- **`utils/page-dims.ts` 재구성** — `parsePageDimensions` 가 SVG 문자열이 아니라 `getPageInfo` JSON 을 입력. 6 신규 단위 테스트
+- **forceRerender + viewport unmount + useDebugSurface + useUndoHistory** — 모든 dual-mode 분기 제거, canvas-only 통일
+- **`render-mode.ts` 모듈 + `localStorage.ahwp:render-mode` flag 삭제** — 불필요해짐
+- **e2e 정정** — `studio-image.spec.ts` 의 `svg image` 검사 → `getPageLayerTree` JSON 의 image op 검출. `studio-viewer.spec.ts:200` 도 동일
+- **`__studioDebug.getPageLayerTreeJson(idx)` 신규** — e2e 가 image 존재 검증할 수 있게 lib JSON 노출
+- **KNOWN_ISSUES L-004 갱신** — Canvas-only 시 SVG `<title>` tooltip 우회 불가. 후속: `getPageLayerTree` text op bbox + overlay tooltip 검토
+- **Phase 6 완료 게이트** — `grep renderPageSvg src/` 코멘트만 (호출 0건). e2e 26 케이스 (viewer/input/undo/canvas-mode) 통과
+
+### Changed — chunk 106: Phase 6.6 e2e selector mode-agnostic 정리 (0.3.48)
+
+`tests/e2e/*.spec.ts` 의 SVG-specific selector 를 mode-agnostic 으로 일괄 변경 — chunk 107 SVG 제거 후에도 동일 e2e 가 Canvas-only 환경에서 통과. `studio-viewer.spec.ts` (3 sites) / `studio-bigdoc.spec.ts` (8 sites, sed) / `studio-format.spec.ts` (1 site) 의 `locator('svg')` → `'svg, canvas'`.
+
+### Changed — chunk 105: Phase 6.5 find / selection / changed-paragraph mode 정합 (0.3.47)
+
+Inventory 결과 — 회귀 가드만 추가. 세 highlight (selection rect / find match / changed-paragraph stripe) 모두 이미 DOM `<div>` overlay 였음 (`PaperPage.tsx`). Canvas mode 에서 자동 동작. `tests/e2e/studio-canvas-overlays.spec.ts` 신규 — 회귀 가드 (selection rect + find match DOM overlay 검증).
+
+### Changed — chunk 104: Phase 6.4 behind/front overlay (getPageLayerTree) (0.3.46)
+
+Canvas mode 의 behind/front floating image (워터마크 / 도장 / 사인) 를 native overlay 로 정확히 그리도록.
+
+- **`page-layer-tree.ts` 신설** — `parsePageLayerTree` (`getPageLayerTree` JSON 트리에서 wrap=behindText|inFrontOfText image op 분리) + `applyOverlayLayers` (DOM 적용: behind div z-index=0 + front div z-index=2). bbox × zoom = CSS px. pointer-events: none. 6 단위 테스트
+- **CSS filter 매핑** — grayScale → `grayscale(100%)`, blackWhite → `grayscale + contrast(1000%)`, brightness/contrast 비례. 워터마크 → `mix-blend-mode: multiply`
+- **`renderCanvasPage` 통합** — 본문 canvas 렌더 직후 `getPageLayerTree` → parse → applyOverlayLayers
+
+### Changed — chunk 103b: Phase 6.3 follow-up dual-mode re-render hooks (0.3.45)
+
+Canvas mode 가 `useDebugSurface` (debug insertText) 와 `useUndoHistory` (snapshot restore) 에서도 redraw 동작. 이전엔 mounted 검사가 SVG 한정이라 Canvas 모드에서 누락. 두 hook 의 selector → `'svg, canvas'`.
+
+### Changed — chunk 103: Phase 6.3 Canvas 본문 렌더 path (dual-mode) (0.3.44)
+
+`StudioViewer` 의 페이지 마운트 path 가 `localStorage.ahwp:render-mode` 에 따라 SVG / Canvas 로 분기. SVG (default) 는 0건 회귀. Canvas 는 `renderPageToCanvasFiltered("flow")` 호출 + `CanvasPool` 재사용 + 비동기 이미지 디코딩 200ms / 600ms 재렌더 (rhwp-studio scheduleReRender 패턴).
+
+- **`renderCanvasPage(idx, el)`** — DPR-aware backing store (`pageW × zoom × DPR`), CSS `100% × 100%` (parent-sized). lib `scale = zoom × DPR`. canvas.parentElement 검사로 in-place 재렌더 (zoom 변경 / 비동기 디코딩 시) 가능.
+- **dual-mode 분기 3 지점** — `renderPageInto` 진입 시 / `forceRerender` 의 mounted 검사 / viewport unmount 의 in-window 판정. SVG 경로는 기존과 동일.
+- **path 변경 정리** — `useEffect([path])` 의 cleanup 이 `canvasPoolRef.releaseAll()` + 모든 pending re-render timer 취소. `useDocumentLifecycle` 의 bridge.dispose 후 실행.
+- **zoom 변화 재렌더** — Canvas mode 한정 `useEffect([zoom])` 가 viewport 내 모든 mounted canvas 를 재렌더 (SVG 는 CSS scale 로 충분, skip).
+- **`tests/e2e/studio-canvas-mode.spec.ts`** 3 케이스 신규 — `<canvas>` 마운트 / DPR-aware 백킹 store / 비공백 픽셀 콘텐츠.
+- **deferred to chunk 103b**: L-004 narrow-column tooltip 우회 (현재 Canvas mode 는 `<title>` 못 함 — `getPageLayerTree` text op 기반 transparent overlay 필요), `useDebugSurface` `el?.querySelector('svg')` selector mode 분기, per-page dims (`getPageInfo`).
+
+검증: SVG mode e2e 29 케이스 회귀 0 / Canvas mode 3 케이스 통과 / typecheck / lint (0 errors, 7 사전 warnings) / unit (58/59).
+
+### Changed — chunk 102: Phase 6.2 canvas-pool + render-mode 인프라 (0.3.43)
+
+Phase 6 세 번째 chunk. 동작 변화 0건 인프라만 — chunk 103 의 Canvas 본문 렌더 swap 이 사용할 토대.
+
+- **`canvas-pool.ts`** — `<canvas>` element 풀링 (rhwp-studio reference 포팅). `acquire(idx)` / `release(idx)` / `releaseAll()` / `has` / `getCanvas` / `activePages` / `totalCount`. viewport 스크롤 시 GC 압박 완화 — viewport buffer 11 페이지에 풀이 stable 11 elements 로 수렴
+- **`render-mode.ts`** — `localStorage.ahwp:render-mode` (`'svg' | 'canvas'`) 읽기/쓰기. 인식 못 하는 값은 fail-safe `'svg'`. e2e 가 `page.evaluate` 로 spec 별 set 가능
+- **`canvas-pool.test.ts`** 7 단위 테스트 — acquire/release 순환, 재사용, releaseAll, 미존재 페이지 release no-op
+- 본 chunk 에서 renderPageInto 분기 X — chunk 103 가 mode 별 path 분기 + Canvas 본문 렌더 도입
+
+### Changed — chunk 101: Phase 6.1 coordinate-system.ts (0.3.42)
+
+`src/lib/rhwp-core/coordinate-system.ts` 신설 — DPR-aware 좌표계 변환 유틸. 5 좌표 공간 (Client / Scroller / Page-CSS / Page / Canvas-px) 의 변환 함수 6개 (`clientToPage`, `clientToPageWithRect`, `pageYToClientY`, `clientToScroller`, `pageToScroller`, `pageDimsToCanvasSize`) 를 단일 모듈로 통합. `StudioViewer.tsx:hitTestAt` + `usePageMouseHandlers.ts` 4개 inline 변환 지점을 함수 호출로 교체. `pageDimsToCanvasSize` 는 Phase 6.3 Canvas swap 의 `scale = zoom × DPR` 정합용 prep — 현재 path 미사용. 동작 변화 0건.
+
+### Changed — chunk 100: Phase 6.0 WasmBridge 추상화 + RhwpDoc 타입 단일화 (0.3.41)
+
+Phase 6 (rhwp-studio view 계층 정합) 시작. 동작 변화 0건 순수 refactor.
+
+- **`src/lib/rhwp-core/` 디렉토리 분할** — 단일 파일 `rhwp-core.ts` 를 `index.ts` (배럴) / `init.ts` (`ensureRhwpCore`) / `wasm-bridge.ts` (`WasmBridge` 클래스) / `types.ts` (`RhwpDoc`/`RhwpViewer` 단일 정의) 로 분해. `WasmBridge.create(bytes)` / `.dispose()` 가 lifecycle 소유, `useDocumentLifecycle` 이 진입점.
+- **`RhwpDoc` 타입 8 곳 중복 → 1 곳** — 7 hook + StudioViewer 의 `type RhwpDoc = InstanceType<typeof HwpDocument>` 중복 제거, `import type { RhwpDoc } from '@/lib/rhwp-core'` 로 통합.
+- **`docRef` 호출 지점 0건 변경** — `docRef.current?.X(...)` 패턴 ~136 곳은 `bridge.doc` 미러링으로 그대로 동작. Phase 6.3 의 Canvas render path swap 시 그때 필요한 method 만 bridge 로 promote 예정.
+
+### Changed — chunk 99 follow-up: confirm UI 폐기 + 자동 적용 + 컨텍스트 매뉴얼화 (0.3.40)
+
+사용자 요청 — 채팅 흐름의 모든 explicit confirm 버튼 제거, 자동 적용을 main flow 로. 만족 못하면 stop / undo (⌘Z) 로 옵트아웃.
+
+- **자동 승인 토글 폐기** — `chat-auto-approve-toggle` UI / `loadAutoApprove` / `STORAGE_AUTO_APPROVE` / `autoApproveRef` / `pendingCalls` 사용자 승인 게이트 모두 제거. 모든 도구 (read + write) 즉시 dispatch. 검토 모드 e2e 3개 skip + helper `enableAutoApprove` no-op 화.
+- **자동 적용** — assistant 응답이 `html` 블록 / markdown fallback / outline-aware section 을 포함하면 useEffect 가 한 번 자동 dispatch. `chat-action-apply-html` 버튼은 plan mode 일 때만 노출. 자동 적용 후 `chat-action-applied-toast` ✓ 표시 + 되돌리기 버튼.
+- **Patches 자동 acceptAll** — `ahwp-patches` 블록 도착 시 useEffect 가 한 번 자동 acceptAll. plan mode 가 아니면 클릭 없이 즉시 적용. Diff 카드는 portal overlay 에 변경 기록 + 되돌리기 용도로 잔류.
+- **Plan mode default OFF** — 자동 적용이 main flow 라 default false. Plan mode 는 큰 / 위험한 변경에 opt-in 하는 검토 모드 (Settings → AI 공급자 → "Plan mode 기본 활성화" ON).
+- **컨텍스트 자동 첨부 폐기** — `chat-attach-toggle` (`📎 현재 문서를 컨텍스트로 첨부`) UI / `STORAGE_ATTACH_DOC` / `MultiDocChips` (auto multi-doc reference) 모두 제거. 사용자가 매뉴얼로 `📌 발췌 첨부` 버튼 또는 selection rect 드래그로만 컨텍스트 추가. 응답마다 토큰 비용 예측 가능.
+- **Tool entry 실패 시각 강조** — `chat-tool-entry` 의 status='failed' 일 때 컨테이너 + 아이콘 + argsPreview 모두 destructive 색상 (이전엔 reason 텍스트만). switchTargetDoc 의 `target-not-open:` 같은 실패가 시각적으로 명확.
+
+신규 / 수정 e2e: chat-html-apply 자동 적용 회귀 가드, chat-plan-mode default ON 명시 set, chat-actions / chat-agent-multidoc / nvidia-live / gemini-live / ollama-live 의 auto-approve 호출 정리. 폭넓은 회귀 40/40 + 5 skipped (검토 모드 의도적). typecheck / lint (0 errors).
+
+### Fixed — chunk 99 follow-up: 세션 복원 시 폴더 트리 / 탭 다중 복원 (0.3.39)
+
+- **`getSession()` 파싱 버그 fix** — `setSession()` 은 `lastActivePath` / `lastFolderPath` / `openTabPaths` 전체 스냅샷을 disk 에 쓰는데 `getSession()` 은 `lastActivePath` 만 파싱하고 나머지는 무시하던 버그. 결과적으로 (a) 앱 재시작 시 폴더 트리가 항상 비어있고 (b) 다중 탭 복원이 legacy `else if (lastActivePath)` 단일 탭 fallback 으로만 작동. 이제 세 필드 모두 round-trip.
+- **사용자 영향** — 재시작 후 좌측 폴더 트리에 직전 작업 폴더가 그대로 복원. 다중 탭도 정상 복원 (heretofore 마지막 활성 탭만 복원되던 것).
+- **신규 unit test** — `electron/store/session.test.ts` 4 케이스: 라운드트립, 파일 부재 시 default, 손상된 array 엔트리 drop, legacy 단일-필드 호환.
+
+### Changed — chunk 99 follow-up: Diff cards 를 가운데 (Studio) 패널로 이동 (0.3.38)
+
+- **`react-dom` createPortal 로 ahwp-patches 카드 라우팅** — 기존엔 chat 메시지 버블 안에 inline 렌더되어 (a) 좁은 우측 패널에서 카드 가독성 ↓, (b) 본문 옆에 변경 제안이 있는데도 시선이 chat 으로 이동해야 하는 비효율. AppShell 의 center pane (TabBar 아래) 에 새 portal target `#ahwp-editor-diff-overlay` 추가 — sticky 우측 상단에 max-width 420px / max-height calc(100%-3.5rem-1rem). ChatPanel 의 Message 가 자기 패치 카드를 이 컨테이너로 portal.
+- **Chat 측엔 hint 만 잔류** — `📋 N개 변경 제안 — 에디터 우측 카드에서 검토` 한 줄. portal target 미마운트 환경(초기 / e2e fixture-less)에선 inline fallback.
+- **e2e 신규 1 케이스** — `chat-diff.spec.ts`: portal 카드가 overlay 컨테이너 안 visible / chat 메시지 트리 안엔 chat-patches-block 부재.
+- 기존 6 케이스 통과 회귀 가드.
+
+### Added / Changed — chunk 99 follow-up: agentic 파이프라인 + Plan mode + Section replace (0.3.37)
+
+chunk 99 의 markdown fallback 후속 — Claude Code 식 자율 흐름으로 다음 7개 묶음 진화. NIM gemma4 31b it 류 도구 호출률 낮은 모델에서도 사업계획서 작성 같은 long-form 이 안정적으로 완주하도록.
+
+- **Outline-aware section replace** — AI 응답 첫 heading 의 섹션 번호 ("2.7.4") 가 outline 매칭되면 기존 섹션 영역을 delete-and-replace (중복 X). `applyHtmlReplaceSection` 신규 IR 메서드 + `findSectionToReplace` 매처. ⌘Z 한 번에 롤백. 매칭 실패 시 paste-at-caret fallback.
+- **System prompt 의 섹션 heading 가이드** — Manual / Agent 양쪽 prompt 에 "사용자가 특정 섹션 작성 요청 시 첫 줄을 `### {번호} {제목}` markdown heading 으로 시작" 박제. 매칭 정확도 ↑.
+- **Agentic 파이프라인 강화** — Turn cap 10 → 50 (Settings 1~200 조절). 도구 결과 truncation 차등 (read 16k / write 4k). 실패 reason 에 retry hint 자동 추가. Stop 버튼이 mid-loop turn 진입 차단 (이전엔 abort 만 → 다음 turn 자동 진입). Step counter UI ("Turn 12/50"). 시스템 prompt 의 `Agentic loop discipline` 6개 원칙 (verify / retry / signal completion / etc).
+- **Plan mode (Claude Code 식 dry-run)** — 기본 ON. 매 새 prompt 마다 AI 가 read tool 만 호출하고 변경 계획만 작성 (write 차단). 사용자 검토 후 (a) "이 계획대로 실행" 버튼 / (b) "건너뛰기" 인라인 / (c) 같은 prompt 재전송 — 모두 next-send 1회만 plan 우회. 영속 상태는 default (Settings → AI 공급자 → "Plan mode 기본 활성화") 한 가지뿐, turn-by-turn active 는 메모리 ref 로 관리. ChatPanel 의 토글 UI 는 Settings 로 이동, 채팅창엔 default ON 일 때 indicator + 건너뛰기 버튼만.
+- **Cross-doc write routing** — 신규 `switchTargetDoc({path})` 도구. 한 turn 에서 여러 문서를 순차 편집. 닫힌 탭 path 도 자동 `file:open-by-path` 로 mount 후 라우팅 (chunk 50 docId-aware 와 결합).
+- **Parallel read dispatch** — read-only / auto-approved 도구들을 한 turn 안에서 `Promise.allSettled` 로 동시 발사. IPC 경로 read (`searchWorkspaceOutlines` / `readParagraphByPath`) 가 진짜 동시성 획득. write 는 기존대로 직렬.
+- **휴리스틱 정리** — `SYSTEM_PROMPT_AGENT_GUIDE` 의 keyword→tool 매핑 표 (10+ 줄), few-shot (A)/(B)/(C) verbose 예시, "워크스페이스 / 폴더 / 양식 / ..." keyword 트리거 일괄 삭제. 도구 catalog description 만으로 LLM 이 결정. tool router 의 keyword 리스트도 일반화. ~100 → ~60 줄.
+
+신규 e2e 9 케이스 — chat-section-replace 3 + chat-plan-mode 3 + 기존 회귀 가드. typecheck / lint (0 errors) / vitest 21/21 / 폭넓은 e2e 49/49 통과.
+
+### Added — chunk 100: Settings "캐시 비우기" (0.3.36)
+
+- **새 IPC `app:clear-caches`** — `userData/outline-cache.json` (chunk 96 워크스페이스 outline) + `userData/model-cache.json` (chunk 48/70 provider 모델 목록 24h 캐시) 만 삭제. 채팅 히스토리 / 세션 / API 키 / recent.json 등 사용자 데이터는 절대 건드리지 않음 (실수로 날리면 손실 큰 데이터). 결과는 `{removed: string[], failed: string[]}`.
+- **Settings "일반" 탭 — "캐시 비우기" 버튼** — `data-testid="settings-clear-caches"`. 클릭 시 IPC 호출 → idle / busy / ok / error 상태 표시. ok 표시는 3초 후 idle 복귀.
+- **e2e 2 케이스** — (a) 캐시 두 파일 + 임의 sentinel 파일 작성 → 버튼 클릭 → 캐시 두 개만 사라지고 sentinel 보존 검증, (b) 캐시 파일 없는 fresh 상태에서도 silent 성공.
+
+### Changed — chunk 99: tool 라우터 휴리스틱 → LLM 기반 (0.3.35)
+
+- **휴리스틱 키워드 매칭 제거 → LLM 기반 라우팅** — chunk 98 의 키워드 그룹 정적 정의 (`GROUPS`) 가 사라지고, 사용자 선택 모델로 router LLM 한 번 호출해서 다음 turn 에 필요한 tool 이름 JSON 배열을 받음. 별도 small router 모델 없이 사용자 선택 모델 그대로. 휴리스틱이 미리 정의된 키워드에만 반응하던 한계 (예: 신규 표현 / 외래어 / 신조어) 해소.
+- **`selectToolsViaLlm({history, provider, model, hasKey})`** — router LLM 에 카탈로그 요약 (이름 + 1줄 설명) + 사용자 latest 메시지 → JSON 배열 응답 → `parseRouterResponse` 가 코드펜스/잡설을 정리하고 첫 `[...]` 추출 → `normalizeSelection` 이 이름 화이트리스트 검사 + always-include 두 개 (`getCaretPosition`, `getDocumentOutline`) 보강.
+- **Fail-safe** — router timeout (30s) / parse error / 빈 배열 / 키 없음 / 빈 query 면 full catalog fallback. `ToolSelectionResult.reason` 에 분기 사유 (router-ok / router-empty / router-timeout / router-error / router-parse-failed / no-key / empty-query) 직렬화 → 디버깅 / 메트릭 용도.
+- **검증** — fake-AI agent regression 9 케이스 통과 (router 가 fake provider 의 TOOL: 응답을 평문으로 못 받아 fallback → main turn 그대로 동작). NIM live 종단간 (자연 한국어 컨셉 질의 → 워크스페이스 검색 → 검토 모드 승인 → IR 변경) 31.1s 통과 (휴리스틱 22.3s 대비 +9s 가 router LLM 라운드트립 비용).
+
+### Added — chunk 98: 휴리스틱 tool 라우터 (0.3.34)
+
+- **`src/features/chat/toolRouter.ts`** — 사용자 query 의 키워드 매칭으로 60+ tool catalog 의 부분집합만 LLM 에 노출. 별도 router LLM 없이 (사용자 선택 모델 그대로). 11개 키워드 그룹 (워크스페이스 / 정렬 / 글자 서식 / 단락 편집 / 표 / 그림·도형 / 머리말꼬리말 / 책갈피·각주 / 페이지 / 검색 / 스타일) + always-include 2개 (`getCaretPosition`, `getDocumentOutline`). 매칭 0개면 full catalog fallback (의도 모호 시 모델 자유 선택). useChatStreaming.fireChat 가 매 turn 마다 가장 최근 user 메시지로 selection 적용.
+- **효과 입증** — chunks 96+97 종단간 NIM live e2e 가 전에 어떤 모델로도 실패하던 것이, 휴리스틱 라우터 + meta/llama-3.3-70b-instruct 조합으로 22초 만에 통과: 자연 한국어 컨셉 질의 ("워크스페이스에 있는 사업계획서 양식을 참고해서 이 빈 문서에 첫 섹션 제목 한 줄 추가해줘") → searchWorkspaceOutlines 호출 → 검토 모드 승인 → 실제 IR 변경 (단락 추가). qwen3.5-122b 의 stall 은 NIM 호스팅 모델 특이 이슈로 분리 확인 (catalog 크기 무관).
+- **단위 테스트** — `toolRouter.test.ts` 10 케이스: 워크스페이스 / 정렬 / 표 / 그림 / 머리말 / 책갈피 / 각주 / fallback / always-include / 복합 키워드. fake-AI agent regression 12 케이스 통과.
+
+### Changed — chunk 97: Manual / Agent 통합 + 자동 승인 토글 (0.3.33)
+
+- **모드 pill 제거 + 자동 승인 토글로 일원화** — 두 개의 별도 모드 (Manual = 코드 블록 응답 → 사용자 클릭 vs Agent = 즉시 실행 + 묶음 undo) 가 단일 흐름으로 통합. 모든 turn 에서 provider tool-use API 가 활성 (= 기존 Agent path), 차이는 **쓰기 도구 자동 승인 토글** (off=검토 / on=즉시 실행) 하나 뿐. 검토 모드 (default) 에선 매 write tool 호출이 `pending` 상태로 잡혀 사용자가 "승인" / "거절" 버튼을 누르면 dispatch (혹은 거절). 읽기 도구는 항상 즉시 실행 (안전).
+- **Pending 상태 + Accept/Reject UI** — `chat-tool-entry` 가 `pending` / `rejected` 상태 추가. pending 항목엔 인라인 "승인" / "거절" 버튼. 한 turn 에 pending 이 둘 이상이면 "모두 승인 / 모두 거절" bulk 버튼 노출.
+- **Tool 분류 (`READONLY_TOOL_NAMES`)** — `shared/ai-tools.ts` 가 read-only tool 11개 (getCaretPosition / getDocumentOutline / getStyleAt / getCharPropertiesAt / getParaPropertiesAt / getStyleListJson / getTextRange / findInDocument / getCellInfo / searchWorkspaceOutlines / readParagraphByPath) 를 명시 set 으로 export. `isReadOnlyTool(name)` helper 가 dispatcher 의 즉시 실행 분기 결정.
+- **`useChatStreaming` 두 단계 dispatch** — Phase 1: validate + 즉시 실행 (read / autoApprove write). Phase 2: pending write 가 있으면 turn 일시 중지 + 사용자 결정 대기. 모든 pending resolve 되면 `advanceAgentLoop` 가 tool_results 합성 + next turn 진입. 새 export `resolveApproval(toolUseId, accept)`.
+- **System prompt 보강** — `SYSTEM_PROMPT_AGENT_GUIDE` 에 검토 모드 안내 추가. 거절된 호출은 `tool_result: error: user-rejected` 로 회신되니 모델이 다시 묻거나 다른 접근으로 재시도해야 함을 명시.
+- **마이그레이션** — 옛 `localStorage['ahwp:chat:mode']` ('manual' / 'agent') 가 새 `localStorage['ahwp:chat:auto-approve']` (boolean) 로 자동 변환. 'agent' → true, 'manual'/없음 → false. 옛 키는 제거.
+- **e2e**: `chat-agent.spec.ts` 에 검토-모드 3 케이스 추가 (write pending → 승인 → ok / 거절 → rejected / read tool 자동 실행). 기존 모드 pill 토글 케이스는 제거. fake-AI 9 케이스 통과. full e2e 403 통과 / 0 회귀.
+
+### Added — chunk 96: outline-as-router 워크스페이스 검색 (0.3.32)
+
+- **`searchWorkspaceOutlines` / `readParagraphByPath` 신규 read tool** — 사용자가 첨부 / 발췌 없이 개념적 질의 ("사업계획서의 매출 항목 기준으로 ~~ 수정해줘") 만 했을 때 Agent 가 워크스페이스 (`session.lastFolderPath`) 를 직접 검색하도록 지원. (a) `searchWorkspaceOutlines` 가 BFS (max depth 5, max docs 200) 로 폴더 안 모든 .hwp/.hwpx 의 파일명 + 제목 단락 outline 만 회수 (heading-styled paragraphs only — `제목 N` / `Heading N`). 응답은 본문 미포함 라우팅용 인벤토리. (b) `readParagraphByPath` 가 임의 path + paragraphIdx 로 단락 본문 + 주변 context (default 2개) 회수. 활성 문서 IR 변경 없음.
+- **Outline cache** — `userData/outline-cache.json`, 파일 path + mtime 키. 변경 없는 파일은 재파싱 skip → 두 번째 검색은 즉시 응답.
+- **System prompt 가이드 보강** — `SYSTEM_PROMPT_AGENT_GUIDE` 에 "워크스페이스 안의 다른 문서를 참조해야 하는 작업" 워크플로우 추가 (인벤토리 → 본문 회수 → 편집).
+- **Tool dispatcher async 화** — `runOne` / `runTools` / `onRunTools` prop 시그니처가 sync `AhwpToolResult[]` → async `Promise<AhwpToolResult[]>` 로 일반화. 기존 IR-only tool 들은 성능 영향 없음 (Promise resolve 즉시).
+- **String-encoded integer args 허용** — `nonNegInts` validator 가 `"42"` 같은 문자열 정수도 받도록 보강. NIM / qwen 류 모델이 JSON Schema 가 integer 라도 string 으로 emit 하는 일이 잦아서 모든 tool 의 dispatch 안정성 향상 (chunk 51 read tool 들도 같이 혜택).
+- **NIM live e2e** — `tests/e2e/nvidia-live.spec.ts` 에 "Agent calls searchWorkspaceOutlines on concept query" 1 케이스 추가. 임시 워크스페이스 (사업계획서 + 공고 .hwp 두 개 + blank 활성 doc) 셋업 후 NIM (qwen3.5-122b) 으로 컨셉 쿼리 → 40초 안에 tool 호출 + status=ok 확인.
+
 ### Fixed — chunk 95.1: release CI Linux deb maintainer (0.3.31)
 
 - **`build.linux.maintainer` 추가** — 0.3.30 release CI 가 Linux .deb 빌드 단계에서 `Please specify author 'email' in the application package.json` 으로 실패. `package.json` `author` 가 string ("ahwp contributors") 인데 .deb 패키지는 별도로 maintainer 필드 (이름 + 이메일) 가 필수. `build.linux.maintainer` 에 GitHub noreply 메일 (`61678329+YEUNU@users.noreply.github.com`) 로 표기. AppImage 빌드는 이전에도 성공했고 mac/win 도 무관 — Linux .deb 단일 fix.

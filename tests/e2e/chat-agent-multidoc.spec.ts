@@ -88,8 +88,7 @@ test.describe('chat — chunk 50 docId-aware Agent dispatch', () => {
     const { page } = launched;
     await openBoth(page);
 
-    // Activate Agent and fire a single insertText turn.
-    await page.getByTestId('chat-mode-agent').click();
+    // chunk 99 follow-up — 자동 승인 토글 폐기. 모든 write 즉시 dispatch.
     await page
       .getByTestId('chat-input')
       .fill(
@@ -149,7 +148,6 @@ test.describe('chat — chunk 50 docId-aware Agent dispatch', () => {
       .locator('button:not([data-testid="studio-tab-close"])');
 
     // Turn 1: target.hwpx active. Insert "TURN1_TARGET".
-    await page.getByTestId('chat-mode-agent').click();
     await page
       .getByTestId('chat-input')
       .fill(
@@ -223,7 +221,7 @@ test.describe('chat — chunk 50 docId-aware Agent dispatch', () => {
     const { page } = launched;
     await openBoth(page);
 
-    await page.getByTestId('chat-mode-agent').click();
+    // chunk 99 follow-up — 자동 승인 폐기. write 즉시 dispatch.
     // sectionIdx=99 is out of range — dispatcher should mark tool as
     // failed and NOT mutate either doc.
     await page

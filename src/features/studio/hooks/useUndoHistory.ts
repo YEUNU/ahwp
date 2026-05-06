@@ -24,10 +24,8 @@ import {
   useRef,
   type MutableRefObject,
 } from 'react';
-import { HwpDocument } from '@/lib/rhwp-core';
+import type { RhwpDoc } from '@/lib/rhwp-core';
 import type { LifecycleCaret } from './useDocumentLifecycle';
-
-type RhwpDoc = InstanceType<typeof HwpDocument>;
 
 export const HISTORY_CAP = 100;
 
@@ -136,9 +134,9 @@ export function useUndoHistory(opts: UseUndoHistoryOptions): UndoHistoryHandle {
         /* ignore — older lib */
       }
       o.cacheRef.current.clear();
+      // chunk 107: canvas-only — re-render in place onto the pooled canvas.
       o.pageRefsRef.current.forEach((el, idx) => {
-        if (el?.firstElementChild?.tagName.toLowerCase() === 'svg') {
-          el.innerHTML = '';
+        if (el?.firstElementChild?.tagName.toLowerCase() === 'canvas') {
           o.renderPageInto(idx);
         }
       });

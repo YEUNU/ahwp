@@ -23,18 +23,35 @@ function byteLen(s: string): number {
   return new TextEncoder().encode(s).length;
 }
 
+/** chunk 96 — coerce a string-encoded non-negative integer ("42") to
+ * number. Real LLM tool-use APIs (OpenAI / NVIDIA NIM / Gemini) often
+ * stringify integer arg values even when the JSON Schema says
+ * `integer`. Returns null if the value is not a usable non-negative
+ * integer (rejects floats, negatives, NaN, scientific, leading zeroes
+ * other than "0"). */
+function coerceNonNegInt(v: unknown): number | null {
+  if (typeof v === 'number') {
+    return Number.isInteger(v) && v >= 0 ? v : null;
+  }
+  if (typeof v === 'string') {
+    if (!/^(0|[1-9]\d*)$/.test(v)) return null;
+    const n = Number(v);
+    return Number.isInteger(n) && n >= 0 ? n : null;
+  }
+  return null;
+}
+
 /** Phase 3 chunk 45+ — common pattern: validate a list of keys as
- * non-negative integers. Returns a typed object on success. */
+ * non-negative integers. chunk 96 — accept string-encoded ints too. */
 function nonNegInts(
   args: Record<string, unknown>,
   keys: readonly string[],
 ): { ok: true; value: Record<string, number> } | { ok: false; reason: string } {
   const out: Record<string, number> = {};
   for (const k of keys) {
-    const v = args[k];
-    if (typeof v !== 'number' || !Number.isInteger(v) || v < 0)
-      return { ok: false, reason: `${k}-not-non-negative-int` };
-    out[k] = v;
+    const n = coerceNonNegInt(args[k]);
+    if (n === null) return { ok: false, reason: `${k}-not-non-negative-int` };
+    out[k] = n;
   }
   return { ok: true, value: out };
 }
@@ -623,6 +640,53 @@ function validateArgs<T extends AhwpToolName>(
       ]);
       if (!v.ok) return v;
       return { ok: true, value: v.value as AhwpToolArgs[T] };
+    }
+    // === Phase 5 chunk 96 — workspace outline router ===
+    case 'searchWorkspaceOutlines': {
+      const raw = args.maxDocs;
+      if (raw === undefined) {
+        return { ok: true, value: {} as AhwpToolArgs[T] };
+      }
+      const n = coerceNonNegInt(raw);
+      if (n === null || n < 1 || n > 200)
+        return { ok: false, reason: 'maxDocs-out-of-range' };
+      return { ok: true, value: { maxDocs: n } as AhwpToolArgs[T] };
+    }
+    case 'readParagraphByPath': {
+      const filePath = args.path;
+      if (typeof filePath !== 'string' || filePath.length === 0)
+        return { ok: false, reason: 'path-not-string' };
+      if (byteLen(filePath) > 4096)
+        return { ok: false, reason: 'path-too-large' };
+      const v = nonNegInts(args, ['sectionIdx', 'paragraphIdx']);
+      if (!v.ok) return v;
+      const rawCtx = args.contextParagraphs;
+      let contextParagraphs: number | undefined;
+      if (rawCtx !== undefined) {
+        const n = coerceNonNegInt(rawCtx);
+        if (n === null || n > 10)
+          return { ok: false, reason: 'contextParagraphs-out-of-range' };
+        contextParagraphs = n;
+      }
+      return {
+        ok: true,
+        value: {
+          path: filePath,
+          ...v.value,
+          ...(contextParagraphs !== undefined ? { contextParagraphs } : {}),
+        } as AhwpToolArgs[T],
+      };
+    }
+    case 'switchTargetDoc': {
+      const filePath = args.path;
+      if (typeof filePath !== 'string' || filePath.length === 0)
+        return { ok: false, reason: 'path-not-string' };
+      if (byteLen(filePath) > 4096)
+        return { ok: false, reason: 'path-too-large' };
+      return {
+        ok: true,
+        value: { path: filePath } as AhwpToolArgs[T],
+      };
     }
     default: {
       // Exhaustiveness — the AHWP_TOOL_NAMES guard above already filters

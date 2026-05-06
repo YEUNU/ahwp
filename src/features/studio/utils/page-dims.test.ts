@@ -1,33 +1,48 @@
 import { describe, expect, it } from 'vitest';
 import { parsePageDimensions } from './page-dims';
 
-describe('parsePageDimensions', () => {
-  it('returns null for non-svg input', () => {
+describe('parsePageDimensions (chunk 107: getPageInfo JSON)', () => {
+  it('returns null for malformed JSON', () => {
     expect(parsePageDimensions('')).toBeNull();
-    expect(parsePageDimensions('<html><body>x</body></html>')).toBeNull();
+    expect(parsePageDimensions('not json')).toBeNull();
   });
 
-  it('reads width / height when present', () => {
-    const svg =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="595" height="842"></svg>';
-    expect(parsePageDimensions(svg)).toEqual({ w: 595, h: 842 });
+  it('reads width / height from a getPageInfo JSON payload', () => {
+    const json = JSON.stringify({ width: 595, height: 842 });
+    expect(parsePageDimensions(json)).toEqual({ w: 595, h: 842 });
   });
 
-  it('falls back to viewBox when width/height absent', () => {
-    const svg =
-      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 595 842"></svg>';
-    expect(parsePageDimensions(svg)).toEqual({ w: 595, h: 842 });
+  it('returns null when width / height are missing', () => {
+    expect(parsePageDimensions(JSON.stringify({}))).toBeNull();
+    expect(parsePageDimensions(JSON.stringify({ width: 595 }))).toBeNull();
   });
 
-  it('rejects non-positive dimensions and falls through to viewBox', () => {
-    const svg =
-      '<svg xmlns="http://www.w3.org/2000/svg" width="0" height="-1" viewBox="0 0 100 200"></svg>';
-    expect(parsePageDimensions(svg)).toEqual({ w: 100, h: 200 });
+  it('rejects non-positive dimensions', () => {
+    expect(
+      parsePageDimensions(JSON.stringify({ width: 0, height: 842 })),
+    ).toBeNull();
+    expect(
+      parsePageDimensions(JSON.stringify({ width: 595, height: -1 })),
+    ).toBeNull();
   });
 
-  it('rejects malformed viewBox', () => {
-    const svg =
-      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 abc"></svg>';
-    expect(parsePageDimensions(svg)).toBeNull();
+  it('rejects non-numeric width / height', () => {
+    expect(
+      parsePageDimensions(JSON.stringify({ width: '595', height: 842 })),
+    ).toBeNull();
+  });
+
+  it('ignores unrelated fields (margins, etc.) — pageInfo has more than just dims', () => {
+    const json = JSON.stringify({
+      width: 595,
+      height: 842,
+      marginLeft: 20,
+      marginRight: 20,
+      marginTop: 30,
+      marginBottom: 30,
+      marginHeader: 15,
+      marginFooter: 15,
+    });
+    expect(parsePageDimensions(json)).toEqual({ w: 595, h: 842 });
   });
 });

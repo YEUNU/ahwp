@@ -77,9 +77,43 @@ export const AHWP_TOOL_NAMES = [
   'getCaretPosition',
   'findInDocument',
   'getCellInfo',
+  // Phase 5 chunk 96 — outline-as-router workspace search
+  'searchWorkspaceOutlines',
+  'readParagraphByPath',
+  // chunk 99 follow-up — cross-doc write routing. switchTargetDoc 가
+  // turn 의 활성 write target 을 절대 경로로 변경. read-only 분류 (실제
+  // IR 변경 없음 — 그냥 라우팅 ref 갱신).
+  'switchTargetDoc',
 ] as const;
 
 export type AhwpToolName = (typeof AHWP_TOOL_NAMES)[number];
+
+/**
+ * Phase 5 chunk 97 — Manual/Agent 통합. 읽기 전용 도구 set. 활성 doc /
+ * 워크스페이스 의 IR 을 변경하지 않으니 사용자 승인 없이 즉시 실행해도
+ * 안전하다. 쓰기 도구는 기본 검토 게이트 통과 후 실행 (Settings 의
+ * "쓰기 도구 자동 승인" 토글로 우회 가능).
+ */
+export const READONLY_TOOL_NAMES = new Set<AhwpToolName>([
+  'getDocumentOutline',
+  'getStyleListJson',
+  'getStyleAt',
+  'getCharPropertiesAt',
+  'getParaPropertiesAt',
+  'getTextRange',
+  'getCaretPosition',
+  'findInDocument',
+  'getCellInfo',
+  'searchWorkspaceOutlines',
+  'readParagraphByPath',
+  // chunk 99 follow-up — switchTargetDoc 는 IR 을 변경하지 않으므로
+  // read-only 게이트로 분류 (즉시 실행, 사용자 승인 불필요).
+  'switchTargetDoc',
+]);
+
+export function isReadOnlyTool(name: string): boolean {
+  return READONLY_TOOL_NAMES.has(name as AhwpToolName);
+}
 
 /**
  * Phase 3 — provider tool-use API 용 카탈로그. `getAhwpToolCatalog()` 가
@@ -388,6 +422,16 @@ export interface AhwpToolArgs {
     controlIdx: number;
     cellIdx: number;
   };
+  // Phase 5 chunk 96 — outline-as-router workspace search
+  searchWorkspaceOutlines: { maxDocs?: number };
+  readParagraphByPath: {
+    path: string;
+    sectionIdx: number;
+    paragraphIdx: number;
+    contextParagraphs?: number;
+  };
+  // chunk 99 follow-up — switchTargetDoc args.
+  switchTargetDoc: { path: string };
 }
 
 /** A single op as it appears inside the model-authored block. */

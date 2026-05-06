@@ -111,6 +111,21 @@ export interface ViewerHandle {
    */
   applyHtmlAtCaret: (html: string) => void;
   /**
+   * Apply an HTML fragment by replacing the body of an existing outline
+   * section (chunk 99 follow-up). Removes paragraphs in
+   * `[startParaIdx, endParaIdxExclusive)` then pastes HTML at
+   * `startParaIdx`. The whole operation is wrapped in a single undo
+   * group so ⌘Z rolls back as one.
+   *
+   * Used when the AI-authored HTML's first heading matches an outline
+   * section number — fixes the chunk 99 markdown fallback duplicating
+   * the section instead of replacing it.
+   */
+  applyHtmlReplaceSection: (
+    html: string,
+    target: { startParaIdx: number; endParaIdxExclusive: number },
+  ) => void;
+  /**
    * Export the first N paragraphs of section 0 as HTML (chunk 18).
    * Used by the chat panel to attach document context to AI requests.
    * Token-cheap compared to HWPX; lossy on header/footer/footnote

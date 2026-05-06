@@ -882,6 +882,50 @@ const TOOL_DESCRIPTORS: AhwpToolDescriptor[] = [
       required: ['sectionIdx', 'parentParaIdx', 'controlIdx', 'cellIdx'],
     },
   },
+  // === Phase 5 chunk 96 — outline-as-router workspace search ===
+  {
+    name: 'searchWorkspaceOutlines',
+    description:
+      '현재 폴더 트리(워크스페이스) 안의 모든 .hwp/.hwpx 의 파일명 + 제목 단락 outline (paragraphIndex/level/text) 인벤토리를 회수. 사용자가 특정 문서를 지칭하지 않고 개념적 질의 ("매출 항목 기준으로 ~~ 수정해줘") 만 한 경우, 이 도구로 후보 문서/단락을 식별한 뒤 readParagraphByPath 로 본문을 회수해 의사결정 근거로 사용. maxDocs 1~200 (기본 50). 응답 크기는 폴더 규모에 비례하니 필요할 때만 호출.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        maxDocs: { type: 'integer', minimum: 1, maximum: 200 },
+      },
+    },
+  },
+  {
+    name: 'readParagraphByPath',
+    description:
+      '임의 .hwp/.hwpx 파일의 특정 단락 본문 + 주변 단락(context)을 회수. searchWorkspaceOutlines 응답의 path/paragraphIndex 를 그대로 넘기면 됨. 활성 문서 IR 은 변경되지 않음 (mutation 없음, caret 이동 없음). contextParagraphs 0~10 (기본 2 — 앞뒤 2개씩 부가 회수). 단락당 4KB 상한.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', minLength: 1 },
+        sectionIdx: { type: 'integer', minimum: 0 },
+        paragraphIdx: { type: 'integer', minimum: 0 },
+        contextParagraphs: { type: 'integer', minimum: 0, maximum: 10 },
+      },
+      required: ['path', 'sectionIdx', 'paragraphIdx'],
+    },
+  },
+  {
+    name: 'switchTargetDoc',
+    description:
+      'Cross-doc write routing (chunk 99 follow-up). 후속 write tool 들의 활성 target 을 다른 열린 문서로 전환. path 는 절대 경로 (현재 열린 탭 중 하나 — `searchWorkspaceOutlines` 응답이나 chat 시스템 메시지의 `[참조 문서]` path 와 동일). 닫힌 / 미열린 파일은 reject. 한 turn 안에서 여러 번 호출 가능 (예: 보고서 A 의 요약 작성 후 보고서 B 의 결론으로 이동). turn 종료 시점에 자동으로 원래 active doc 으로 복귀하지는 않으니, 작업 완료 후 명시적으로 다시 switchTargetDoc 으로 돌아가거나 그대로 마무리. read tool 은 이 라우팅과 무관하게 explicit path arg 를 받으니 영향 없음.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          minLength: 1,
+          description:
+            '전환할 활성 target 의 절대 경로 (.hwp 또는 .hwpx). 현재 열린 탭 중 하나여야 함.',
+        },
+      },
+      required: ['path'],
+    },
+  },
 ];
 
 /**

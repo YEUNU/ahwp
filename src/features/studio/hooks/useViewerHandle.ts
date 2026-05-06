@@ -11,13 +11,11 @@
  * 보존. 70+ 메서드.
  */
 import { useImperativeHandle, type ForwardedRef } from 'react';
-import { HwpDocument } from '@/lib/rhwp-core';
+import type { RhwpDoc } from '@/lib/rhwp-core';
 import { relocateExcerpt } from '@/features/studio/utils/relocate-excerpt';
 import type { CharFormatKey, ViewerHandle } from '../types';
 import type { RhwpStyleAt } from '@shared/rhwp-types';
 import type { LifecycleCursorRect } from './useDocumentLifecycle';
-
-type RhwpDoc = InstanceType<typeof HwpDocument>;
 
 type ParaAlignment = 'left' | 'center' | 'right' | 'justify';
 
@@ -172,6 +170,10 @@ export interface UseViewerHandleOptions {
     opts?: { treatAsChar?: boolean },
   ) => { paraIdx: number; controlIdx: number } | null;
   applyHtmlAtCaret: (html: string) => void;
+  applyHtmlReplaceSection: (
+    html: string,
+    target: { startParaIdx: number; endParaIdxExclusive: number },
+  ) => void;
 }
 
 export function useViewerHandle(
@@ -222,6 +224,7 @@ export function useViewerHandle(
     renderEquationSvg,
     createRectShapeAtCaret,
     applyHtmlAtCaret,
+    applyHtmlReplaceSection,
   } = opts;
 
   // R5 — Agent ir* tool wrappers 의 try/catch 보일러플레이트 일원화.
@@ -342,6 +345,8 @@ export function useViewerHandle(
       createRectShapeAtCaret: (widthHwpunit, heightHwpunit, opts) =>
         createRectShapeAtCaret(widthHwpunit, heightHwpunit, opts),
       applyHtmlAtCaret: (html) => applyHtmlAtCaret(html),
+      applyHtmlReplaceSection: (html, target) =>
+        applyHtmlReplaceSection(html, target),
       exportDocumentHtml: (maxParagraphs = 50) => {
         const doc = docRef.current;
         if (!doc) return '';
@@ -669,9 +674,14 @@ export function useViewerHandle(
         if (!doc) return [];
         const headingByStyleId = new Map<number, number>();
         for (const s of styleList) {
+          // "제목 N" / "Heading N" — 표준 한컴 / 워드 호환 헤딩 스타일.
+          // "개요 N" — Korean outline style (blank.hwpx 기본 + 많은
+          // 사업계획서 양식에서 채용). 둘 다 picked up — 매칭은 number
+          // prefix 만 비교라 false positive 위험 미미.
           const koMatch = s.name.match(/^제목\s*(\d+)?/);
+          const koOutline = s.name.match(/^개요\s*(\d+)?/);
           const enMatch = s.englishName?.match(/^Heading\s*(\d+)?/i);
-          const m = koMatch ?? enMatch;
+          const m = koMatch ?? koOutline ?? enMatch;
           if (m) {
             const level = m[1] ? Math.min(6, parseInt(m[1], 10)) : 1;
             headingByStyleId.set(s.id, level);
@@ -1164,6 +1174,7 @@ export function useViewerHandle(
       renderEquationSvg,
       createRectShapeAtCaret,
       applyHtmlAtCaret,
+      applyHtmlReplaceSection,
       styleList,
     ],
   );

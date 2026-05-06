@@ -1,20 +1,15 @@
 /**
- * Renderer-side @rhwp/core integration. Lazy WASM init on first use.
+ * WASM lazy-init for `@rhwp/core` in the renderer.
  *
- * This is the foundation for the Studio migration (see docs/STUDIO_MIGRATION.md).
- * Chunk 1: just import + version() to verify Vite bundles @rhwp/core's WASM
- * asset and resolves it at runtime. Chunk 2 will add HwpViewer rendering.
+ * Split out from `rhwp-core.ts` (chunk 100, Phase 6.0). Init logic + the
+ * `measureTextWidth` host callback. Foundation for `WasmBridge` (which
+ * gates instantiation behind `ensureRhwpCore`).
  *
  * Note: the main process has its own @rhwp/core instance (see
  * electron/hwp/converter.ts). They're separate WASM instances in separate
  * processes — no shared state.
  */
-import init, {
-  HwpDocument,
-  HwpViewer,
-  init_panic_hook,
-  version,
-} from '@rhwp/core';
+import init, { init_panic_hook, version } from '@rhwp/core';
 
 let initPromise: Promise<void> | null = null;
 
@@ -63,8 +58,6 @@ export async function ensureRhwpCore(): Promise<void> {
   })();
   return initPromise;
 }
-
-export { HwpDocument, HwpViewer };
 
 // Dev-only window attachment so the module can be probed from DevTools without
 // having to wait for chunk 2's UI. Also serves as a top-level side effect so

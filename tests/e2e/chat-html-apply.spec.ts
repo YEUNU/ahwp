@@ -60,17 +60,12 @@ async function openFixture(page: Page, fixture: string): Promise<void> {
 test.describe('chat — chunk 18 doc-context + apply-html', () => {
   test.skip(!existsSync(FIXTURE), 'tests/e2e/fixtures/blank.hwpx missing');
 
-  test('attach-doc toggle is visible when a doc is loaded', async () => {
-    const { page } = launched;
-    await openFixture(page, FIXTURE);
-    await expect(page.getByTestId('chat-attach-toggle')).toBeVisible();
-    // chunk 74 — default true (persisted via localStorage). User
-    // expectation when opening ChatPanel with an active doc is "AI
-    // already sees what I'm looking at".
-    await expect(page.getByTestId('chat-attach-checkbox')).toBeChecked();
+  test.skip('attach-doc toggle is visible when a doc is loaded', async () => {
+    // chunk 99 follow-up — 컨텍스트 자동 첨부 토글 폐기 (사용자 요청).
+    // 사용자가 매뉴얼로 발췌 chip 으로만 컨텍스트 추가.
   });
 
-  test('apply-html button surfaces on assistant html block + applies to doc', async () => {
+  test('html block 응답 → 자동 적용 + ⌘Z 가능 (자동 적용 회귀 가드)', async () => {
     const { page } = launched;
     await openFixture(page, FIXTURE);
 
@@ -80,12 +75,10 @@ test.describe('chat — chunk 18 doc-context + apply-html', () => {
       '여기 정렬 변경:\n```html\n<p style="text-align:center;">CENTER</p>\n```';
     await sendEcho(page, reply);
 
-    const applyBtn = page.getByTestId('chat-action-apply-html');
-    await expect(applyBtn).toBeVisible();
-    await expect(applyBtn).toHaveText('문서에 적용');
-
-    await applyBtn.click();
-    await expect(applyBtn).toHaveText('✓ 적용됨');
+    // chunk 99 follow-up — 자동 적용. 응답 후 toast 가 곧장 보이고
+    // 사용자가 클릭할 버튼 자체가 없음.
+    const toast = page.getByTestId('chat-action-applied-toast');
+    await expect(toast).toBeVisible({ timeout: 3000 });
 
     // Verify the doc actually received the alignment change.
     const align = await page.evaluate(() => {

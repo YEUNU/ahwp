@@ -24,13 +24,11 @@ import {
   useState,
   type MutableRefObject,
 } from 'react';
-import { HwpDocument } from '@/lib/rhwp-core';
+import type { RhwpDoc } from '@/lib/rhwp-core';
 import type {
   LifecycleCaret,
   LifecycleCursorRect,
 } from './useDocumentLifecycle';
-
-type RhwpDoc = InstanceType<typeof HwpDocument>;
 
 export interface FindMatch {
   sectionIndex: number;

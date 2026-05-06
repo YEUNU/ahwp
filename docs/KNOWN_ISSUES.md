@@ -79,7 +79,7 @@
 - 줄바꿈 / 페이지 분할: 차이 가능성 **높음**
 - 한컴 전용 폰트 (함초롬돋움 등): OS 폰트 부재 시 fallback **높음**
 - 수식 렌더링: 차이 가능성 **중간**
-- 복잡한 표·병합 셀: 미묘한 차이 가능 **중간 → 높음** (다중 행/열 병합이 있는 양식 표에서 column width 추정이 어긋나 우측 narrow column 의 텍스트가 잘리거나 행 높이가 불균형하게 보임. lib 가 SVG 를 직접 그려 우리에게 넘기므로 우리 쪽 fix 불가)
+- 복잡한 표·병합 셀: 미묘한 차이 가능 **중간 → 높음** (다중 행/열 병합이 있는 양식 표에서 column width 추정이 어긋나 우측 narrow column 의 텍스트가 잘리거나 행 높이가 불균형하게 보임. lib 가 Canvas 를 직접 그려 우리에게 넘기므로 우리 쪽 fix 불가. clipping 자체는 라이브러리 한계지만 hover tooltip 우회는 적용됨 — Phase 6 follow-up (`getPageTextLayout` 기반 transparent `<div title="...">` per-run overlay) 으로 SVG `<text><title>` 시절 동등한 수준 회복)
 - 차트·SmartArt: core 부분 지원 **높음**
 
 **우리 자체 일관성은 보장**: 우리 viewer === HOP === rhwp-studio (같은 엔진). 우리 안에서 "보고 → 저장 → 다시 봐도 동일"은 OK. 한컴오피스로 다시 열거나 인쇄 시 픽셀 동일 보장은 X

@@ -30,6 +30,14 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { localizeShortcutPublic } from '@/lib/hancom-tooltips';
+import {
+  AGENT_MAX_TURNS_DEFAULT,
+  AGENT_MAX_TURNS_HARD_CAP,
+  loadAgentMaxTurns,
+  saveAgentMaxTurns,
+  loadPlanModeDefault,
+  savePlanModeDefault,
+} from '@/features/chat/hooks/useChatStreaming';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/app/use-theme';
 
@@ -244,11 +252,33 @@ function PaneFooter({
 
 function GeneralPane(): JSX.Element {
   const { theme, setTheme, resolvedTheme } = useTheme();
+  // chunk 100 — 캐시 비우기. outline-cache + model-cache 만 삭제 (사용자
+  // 데이터 / 세션 / API 키 / 채팅 히스토리는 보존).
+  type ClearState =
+    | { kind: 'idle' }
+    | { kind: 'busy' }
+    | { kind: 'ok'; removed: string[] }
+    | { kind: 'error'; reason: string };
+  const [clearState, setClearState] = useState<ClearState>({ kind: 'idle' });
+  const onClearCaches = useCallback(async () => {
+    setClearState({ kind: 'busy' });
+    try {
+      const result = await window.api.clearCaches();
+      setClearState({ kind: 'ok', removed: result.removed });
+      // ~3s 후 idle 복귀.
+      setTimeout(() => setClearState({ kind: 'idle' }), 3_000);
+    } catch (err) {
+      setClearState({
+        kind: 'error',
+        reason: (err as Error).message ?? String(err),
+      });
+    }
+  }, []);
   return (
     <>
       <PaneHeader title="일반" description="외형과 기본 동작을 설정합니다." />
       <PaneBody>
-        <section className="space-y-3" data-testid="settings-general">
+        <section className="space-y-5" data-testid="settings-general">
           <Field label="테마" help="시스템: OS의 라이트/다크 모드 자동 추적">
             <div className="flex gap-1.5">
               {(['system', 'light', 'dark'] as const).map((opt) => (
@@ -276,6 +306,44 @@ function GeneralPane(): JSX.Element {
               현재 적용: {resolvedTheme === 'dark' ? '다크' : '라이트'}
             </p>
           </Field>
+          <Field
+            label="캐시 비우기"
+            help="워크스페이스 outline 캐시 + provider 모델 목록 캐시만 삭제. 채팅 히스토리 / 세션 / API 키는 보존됩니다."
+          >
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={onClearCaches}
+                disabled={clearState.kind === 'busy'}
+                data-testid="settings-clear-caches"
+                className="text-xs"
+              >
+                {clearState.kind === 'busy' ? (
+                  <>
+                    <Loader2 className="mr-1.5 size-3 animate-spin" />
+                    삭제 중...
+                  </>
+                ) : (
+                  '캐시 비우기'
+                )}
+              </Button>
+              {clearState.kind === 'ok' ? (
+                <span
+                  className="text-[10.5px] text-emerald-600 dark:text-emerald-400"
+                  data-testid="settings-clear-caches-ok"
+                >
+                  ✓ 삭제됨 ({clearState.removed.length}개 파일)
+                </span>
+              ) : null}
+              {clearState.kind === 'error' ? (
+                <span className="text-[10.5px] text-destructive">
+                  실패: {clearState.reason}
+                </span>
+              ) : null}
+            </div>
+          </Field>
         </section>
       </PaneBody>
     </>
@@ -295,9 +363,104 @@ function AiProvidersPane(): JSX.Element {
             <ProviderCard key={meta.id} meta={meta} />
           ))}
         </div>
+        <div className="mt-5 space-y-3 border-t border-border pt-4">
+          <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Agent 동작
+          </h3>
+          <AgentSettingsRow />
+          <PlanModeDefaultRow />
+        </div>
       </PaneBody>
       <PaneFooter hint="변경사항은 저장 버튼으로 반영됩니다. 키를 변경하려면 새 값을 입력하세요." />
     </>
+  );
+}
+
+/**
+ * Agent turn 한계 설정 — chunk 99 follow-up. 한 작업당 최대 read +
+ * write tool 호출 횟수. 사업계획서 같은 long-form 은 30~50 권장. 너무
+ * 작으면 모델이 작업 중간에 막힘. 너무 크면 무한 루프 가능 (안전망).
+ */
+function AgentSettingsRow(): JSX.Element {
+  const [maxTurns, setMaxTurns] = useState<number>(() => loadAgentMaxTurns());
+  const onChange = (n: number) => {
+    const clamped = Math.max(
+      1,
+      Math.min(AGENT_MAX_TURNS_HARD_CAP, Math.round(n)),
+    );
+    setMaxTurns(clamped);
+    saveAgentMaxTurns(clamped);
+  };
+  return (
+    <div
+      className="flex items-center gap-3 text-xs"
+      data-testid="settings-agent-max-turns-row"
+    >
+      <label
+        htmlFor="settings-agent-max-turns"
+        className="flex flex-col gap-0.5"
+      >
+        <span className="font-medium">Agent turn 한계</span>
+        <span className="text-[10px] text-muted-foreground">
+          한 작업당 최대 도구 호출 횟수. 기본 {AGENT_MAX_TURNS_DEFAULT}, 최대{' '}
+          {AGENT_MAX_TURNS_HARD_CAP}. 사업계획서 같은 long-form 은 30~50 권장.
+        </span>
+      </label>
+      <input
+        id="settings-agent-max-turns"
+        data-testid="settings-agent-max-turns-input"
+        type="number"
+        min={1}
+        max={AGENT_MAX_TURNS_HARD_CAP}
+        value={maxTurns}
+        onChange={(e) => {
+          const v = Number(e.target.value);
+          if (!Number.isFinite(v)) return;
+          onChange(v);
+        }}
+        className="w-20 rounded border border-input bg-background px-2 py-1 text-right tabular-nums focus:outline-hidden focus:ring-2 focus:ring-ring"
+      />
+    </div>
+  );
+}
+
+/**
+ * Plan mode 기본 활성화 토글 — chunk 99 follow-up. on=새 prompt 마다
+ * AI 가 변경 계획만 작성 (write 차단), 응답 후 자동 disengage. 사용자
+ * 검토 후 같은 prompt 재전송 또는 "이 계획대로 실행" 버튼으로 실제
+ * 적용. 큰 / 위험한 / 모호한 변경의 dry-run 검토를 매번 강제.
+ *
+ * off=즉시 실행 (전통적 Agent 흐름). 빠른 반복 / 간단 명령에 적합.
+ */
+function PlanModeDefaultRow(): JSX.Element {
+  const [planDefault, setPlanDefault] = useState<boolean>(() =>
+    loadPlanModeDefault(),
+  );
+  const onChange = (next: boolean) => {
+    setPlanDefault(next);
+    savePlanModeDefault(next);
+  };
+  return (
+    <label
+      className="flex cursor-pointer items-start justify-between gap-3 rounded-md border border-input bg-background px-3 py-2"
+      data-testid="settings-plan-mode-default-row"
+    >
+      <div className="flex flex-col gap-0.5">
+        <span className="text-xs font-medium">Plan mode 기본 활성화</span>
+        <span className="text-[10px] text-muted-foreground">
+          on=새 prompt 마다 dry-run (변경 계획 작성, write 차단). 응답 후 자동
+          해제 → 같은 prompt 재전송 또는 “이 계획대로 실행” 버튼으로 적용.
+          off=즉시 실행 (전통적 Agent 흐름).
+        </span>
+      </div>
+      <input
+        type="checkbox"
+        checked={planDefault}
+        onChange={(e) => onChange(e.target.checked)}
+        data-testid="settings-plan-mode-default-toggle"
+        className="mt-0.5 h-4 w-4 cursor-pointer accent-primary"
+      />
+    </label>
   );
 }
 

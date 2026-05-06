@@ -204,16 +204,11 @@ export const HANCOM_TOOLTIPS = {
     description: '본문 너비에 맞춰 자동으로 확대·축소합니다.',
   },
 
-  // 채팅 / AI
-  'chat-mode-manual': {
-    name: 'Manual 모드',
+  // 채팅 / AI (chunk 97 — Manual/Agent 통합. 모드 pill 제거)
+  'chat-auto-approve-toggle': {
+    name: '쓰기 도구 자동 승인',
     description:
-      'AI 가 변경 제안을 코드 블록으로 출력하면 사용자가 적용 버튼을 눌러 반영합니다.',
-  },
-  'chat-mode-agent': {
-    name: 'Agent 모드',
-    description:
-      'AI 가 도구를 직접 호출해 본문을 자동 수정합니다. ⌘Z 한 번으로 한 turn 전체 롤백 가능.',
+      'on: AI 의 쓰기 도구 호출을 즉시 실행 (⌘Z 한 번으로 한 turn 롤백). off: 매 쓰기 호출마다 승인/거절 검토. 읽기 도구는 항상 즉시 실행.',
   },
   'chat-history-toggle': {
     name: '대화 목록',

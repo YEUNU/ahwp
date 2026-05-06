@@ -37,8 +37,22 @@ import {
 } from 'react';
 import { Button } from '@/components/ui/button';
 import { hancomTitle } from '@/lib/hancom-tooltips';
-// `ensureRhwpCore` 는 R1.1 에서 useDocumentLifecycle 로 이동.
-import { HwpDocument } from '@/lib/rhwp-core';
+// `ensureRhwpCore` 는 R1.1 에서 useDocumentLifecycle 로 이동. chunk 100
+// (Phase 6.0): `RhwpDoc` 타입은 `@/lib/rhwp-core` 에서 단일 정의 import,
+// `WasmBridge` 가 lifecycle 소유. chunk 101 (Phase 6.1): `clientToPage`
+// 등 좌표 변환 유틸도 같은 모듈. chunk 103 (Phase 6.3): Canvas 렌더 path
+// (`CanvasPool`). chunk 107 (Phase 6.7): SVG 경로 + `getRenderMode` flag
+// 제거 — Canvas only.
+import {
+  WasmBridge,
+  CanvasPool,
+  clientToPage,
+  parsePageLayerTree,
+  applyOverlayLayers,
+  parsePageTextLayout,
+  applyTextTooltipOverlay,
+  type RhwpDoc,
+} from '@/lib/rhwp-core';
 import { type PageDims } from '@/features/studio/utils/page-dims';
 // `relocateExcerpt` 는 R1.8 에서 useViewerHandle 로 이동.
 import { callCellOp } from '@/features/studio/utils/cell-op';
@@ -89,8 +103,6 @@ interface StudioViewerProps {
 }
 
 type Phase = 'mounting' | 'reading' | 'rendering' | 'ready';
-
-type RhwpDoc = InstanceType<typeof HwpDocument>;
 
 // `PageDims` 는 R1.0 에서 `utils/page-dims.ts` 로 추출됨.
 
@@ -536,15 +548,57 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     ref,
   ) {
     const scrollRef = useRef<HTMLDivElement>(null);
+    // chunk 100 (Phase 6.0): `bridgeRef` owns the underlying HwpDocument
+    // lifecycle (`WasmBridge.create()` / `.dispose()`). `docRef` is a
+    // mirror of `bridge.doc` so the existing ~136 `docRef.current?.X(...)`
+    // call sites in this file + 7 hooks continue to work unchanged.
+    const bridgeRef = useRef<WasmBridge | null>(null);
     const docRef = useRef<RhwpDoc | null>(null);
     const pageRefsRef = useRef<(HTMLDivElement | null)[]>([]);
     const cacheRef = useRef<Map<number, string>>(new Map());
+    // chunk 103 (Phase 6.3): Canvas render path. `canvasPoolRef` reuses
+    // `<canvas>` elements across mount/unmount cycles. `pendingReRenderRef`
+    // schedules 200ms / 600ms re-renders to cover async <image> base64
+    // decode (rhwp-studio scheduleReRender pattern). `zoomRef` /
+    // `pageDimsRef` mirror state into refs so the stable
+    // `renderPageInto` callback (deps `[]`) reads current values.
+    const canvasPoolRef = useRef<CanvasPool>(new CanvasPool());
+    const pendingReRenderRef = useRef<
+      Map<number, ReturnType<typeof setTimeout>[]>
+    >(new Map());
+    const zoomRef = useRef(1);
+    const pageDimsRef = useRef<PageDims | null>(null);
 
     const [phase, setPhase] = useState<Phase>('mounting');
     const [error, setError] = useState<string | null>(null);
     const [pageCount, setPageCount] = useState(0);
     const [pageDims, setPageDims] = useState<PageDims | null>(null);
     const [zoom, setZoom] = useState(1);
+    // chunk 103: keep refs in sync for the empty-deps `renderPageInto`
+    // callback (used by IntersectionObserver mount window).
+    useEffect(() => {
+      zoomRef.current = zoom;
+    }, [zoom]);
+    useEffect(() => {
+      pageDimsRef.current = pageDims;
+    }, [pageDims]);
+    // chunk 103: path change → release all canvases + cancel pending
+    // re-renders. Pool keeps elements alive across mount/unmount cycles
+    // within the same doc, but a new doc has a different page-count
+    // mapping. Cleanup runs after useDocumentLifecycle's bridge.dispose.
+    // (`renderCanvasPage` zoom effect is deferred until after that
+    //  callback's declaration further down.)
+    useEffect(() => {
+      const pool = canvasPoolRef.current;
+      const pending = pendingReRenderRef.current;
+      return () => {
+        pending.forEach((timers) => {
+          for (const t of timers) clearTimeout(t);
+        });
+        pending.clear();
+        pool.releaseAll();
+      };
+    }, [path]);
     const [currentPage, setCurrentPage] = useState(0);
     const [dirty, setDirty] = useState(false);
     // chunk 51 — body text counters (chars / words / paragraphs).
@@ -884,6 +938,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     // 로 분해 (utils 가 아닌 hook — useEffect + 의존 ref/setter 조합).
     useDocumentLifecycle({
       path,
+      bridgeRef,
       docRef,
       caretRef,
       cacheRef,
@@ -903,92 +958,124 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       setPageDims,
     });
 
-    // Mount or fetch SVG for a page (uses cache).
-    const renderPageInto = useCallback((idx: number): void => {
-      const el = pageRefsRef.current[idx];
-      if (!el) return;
-      // Already mounted? Skip.
-      if (el.firstElementChild?.tagName.toLowerCase() === 'svg') return;
-      let svg = cacheRef.current.get(idx);
-      if (!svg) {
-        const doc = docRef.current;
-        if (!doc) return;
-        try {
-          svg = doc.renderPageSvg(idx);
-          cacheRef.current.set(idx, svg);
-        } catch (err) {
-          console.error(`[studio] render page ${idx} failed:`, err);
-          return;
-        }
-      }
-      // Parse via DOMParser (image/svg+xml) — guarantees the SVG namespace
-      // is established for `<image>` (otherwise the HTML parser may treat it
-      // ambiguously) and that xlink:href / href on embedded images resolve
-      // correctly. innerHTML works for many SVGs but is unreliable when the
-      // payload contains <image>, <use href>, or namespace-prefixed attrs.
-      const parser = new DOMParser();
-      const parsed = parser.parseFromString(svg, 'image/svg+xml');
-      const root = parsed.documentElement;
-      // Surface parse errors (DOMParser doesn't throw — it returns a
-      // <parsererror> document instead).
-      if (root.tagName.toLowerCase() === 'parsererror') {
-        console.error(
-          `[studio] page ${idx} SVG parse error:`,
-          root.textContent,
-        );
-        return;
-      }
-      const adopted = document.importNode(
-        root,
-        true,
-      ) as unknown as SVGSVGElement;
-      // Strip fixed dims so CSS controls size; preserve aspect via viewBox.
-      adopted.removeAttribute('width');
-      adopted.removeAttribute('height');
-      adopted.setAttribute('preserveAspectRatio', 'xMidYMid meet');
-      adopted.style.width = '100%';
-      adopted.style.height = '100%';
-      adopted.style.display = 'block';
-      // chunk 92 — narrow column 텍스트 잘림 우회 (KNOWN_ISSUES L-004).
-      // lib 가 추정한 column width 가 좁아서 text 가 잘려 보일 때, native
-      // browser 의 <title> tooltip 로 full text 를 hover-read 가능하게
-      // 한다. 모든 <text> 에 자기 textContent 를 <title> 로 한 번 더
-      // 노출 — clipping 자체는 그대로지만 hover 시 잘린 부분도 볼 수
-      // 있다. SVG 레이아웃 변경 없음 (안전).
-      const SVG_NS = 'http://www.w3.org/2000/svg';
-      adopted.querySelectorAll('text').forEach((t) => {
-        const txt = t.textContent?.trim();
-        if (!txt) return;
-        // Skip if a <title> child already exists (lib may add its own).
-        if (t.querySelector(':scope > title')) return;
-        const title = document.createElementNS(SVG_NS, 'title');
-        title.textContent = txt;
-        // <title> must be the first child for spec-compliant tooltip behavior.
-        t.insertBefore(title, t.firstChild);
-      });
-      el.replaceChildren(adopted);
-      // Diagnostic: track image counts per page for debugging.
-      const stringCount = (svg.match(/<image\b/g) ?? []).length;
-      const parsedCount = parsed.querySelectorAll('image').length;
-      const mountedCount = el.querySelectorAll('image').length;
-      const diag = window as Window & {
-        __studioPageDiag?: Record<
-          number,
-          { string: number; parsed: number; mounted: number }
-        >;
-      };
-      diag.__studioPageDiag ??= {};
-      diag.__studioPageDiag[idx] = {
-        string: stringCount,
-        parsed: parsedCount,
-        mounted: mountedCount,
-      };
-      if (stringCount !== mountedCount) {
-        console.warn(
-          `[studio] page ${idx} image count mismatch: string=${stringCount} parsed=${parsedCount} mounted=${mountedCount}`,
-        );
+    // chunk 103 (Phase 6.3): cancel any pending async re-render for a
+    // page (used when the page leaves the viewport or the doc changes).
+    const cancelPendingReRender = useCallback((idx: number): void => {
+      const timers = pendingReRenderRef.current.get(idx);
+      if (timers) {
+        for (const t of timers) clearTimeout(t);
+        pendingReRenderRef.current.delete(idx);
       }
     }, []);
+
+    // chunk 103: Canvas-mode page render. Uses `getPageInfo`-grade dims
+    // (currently mirrored from page-0 SVG via pageDims state — Phase 6.3b
+    // will migrate per-page). Sets backing store = pageW × zoom × DPR,
+    // CSS = 100% (parent already sized to pageW × zoom). The lib's `scale`
+    // parameter takes the combined `zoom × DPR` factor — backing-store
+    // pixels per page-coord unit.
+    const renderCanvasPage = useCallback(
+      (idx: number, el: HTMLElement): void => {
+        const doc = docRef.current;
+        const dims = pageDimsRef.current;
+        if (!doc || !dims) return;
+        const z = zoomRef.current;
+        const dpr = window.devicePixelRatio || 1;
+        const scale = z * dpr;
+        const expectedW = Math.round(dims.w * z * dpr);
+        const expectedH = Math.round(dims.h * z * dpr);
+        let canvas = canvasPoolRef.current.getCanvas(idx);
+        const alreadyMounted = !!canvas && el.firstElementChild === canvas;
+        const sizeMatches =
+          !!canvas && canvas.width === expectedW && canvas.height === expectedH;
+        if (!canvas) {
+          canvas = canvasPoolRef.current.acquire(idx);
+        }
+        if (!sizeMatches) {
+          canvas.width = expectedW;
+          canvas.height = expectedH;
+        }
+        canvas.style.width = '100%';
+        canvas.style.height = '100%';
+        canvas.style.display = 'block';
+        try {
+          doc.renderPageToCanvasFiltered(idx, canvas, scale, 'flow');
+        } catch (err) {
+          console.error(`[studio] canvas render page ${idx} failed:`, err);
+          return;
+        }
+        if (!alreadyMounted) {
+          el.replaceChildren(canvas);
+        }
+        // chunk 104 (Phase 6.4): behind/front floating image overlays
+        // (워터마크 / 도장 등 wrap=behindText|inFrontOfText). Body-layer
+        // images (square / topAndBottom / inline) ride on the canvas
+        // itself. `getPageLayerTree` is the lib's source of truth for
+        // bbox + base64 + effect metadata.
+        try {
+          const overlays = parsePageLayerTree(doc.getPageLayerTree(idx));
+          applyOverlayLayers(el, idx, overlays, z);
+        } catch (err) {
+          console.warn(`[studio] page ${idx} overlay apply failed:`, err);
+        }
+        // Phase 6 follow-up (L-004 mitigation): transparent text-tooltip
+        // overlay so narrow-column text (clipped by lib's column-width
+        // estimate) shows full content on hover. SVG mode used to inject
+        // `<title>` into each `<text>` — Canvas has no equivalent, so
+        // we mount one transparent `<div title="...">` per text run via
+        // `getPageTextLayout`. Z-index 1 keeps it between behind/front
+        // overlays. Mouse events bubble to the page container — caret
+        // placement / drag selection unchanged.
+        try {
+          const layout = parsePageTextLayout(doc.getPageTextLayout(idx));
+          applyTextTooltipOverlay(el, idx, layout, z);
+        } catch (err) {
+          console.warn(`[studio] page ${idx} text tooltip apply failed:`, err);
+        }
+        // Async <image> base64 decode may not complete on the first paint —
+        // re-render at 200ms / 600ms covers most timings (rhwp-studio
+        // scheduleReRender pattern, page-renderer.ts:237-253).
+        cancelPendingReRender(idx);
+        const timers: ReturnType<typeof setTimeout>[] = [];
+        for (const delay of [200, 600]) {
+          const t = setTimeout(() => {
+            if (!canvas || !canvas.parentElement) return;
+            try {
+              doc.renderPageToCanvasFiltered(idx, canvas, scale, 'flow');
+            } catch {
+              /* doc may have been disposed during the timeout */
+            }
+          }, delay);
+          timers.push(t);
+        }
+        pendingReRenderRef.current.set(idx, timers);
+      },
+      [cancelPendingReRender],
+    );
+
+    // Mount or fetch SVG for a page (uses cache).
+    // chunk 107 (Phase 6.7): Canvas-only render path. Pre-107 had a
+    // dual-mode dispatch on `getRenderMode()` and an inline SVG mount
+    // path (renderPageSvg → DOMParser → <svg> mount + L-004 narrow-
+    // column tooltip injection + per-page <image> diagnostic). All
+    // gone — `renderCanvasPage` is the only way pages reach the DOM.
+    const renderPageInto = useCallback(
+      (idx: number): void => {
+        const el = pageRefsRef.current[idx];
+        if (!el) return;
+        renderCanvasPage(idx, el);
+      },
+      [renderCanvasPage],
+    );
+
+    // chunk 107: zoom change → Canvas re-render. (SVG branch removed.)
+    useEffect(() => {
+      pageRefsRef.current.forEach((el, idx) => {
+        if (el?.firstElementChild?.tagName.toLowerCase() === 'canvas') {
+          renderCanvasPage(idx, el);
+        }
+      });
+    }, [zoom, renderCanvasPage]);
 
     /**
      * After a HwpDocument mutation (insert / delete / etc.), the cached SVGs
@@ -1509,9 +1596,10 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             /* keep previous */
           }
         }
+        // chunk 107: canvas-only — re-render in place onto the
+        // pooled canvas (no detach).
         pageRefsRef.current.forEach((el, idx) => {
-          if (el?.firstElementChild?.tagName.toLowerCase() === 'svg') {
-            el.innerHTML = '';
+          if (el?.firstElementChild?.tagName.toLowerCase() === 'canvas') {
             renderPageInto(idx);
           }
         });
@@ -1946,6 +2034,83 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
      * 1px ≈ 75 HWPUNIT (96 DPI: 25.4/96 mm × 283.5 HWPUNIT/mm ≈ 75).
      * line-height: 1.5 → lineSpacing: 150 (percent of single).
      */
+    /** DOM-walk for paragraph-level styles `pasteHtml` drops — extracted
+     *  helper so applyHtmlAtCaret + applyHtmlReplaceSection share. */
+    const applyParaFormatsFromHtml = useCallback(
+      (
+        doc: NonNullable<typeof docRef.current>,
+        sec: number,
+        startParaIdx: number,
+        html: string,
+      ) => {
+        const dom = new DOMParser().parseFromString(html, 'text/html');
+        const blocks = Array.from(
+          dom.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li'),
+        );
+        let paraIdx = startParaIdx;
+        for (const el of blocks) {
+          const props: Record<string, unknown> = {};
+          const style = (el as HTMLElement).style;
+          const align = style.textAlign;
+          if (
+            align === 'left' ||
+            align === 'center' ||
+            align === 'right' ||
+            align === 'justify'
+          ) {
+            props.alignment = align;
+          }
+          const lh = style.lineHeight;
+          if (lh) {
+            let percent: number | null = null;
+            if (lh.endsWith('%')) percent = parseFloat(lh);
+            else {
+              const ratio = parseFloat(lh);
+              if (Number.isFinite(ratio) && ratio > 0)
+                percent = Math.round(ratio * 100);
+            }
+            if (percent != null && Number.isFinite(percent)) {
+              props.lineSpacing = percent;
+              props.lineSpacingType = 'Percent';
+            }
+          }
+          const pxToHu = (raw: string): number | null => {
+            const m = raw.match(/^(-?\d+(?:\.\d+)?)(px|pt)?$/);
+            if (!m) return null;
+            const n = parseFloat(m[1]);
+            if (!Number.isFinite(n)) return null;
+            const unit = m[2] || 'px';
+            // 1pt ≈ 100, 1px ≈ 75 HWPUNIT (96 DPI).
+            const k = unit === 'pt' ? 100 : 75;
+            return Math.round(n * k);
+          };
+          const ml = pxToHu(style.marginLeft);
+          if (ml != null) props.marginLeft = ml;
+          const mr = pxToHu(style.marginRight);
+          if (mr != null) props.marginRight = mr;
+          const ti = pxToHu(style.textIndent);
+          if (ti != null) props.indent = ti;
+          const mt = pxToHu(style.marginTop);
+          if (mt != null) props.spacingBefore = mt;
+          const mb = pxToHu(style.marginBottom);
+          if (mb != null) props.spacingAfter = mb;
+
+          if (Object.keys(props).length > 0) {
+            try {
+              doc.applyParaFormat(sec, paraIdx, JSON.stringify(props));
+            } catch (err) {
+              console.warn(
+                '[studio] applyParaFormatsFromHtml applyParaFormat failed:',
+                err,
+              );
+            }
+          }
+          paraIdx += 1;
+        }
+      },
+      [],
+    );
+
     const applyHtmlAtCaret = useCallback(
       (html: string): void => {
         const doc = docRef.current;
@@ -1955,80 +2120,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           // 1. Native paste — body text + char-level styles only.
           doc.pasteHtml(c.sectionIndex, c.paragraphIndex, c.charOffset, html);
           // 2. DOM-walk for paragraph-level styles `pasteHtml` ignores.
-          //    Each <p>/<h*>/<li> becomes a paragraph in IR order
-          //    starting at the caret's paragraph index.
-          const dom = new DOMParser().parseFromString(html, 'text/html');
-          const blocks = Array.from(
-            dom.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li'),
-          );
-          let paraIdx = c.paragraphIndex;
-          for (const el of blocks) {
-            const props: Record<string, unknown> = {};
-            const style = (el as HTMLElement).style;
-            // Alignment.
-            const align = style.textAlign;
-            if (
-              align === 'left' ||
-              align === 'center' ||
-              align === 'right' ||
-              align === 'justify'
-            ) {
-              props.alignment = align;
-            }
-            // Line height — accept "1.5" / "150%" / "200%".
-            const lh = style.lineHeight;
-            if (lh) {
-              let percent: number | null = null;
-              if (lh.endsWith('%')) percent = parseFloat(lh);
-              else {
-                const ratio = parseFloat(lh);
-                if (Number.isFinite(ratio) && ratio > 0)
-                  percent = Math.round(ratio * 100);
-              }
-              if (percent != null && Number.isFinite(percent)) {
-                props.lineSpacing = percent;
-                props.lineSpacingType = 'Percent';
-              }
-            }
-            // Left/right indent — only handle px / pt for now.
-            const pxToHu = (raw: string): number | null => {
-              const m = raw.match(/^(-?\d+(?:\.\d+)?)(px|pt)?$/);
-              if (!m) return null;
-              const n = parseFloat(m[1]);
-              if (!Number.isFinite(n)) return null;
-              const unit = m[2] || 'px';
-              // 1pt = 1/72 in × 25.4 mm × 283.5 HWPUNIT/mm ≈ 100
-              // 1px = 1/96 in × 25.4 mm × 283.5 HWPUNIT/mm ≈ 75
-              const k = unit === 'pt' ? 100 : 75;
-              return Math.round(n * k);
-            };
-            const ml = pxToHu(style.marginLeft);
-            if (ml != null) props.marginLeft = ml;
-            const mr = pxToHu(style.marginRight);
-            if (mr != null) props.marginRight = mr;
-            const ti = pxToHu(style.textIndent);
-            if (ti != null) props.indent = ti;
-            const mt = pxToHu(style.marginTop);
-            if (mt != null) props.spacingBefore = mt;
-            const mb = pxToHu(style.marginBottom);
-            if (mb != null) props.spacingAfter = mb;
-
-            if (Object.keys(props).length > 0) {
-              try {
-                doc.applyParaFormat(
-                  c.sectionIndex,
-                  paraIdx,
-                  JSON.stringify(props),
-                );
-              } catch (err) {
-                console.warn(
-                  '[studio] applyHtmlAtCaret applyParaFormat failed:',
-                  err,
-                );
-              }
-            }
-            paraIdx += 1;
-          }
+          applyParaFormatsFromHtml(doc, c.sectionIndex, c.paragraphIndex, html);
           dirtyRef.current = true;
           setDirty(true);
           refreshAfterMutation({ syncCaret: false });
@@ -2036,7 +2128,67 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           console.warn('[studio] applyHtmlAtCaret failed:', err);
         }
       },
-      [refreshAfterMutation],
+      [applyParaFormatsFromHtml, refreshAfterMutation],
+    );
+
+    /**
+     * Replace an outline section's body with HTML — chunk 99 follow-up.
+     *
+     * Avoids the "duplicate section" issue where the markdown-fallback
+     * apply pasted at caret leaving the existing X.Y.Z heading + body
+     * intact. Strategy:
+     *  1. `insertParagraph` at `startParaIdx` to mint an empty placeholder
+     *     (existing heading + body shift down by 1).
+     *  2. Delete the original span (now at `[startParaIdx+1, endParaIdxExclusive+1)`)
+     *     by repeatedly calling `deleteParagraph(sec, startParaIdx + 1)` —
+     *     each delete shifts the next paragraph back to that index.
+     *  3. `pasteHtml` into the placeholder at `(startParaIdx, 0)`.
+     *  4. Walk DOM for para-level styles, same as applyHtmlAtCaret.
+     *
+     * Wrapped in `beginUndoGroup`/`endUndoGroup` so ⌘Z rolls back the
+     * whole replace as one entry.
+     */
+    const applyHtmlReplaceSection = useCallback(
+      (
+        html: string,
+        target: { startParaIdx: number; endParaIdxExclusive: number },
+      ): void => {
+        const doc = docRef.current;
+        if (!doc) return;
+        const sec = caretRef.current.sectionIndex;
+        const { startParaIdx, endParaIdxExclusive } = target;
+        if (endParaIdxExclusive <= startParaIdx) return;
+
+        beginUndoGroup();
+        try {
+          // 1. Mint placeholder at startParaIdx (heading + body shift +1).
+          doc.insertParagraph(sec, startParaIdx);
+          // 2. Delete original span at startParaIdx+1 (now contains the
+          //    old heading + body). Each delete shifts the next paragraph
+          //    back to that same index.
+          const paraToDelete = endParaIdxExclusive - startParaIdx;
+          for (let i = 0; i < paraToDelete; i++) {
+            doc.deleteParagraph(sec, startParaIdx + 1);
+          }
+          // 3. Paste new HTML into the placeholder.
+          doc.pasteHtml(sec, startParaIdx, 0, html);
+          // 4. DOM-walk for paragraph-level styles.
+          applyParaFormatsFromHtml(doc, sec, startParaIdx, html);
+          dirtyRef.current = true;
+          setDirty(true);
+          refreshAfterMutation({ syncCaret: false });
+        } catch (err) {
+          console.warn('[studio] applyHtmlReplaceSection failed:', err);
+        } finally {
+          endUndoGroup();
+        }
+      },
+      [
+        applyParaFormatsFromHtml,
+        beginUndoGroup,
+        endUndoGroup,
+        refreshAfterMutation,
+      ],
     );
 
     /**
@@ -3240,6 +3392,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       renderEquationSvg,
       createRectShapeAtCaret,
       applyHtmlAtCaret,
+      applyHtmlReplaceSection,
     });
 
     /**
@@ -3491,9 +3644,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       ): HitTestResult | null => {
         const doc = docRef.current;
         if (!doc) return null;
-        const rect = target.getBoundingClientRect();
-        const x = (clientX - rect.left) / zoom;
-        const y = (clientY - rect.top) / zoom;
+        const { x, y } = clientToPage(clientX, clientY, target, zoom);
         try {
           return JSON.parse(doc.hitTest(idx, x, y)) as HitTestResult;
         } catch (err) {
@@ -3864,6 +4015,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       exportSelectionHtmlAt,
       pasteHtmlAt,
       applyHtmlAtCaret,
+      applyHtmlReplaceSection,
     });
 
     // Effect 2: page indicator + mount window. On every scroll (rAF-
@@ -3905,16 +4057,19 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
 
         const lo = Math.max(0, best - VIEWPORT_BUFFER_PAGES);
         const hi = Math.min(refs.length - 1, best + VIEWPORT_BUFFER_PAGES);
+        // chunk 107: canvas-only viewport unmount — releases the
+        // pooled canvas so it's available for another page.
         for (let i = 0; i < refs.length; i++) {
           const el = refs[i];
           if (!el) continue;
           const inWindow = i >= lo && i <= hi;
-          const hasSvg = el.firstElementChild?.tagName.toLowerCase() === 'svg';
-          if (inWindow && !hasSvg) {
+          const isMounted =
+            el.firstElementChild?.tagName.toLowerCase() === 'canvas';
+          if (inWindow && !isMounted) {
             renderPageInto(i);
-          } else if (!inWindow && hasSvg) {
-            // Clear DOM but keep cacheRef[i] so re-mount is fast.
-            el.innerHTML = '';
+          } else if (!inWindow && isMounted) {
+            cancelPendingReRender(i);
+            canvasPoolRef.current.release(i);
           }
         }
       };
@@ -3928,7 +4083,15 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       return () => {
         scrollEl.removeEventListener('scroll', onScroll);
       };
-    }, [phase, pageCount, pageDims, zoom, renderPageInto, isActive]);
+    }, [
+      phase,
+      pageCount,
+      pageDims,
+      zoom,
+      renderPageInto,
+      isActive,
+      cancelPendingReRender,
+    ]);
 
     const setZoomFit = useCallback(() => {
       if (!pageDims || !scrollRef.current) return;
