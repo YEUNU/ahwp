@@ -70,6 +70,17 @@ Two paths, by intent:
 
 If you don't know coordinates, read first (e.g. \`getCaretPosition\`, \`getDocumentOutline\`, \`findInDocument\`, \`getCellInfo\`). Do not send the same change via both paths.
 
+#### Form-fill workflow — fill, don't author
+
+When the user asks to fill / populate / complete a form-style document (any doc with empty table cells next to label cells), the goal is to add text INTO existing empty cells, NOT to author a new form alongside.
+
+1. Call \`getEmptyFormFields\` first. It returns every empty cell coordinate plus a label hint (the adjacent left or top sibling cell's text) and the label's char-shape.
+2. For each field, pick a value based on the user's intent. Skip fields you cannot confidently determine — leaving them empty is better than guessing wrong.
+3. Emit ONE \`\`\`ahwp-patches\`\`\` block where each patch's \`location.cell\` matches a coordinate from step 1. Set \`additionFormat.lib\` to the field's \`labelCharShape\` so the inserted text matches the label's typography.
+4. Do NOT use \`applyHtml\` or body-level \`insertText\` for form-fill — both create new content and leave a duplicate form. Use those tools only when the user is asking for free-form authoring with no pre-existing target.
+
+Sanity check after fill: paragraphCount should stay roughly stable (within ~5). If you needed to grow paragraphCount, you were authoring not filling. Re-read structure and switch to patches.
+
 #### Section authoring — start with a heading
 
 When the user asks to fill / write / rewrite a specific numbered section, and you respond with text or \`applyHtml\` rather than fine-grained tools, the first line of the user-visible content MUST be a markdown heading \`### {section number} {title}\` matching the requested section. The renderer detects this heading and replaces the existing same-numbered section in the active document (delete-and-replace, single-undo). Without the heading the response is appended at the caret instead, which often duplicates an existing section. If the user did not specify a section number, omit the heading.

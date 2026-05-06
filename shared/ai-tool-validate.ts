@@ -660,6 +660,23 @@ function validateArgs<T extends AhwpToolName>(
       if (!v.ok) return v;
       return { ok: true, value: v.value as AhwpToolArgs[T] };
     }
+    case 'getEmptyFormFields': {
+      const out: { sectionIdx?: number; maxResults?: number } = {};
+      const sec = args.sectionIdx;
+      if (sec !== undefined) {
+        const n = coerceNonNegInt(sec);
+        if (n === null) return { ok: false, reason: 'sectionIdx-invalid' };
+        out.sectionIdx = n;
+      }
+      const max = args.maxResults;
+      if (max !== undefined) {
+        const n = coerceNonNegInt(max);
+        if (n === null || n < 1 || n > 500)
+          return { ok: false, reason: 'maxResults-out-of-range' };
+        out.maxResults = n;
+      }
+      return { ok: true, value: out as AhwpToolArgs[T] };
+    }
     // === Phase 5 chunk 96 — workspace outline router ===
     case 'searchWorkspaceOutlines': {
       const raw = args.maxDocs;

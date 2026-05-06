@@ -931,6 +931,18 @@ const TOOL_DESCRIPTORS: AhwpToolDescriptor[] = [
       required: ['sectionIdx', 'parentParaIdx', 'controlIdx', 'cellIdx'],
     },
   },
+  {
+    name: 'getEmptyFormFields',
+    description:
+      "Enumerate empty fillable spots in the document — every table cell whose only paragraph has length 0. For each, returns the cell coordinate plus a label hint (text of the adjacent cell — left sibling first, then top sibling) and the label's char-shape (font / size / bold etc.). Use BEFORE filling a form so each patch can target an existing empty spot rather than authoring new content. Read-only and deterministic — does not mutate the IR. Cap maxResults to keep response small (default 100).",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sectionIdx: { type: 'integer', minimum: 0 },
+        maxResults: { type: 'integer', minimum: 1, maximum: 500 },
+      },
+    },
+  },
   // === Phase 5 chunk 96 — outline-as-router workspace search ===
   {
     name: 'searchWorkspaceOutlines',

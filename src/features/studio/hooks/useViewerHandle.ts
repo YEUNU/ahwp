@@ -13,6 +13,7 @@
 import { useImperativeHandle, type ForwardedRef } from 'react';
 import type { RhwpDoc } from '@/lib/rhwp-core';
 import { relocateExcerpt } from '@/features/studio/utils/relocate-excerpt';
+import { enumerateEmptyFormFields } from '@/features/studio/utils/empty-form-fields';
 import type { CharFormatKey, ViewerHandle } from '../types';
 import type { RhwpStyleAt } from '@shared/rhwp-types';
 import type { LifecycleCursorRect } from './useDocumentLifecycle';
@@ -724,6 +725,18 @@ export function useViewerHandle(
           return { sectionCount, sections };
         } catch (err) {
           console.warn('[studio] getDocumentSummary failed:', err);
+          return null;
+        }
+      },
+      // 0.4.21 — empty form-field discovery. Delegates to the standalone
+      // helper so __studioDebug + AI dispatch share the same impl.
+      getEmptyFormFields: (opts) => {
+        const doc = docRef.current;
+        if (!doc) return null;
+        try {
+          return enumerateEmptyFormFields(doc, opts ?? {});
+        } catch (err) {
+          console.warn('[studio] getEmptyFormFields failed:', err);
           return null;
         }
       },

@@ -623,6 +623,30 @@ export interface ViewerHandle {
     }[];
   } | null;
   /**
+   * 0.4.21 — empty form-field discovery. Walks every table cell in
+   * the document and emits a coordinate for every cell whose only
+   * paragraph has length 0 (= empty fillable spot). Includes a label
+   * hint (text of the adjacent left or top sibling cell) and the
+   * label's char-shape so the agent can apply matching typography.
+   * Deterministic, read-only, no IR mutation. Used as the discovery
+   * step for form-fill workflows so the LLM never has to guess
+   * coordinates by trial-and-error.
+   */
+  getEmptyFormFields: (opts?: { sectionIdx?: number; maxResults?: number }) => {
+    cellFields: {
+      location: {
+        sectionIndex: number;
+        paragraphIndex: number;
+        controlIndex: number;
+        cellIndex: number;
+        cellParagraphIndex: number;
+      };
+      labelHint: string;
+      labelCharShape?: Record<string, unknown>;
+    }[];
+    truncated: boolean;
+  } | null;
+  /**
    * Capture the current viewer selection as a portable excerpt — chunk
    * 20. Returns null when no selection is active or the selection
    * spans multiple paragraphs (multi-paragraph excerpts are deferred:

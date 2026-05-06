@@ -42,6 +42,20 @@ interface StudioDebug {
   getParagraphCount?(s: number): number;
   getParagraphLength?(s: number, p: number): number;
   getTextRange?(s: number, p: number, start: number, end: number): string;
+  getEmptyFormFields?(opts?: { sectionIdx?: number; maxResults?: number }): {
+    cellFields: {
+      location: {
+        sectionIndex: number;
+        paragraphIndex: number;
+        controlIndex: number;
+        cellIndex: number;
+        cellParagraphIndex: number;
+      };
+      labelHint: string;
+      labelCharShape?: Record<string, unknown>;
+    }[];
+    truncated: boolean;
+  };
 }
 
 test.describe('NVIDIA NIM — live smoke', () => {
@@ -942,6 +956,19 @@ test.describe('NVIDIA NIM — live smoke', () => {
       after.para0Head.length > baseline.para0Head.length;
     expect(filled).toBe(true);
 
+    // 0.4.21 — paragraphCount 폭증 가드. "fill" 작업 (cell 채움) 인데
+    // paragraphCount 가 크게 증가했다면 AI 가 양식을 새로 author 한
+    // 증거. 이전엔 위양성 (paraCount Δ > 0 이면 PASS) 으로 새 양식 dump
+    // 도 통과해버렸다. real fill 은 cell 안 paragraph 만 늘어나니
+    // paragraphCount 변동 < 5 가 정상.
+    const paraCountDelta = after.paraCount - baseline.paraCount;
+    expect(paraCountDelta).toBeLessThan(20);
+    if (paraCountDelta > 5) {
+      console.warn(
+        `[live] WARN paragraphCount delta=${paraCountDelta} > 5 — 양식 author 의심 (in-place fill 미달).`,
+      );
+    }
+
     // 핵심 검증 2 — `insertText(0,0,0,multiline)` 호출이 있었다면 0.4.12
     // hard guard 가 fail 시켰어야. tool entry 중 status=failed +
     // reason matching guard 메시지 검색.
@@ -1045,5 +1072,65 @@ test.describe('NVIDIA NIM — live smoke', () => {
     // char-shape 매칭 시퀀스 (gCpA + aCF) 는 informational — 미발생이면
     // prompt 가이드 강화 회의 트리거.
     expect(seqHas('insertTextInCell') || seqHas('applyHtml')).toBe(true);
+  });
+});
+
+// 0.4.21 — deterministic: getEmptyFormFields 가 양식 fixture 에서
+// 실제 빈 cell 들을 발견하고 인접 라벨을 hint 로 붙이는지. NVAPI_KEY
+// 무관 (LLM 미호출, lib 직접 walk 만).
+test.describe('getEmptyFormFields — deterministic', () => {
+  let launched: LaunchedApp;
+  test.beforeEach(async () => {
+    launched = await launchApp();
+  });
+  test.afterEach(async () => {
+    await launched.close();
+  });
+  test('양식 fixture 의 빈 cell + label hint enumerate', async () => {
+    const { page } = launched;
+    const ALPHA = path.resolve(
+      __dirname,
+      '..',
+      '..',
+      'examples',
+      '4. [사업계획서] 제조AI특화 스마트공장 사업계획서_양식_260326_01_데이터수집검증 중복화 복사본.hwp',
+    );
+    test.skip(!existsSync(ALPHA), 'examples/사업계획서 fixture missing');
+
+    await page.evaluate(async (p) => {
+      await window.api.session.set({ lastActivePath: p });
+    }, ALPHA);
+    await page.reload();
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForFunction(
+      () =>
+        Boolean(
+          (window as Window & { __studioDebug?: StudioDebug }).__studioDebug
+            ?.getEmptyFormFields,
+        ),
+      { timeout: 30_000 },
+    );
+
+    const result = await page.evaluate(() => {
+      const dbg = (window as Window & { __studioDebug?: StudioDebug })
+        .__studioDebug!;
+      return dbg.getEmptyFormFields!({ sectionIdx: 0, maxResults: 200 });
+    });
+    expect(result.cellFields.length).toBeGreaterThan(10);
+    const withLabel = result.cellFields.filter(
+      (f) => f.labelHint.length > 0,
+    ).length;
+    expect(withLabel).toBeGreaterThan(10);
+    // 라벨 hint 의 char-shape 가 실제 lib props 모양인지 검증.
+    const labelled = result.cellFields.find((f) => f.labelHint.length > 0);
+    expect(labelled?.labelCharShape).toBeDefined();
+    console.log(
+      `[deterministic] empty cells=${result.cellFields.length}, with label=${withLabel}, truncated=${result.truncated}`,
+    );
+    for (const f of result.cellFields.slice(0, 5)) {
+      console.log(
+        `  cell (p=${f.location.paragraphIndex} ctrl=${f.location.controlIndex} cell=${f.location.cellIndex}) label="${f.labelHint}"`,
+      );
+    }
   });
 });

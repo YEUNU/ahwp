@@ -645,6 +645,20 @@ async function runOne(
           return { ok: false, tool: call.tool, reason: 'getCellInfo-failed' };
         return { ok: true, tool: call.tool, data };
       }
+      case 'getEmptyFormFields': {
+        const a = call.args;
+        const data = viewer.getEmptyFormFields({
+          sectionIdx: a.sectionIdx,
+          maxResults: a.maxResults,
+        });
+        if (data === null)
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: 'getEmptyFormFields-failed',
+          };
+        return { ok: true, tool: call.tool, data };
+      }
       // === Phase 5 chunk 96 — outline-as-router workspace search ===
       case 'searchWorkspaceOutlines': {
         // Resolve workspace root through session.lastFolderPath. The
@@ -878,6 +892,10 @@ export function previewArgs(call: AhwpToolCall): string {
     }
     case 'getCellInfo':
       return `cell=${call.args.cellIdx}`;
+    case 'getEmptyFormFields':
+      return call.args.sectionIdx !== undefined
+        ? `sec=${call.args.sectionIdx}`
+        : '(all)';
     case 'searchWorkspaceOutlines':
       return call.args.maxDocs ? `max=${call.args.maxDocs}` : '';
     case 'readParagraphByPath': {

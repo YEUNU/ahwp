@@ -80,6 +80,8 @@ export const AHWP_TOOL_NAMES = [
   'getCaretPosition',
   'findInDocument',
   'getCellInfo',
+  // 0.4.21 — empty form-field discovery (양식 채우기 baseline)
+  'getEmptyFormFields',
   // Phase 5 chunk 96 — outline-as-router workspace search
   'searchWorkspaceOutlines',
   'readParagraphByPath',
@@ -108,6 +110,7 @@ export const READONLY_TOOL_NAMES = new Set<AhwpToolName>([
   'getCaretPosition',
   'findInDocument',
   'getCellInfo',
+  'getEmptyFormFields',
   'searchWorkspaceOutlines',
   'readParagraphByPath',
   // chunk 99 follow-up — switchTargetDoc 는 IR 을 변경하지 않으므로
@@ -436,6 +439,11 @@ export interface AhwpToolArgs {
     parentParaIdx: number;
     controlIdx: number;
     cellIdx: number;
+  };
+  // 0.4.21 — empty form-field enumeration
+  getEmptyFormFields: {
+    sectionIdx?: number;
+    maxResults?: number;
   };
   // Phase 5 chunk 96 — outline-as-router workspace search
   searchWorkspaceOutlines: { maxDocs?: number };

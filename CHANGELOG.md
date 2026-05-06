@@ -6,6 +6,37 @@
 
 ## [Unreleased]
 
+### Added — getEmptyFormFields discovery 도구 + form-fill workflow prompt (0.4.21)
+
+목표: AI 가 양식의 빈 cell 좌표를 trial-and-error 없이 deterministic 하게 알아내도록. 기존엔 "양식 채워줘" → AI 가 좌표 모름 → applyHtml 로 새 양식 통째 author → 원본 옆 dump (paraCount 폭증). Discovery 도구로 lookup 한 번에 좌표 + 라벨 + char-shape 받고 patches block 으로 in-place fill.
+
+신규 read tool — `getEmptyFormFields(sectionIdx?, maxResults?)`:
+
+- 모든 table cell 을 walk 해 paragraph 길이 0 + paragraph count 1 인 cell 의 좌표 enumerate
+- 각 빈 cell 마다 label hint (left sibling 의 텍스트, 없으면 top sibling) + label 의 char-shape (font/size/bold) 동봉
+- 휴리스틱 X — paragraph 길이 검사만. 필드 이름 enumeration 없음
+- shared helper `enumerateEmptyFormFields` — useViewerHandle (AI dispatch) / useDebugSurface (deterministic e2e) 둘이 공유
+- 6 surface 동기화: catalog / validator / dispatcher / preview args / ViewerHandle types / \_\_studioDebug
+
+deterministic e2e 검증 (`tests/e2e/nvidia-live.spec.ts getEmptyFormFields — deterministic`):
+
+- 사업계획서 fixture 에서 빈 cell 200+ 개 발견, 라벨 32개 (도입기업명 / 공급기업명 / 과제번호 / 컨소시엄 참여 / 수행시 2026 etc.)
+- labelCharShape 가 lib props 모양으로 정상 반환
+
+Agent prompt — form-fill workflow:
+
+- "fill, don't author" 원칙 명시
+- 절차: getEmptyFormFields → 의도 매칭 → patches block (location.cell + additionFormat.lib = labelCharShape)
+- applyHtml / body insertText 는 form-fill 에서 사용 금지 ("새 양식 author 위험")
+- Sanity check directive: paragraphCount Δ < 5 — 그보다 크면 author 했다는 신호
+
+e2e 어설션 정확화 (0.4.14):
+
+- 기존: `filled = paraCount Δ > 0 OR para0 len Δ > 0` 위양성 (양식 dump 도 PASS)
+- 신규: paraCount Δ < 20 hard limit. Δ > 5 면 console.warn (튜닝 시그널)
+
+probeControls 진단 도구 (`__studioDebug`) — 빈 cell discovery 가 작동 안 할 때 lib `getControlTextPositions` / `getTableDimensions` 결과 dump. 초기 디버깅에서 `getControlTextPositions` 가 control descriptor 가 아니라 char offset 배열만 반환한다는 사실 (lib 문서 미상세) 발견 → enumerateEmptyFormFields 의 ctrlIdx 결정 로직 수정.
+
 ### Changed — Patches schema 확장 (cell + charShape) + Agent text/structure 분기 (0.4.20)
 
 목표: 양식 cell 채우기 같은 텍스트 변경을 ahwp-patches 블록 (DiffCard 미리보기) 으로 표현 가능하게 schema 확장. Agent prompt 가 텍스트 vs 구조 명확히 분기. LLM 비결정성을 사용자 Accept/Reject 게이트가 흡수.
