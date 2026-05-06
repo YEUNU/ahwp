@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+### Fixed — OpenAI Responses API 다중 tool 호출 turn 직렬화 시 `type:'list'` 400 에러 (0.4.7)
+
+증상: 한 turn 에 다중 tool call (예: `findInDocument` 12회 연속) 한 후 다음 turn 진입 시 OpenAI / NVIDIA NIM / Custom (OpenAI 호환) 모두 400 — `Invalid value: 'list'. Supported values are: 'function_call', 'function_call_output', 'message', 'reasoning', ...`. agent loop 가 도중에 stuck.
+
+원인: `electron/ai/providers/openai.ts:toResponsesInputItem` 가 ChatMessage → /v1/responses input item 변환 시, 한 assistant 메시지의 `toolUses` 가 2개 이상이면 임의의 wrapper `{ type: 'list', items: [...] }` 로 묶어 전송. Responses API 는 'list' 타입 미지원 → 즉시 reject.
+
+수정: 변환 함수 시그니처를 `Record → Record[]` 로 바꿔 한 assistant turn 의 N개 tool call 이 N개 individual `function_call` item 으로 평탄화. 호출 측은 `messages.map` → `messages.flatMap` 으로 spread. NVIDIA / Custom 어댑터가 `openaiProvider.chat` 에 위임하므로 같은 fix 가 셋 다 cover.
+
 ### Fixed — Read-only 의도 query 가 markdown fallback 자동 적용으로 doc mutate (0.4.6)
 
 증상: "사업계획서 읽고, 다 채워졌는지 확인해줘" 같은 read-only 의도 요청 시 AI 가 read tool 호출 후 informational 텍스트 (옵션 나열 / 질문) 로 응답. Agent loop 의 final text 메시지는 `toolEntries` 가 비어있어 `markdownToHtml` fallback 이 발동, 변환된 HTML 이 active doc 에 자동 insert. 사용자 입장: "조회한 건데 문서 내용이 바뀌었네."

@@ -113,30 +113,36 @@ function shouldUseResponsesApi(model: string): boolean {
   return false;
 }
 
-/** /v1/responses 의 input 항목. messages → input 변환. */
-function toResponsesInputItem(m: ChatMessage): Record<string, unknown> {
+/** /v1/responses 의 input 항목. messages → input 변환.
+ *
+ * 한 ChatMessage 가 여러 input item 으로 펼쳐질 수 있다 (assistant 가
+ * 한 turn 에 여러 tool 호출 시). 호출 측에서 `flatMap` 사용. 0.4.7
+ * fix: 이전엔 다중 호출을 `{ type: 'list', items: [...] }` wrapper 로
+ * 보냈는데 Responses API 가 'list' 타입 모름 → 400 invalid_value. 이제
+ * 각 호출이 individual `type: 'function_call'` item 으로 평탄화. */
+function toResponsesInputItems(m: ChatMessage): Record<string, unknown>[] {
   if (m.role === 'tool' && m.toolResult) {
     // 직전 turn 의 tool 호출 결과 회신 — function_call_output.
-    return {
-      type: 'function_call_output',
-      call_id: m.toolResult.id,
-      output: m.toolResult.content,
-    };
+    return [
+      {
+        type: 'function_call_output',
+        call_id: m.toolResult.id,
+        output: m.toolResult.content,
+      },
+    ];
   }
   if (m.role === 'assistant' && m.toolUses && m.toolUses.length > 0) {
-    // assistant 가 도구 호출한 turn 은 function_call 항목들로 직렬화.
-    // assistant 메시지 본문이 있으면 별도 message 항목으로 추가 (caller
-    // 가 array 펼침은 안 해서, 본문 + 호출이 같은 turn 인 경우 호출만
-    // 직렬화하고 본문은 후속 turn 에서 다시 보내지 않으니 안전).
-    const calls = m.toolUses.map((u) => ({
+    // assistant 가 도구 호출한 turn 은 각 호출이 별도 function_call item.
+    // assistant 메시지 본문이 있어도 후속 turn 에서 재전송하지 않으니
+    // 호출 items 만 직렬화하면 충분.
+    return m.toolUses.map((u) => ({
       type: 'function_call',
       call_id: u.id,
       name: u.name,
       arguments: JSON.stringify(u.args ?? {}),
     }));
-    return calls.length === 1 ? calls[0] : { type: 'list', items: calls };
   }
-  return { role: m.role, content: m.content };
+  return [{ role: m.role, content: m.content }];
 }
 
 interface ResponsesEvent {
@@ -200,7 +206,7 @@ async function* chatViaResponses(
   const url = `${trimBaseUrl(opts.baseUrl)}/responses`;
   const body: Record<string, unknown> = {
     model: req.model,
-    input: req.messages.map(toResponsesInputItem),
+    input: req.messages.flatMap(toResponsesInputItems),
     stream: true,
     store: false,
   };
