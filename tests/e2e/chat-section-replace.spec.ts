@@ -159,6 +159,14 @@ test.describe('chat — section replace (chunk 99 follow-up)', () => {
 
   test('UI: outline 에 같은 섹션 번호 있으면 버튼이 "기존 X 섹션 교체" 로 바뀜', async () => {
     const { page } = launched;
+    // chunk 99 follow-up (0.3.40): 자동 적용이 main flow — 명시적 "적용"
+    // 버튼은 plan mode 일 때만 노출. 본 케이스는 button 라벨 검증이
+    // 핵심이라 plan mode default ON.
+    await page.evaluate(() => {
+      localStorage.setItem('ahwp:chat:plan-mode-default', '1');
+    });
+    await page.reload();
+    await page.waitForLoadState('domcontentloaded');
     await openFixture(page, FIXTURE);
 
     // 1. Heading 스타일 id 찾기 — blank.hwpx 에 "제목 N" 또는 "Heading N"
@@ -209,6 +217,13 @@ test.describe('chat — section replace (chunk 99 follow-up)', () => {
 
   test('UI: outline 비어있으면 매칭 미발동 → 기본 마크다운 적용 (회귀 가드)', async () => {
     const { page } = launched;
+    // chunk 99 follow-up (0.3.40): 명시적 "적용" button 은 plan mode
+    // 한정. 본 케이스는 button 라벨 검증이 핵심.
+    await page.evaluate(() => {
+      localStorage.setItem('ahwp:chat:plan-mode-default', '1');
+    });
+    await page.reload();
+    await page.waitForLoadState('domcontentloaded');
     await openFixture(page, FIXTURE);
 
     // blank.hwpx 는 heading 스타일이 적용된 단락이 없어 outline=[]. AI 가
@@ -225,5 +240,48 @@ test.describe('chat — section replace (chunk 99 follow-up)', () => {
     // 한 상태 (attribute 부재 또는 ""). 핵심은 버튼 라벨이 "기존 X 섹션
     // 교체" 가 *아니라는* 점.
     await expect(applyBtn).not.toHaveText(/기존.*섹션 교체/);
+  });
+
+  // 0.4.6 fix — read-only 의도 query 가 markdown fallback 자동 적용으로
+  // doc 을 mutate 하던 회귀. "사업계획서 읽고 누락 부분 찾아줘" 같은
+  // informational 응답이 자동 적용 X 여야. sectionMatch 없는 markdown
+  // fallback 은 plan mode OFF 라도 자동 dispatch 안 함.
+  test('0.4.6 회귀 — sectionMatch 없는 markdown 응답은 자동 적용 X', async () => {
+    const { page } = launched;
+    // plan mode OFF (default OFF since 0.3.40 이지만 명시).
+    await page.evaluate(() => {
+      localStorage.setItem('ahwp:chat:plan-mode-default', '0');
+    });
+    await page.reload();
+    await page.waitForLoadState('domcontentloaded');
+    await openFixture(page, FIXTURE);
+
+    // 빈 문서 — paragraph 0 길이 = 0.
+    const initialPara0Len = await page.evaluate(() => {
+      const dbg = (window as Window & { __studioDebug?: StudioDebug })
+        .__studioDebug!;
+      return dbg.getParagraphLength(0, 0);
+    });
+
+    // markdown fallback 이 발동되는 응답 (** bold **, list 등) — 단,
+    // section heading (`### N.N.N ...`) 패턴 없음. 기존 동작이라면 이런
+    // 응답도 markdownToHtml 변환 후 자동 적용됐었음.
+    await sendEcho(
+      page,
+      '**옵션 A** — 첫 번째 안내\n\n**옵션 B** — 두 번째 안내\n\n어느 쪽 원하세요?',
+    );
+
+    // 자동 적용 toast (chat-action-applied-toast) 가 노출되면 안 됨.
+    // 응답이 streaming 끝나고 잠깐 대기 후 검증.
+    await page.waitForTimeout(500);
+    await expect(page.getByTestId('chat-action-applied-toast')).toHaveCount(0);
+
+    // doc IR 도 무변경 — paragraph 0 길이가 그대로.
+    const afterPara0Len = await page.evaluate(() => {
+      const dbg = (window as Window & { __studioDebug?: StudioDebug })
+        .__studioDebug!;
+      return dbg.getParagraphLength(0, 0);
+    });
+    expect(afterPara0Len).toBe(initialPara0Len);
   });
 });

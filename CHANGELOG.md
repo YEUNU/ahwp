@@ -6,6 +6,31 @@
 
 ## [Unreleased]
 
+### Test — chat e2e 갱신 + 미커버 fix 회귀 가드 (0.4.13)
+
+목적: 사용자 검증 격차 메우기. 기존 stale 7건 (chunk 99 follow-up 0.3.40 부터 깨져 있던 것) 정정 + 본 세션 fix 의 회귀 가드 신규.
+
+stale 정정:
+
+- `chat-tools.spec.ts:195` "html and ahwp-tools both buttons render" — plan mode default ON 으로 button 노출 (0.3.40 부터 button 이 plan mode gate)
+- `chat-section-replace.spec.ts:160, 218` "outline 매치 / 비어있음 → 버튼 텍스트" 2건 — 동일 plan mode 활성화
+- `chat-multidoc.spec.ts:82, 103, 115, 126` "target chip / reference checkbox" 4건 — feature 자체 폐기 (`MultiDocChips` 제거 since 0.3.40) 라 `test.skip` + 사유 명시. 회귀 가드는 `chat-excerpt.spec.ts` (📌 발췌 첨부) 가 cover
+
+신규 회귀 가드:
+
+- `chat-section-replace.spec.ts` "0.4.6 회귀 — sectionMatch 없는 markdown 응답은 자동 적용 X" — paragraph 0 길이 사전/사후 비교 + applied-toast 카운트 0 검증. 사용자 보고 "조회인데 문서 mutate" 직접 가드
+- `chat-tool-ui.spec.ts` 신설 — 0.4.11 single-line truncate (행 높이 < 32px), chevron 노출, click → result panel + 재클릭 → 접힘. JSON 키 (sectionIndex/paragraphIndex) 매치로 result 정확성도 검증
+
+검증:
+✓ chat e2e 9 spec (43 passed, 9 skipped, 0 failed) — 본 세션 직전 7 failed 였던 것 0 건으로
+✓ studio e2e 16 passed, 10 skipped — 회귀 0건
+
+미커버 (의식적):
+
+- 0.4.10 multi-write 직렬화: fake provider 가 multi-tool emit 미지원 — 결정적 e2e 어려움. 코드 review 로 검증 (parallelBatch.filter(read/write) + Promise.allSettled vs for-of)
+- 0.4.8 Keychain cache: OS 의존 — e2e 환경에서 keychain prompt 자체 안 뜸
+- 0.4.9 prompt 가이드: 모델 동작 — e2e 비결정적
+
 ### Fixed — `insertText(0,0,0,multiline)` dispatcher hard guard (0.4.12)
 
 증상: 0.4.9 의 prompt 가이드 추가 후에도 일부 LLM (gpt-5.x) 이 사업계획서 양식 doc 에서 또 `insertText(0,0,0,"...100+ 줄...")` 호출 → 표지 layout 파손 재발 (사용자 두 번째 보고).

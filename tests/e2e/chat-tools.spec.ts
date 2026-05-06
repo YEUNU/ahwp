@@ -194,6 +194,14 @@ test.describe('chat — chunk 19 ahwp-tools dispatcher', () => {
 
   test('html and ahwp-tools in same response — both buttons render', async () => {
     const { page } = launched;
+    // chunk 99 follow-up (0.3.40): explicit "적용" 버튼은 plan mode 일
+    // 때만 렌더 (그 외엔 자동 적용). 본 케이스는 button 가시성 검증이
+    // 핵심 — plan mode 명시 ON 으로 button 노출.
+    await page.evaluate(() => {
+      localStorage.setItem('ahwp:chat:plan-mode-default', '1');
+    });
+    await page.reload();
+    await page.waitForLoadState('domcontentloaded');
     await openFixture(page, FIXTURE);
 
     const reply = [
