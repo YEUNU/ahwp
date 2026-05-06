@@ -38,7 +38,7 @@ async function activateStudio(page: Page, fixture: string): Promise<void> {
 
 async function waitForFirstPageRender(page: Page): Promise<void> {
   const firstPage = page.getByTestId('studio-viewer-page').first();
-  await expect(firstPage.locator('svg').first()).toBeVisible({
+  await expect(firstPage.locator('svg, canvas').first()).toBeVisible({
     timeout: 30_000,
   });
 }
@@ -160,13 +160,16 @@ test.describe('studio viewer — chunk 3 (multi-page stress)', () => {
     const total = await placeholders.count();
     expect(total).toBeGreaterThan(5);
 
-    // Last page should NOT yet have SVG (lazy rendering).
+    // Last page should NOT yet have a render target (lazy rendering).
+    // chunk 106: mode-agnostic — SVG mode mounts <svg>, canvas mode mounts <canvas>.
     const last = placeholders.nth(total - 1);
-    await expect(last.locator('svg')).toHaveCount(0);
+    await expect(last.locator('svg, canvas')).toHaveCount(0);
 
     // Scroll into view → IntersectionObserver fires → render.
     await last.scrollIntoViewIfNeeded();
-    await expect(last.locator('svg').first()).toBeVisible({ timeout: 15_000 });
+    await expect(last.locator('svg, canvas').first()).toBeVisible({
+      timeout: 15_000,
+    });
   });
 
   test('page indicator tracks the topmost visible page on scroll', async () => {

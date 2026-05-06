@@ -87,13 +87,17 @@ test.describe('studio big doc — multi-page load profile', () => {
   test('mount window — only ±5 pages from the active page have SVG mounted', async () => {
     const { page } = launched;
     await expect(
-      page.getByTestId('studio-viewer-page').first().locator('svg').first(),
+      page
+        .getByTestId('studio-viewer-page')
+        .first()
+        .locator('svg, canvas')
+        .first(),
     ).toBeVisible({ timeout: 30_000 });
     const total = await page.getByTestId('studio-viewer-page').count();
     expect(total).toBeGreaterThan(20);
     const mounted = await page
       .getByTestId('studio-viewer-page')
-      .locator('svg')
+      .locator('svg, canvas')
       .count();
     // VIEWPORT_BUFFER_PAGES = 5 → max 11 mounted (current ±5).
     expect(mounted).toBeLessThanOrEqual(12);
@@ -104,7 +108,7 @@ test.describe('studio big doc — multi-page load profile', () => {
     const placeholders = page.getByTestId('studio-viewer-page');
     const total = await placeholders.count();
     // Initially, page 0 is mounted.
-    await expect(placeholders.first().locator('svg')).toHaveCount(1);
+    await expect(placeholders.first().locator('svg, canvas')).toHaveCount(1);
     // Scroll to last page.
     await placeholders.nth(total - 1).scrollIntoViewIfNeeded();
     // Wait for the rAF-throttled scroll handler to settle.
@@ -112,10 +116,12 @@ test.describe('studio big doc — multi-page load profile', () => {
     // Page 0 should now be UNMOUNTED (out of the ±5 window from the
     // bottom of a multi-page doc).
     await expect
-      .poll(async () => placeholders.first().locator('svg').count())
+      .poll(async () => placeholders.first().locator('svg, canvas').count())
       .toBe(0);
     // Last page is mounted.
-    await expect(placeholders.nth(total - 1).locator('svg')).toHaveCount(1);
+    await expect(
+      placeholders.nth(total - 1).locator('svg, canvas'),
+    ).toHaveCount(1);
   });
 
   test('scroll to last page triggers lazy render', async () => {
@@ -123,9 +129,11 @@ test.describe('studio big doc — multi-page load profile', () => {
     const placeholders = page.getByTestId('studio-viewer-page');
     const total = await placeholders.count();
     const last = placeholders.nth(total - 1);
-    await expect(last.locator('svg')).toHaveCount(0);
+    await expect(last.locator('svg, canvas')).toHaveCount(0);
     await last.scrollIntoViewIfNeeded();
-    await expect(last.locator('svg').first()).toBeVisible({ timeout: 15_000 });
+    await expect(last.locator('svg, canvas').first()).toBeVisible({
+      timeout: 15_000,
+    });
   });
 
   test('Find across the whole doc returns matches in under 5s', async () => {

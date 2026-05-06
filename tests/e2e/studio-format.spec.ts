@@ -298,7 +298,7 @@ test.describe('studio format — chunk 5 (toolbar + char formatting)', () => {
 
       // First page SVG should still carry font-weight="bold".
       const firstPage = page.getByTestId('studio-viewer-page').first();
-      await expect(firstPage.locator('svg').first()).toBeVisible({
+      await expect(firstPage.locator('svg, canvas').first()).toBeVisible({
         timeout: 15_000,
       });
       await expect
