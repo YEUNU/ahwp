@@ -267,7 +267,7 @@
 
 상세 계획: [`docs/PHASE6_PLAN.md`](PHASE6_PLAN.md). chunks 100~107, 약 1.5~2주 규모. 0.7.10 (2026-05-05) 의 `renderPageToCanvasFiltered` 추가로 가능해진 작업.
 
-- [ ] **chunk 100** — Phase 6.0: WasmBridge 추상 (`src/lib/rhwp-core/wasm-bridge.ts`)
+- [x] **chunk 100** — Phase 6.0: WasmBridge 추상 ✅: `src/lib/rhwp-core/` 디렉토리 분할 (index/init/wasm-bridge/types). `WasmBridge.create(bytes)` / `.dispose()` 가 lifecycle 소유. `RhwpDoc` 타입 8 곳 중복 → 1 곳. `docRef.current` 호출 지점 ~136 곳 변경 0 (bridge.doc 미러링). 동작 변화 0건. studio 회귀 e2e 통과
 - [ ] **chunk 101** — Phase 6.1: coordinate-system.ts (DPR-aware 4-좌표계 변환)
 - [ ] **chunk 102** — Phase 6.2: canvas-pool + dual-mode (`localStorage.ahwp:render-mode`) 인프라
 - [ ] **chunks 103a~b** — Phase 6.3: Canvas 본문 렌더 + L-004 tooltip 대체 + 비동기 이미지 재렌더 스케줄러

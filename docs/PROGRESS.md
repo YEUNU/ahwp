@@ -354,6 +354,30 @@ UI/UX 격차 16개 분석 후 3차 묶음으로 분할, 1차 6개. 자체 fuzzy 
 
 UX 회귀 3건 fix (caret 동기화 / 페이지 경계 드래그 / ⌘A 스코프) + ArrowUp/Down 시각 라인 nav + shift+click + 드래그 자동 스크롤(rAF, 36px edge) + Esc 드래그 취소 + `commitCaretMove` helper + `.bak` 사이드카 + HWPX 라우팅 banner + 외부 변경 감지(chokidar). 신규 e2e 11건.
 
+### Phase 6 — rhwp-studio view 계층 정합 진입 (2026-05-06 ~)
+
+`@rhwp/core` 0.7.10 의 `renderPageToCanvasFiltered` (Task #516 Stage 5.2, 2026-05-05 추가) 으로 가능해진 Canvas + 3-tier DOM overlay 아키텍처 마이그레이션. 라이브러리 메인테이너 reference (`rhwp-studio/src/view/`) 와 정합. AI 자동 글쓰기의 fidelity 천장이 라이브러리 정합도에 비례하므로 ROI 가 가장 높은 follow-up. 상세 청사진: [PHASE6_PLAN.md](PHASE6_PLAN.md).
+
+**진입 결정 — chunk 1~2 시점 (2026-04-29) SVG 선택은 정합한 결정**: 당시 layer-aware Canvas API 가 lib 에 미존재. 0.7.10 (2026-05-05) 출시 + ahwp 0.7.10 업그레이드 (2026-05-06) 로 새 API 사용 가능해진 자연스러운 follow.
+
+**핵심 Inventory (2026-05-06 확정)** — 작업량을 chunks 100~120 추정 → 100~107 로 축소시킨 근거:
+
+- `caret · click hit-test` 가 이미 `doc.hitTest` 기반 → Canvas 전환 시 변경 0
+- `selection rect` 가 SVG 가 아니라 별도 DOM `<div>` overlay (`PaperPage.tsx:219`) → 변경 0
+- AI tool 55개가 모두 IR 좌표 (sec/para/charOffset) 만 사용 → 어댑터 불필요
+- 진짜 SVG 의존은 4지점만: `renderPageSvg` mount + L-004 tooltip 우회 + page-dims regex + useDebugSurface selector
+
+| chunk | 내용                                                                                                         | 상태 |
+| ----- | ------------------------------------------------------------------------------------------------------------ | ---- |
+| 100   | Phase 6.0 — `WasmBridge` 추상 + `RhwpDoc` 타입 단일화. lifecycle 소유권 한 곳, hooks 시그니처 변경 0. 회귀 0 | ✅   |
+| 101   | Phase 6.1 — `coordinate-system.ts` (DPR-aware 4-좌표계 변환)                                                 | 다음 |
+| 102   | Phase 6.2 — `canvas-pool` + dual-mode (`localStorage.ahwp:render-mode`) 인프라                               | -    |
+| 103   | Phase 6.3 — Canvas 본문 렌더 + L-004 tooltip 대체 + 비동기 이미지 재렌더                                     | -    |
+| 104   | Phase 6.4 — behind/front overlay (`getPageLayerTree` 파싱) + 효과 CSS + 워터마크 multiply                    | -    |
+| 105   | Phase 6.5 — find / changed-paragraph 하이라이트 mode 정합                                                    | -    |
+| 106   | Phase 6.6 — e2e selector-DOM 의존 정리                                                                       | -    |
+| 107   | Phase 6.7 — SVG 경로 제거 + cleanup + KNOWN_ISSUES L-004 close                                               | -    |
+
 ## 향후 작업
 
 | 영역             | 항목                                                                                         | 상태             |

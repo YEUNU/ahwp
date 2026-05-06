@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+### Changed — chunk 100: Phase 6.0 WasmBridge 추상화 + RhwpDoc 타입 단일화
+
+Phase 6 (rhwp-studio view 계층 정합) 시작. 동작 변화 0건 순수 refactor.
+
+- **`src/lib/rhwp-core/` 디렉토리 분할** — 단일 파일 `rhwp-core.ts` 를 `index.ts` (배럴) / `init.ts` (`ensureRhwpCore`) / `wasm-bridge.ts` (`WasmBridge` 클래스) / `types.ts` (`RhwpDoc`/`RhwpViewer` 단일 정의) 로 분해. `WasmBridge.create(bytes)` / `.dispose()` 가 lifecycle 소유, `useDocumentLifecycle` 이 진입점.
+- **`RhwpDoc` 타입 8 곳 중복 → 1 곳** — 7 hook + StudioViewer 의 `type RhwpDoc = InstanceType<typeof HwpDocument>` 중복 제거, `import type { RhwpDoc } from '@/lib/rhwp-core'` 로 통합.
+- **`docRef` 호출 지점 0건 변경** — `docRef.current?.X(...)` 패턴 ~136 곳은 `bridge.doc` 미러링으로 그대로 동작. Phase 6.3 의 Canvas render path swap 시 그때 필요한 method 만 bridge 로 promote 예정.
+
 ### Changed — chunk 99 follow-up: confirm UI 폐기 + 자동 적용 + 컨텍스트 매뉴얼화 (0.3.40)
 
 사용자 요청 — 채팅 흐름의 모든 explicit confirm 버튼 제거, 자동 적용을 main flow 로. 만족 못하면 stop / undo (⌘Z) 로 옵트아웃.
