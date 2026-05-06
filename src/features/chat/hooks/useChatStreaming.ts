@@ -578,20 +578,50 @@ export function useChatStreaming(
         // pendingCalls 는 더 이상 채워지지 않음 (legacy 호환 — 빈 Map
         // 유지해 아래 size>0 분기가 자연 dead code).
 
-        // Phase 1.5 — Parallel dispatch of read/auto-approved items.
-        // Each item gets its own dispatcher round-trip (true concurrency
-        // for IPC reads); writes within the same batch run sequentially
-        // inside dispatcher (tools.ts:runTools uses begin/endUndoGroup
-        // per call). turnTargetPathRef is captured per-item so a
-        // switchTargetDoc that ran above already has effect on writes
-        // sent in the same Promise.all (the batch sees the new ref).
+        // 0.4.10 — 다중 dispatch 시 read 와 write 분리:
+        //   reads  → Promise.allSettled (true 병렬, IR 무변경이라 안전)
+        //   writes → for-of 직렬 (race 차단 + AI 가 호출한 순서 보존)
+        // 이전엔 둘 다 병렬이라 다중 write 시 비결정적 interleaving 가능.
+        // (paragraph index shift 문제는 별개 — AI 가 bottom-up 순서로
+        //  호출하거나 매 write 사이 re-read 해야 함. prompt 가이드 참조.)
         if (parallelBatch.length > 0 && dispatcher) {
           const dispatch = dispatcher;
-          const settled = await Promise.allSettled(
-            parallelBatch.map((b) =>
+          const reads = parallelBatch.filter((b) => isReadOnlyTool(b.tu.name));
+          const writes = parallelBatch.filter(
+            (b) => !isReadOnlyTool(b.tu.name),
+          );
+
+          // reads — 병렬
+          const readResults = await Promise.allSettled(
+            reads.map((b) =>
               dispatch([{ ok: true, call: b.call }], turnTargetPathRef.current),
             ),
           );
+          // writes — 직렬 (AI 가 호출한 순서 보존)
+          const writeResults: typeof readResults = [];
+          for (const b of writes) {
+            try {
+              const v = await dispatch(
+                [{ ok: true, call: b.call }],
+                turnTargetPathRef.current,
+              );
+              writeResults.push({ status: 'fulfilled', value: v });
+            } catch (err) {
+              writeResults.push({ status: 'rejected', reason: err });
+            }
+          }
+          // 결과 병합 — parallelBatch 의 원래 순서 (id) 로 다시 매핑
+          const ordered: typeof readResults = [];
+          let ri = 0;
+          let wi = 0;
+          for (const b of parallelBatch) {
+            if (isReadOnlyTool(b.tu.name)) {
+              ordered.push(readResults[ri++]);
+            } else {
+              ordered.push(writeResults[wi++]);
+            }
+          }
+          const settled = ordered;
           for (let i = 0; i < parallelBatch.length; i++) {
             const b = parallelBatch[i];
             const s = settled[i];

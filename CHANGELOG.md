@@ -6,6 +6,22 @@
 
 ## [Unreleased]
 
+### Fixed — 다중 write tool 병렬 dispatch race + bottom-up 가이드 (0.4.10)
+
+증상: AI 가 한 turn 에 다중 write tool (예: `insertText` × 5) batch 시 비결정적 interleaving + paragraph index shift 로 의도 안 된 위치에 적용. 사용자: "다중 위치에 동시 작업할 때도 동작하나?"
+
+원인 두 갈래:
+
+- **JS-level 병렬 dispatch (코드 결함)**: `useChatStreaming.ts` 의 `Promise.allSettled(parallelBatch.map(...))` 가 read / write 구분 없이 모두 병렬 dispatch. write 가 race 가능. 코드 의도는 read 만 병렬이었는데 write 도 같이 휘말림
+- **Paragraph index shift (구조적 한계)**: write 1 이 paragraph 추가 시 후속 write 의 target idx 가 stale. AI 가 single read 의 idx 를 multi-write 에 재사용하면 어긋남
+
+수정:
+
+- 코드: `parallelBatch` 를 `reads` (`Promise.allSettled` 병렬) + `writes` (for-of 직렬, AI call 순서 보존) 로 분리. read 가속은 유지하면서 write race 차단. 결과 ordering 은 AI tool call 의 원래 순서대로 partialResults 에 매핑
+- prompt 가이드 신규 섹션 "Multi-position writes — paragraph indices SHIFT during a turn" — bottom-up 순서 / 매 write 전 anchor re-resolve / "reads parallel, writes serial" 명시 / 안전 패턴 (one write per turn) + wrong/right 예시
+
+이제 다중 write 도 race 없이 작동. 단 AI 가 bottom-up / re-resolve 안 하면 idx shift 는 여전 — prompt 로 유도.
+
 ### Changed — Agent prompt + insertText description 강화 — 양식 doc layout 파손 방지 (0.4.9)
 
 증상: 사업계획서 양식 (표지 표 + 섹션 구조) 에서 "작성해줘" 요청 시 AI 가 `insertText(0,0,0,...)` 호출. 평문 + `\n` paragraph break 만 있어 표지 표 cell 안에 raw text dump → 양식 layout 망가짐. 사용자 보고: "문서 형식 하나도 안맞아".
