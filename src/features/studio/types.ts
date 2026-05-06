@@ -183,6 +183,31 @@ export interface ViewerHandle {
     charOffset: number,
     text: string,
   ) => boolean;
+  /** 0.4.20 — cell-level deleteRange. lib `deleteRangeInCell`. patches
+   *  block 의 cell location 에서 텍스트 교체할 때 (deletion → addition
+   *  순서) delete 단계용. */
+  irDeleteRangeInCell: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+    cellIdx: number,
+    startCellParaIdx: number,
+    startOffset: number,
+    endCellParaIdx: number,
+    endOffset: number,
+  ) => boolean;
+  /** 0.4.20 — cell-level applyCharFormat. lib `applyCharFormatInCell`.
+   *  cell 내부에서 삽입한 영역에 char-shape 적용할 때. */
+  irApplyCharFormatInCell: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+    cellIdx: number,
+    cellParaIdx: number,
+    startOffset: number,
+    endOffset: number,
+    props: Record<string, unknown>,
+  ) => boolean;
   irDeleteRange: (
     sectionIdx: number,
     startParaIdx: number,

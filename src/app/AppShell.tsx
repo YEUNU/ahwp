@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 // lib upstream issue 추적 후 재시도.
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import type { PingResponse } from '@shared/api';
+import { patchFormatToLibProps } from '@shared/ai-patches';
 import { ChatPanel, type ChatPanelHandle } from '@/features/chat/ChatPanel';
 import { runTools } from '@/features/chat/tools';
 import { primaryModifier } from '@/lib/platform';
@@ -1207,10 +1208,11 @@ export default function AppShell() {
                   }}
                   applyPatches={(patches) => {
                     // Q5 Diff Viewer — apply a batch of patches as a single
-                    // grouped-undo turn. Per-patch: irDeleteRange to remove
-                    // the existing range, then irInsertText with addition.
-                    // Whole-paragraph patches (no startOffset/endOffset)
-                    // use irGetTextRange to discover paragraph length first.
+                    // grouped-undo turn. Body patches: irDeleteRange + irInsertText.
+                    // Cell patches (0.4.20, location.cell present): irDeleteRangeInCell
+                    // + irInsertTextInCell. additionFormat → applyCharFormat 또는
+                    // applyCharFormatInCell. typed → lib props 매핑은
+                    // patchFormatToLibProps 가 담당 (size_hu / color int 변환 등).
                     const v = activeViewerRef();
                     if (!v) return patches.map(() => false);
                     v.beginUndoGroup();
@@ -1219,6 +1221,62 @@ export default function AppShell() {
                         const sec = p.location.sectionIndex;
                         const para = p.location.paragraphIndex;
                         const start = p.location.startOffset ?? 0;
+                        const cell = p.location.cell;
+                        const fmtProps = p.additionFormat
+                          ? patchFormatToLibProps(p.additionFormat)
+                          : null;
+                        const insEnd = start + p.addition.length;
+
+                        if (cell) {
+                          // Cell-level patch. endOffset 없으면 그 cell
+                          // paragraph 의 길이 만큼.
+                          let end = p.location.endOffset;
+                          if (end === undefined) {
+                            // lib 에 cell paragraph length 직접 read 가
+                            // 없으니 일단 large sentinel 로 deleteRange 호출.
+                            // lib 가 internally clamp. (deletion 이 ""
+                            // 이고 빈 cell 채우는 경우엔 delete 단계 skip.)
+                            end = p.deletion.length;
+                          }
+                          if (p.deletion.length > 0) {
+                            const okDel = v.irDeleteRangeInCell(
+                              sec,
+                              para,
+                              cell.controlIndex,
+                              cell.cellIndex,
+                              cell.cellParagraphIndex,
+                              start,
+                              cell.cellParagraphIndex,
+                              end,
+                            );
+                            if (!okDel) return false;
+                          }
+                          const okIns = v.irInsertTextInCell(
+                            sec,
+                            para,
+                            cell.controlIndex,
+                            cell.cellIndex,
+                            cell.cellParagraphIndex,
+                            start,
+                            p.addition,
+                          );
+                          if (!okIns) return false;
+                          if (fmtProps && p.addition.length > 0) {
+                            v.irApplyCharFormatInCell(
+                              sec,
+                              para,
+                              cell.controlIndex,
+                              cell.cellIndex,
+                              cell.cellParagraphIndex,
+                              start,
+                              insEnd,
+                              fmtProps,
+                            );
+                          }
+                          return true;
+                        }
+
+                        // Body-level patch (legacy path).
                         let end = p.location.endOffset;
                         if (end === undefined) {
                           // Whole-paragraph — find current length via the
@@ -1248,16 +1306,13 @@ export default function AppShell() {
                           p.addition,
                         );
                         if (!okIns) return false;
-                        // Q5 확장 — additionFormat 이 있으면 삽입한
-                        // 영역에 char format 적용. 같은 undo group 안.
-                        if (p.additionFormat) {
-                          const insEnd = start + p.addition.length;
+                        if (fmtProps && p.addition.length > 0) {
                           v.irApplyCharFormat(
                             sec,
                             para,
                             start,
                             insEnd,
-                            p.additionFormat as Record<string, unknown>,
+                            fmtProps,
                           );
                         }
                         return true;

@@ -16,10 +16,25 @@ export interface PatchLocation {
   endOffset?: number;
   /** Display-only label (e.g. "3페이지 · 단락 2"). */
   label?: string;
+  /** 0.4.20 — 표 cell 안 좌표. paragraphIndex 는 cell 의 부모 paragraph
+   *  (= 표 control 이 anchor 된 paragraph), startOffset / endOffset 은
+   *  cell 의 cellParagraphIndex 안 char range. lib 의 *InCell APIs
+   *  (insertTextInCell / deleteRangeInCell / applyCharFormatInCell) 로
+   *  라우팅. 좌표는 getCellInfo 로 검증된 값이어야 안전. */
+  cell?: {
+    controlIndex: number;
+    cellIndex: number;
+    cellParagraphIndex: number;
+  };
 }
 
 /** Char format hints applied to the addition after insertion. Mirrors
- * `applyCharFormat` props_json subset. */
+ * `applyCharFormat` props_json subset.
+ *
+ * 0.4.20 — `lib` raw passthrough 추가. 모델이 `getCharPropertiesAt` 결과를
+ * 그대로 dump 하면 lib props_json 으로 직행 (key mapping 없이). 작은
+ * 오차에 대한 fallback. typed 필드 (bold 등) 와 같이 쓸 때 typed 필드가
+ * 우선. */
 export interface PatchCharFormat {
   bold?: boolean;
   italic?: boolean;
@@ -28,6 +43,11 @@ export interface PatchCharFormat {
   textColor?: string;
   /** HWPUNIT (1pt = 100). e.g. 1000 = 10pt. */
   fontSize?: number;
+  /** Font family name (e.g. "함초롬바탕"). lib `name` key. */
+  fontName?: string;
+  /** Raw lib props_json passthrough — `getCharPropertiesAt` 결과를 그대로
+   *  넣어도 됨. 예: `{name:"함초롬바탕",size_hu:1000,bold:false,...}`. */
+  lib?: Record<string, unknown>;
 }
 
 export interface AhwpPatch {
@@ -92,6 +112,24 @@ function validatePatch(
   const label = location.label;
   if (label !== undefined && typeof label !== 'string')
     return { ok: false, reason: 'label-not-string' };
+  let cell: PatchLocation['cell'];
+  if (location.cell !== undefined) {
+    if (!isObj(location.cell)) return { ok: false, reason: 'cell-not-object' };
+    const ctrl = location.cell.controlIndex;
+    const ci = location.cell.cellIndex;
+    const cp = location.cell.cellParagraphIndex;
+    if (typeof ctrl !== 'number' || !Number.isInteger(ctrl) || ctrl < 0)
+      return { ok: false, reason: 'cell.controlIndex-invalid' };
+    if (typeof ci !== 'number' || !Number.isInteger(ci) || ci < 0)
+      return { ok: false, reason: 'cell.cellIndex-invalid' };
+    if (typeof cp !== 'number' || !Number.isInteger(cp) || cp < 0)
+      return { ok: false, reason: 'cell.cellParagraphIndex-invalid' };
+    cell = {
+      controlIndex: ctrl,
+      cellIndex: ci,
+      cellParagraphIndex: cp,
+    };
+  }
   const del = raw.deletion;
   const add = raw.addition;
   if (typeof del !== 'string')
@@ -126,6 +164,9 @@ function validatePatch(
       additionFormat.textColor = fmt.textColor;
     if (typeof fmt.fontSize === 'number')
       additionFormat.fontSize = fmt.fontSize;
+    if (typeof fmt.fontName === 'string')
+      additionFormat.fontName = fmt.fontName;
+    if (isObj(fmt.lib)) additionFormat.lib = fmt.lib;
   }
   const value: AhwpPatch = {
     title,
@@ -135,6 +176,7 @@ function validatePatch(
       startOffset: startOff,
       endOffset: endOff,
       label,
+      cell,
     },
     deletion: del,
     addition: add,
@@ -142,6 +184,28 @@ function validatePatch(
     reason,
   };
   return { ok: true, value };
+}
+
+/** 0.4.20 — typed PatchCharFormat 를 lib applyCharFormat props_json 키
+ *  매핑. 사용자에게 보이는 키 (bold / fontSize / textColor 등) 와 lib 의
+ *  키 (bold / size_hu / color int) 가 일부 다르므로 변환. `lib` 가
+ *  주어졌으면 우선 base 로 사용하고 typed 가 그 위에 덮음. */
+export function patchFormatToLibProps(
+  fmt: PatchCharFormat,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = fmt.lib ? { ...fmt.lib } : {};
+  if (fmt.bold !== undefined) out.bold = fmt.bold;
+  if (fmt.italic !== undefined) out.italic = fmt.italic;
+  if (fmt.underline !== undefined) out.underline = fmt.underline;
+  if (fmt.fontName !== undefined) out.name = fmt.fontName;
+  if (fmt.fontSize !== undefined) out.size_hu = fmt.fontSize;
+  if (fmt.textColor !== undefined) {
+    // "#RRGGBB" → 0xRRGGBB int. lib 가 정수 BGR/RGB 둘 다 케이스가
+    // 있으니 lib 매뉴얼 그대로 RGB int.
+    const m = fmt.textColor.match(/^#([0-9a-fA-F]{6})$/);
+    if (m) out.color = parseInt(m[1], 16);
+  }
+  return out;
 }
 
 export type AhwpPatchPreflightItem =

@@ -6,6 +6,35 @@
 
 ## [Unreleased]
 
+### Changed — Patches schema 확장 (cell + charShape) + Agent text/structure 분기 (0.4.20)
+
+목표: 양식 cell 채우기 같은 텍스트 변경을 ahwp-patches 블록 (DiffCard 미리보기) 으로 표현 가능하게 schema 확장. Agent prompt 가 텍스트 vs 구조 명확히 분기. LLM 비결정성을 사용자 Accept/Reject 게이트가 흡수.
+
+patches schema (`shared/ai-patches.ts`):
+
+- `PatchLocation.cell?: { controlIndex, cellIndex, cellParagraphIndex }` 추가. 표 cell 내부 좌표 표현. paragraphIndex 는 표 control 의 anchor paragraph, startOffset/endOffset 은 cellParagraphIndex 안 char range
+- `PatchCharFormat.fontName?: string` (lib `name` 매핑) + `lib?: Record<string, unknown>` raw passthrough 추가. 모델이 `getCharPropertiesAt` 결과를 그대로 dump 가능 (key mapping 없이)
+- `patchFormatToLibProps(fmt)` 추가 — typed 키 (fontName/fontSize/textColor) 를 lib props_json 키 (name/size_hu/color int) 로 변환. lib raw 가 있으면 base 로, typed 가 그 위에 덮음
+- validator 가 cell 좌표 + lib passthrough 검증 (음수 / 잘못된 shape 거절)
+- 7 unit test 추가 (`shared/ai-patches.test.ts`) — backward compat / cell parsing / fontName+lib passthrough / lib props 매핑
+
+ViewerHandle wrappers (`src/features/studio/`):
+
+- `irDeleteRangeInCell` — lib `deleteRangeInCell`. cell patch 의 deletion 단계
+- `irApplyCharFormatInCell` — lib `applyCharFormatInCell`. cell 내부 삽입 영역 char format
+
+`AppShell.applyPatches` 라우팅 (`src/app/AppShell.tsx`):
+
+- location.cell 있으면 → irDeleteRangeInCell (deletion 길이 0 이면 skip) + irInsertTextInCell + 옵션 irApplyCharFormatInCell. cell 없으면 기존 body path
+- additionFormat 있으면 patchFormatToLibProps 로 매핑 후 (cell 여부 따라) applyCharFormat 또는 applyCharFormatInCell. 이전엔 typed 키를 lib 에 그대로 넘겨 size_hu / color int 변환 누락 — 이번에 fix
+- 모두 같은 undo group (turn 1회 ⌘Z)
+
+Agent prompt (`src/features/chat/prompts.ts`):
+
+- "Core rule" 갱신: text edits → ahwp-patches 블록 (사용자 Accept/Reject), structural ops → write tool. 두 경로 schema 모델에게 명시
+- patches 블록 schema 인라인 (location.cell / additionFormat.lib 등) — LLM 이 직접 schema 보고 생성
+- char-shape 매칭 절차: read tool 로 sibling char-props → additionFormat.lib 에 그대로 dump
+
 ### Changed — Phase-aware tool router + 모든 LLM-facing prompt 영어 (0.4.19)
 
 목표: tool router 가 "정보 부족 → 검색 / 정보 충분 → 작성" 흐름을 자동 판단해 매 turn subset 을 phase 에 맞춰 좁힘. 사용자 지시: "정보가 부족하면 검색, 정보가 다 있으면 작성 이런식으로 알아서 되게 하고 싶은데" + "llm에 제공하는 프롬프트 다 영어로 사용해".

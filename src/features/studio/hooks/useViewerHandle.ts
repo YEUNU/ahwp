@@ -1013,6 +1013,50 @@ export function useViewerHandle(
             text,
           ),
         ),
+      irDeleteRangeInCell: (
+        sec,
+        parentPara,
+        ctrl,
+        cellIdx,
+        startCellPara,
+        startOff,
+        endCellPara,
+        endOff,
+      ) =>
+        irMutate('irDeleteRangeInCell', (doc) =>
+          doc.deleteRangeInCell(
+            sec,
+            parentPara,
+            ctrl,
+            cellIdx,
+            startCellPara,
+            startOff,
+            endCellPara,
+            endOff,
+          ),
+        ),
+      irApplyCharFormatInCell: (
+        sec,
+        parentPara,
+        ctrl,
+        cellIdx,
+        cellPara,
+        startOff,
+        endOff,
+        props,
+      ) =>
+        irMutate('irApplyCharFormatInCell', (doc) =>
+          doc.applyCharFormatInCell(
+            sec,
+            parentPara,
+            ctrl,
+            cellIdx,
+            cellPara,
+            startOff,
+            endOff,
+            JSON.stringify(props),
+          ),
+        ),
       irDeleteRange: (sec, sp, so, ep, eo) =>
         irMutate('irDeleteRange', (doc) =>
           doc.deleteRange(sec, sp, so, ep, eo),
