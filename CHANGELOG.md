@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+### Changed — chunk 103: Phase 6.3 Canvas 본문 렌더 path (dual-mode) (0.3.44)
+
+`StudioViewer` 의 페이지 마운트 path 가 `localStorage.ahwp:render-mode` 에 따라 SVG / Canvas 로 분기. SVG (default) 는 0건 회귀. Canvas 는 `renderPageToCanvasFiltered("flow")` 호출 + `CanvasPool` 재사용 + 비동기 이미지 디코딩 200ms / 600ms 재렌더 (rhwp-studio scheduleReRender 패턴).
+
+- **`renderCanvasPage(idx, el)`** — DPR-aware backing store (`pageW × zoom × DPR`), CSS `100% × 100%` (parent-sized). lib `scale = zoom × DPR`. canvas.parentElement 검사로 in-place 재렌더 (zoom 변경 / 비동기 디코딩 시) 가능.
+- **dual-mode 분기 3 지점** — `renderPageInto` 진입 시 / `forceRerender` 의 mounted 검사 / viewport unmount 의 in-window 판정. SVG 경로는 기존과 동일.
+- **path 변경 정리** — `useEffect([path])` 의 cleanup 이 `canvasPoolRef.releaseAll()` + 모든 pending re-render timer 취소. `useDocumentLifecycle` 의 bridge.dispose 후 실행.
+- **zoom 변화 재렌더** — Canvas mode 한정 `useEffect([zoom])` 가 viewport 내 모든 mounted canvas 를 재렌더 (SVG 는 CSS scale 로 충분, skip).
+- **`tests/e2e/studio-canvas-mode.spec.ts`** 3 케이스 신규 — `<canvas>` 마운트 / DPR-aware 백킹 store / 비공백 픽셀 콘텐츠.
+- **deferred to chunk 103b**: L-004 narrow-column tooltip 우회 (현재 Canvas mode 는 `<title>` 못 함 — `getPageLayerTree` text op 기반 transparent overlay 필요), `useDebugSurface` `el?.querySelector('svg')` selector mode 분기, per-page dims (`getPageInfo`).
+
+검증: SVG mode e2e 29 케이스 회귀 0 / Canvas mode 3 케이스 통과 / typecheck / lint (0 errors, 7 사전 warnings) / unit (58/59).
+
 ### Changed — chunk 102: Phase 6.2 canvas-pool + render-mode 인프라 (0.3.43)
 
 Phase 6 세 번째 chunk. 동작 변화 0건 인프라만 — chunk 103 의 Canvas 본문 렌더 swap 이 사용할 토대.

@@ -40,8 +40,15 @@ import { hancomTitle } from '@/lib/hancom-tooltips';
 // `ensureRhwpCore` 는 R1.1 에서 useDocumentLifecycle 로 이동. chunk 100
 // (Phase 6.0): `RhwpDoc` 타입은 `@/lib/rhwp-core` 에서 단일 정의 import,
 // `WasmBridge` 가 lifecycle 소유. chunk 101 (Phase 6.1): `clientToPage`
-// 등 좌표 변환 유틸도 같은 모듈.
-import { WasmBridge, clientToPage, type RhwpDoc } from '@/lib/rhwp-core';
+// 등 좌표 변환 유틸도 같은 모듈. chunk 103 (Phase 6.3): Canvas 렌더 path
+// (`CanvasPool` + `getRenderMode`).
+import {
+  WasmBridge,
+  CanvasPool,
+  clientToPage,
+  getRenderMode,
+  type RhwpDoc,
+} from '@/lib/rhwp-core';
 import { type PageDims } from '@/features/studio/utils/page-dims';
 // `relocateExcerpt` 는 R1.8 에서 useViewerHandle 로 이동.
 import { callCellOp } from '@/features/studio/utils/cell-op';
@@ -545,12 +552,49 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     const docRef = useRef<RhwpDoc | null>(null);
     const pageRefsRef = useRef<(HTMLDivElement | null)[]>([]);
     const cacheRef = useRef<Map<number, string>>(new Map());
+    // chunk 103 (Phase 6.3): Canvas render path. `canvasPoolRef` reuses
+    // `<canvas>` elements across mount/unmount cycles. `pendingReRenderRef`
+    // schedules 200ms / 600ms re-renders to cover async <image> base64
+    // decode (rhwp-studio scheduleReRender pattern). `zoomRef` /
+    // `pageDimsRef` mirror state into refs so the stable
+    // `renderPageInto` callback (deps `[]`) reads current values.
+    const canvasPoolRef = useRef<CanvasPool>(new CanvasPool());
+    const pendingReRenderRef = useRef<
+      Map<number, ReturnType<typeof setTimeout>[]>
+    >(new Map());
+    const zoomRef = useRef(1);
+    const pageDimsRef = useRef<PageDims | null>(null);
 
     const [phase, setPhase] = useState<Phase>('mounting');
     const [error, setError] = useState<string | null>(null);
     const [pageCount, setPageCount] = useState(0);
     const [pageDims, setPageDims] = useState<PageDims | null>(null);
     const [zoom, setZoom] = useState(1);
+    // chunk 103: keep refs in sync for the empty-deps `renderPageInto`
+    // callback (used by IntersectionObserver mount window).
+    useEffect(() => {
+      zoomRef.current = zoom;
+    }, [zoom]);
+    useEffect(() => {
+      pageDimsRef.current = pageDims;
+    }, [pageDims]);
+    // chunk 103: path change → release all canvases + cancel pending
+    // re-renders. Pool keeps elements alive across mount/unmount cycles
+    // within the same doc, but a new doc has a different page-count
+    // mapping. Cleanup runs after useDocumentLifecycle's bridge.dispose.
+    // (`renderCanvasPage` zoom effect is deferred until after that
+    //  callback's declaration further down.)
+    useEffect(() => {
+      const pool = canvasPoolRef.current;
+      const pending = pendingReRenderRef.current;
+      return () => {
+        pending.forEach((timers) => {
+          for (const t of timers) clearTimeout(t);
+        });
+        pending.clear();
+        pool.releaseAll();
+      };
+    }, [path]);
     const [currentPage, setCurrentPage] = useState(0);
     const [dirty, setDirty] = useState(false);
     // chunk 51 — body text counters (chars / words / paragraphs).
@@ -910,92 +954,183 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       setPageDims,
     });
 
-    // Mount or fetch SVG for a page (uses cache).
-    const renderPageInto = useCallback((idx: number): void => {
-      const el = pageRefsRef.current[idx];
-      if (!el) return;
-      // Already mounted? Skip.
-      if (el.firstElementChild?.tagName.toLowerCase() === 'svg') return;
-      let svg = cacheRef.current.get(idx);
-      if (!svg) {
-        const doc = docRef.current;
-        if (!doc) return;
-        try {
-          svg = doc.renderPageSvg(idx);
-          cacheRef.current.set(idx, svg);
-        } catch (err) {
-          console.error(`[studio] render page ${idx} failed:`, err);
-          return;
-        }
-      }
-      // Parse via DOMParser (image/svg+xml) — guarantees the SVG namespace
-      // is established for `<image>` (otherwise the HTML parser may treat it
-      // ambiguously) and that xlink:href / href on embedded images resolve
-      // correctly. innerHTML works for many SVGs but is unreliable when the
-      // payload contains <image>, <use href>, or namespace-prefixed attrs.
-      const parser = new DOMParser();
-      const parsed = parser.parseFromString(svg, 'image/svg+xml');
-      const root = parsed.documentElement;
-      // Surface parse errors (DOMParser doesn't throw — it returns a
-      // <parsererror> document instead).
-      if (root.tagName.toLowerCase() === 'parsererror') {
-        console.error(
-          `[studio] page ${idx} SVG parse error:`,
-          root.textContent,
-        );
-        return;
-      }
-      const adopted = document.importNode(
-        root,
-        true,
-      ) as unknown as SVGSVGElement;
-      // Strip fixed dims so CSS controls size; preserve aspect via viewBox.
-      adopted.removeAttribute('width');
-      adopted.removeAttribute('height');
-      adopted.setAttribute('preserveAspectRatio', 'xMidYMid meet');
-      adopted.style.width = '100%';
-      adopted.style.height = '100%';
-      adopted.style.display = 'block';
-      // chunk 92 — narrow column 텍스트 잘림 우회 (KNOWN_ISSUES L-004).
-      // lib 가 추정한 column width 가 좁아서 text 가 잘려 보일 때, native
-      // browser 의 <title> tooltip 로 full text 를 hover-read 가능하게
-      // 한다. 모든 <text> 에 자기 textContent 를 <title> 로 한 번 더
-      // 노출 — clipping 자체는 그대로지만 hover 시 잘린 부분도 볼 수
-      // 있다. SVG 레이아웃 변경 없음 (안전).
-      const SVG_NS = 'http://www.w3.org/2000/svg';
-      adopted.querySelectorAll('text').forEach((t) => {
-        const txt = t.textContent?.trim();
-        if (!txt) return;
-        // Skip if a <title> child already exists (lib may add its own).
-        if (t.querySelector(':scope > title')) return;
-        const title = document.createElementNS(SVG_NS, 'title');
-        title.textContent = txt;
-        // <title> must be the first child for spec-compliant tooltip behavior.
-        t.insertBefore(title, t.firstChild);
-      });
-      el.replaceChildren(adopted);
-      // Diagnostic: track image counts per page for debugging.
-      const stringCount = (svg.match(/<image\b/g) ?? []).length;
-      const parsedCount = parsed.querySelectorAll('image').length;
-      const mountedCount = el.querySelectorAll('image').length;
-      const diag = window as Window & {
-        __studioPageDiag?: Record<
-          number,
-          { string: number; parsed: number; mounted: number }
-        >;
-      };
-      diag.__studioPageDiag ??= {};
-      diag.__studioPageDiag[idx] = {
-        string: stringCount,
-        parsed: parsedCount,
-        mounted: mountedCount,
-      };
-      if (stringCount !== mountedCount) {
-        console.warn(
-          `[studio] page ${idx} image count mismatch: string=${stringCount} parsed=${parsedCount} mounted=${mountedCount}`,
-        );
+    // chunk 103 (Phase 6.3): cancel any pending async re-render for a
+    // page (used when the page leaves the viewport or the doc changes).
+    const cancelPendingReRender = useCallback((idx: number): void => {
+      const timers = pendingReRenderRef.current.get(idx);
+      if (timers) {
+        for (const t of timers) clearTimeout(t);
+        pendingReRenderRef.current.delete(idx);
       }
     }, []);
+
+    // chunk 103: Canvas-mode page render. Uses `getPageInfo`-grade dims
+    // (currently mirrored from page-0 SVG via pageDims state — Phase 6.3b
+    // will migrate per-page). Sets backing store = pageW × zoom × DPR,
+    // CSS = 100% (parent already sized to pageW × zoom). The lib's `scale`
+    // parameter takes the combined `zoom × DPR` factor — backing-store
+    // pixels per page-coord unit.
+    const renderCanvasPage = useCallback(
+      (idx: number, el: HTMLElement): void => {
+        const doc = docRef.current;
+        const dims = pageDimsRef.current;
+        if (!doc || !dims) return;
+        const z = zoomRef.current;
+        const dpr = window.devicePixelRatio || 1;
+        const scale = z * dpr;
+        const expectedW = Math.round(dims.w * z * dpr);
+        const expectedH = Math.round(dims.h * z * dpr);
+        let canvas = canvasPoolRef.current.getCanvas(idx);
+        const alreadyMounted = !!canvas && el.firstElementChild === canvas;
+        const sizeMatches =
+          !!canvas && canvas.width === expectedW && canvas.height === expectedH;
+        if (!canvas) {
+          canvas = canvasPoolRef.current.acquire(idx);
+        }
+        if (!sizeMatches) {
+          canvas.width = expectedW;
+          canvas.height = expectedH;
+        }
+        canvas.style.width = '100%';
+        canvas.style.height = '100%';
+        canvas.style.display = 'block';
+        try {
+          doc.renderPageToCanvasFiltered(idx, canvas, scale, 'flow');
+        } catch (err) {
+          console.error(`[studio] canvas render page ${idx} failed:`, err);
+          return;
+        }
+        if (!alreadyMounted) {
+          el.replaceChildren(canvas);
+        }
+        // Async <image> base64 decode may not complete on the first paint —
+        // re-render at 200ms / 600ms covers most timings (rhwp-studio
+        // scheduleReRender pattern, page-renderer.ts:237-253).
+        cancelPendingReRender(idx);
+        const timers: ReturnType<typeof setTimeout>[] = [];
+        for (const delay of [200, 600]) {
+          const t = setTimeout(() => {
+            if (!canvas || !canvas.parentElement) return;
+            try {
+              doc.renderPageToCanvasFiltered(idx, canvas, scale, 'flow');
+            } catch {
+              /* doc may have been disposed during the timeout */
+            }
+          }, delay);
+          timers.push(t);
+        }
+        pendingReRenderRef.current.set(idx, timers);
+      },
+      [cancelPendingReRender],
+    );
+
+    // Mount or fetch SVG for a page (uses cache).
+    const renderPageInto = useCallback(
+      (idx: number): void => {
+        const el = pageRefsRef.current[idx];
+        if (!el) return;
+        // chunk 103: dual-mode dispatch. Canvas path lives in
+        // `renderCanvasPage` (closure over refs to avoid empty-deps stale).
+        if (getRenderMode() === 'canvas') {
+          renderCanvasPage(idx, el);
+          return;
+        }
+        // Already mounted? Skip.
+        if (el.firstElementChild?.tagName.toLowerCase() === 'svg') return;
+        let svg = cacheRef.current.get(idx);
+        if (!svg) {
+          const doc = docRef.current;
+          if (!doc) return;
+          try {
+            svg = doc.renderPageSvg(idx);
+            cacheRef.current.set(idx, svg);
+          } catch (err) {
+            console.error(`[studio] render page ${idx} failed:`, err);
+            return;
+          }
+        }
+        // Parse via DOMParser (image/svg+xml) — guarantees the SVG namespace
+        // is established for `<image>` (otherwise the HTML parser may treat it
+        // ambiguously) and that xlink:href / href on embedded images resolve
+        // correctly. innerHTML works for many SVGs but is unreliable when the
+        // payload contains <image>, <use href>, or namespace-prefixed attrs.
+        const parser = new DOMParser();
+        const parsed = parser.parseFromString(svg, 'image/svg+xml');
+        const root = parsed.documentElement;
+        // Surface parse errors (DOMParser doesn't throw — it returns a
+        // <parsererror> document instead).
+        if (root.tagName.toLowerCase() === 'parsererror') {
+          console.error(
+            `[studio] page ${idx} SVG parse error:`,
+            root.textContent,
+          );
+          return;
+        }
+        const adopted = document.importNode(
+          root,
+          true,
+        ) as unknown as SVGSVGElement;
+        // Strip fixed dims so CSS controls size; preserve aspect via viewBox.
+        adopted.removeAttribute('width');
+        adopted.removeAttribute('height');
+        adopted.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+        adopted.style.width = '100%';
+        adopted.style.height = '100%';
+        adopted.style.display = 'block';
+        // chunk 92 — narrow column 텍스트 잘림 우회 (KNOWN_ISSUES L-004).
+        // lib 가 추정한 column width 가 좁아서 text 가 잘려 보일 때, native
+        // browser 의 <title> tooltip 로 full text 를 hover-read 가능하게
+        // 한다. 모든 <text> 에 자기 textContent 를 <title> 로 한 번 더
+        // 노출 — clipping 자체는 그대로지만 hover 시 잘린 부분도 볼 수
+        // 있다. SVG 레이아웃 변경 없음 (안전).
+        const SVG_NS = 'http://www.w3.org/2000/svg';
+        adopted.querySelectorAll('text').forEach((t) => {
+          const txt = t.textContent?.trim();
+          if (!txt) return;
+          // Skip if a <title> child already exists (lib may add its own).
+          if (t.querySelector(':scope > title')) return;
+          const title = document.createElementNS(SVG_NS, 'title');
+          title.textContent = txt;
+          // <title> must be the first child for spec-compliant tooltip behavior.
+          t.insertBefore(title, t.firstChild);
+        });
+        el.replaceChildren(adopted);
+        // Diagnostic: track image counts per page for debugging.
+        const stringCount = (svg.match(/<image\b/g) ?? []).length;
+        const parsedCount = parsed.querySelectorAll('image').length;
+        const mountedCount = el.querySelectorAll('image').length;
+        const diag = window as Window & {
+          __studioPageDiag?: Record<
+            number,
+            { string: number; parsed: number; mounted: number }
+          >;
+        };
+        diag.__studioPageDiag ??= {};
+        diag.__studioPageDiag[idx] = {
+          string: stringCount,
+          parsed: parsedCount,
+          mounted: mountedCount,
+        };
+        if (stringCount !== mountedCount) {
+          console.warn(
+            `[studio] page ${idx} image count mismatch: string=${stringCount} parsed=${parsedCount} mounted=${mountedCount}`,
+          );
+        }
+      },
+      [renderCanvasPage],
+    );
+
+    // chunk 103: zoom change → Canvas re-render. SVG mode skips (CSS
+    // `width: 100%` scales the vector). Canvas backing-store is pixel-
+    // based, so resize + redraw is required.
+    useEffect(() => {
+      if (getRenderMode() !== 'canvas') return;
+      pageRefsRef.current.forEach((el, idx) => {
+        if (el?.firstElementChild?.tagName.toLowerCase() === 'canvas') {
+          renderCanvasPage(idx, el);
+        }
+      });
+    }, [zoom, renderCanvasPage]);
 
     /**
      * After a HwpDocument mutation (insert / delete / etc.), the cached SVGs
@@ -1516,8 +1651,17 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             /* keep previous */
           }
         }
+        // chunk 103: dual-mode aware. SVG mode requires el.innerHTML
+        // wipe (`renderPageInto` early-returns when an SVG child is
+        // already present). Canvas mode re-renders in place onto the
+        // pooled canvas — no detach.
+        const mode = getRenderMode();
         pageRefsRef.current.forEach((el, idx) => {
-          if (el?.firstElementChild?.tagName.toLowerCase() === 'svg') {
+          if (!el?.firstElementChild) return;
+          const tag = el.firstElementChild.tagName.toLowerCase();
+          if (mode === 'canvas' && tag === 'canvas') {
+            renderPageInto(idx);
+          } else if (mode === 'svg' && tag === 'svg') {
             el.innerHTML = '';
             renderPageInto(idx);
           }
@@ -3976,16 +4120,27 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
 
         const lo = Math.max(0, best - VIEWPORT_BUFFER_PAGES);
         const hi = Math.min(refs.length - 1, best + VIEWPORT_BUFFER_PAGES);
+        // chunk 103: dual-mode aware. Canvas mode releases the pooled
+        // canvas (so it's available for another page); SVG mode just
+        // wipes innerHTML (the cached SVG string stays in cacheRef).
+        const mode = getRenderMode();
         for (let i = 0; i < refs.length; i++) {
           const el = refs[i];
           if (!el) continue;
           const inWindow = i >= lo && i <= hi;
-          const hasSvg = el.firstElementChild?.tagName.toLowerCase() === 'svg';
-          if (inWindow && !hasSvg) {
+          const tag = el.firstElementChild?.tagName.toLowerCase();
+          const expected = mode === 'canvas' ? 'canvas' : 'svg';
+          const isMounted = tag === expected;
+          if (inWindow && !isMounted) {
             renderPageInto(i);
-          } else if (!inWindow && hasSvg) {
-            // Clear DOM but keep cacheRef[i] so re-mount is fast.
-            el.innerHTML = '';
+          } else if (!inWindow && isMounted) {
+            if (mode === 'canvas') {
+              cancelPendingReRender(i);
+              canvasPoolRef.current.release(i);
+            } else {
+              // Clear DOM but keep cacheRef[i] so re-mount is fast.
+              el.innerHTML = '';
+            }
           }
         }
       };
@@ -3999,7 +4154,15 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       return () => {
         scrollEl.removeEventListener('scroll', onScroll);
       };
-    }, [phase, pageCount, pageDims, zoom, renderPageInto, isActive]);
+    }, [
+      phase,
+      pageCount,
+      pageDims,
+      zoom,
+      renderPageInto,
+      isActive,
+      cancelPendingReRender,
+    ]);
 
     const setZoomFit = useCallback(() => {
       if (!pageDims || !scrollRef.current) return;
