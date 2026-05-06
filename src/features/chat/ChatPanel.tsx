@@ -480,11 +480,18 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
     useEffect(() => {
       let cancelled = false;
-      void window.api.secrets.has(provider).then((v) => {
-        if (!cancelled) setHasKey(v);
-      });
+      const refresh = (): void => {
+        void window.api.secrets.has(provider).then((v) => {
+          if (!cancelled) setHasKey(v);
+        });
+      };
+      refresh();
+      // chunk 70 broadcast — Settings 에서 키 저장/삭제 시 즉시 반영
+      // (이전엔 deps=[provider] 만이라 같은 provider 키 추가 시 stale).
+      const unsubscribe = window.api.secrets.onChanged(refresh);
       return () => {
         cancelled = true;
+        unsubscribe();
       };
     }, [provider]);
 

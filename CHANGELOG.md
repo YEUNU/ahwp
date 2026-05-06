@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+### Fixed — ChatPanel hasKey 가 secrets 변경 broadcast 미구독 (0.4.3)
+
+Settings 에서 API 키 입력 후에도 채팅 패널이 "키 설정 필요" 상태로 stale 했던 버그. `hasKey` state effect 가 deps `[provider]` 만 가지고 있어 같은 provider 의 키가 추가/삭제될 때 갱신 안 됐음. chunk 70 의 `secrets:changed` IPC broadcast 는 model prefetch 에만 hooked 되어 있었음.
+
+이제 `hasKey` effect 도 `window.api.secrets.onChanged()` 구독 — Settings 저장 즉시 반영. reload 불필요.
+
 ### Fixed — Phase 6 follow-up: L-004 Canvas-mode tooltip overlay (0.4.1)
 
 KNOWN_ISSUES L-004 (narrow-column 텍스트 잘림 hover tooltip) chunk 107 의 Canvas-only 전환 후 잠시 잃었던 affordance 복구. SVG `<text><title>` injection 의 직접 대체.
