@@ -54,6 +54,15 @@ test.describe('NVIDIA NIM — live smoke', () => {
     launched = await launchApp();
     await launched.page.evaluate(async (key: string) => {
       await window.api.secrets.set('nvidia', key);
+      // 0.4.13 — NIM live e2e default 모델은 google/gemma-4-31b-it.
+      // chunk 48 의 dynamic model selector 가 <select> 라 fill 불가 →
+      // localStorage 의 저장된 model 로 주입. select 가 disabled 상태
+      // (모델 list fetch 전) 라도 saved model 은 적용.
+      localStorage.setItem(
+        'ahwp:chat:models',
+        JSON.stringify({ nvidia: 'google/gemma-4-31b-it' }),
+      );
+      localStorage.setItem('ahwp:chat:provider', 'nvidia');
     }, NVAPI_KEY!);
     await launched.page.reload();
     await launched.page.waitForLoadState('domcontentloaded');
@@ -65,9 +74,10 @@ test.describe('NVIDIA NIM — live smoke', () => {
 
   test('NVIDIA provider streams a real reply containing the sentinel', async () => {
     const { page } = launched;
-    await page.getByTestId('chat-provider-select').selectOption('nvidia');
-    await page.getByTestId('chat-model-input').fill('qwen/qwen3.5-122b-a10b');
-    await expect(page.getByTestId('chat-key-indicator')).toHaveText(/●/);
+    await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
+      'data-state',
+      'ok',
+    );
 
     await page
       .getByTestId('chat-input')
@@ -110,9 +120,10 @@ test.describe('NVIDIA NIM — live smoke', () => {
       { timeout: 30_000 },
     );
 
-    await page.getByTestId('chat-provider-select').selectOption('nvidia');
-    await page.getByTestId('chat-model-input').fill('qwen/qwen3.5-122b-a10b');
-    await expect(page.getByTestId('chat-key-indicator')).toHaveText(/●/);
+    await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
+      'data-state',
+      'ok',
+    );
 
     await page.getByTestId('chat-attach-checkbox').check();
 
@@ -158,9 +169,10 @@ test.describe('NVIDIA NIM — live smoke', () => {
       { timeout: 30_000 },
     );
 
-    await page.getByTestId('chat-provider-select').selectOption('nvidia');
-    await page.getByTestId('chat-model-input').fill('qwen/qwen3.5-122b-a10b');
-    await expect(page.getByTestId('chat-key-indicator')).toHaveText(/●/);
+    await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
+      'data-state',
+      'ok',
+    );
 
     await page.getByTestId('chat-attach-checkbox').check();
 
@@ -223,9 +235,10 @@ test.describe('NVIDIA NIM — live smoke', () => {
       dbg.setSelection(0, 0, 0, text.length);
     }, SENTINEL);
 
-    await page.getByTestId('chat-provider-select').selectOption('nvidia');
-    await page.getByTestId('chat-model-input').fill('qwen/qwen3.5-122b-a10b');
-    await expect(page.getByTestId('chat-key-indicator')).toHaveText(/●/);
+    await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
+      'data-state',
+      'ok',
+    );
 
     // Toggle stays available but goes disabled once a chip is captured.
     await page.getByTestId('chat-attach-checkbox').check();
@@ -322,9 +335,10 @@ test.describe('NVIDIA NIM — live smoke', () => {
         { timeout: 10_000 },
       );
 
-      await page.getByTestId('chat-provider-select').selectOption('nvidia');
-      await page.getByTestId('chat-model-input').fill('qwen/qwen3.5-122b-a10b');
-      await expect(page.getByTestId('chat-key-indicator')).toHaveText(/●/);
+      await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
+        'data-state',
+        'ok',
+      );
 
       // Opt in the reference doc.
       const chips = page.getByTestId('chat-multidoc-chip');
@@ -412,7 +426,6 @@ test.describe('NVIDIA NIM — live smoke', () => {
         { timeout: 30_000 },
       );
 
-      await page.getByTestId('chat-provider-select').selectOption('nvidia');
       // Wait for the model dropdown to populate + enable (pre-fetch
       // settles after secrets:changed broadcast). Don't pick a specific
       // model — chunk 96 verifies tool-call behavior, not model id.
@@ -481,7 +494,6 @@ test.describe('NVIDIA NIM — live smoke', () => {
       { timeout: 30_000 },
     );
 
-    await page.getByTestId('chat-provider-select').selectOption('nvidia');
     await expect(page.getByTestId('chat-model-input')).toBeEnabled({
       timeout: 30_000,
     });
@@ -553,7 +565,6 @@ test.describe('NVIDIA NIM — live smoke', () => {
       { timeout: 30_000 },
     );
 
-    await page.getByTestId('chat-provider-select').selectOption('nvidia');
     await expect(page.getByTestId('chat-model-input')).toBeEnabled({
       timeout: 30_000,
     });
@@ -661,7 +672,6 @@ test.describe('NVIDIA NIM — live smoke', () => {
         return { paraCount, paragraphs: collected };
       });
 
-      await page.getByTestId('chat-provider-select').selectOption('nvidia');
       await expect(page.getByTestId('chat-model-input')).toBeEnabled({
         timeout: 30_000,
       });
@@ -672,7 +682,7 @@ test.describe('NVIDIA NIM — live smoke', () => {
         'meta/llama-3.3-70b-instruct',
         'moonshotai/kimi-k2-instruct',
         'meta/llama-3.1-70b-instruct',
-        'qwen/qwen3.5-122b-a10b',
+        'google/gemma-4-31b-it',
       ];
       const modelSel = page.getByTestId('chat-model-input');
       const availableModels = await modelSel.evaluate((el) =>
@@ -754,5 +764,91 @@ test.describe('NVIDIA NIM — live smoke', () => {
     } finally {
       rmSync(workspaceDir, { recursive: true, force: true });
     }
+  });
+
+  // 0.4.13 회귀 가드 — 사용자 보고된 케이스: "사업계획서 읽고 누락된
+  // 부분 찾아줘" 류 read-intent query 가 doc 을 mutate 하면 안 됨.
+  // 0.4.6 의 markdown fallback gate (sectionMatch 없는 markdown 응답
+  // 자동 적용 X) + 0.4.12 의 insertText(0,0,0,multiline) hard guard 둘
+  // 다 cover. 실제 사업계획서 양식 fixture + gemma-4 로 검증.
+  test('0.4.13 회귀 — 양식 doc 의 read-intent query 가 IR 변경 안 함', async () => {
+    const { page } = launched;
+    const ALPHA = path.resolve(
+      __dirname,
+      '..',
+      '..',
+      'examples',
+      '4. [사업계획서] 제조AI특화 스마트공장 사업계획서_양식_260326_01_데이터수집검증 중복화 복사본.hwp',
+    );
+    test.skip(!existsSync(ALPHA), 'examples/사업계획서 fixture missing');
+
+    // 양식 doc 을 활성 탭으로 mount.
+    await page.evaluate(async (p) => {
+      await window.api.session.set({ lastActivePath: p });
+    }, ALPHA);
+    await page.reload();
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForFunction(
+      () =>
+        Boolean(
+          (window as Window & { __studioDebug?: StudioDebug }).__studioDebug,
+        ),
+      { timeout: 30_000 },
+    );
+    await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
+      'data-state',
+      'ok',
+    );
+
+    // baseline IR 상태 — paragraphCount + 첫 5개 단락 텍스트 캡처.
+    interface IrSnapshot {
+      paraCount: number;
+      first5: string[];
+    }
+    const baseline = await page.evaluate<IrSnapshot>(() => {
+      const dbg = (window as Window & { __studioDebug?: StudioDebug })
+        .__studioDebug!;
+      const cnt = dbg.getParagraphCount!(0);
+      const out: string[] = [];
+      for (let p = 0; p < Math.min(cnt, 5); p++) {
+        const len = dbg.getParagraphLength!(0, p);
+        out.push(len > 0 ? dbg.getTextRange!(0, p, 0, Math.min(len, 200)) : '');
+      }
+      return { paraCount: cnt, first5: out };
+    });
+
+    // 사용자 보고와 동일한 read-intent query.
+    await page
+      .getByTestId('chat-input')
+      .fill(
+        '이 사업계획서 읽고 누락되거나 채워지지 않은 부분이 있는지 찾아줘.',
+      );
+    await page.getByTestId('chat-send').click();
+
+    // Agent loop 마무리 대기 — send 버튼 다시 visible 가 stream 종료
+    // 신호. read tool 만 사용하니 turn 1~3 안에 종료.
+    await expect(page.getByTestId('chat-send')).toBeVisible({
+      timeout: 90_000,
+    });
+    await page.waitForTimeout(2000); // auto-apply useEffect 발동 가능 윈도우
+
+    // applied toast 가 나타나면 안 됨 (0.4.6 fix — sectionMatch 없는
+    // markdown 응답은 auto-apply X).
+    await expect(page.getByTestId('chat-action-applied-toast')).toHaveCount(0);
+
+    // IR 도 무변경 — paragraphCount 동일 + 첫 5개 텍스트 동일.
+    const after = await page.evaluate<IrSnapshot>(() => {
+      const dbg = (window as Window & { __studioDebug?: StudioDebug })
+        .__studioDebug!;
+      const cnt = dbg.getParagraphCount!(0);
+      const out: string[] = [];
+      for (let p = 0; p < Math.min(cnt, 5); p++) {
+        const len = dbg.getParagraphLength!(0, p);
+        out.push(len > 0 ? dbg.getTextRange!(0, p, 0, Math.min(len, 200)) : '');
+      }
+      return { paraCount: cnt, first5: out };
+    });
+    expect(after.paraCount).toBe(baseline.paraCount);
+    expect(after.first5).toEqual(baseline.first5);
   });
 });

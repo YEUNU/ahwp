@@ -6,6 +6,16 @@
 
 ## [Unreleased]
 
+### Test — NIM live e2e default 모델 gemma-4 + 사용자 실패 케이스 live 검증 (0.4.14)
+
+목적: 사용자 결정 (gemma-4 default for live tests) 적용 + 사용자 직접 보고된 "사업계획서 읽고 누락 부분 찾아줘" 시나리오를 live NIM 으로 검증.
+
+- `tests/e2e/nvidia-live.spec.ts` default model `qwen/qwen3.5-122b-a10b` → `google/gemma-4-31b-it` 6 sites sed
+- chunk 48 의 dynamic model selector (`<select>`) 호환 — `localStorage.ahwp:chat:models` + `ahwp:chat:provider` 주입으로 fill / selectOption 우회
+- `chat-key-indicator` lucide 아이콘 전환 (text `●` 사용 안 함) — 5 sites `toHaveText(/●/)` → `toHaveAttribute('data-state', 'ok')`
+- 신규 테스트 "0.4.13 회귀 — 양식 doc 의 read-intent query 가 IR 변경 안 함" — 실제 사업계획서 fixture (`examples/4. [사업계획서] ... .hwp`) 활용, gemma-4 호출, "이 사업계획서 읽고 누락된 부분이 있는지 찾아줘" 같은 read query 후 paragraphCount + 첫 5단락 + applied-toast count 모두 무변경 검증. 26초 안에 통과 (live)
+- 메모리 박제: `feedback_default_test_model.md` — Playwright live test 의 default 는 항상 gemma-4 사용
+
 ### Test — chat e2e 갱신 + 미커버 fix 회귀 가드 (0.4.13)
 
 목적: 사용자 검증 격차 메우기. 기존 stale 7건 (chunk 99 follow-up 0.3.40 부터 깨져 있던 것) 정정 + 본 세션 fix 의 회귀 가드 신규.
