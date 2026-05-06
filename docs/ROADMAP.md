@@ -261,6 +261,25 @@
 
 ---
 
+## Phase 6 — rhwp-studio view 계층 정합 (예정)
+
+`StudioViewer` 의 페이지 렌더 path 를 `renderPageSvg` (SVG 단일 평면) 에서 `renderPageToCanvasFiltered` (Canvas + 3-tier DOM overlay) 로 전환. 라이브러리 메인테이너 reference (`rhwp-studio/src/view/`) 와 정합. AI 자동 글쓰기의 fidelity 천장이 라이브러리 정합도에 비례하므로 ROI 가 가장 높은 follow-up.
+
+상세 계획: [`docs/PHASE6_PLAN.md`](PHASE6_PLAN.md). chunks 100~107, 약 1.5~2주 규모. 0.7.10 (2026-05-05) 의 `renderPageToCanvasFiltered` 추가로 가능해진 작업.
+
+- [ ] **chunk 100** — Phase 6.0: WasmBridge 추상 (`src/lib/rhwp-core/wasm-bridge.ts`)
+- [ ] **chunk 101** — Phase 6.1: coordinate-system.ts (DPR-aware 4-좌표계 변환)
+- [ ] **chunk 102** — Phase 6.2: canvas-pool + dual-mode (`localStorage.ahwp:render-mode`) 인프라
+- [ ] **chunks 103a~b** — Phase 6.3: Canvas 본문 렌더 + L-004 tooltip 대체 + 비동기 이미지 재렌더 스케줄러
+- [ ] **chunk 104** — Phase 6.4: behind/front overlay (`getPageLayerTree` 파싱) + 효과 CSS + 워터마크 multiply
+- [ ] **chunk 105** — Phase 6.5: find / changed-paragraph 하이라이트 mode 정합
+- [ ] **chunk 106** — Phase 6.6: e2e selector-DOM 의존 정리
+- [ ] **chunk 107** — Phase 6.7: SVG 경로 제거 + cleanup + KNOWN_ISSUES L-004 close
+
+검증 게이트: `grep renderPageSvg src/ tests/` → 0건. 워터마크/도장 fixture 시각 회귀 신규. DPR=1/2 좌표 정합. README/ARCHITECTURE/TECH_STACK 갱신.
+
+---
+
 ## Backlog (Phase 미정)
 
 - 음성 입력 → 챗봇
