@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+### Changed — Agent prompt + insertText description 강화 — 양식 doc layout 파손 방지 (0.4.9)
+
+증상: 사업계획서 양식 (표지 표 + 섹션 구조) 에서 "작성해줘" 요청 시 AI 가 `insertText(0,0,0,...)` 호출. 평문 + `\n` paragraph break 만 있어 표지 표 cell 안에 raw text dump → 양식 layout 망가짐. 사용자 보고: "문서 형식 하나도 안맞아".
+
+원인: prompt 가이드 가 양식 doc 에서의 insertText 위험 미언급. 도구 description 도 "raw 텍스트만 추가할 때 사용" 정도라 AI 가 (0,0,0) 호출의 destructive 결과를 인지 못 함.
+
+수정:
+
+- `prompts.ts` SYSTEM_PROMPT_AGENT_GUIDE 에 신규 섹션 "Form / template documents — DO NOT use insertText at (0,0,0)" 추가. 사업계획서 / 보고서 양식 다룰 때 4단계 체크리스트 (anchor 식별 → cell 여부 확인 → applyHtml 선호 → 100+ 줄 single insertText 금지)
+- `ai-tool-catalog.ts` insertText description 강화: "양식 doc 의 (0,0,0) 호출 금지" / "char-shape 만 상속" / "heading 혼합 시 applyHtml 사용" 명시 + 안전 사용처 예시
+
+향후 회귀 가드는 양식 doc fixture 로 e2e 추가 (사용자 실제 양식 .hwp 가 examples/ 에 있으면 활용).
+
 ### Fixed — macOS Keychain prompt 가 매 채팅 turn 마다 반복 (0.4.8)
 
 증상: API 키 저장 후 채팅마다 macOS Keychain 인증 prompt 발생. 사용자 입장 — Settings 한 번 + 첫 채팅 한 번 = 최소 2회.

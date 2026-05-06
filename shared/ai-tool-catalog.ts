@@ -169,7 +169,7 @@ const TOOL_DESCRIPTORS: AhwpToolDescriptor[] = [
   {
     name: 'insertText',
     description:
-      '특정 위치 (sectionIdx, paragraphIdx, charOffset) 에 텍스트 삽입. applyHtml 우회 없이 raw 텍스트만 추가할 때 사용.',
+      '특정 위치 (sectionIdx, paragraphIdx, charOffset) 에 raw 텍스트 삽입. **양식 / 보고서 doc 의 (0,0,0) 호출 금지** — 표지 표 cell 안에 dump 되어 layout 파손. 인접 paragraph 의 char-shape 만 상속, 새 스타일·heading 적용 안 됨. 다중 paragraph + heading + 본문 혼합 시 applyHtml 사용. 표 cell 내부면 insertTextInCell / insertTextInCellByPath 사용. 안전 사용처: 빈 문서·빈 단락·verified 위치의 plain text 추가.',
     inputSchema: {
       type: 'object',
       properties: {
