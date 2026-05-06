@@ -851,4 +851,119 @@ test.describe('NVIDIA NIM — live smoke', () => {
     expect(after.paraCount).toBe(baseline.paraCount);
     expect(after.first5).toEqual(baseline.first5);
   });
+
+  // 0.4.14 회귀 가드 — 사용자 보고된 직접 케이스: 가상의 업체 + 예지보전
+  // 사업으로 양식 채워달라고 했을 때 → AI 가 insertText(0,0,0,multiline)
+  // 호출 → 표지 표 cell layout 파손. 0.4.12 dispatcher hard guard 와
+  // 0.4.9 prompt 가이드가 함께 작동해 양식이 깨지지 않아야 함.
+  // (실제 사례에선 사용자가 자기 업체명 사용했지만, 본 테스트는 외부
+  // 공개 회피 위해 가상 업체명 "테크플로우" 사용.)
+  test('0.4.14 회귀 — 양식 doc 의 write-intent query 가 표지 layout 파손 안 함', async () => {
+    test.setTimeout(300_000); // multi-turn agent loop + LLM latency
+    const { page } = launched;
+    const ALPHA = path.resolve(
+      __dirname,
+      '..',
+      '..',
+      'examples',
+      '4. [사업계획서] 제조AI특화 스마트공장 사업계획서_양식_260326_01_데이터수집검증 중복화 복사본.hwp',
+    );
+    test.skip(!existsSync(ALPHA), 'examples/사업계획서 fixture missing');
+
+    await page.evaluate(async (p) => {
+      await window.api.session.set({ lastActivePath: p });
+    }, ALPHA);
+    await page.reload();
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForFunction(
+      () =>
+        Boolean(
+          (window as Window & { __studioDebug?: StudioDebug }).__studioDebug,
+        ),
+      { timeout: 30_000 },
+    );
+    await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
+      'data-state',
+      'ok',
+    );
+
+    // baseline — paragraph 0 의 첫 200자. 양식 표지의 제목 텍스트 포함.
+    interface FormSnapshot {
+      paraCount: number;
+      para0Head: string;
+    }
+    const baseline = await page.evaluate<FormSnapshot>(() => {
+      const dbg = (window as Window & { __studioDebug?: StudioDebug })
+        .__studioDebug!;
+      const cnt = dbg.getParagraphCount!(0);
+      const len0 = dbg.getParagraphLength!(0, 0);
+      const head =
+        len0 > 0 ? dbg.getTextRange!(0, 0, 0, Math.min(len0, 200)) : '';
+      return { paraCount: cnt, para0Head: head };
+    });
+
+    // 사용자 보고와 동일한 write-intent query (가상 업체명).
+    await page
+      .getByTestId('chat-input')
+      .fill(
+        '테크플로우(TechFlow)라는 가상의 업체의 예지보전(Predictive Maintenance) 솔루션 사업으로 이 사업계획서를 채워줘.',
+      );
+    await page.getByTestId('chat-send').click();
+
+    // Agent loop 끝나기 까지 대기 (write-intent 라 multi-turn 가능).
+    await expect(page.getByTestId('chat-send')).toBeVisible({
+      timeout: 180_000,
+    });
+    await page.waitForTimeout(2000);
+
+    // 핵심 검증 1 — 양식 표지의 paragraph 0 (제목 cell) 텍스트가
+    // catastrophic 하게 길어지지 않음. 사용자 케이스에선 baseline ~30자
+    // 였던 것이 AI dump 로 200+ 자 multi-line 로 늘어나 표지 파손.
+    const after = await page.evaluate<FormSnapshot>(() => {
+      const dbg = (window as Window & { __studioDebug?: StudioDebug })
+        .__studioDebug!;
+      const cnt = dbg.getParagraphCount!(0);
+      const len0 = dbg.getParagraphLength!(0, 0);
+      const head =
+        len0 > 0 ? dbg.getTextRange!(0, 0, 0, Math.min(len0, 4096)) : '';
+      return { paraCount: cnt, para0Head: head };
+    });
+    // baseline para0 길이 + 100 (LLM 의 작은 변경 허용) 보다 크게 늘어
+    // 나면 표지 dump 의심. 200+ 자 추가는 거의 100% bug.
+    expect(after.para0Head.length).toBeLessThan(
+      baseline.para0Head.length + 100,
+    );
+
+    // 핵심 검증 2 — `insertText(0,0,0,multiline)` 호출이 있었다면 0.4.12
+    // hard guard 가 fail 시켰어야. tool entry 중 status=failed +
+    // reason matching guard 메시지 검색.
+    interface ToolEntryInfo {
+      name: string;
+      status: string;
+      reason: string;
+    }
+    const failedInsertEntries = await page
+      .locator('[data-testid="chat-tool-entry"][data-tool-name="insertText"]')
+      .evaluateAll((nodes): ToolEntryInfo[] =>
+        nodes.map((n) => ({
+          name: (n as HTMLElement).dataset.toolName ?? '',
+          status: (n as HTMLElement).dataset.toolStatus ?? '',
+          reason: (n as HTMLElement).getAttribute('title') ?? '',
+        })),
+      );
+    // insertText 호출이 있었으면 그 중 (0,0,0,multiline) 유형은 failed
+    // 여야 함. 호출 자체가 없을 수도 있음 (AI 가 applyHtml 만 사용) — 그
+    // 경우는 이 검증 스킵 (length 0).
+    for (const e of failedInsertEntries) {
+      if (e.status === 'failed') {
+        // guard 거절이라면 reason 에 키워드 포함.
+        expect(e.reason).toMatch(
+          /insertText-at-doc-start-with-multiline-rejected|out-of-range|insertText-failed/,
+        );
+      }
+    }
+    console.log(
+      `[live] form fill: paraCount ${baseline.paraCount}→${after.paraCount}, para0 len ${baseline.para0Head.length}→${after.para0Head.length}, insertText entries=${failedInsertEntries.length}`,
+    );
+  });
 });

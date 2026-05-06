@@ -6,6 +6,20 @@
 
 ## [Unreleased]
 
+### Test — write-intent live regression (양식 layout 파손 가드) (0.4.15)
+
+목적: 사용자 두 번째 보고 케이스 — "양식에 내용 채워넣는 것" — live NIM 으로 검증. 가상 업체명 (테크플로우 / TechFlow) + 예지보전 사업으로 사업계획서 양식 채워달라는 query 후 표지 layout 보존 확인.
+
+신규 테스트:
+
+- `tests/e2e/nvidia-live.spec.ts` "0.4.14 회귀 — 양식 doc 의 write-intent query 가 표지 layout 파손 안 함"
+- `test.setTimeout(300_000)` — multi-turn agent + LLM 지연 대비 (default 60s 부족)
+- 양식 paragraph 0 길이 baseline + 100 안 넘는지 검증 (bug 인 경우 200+ 자 dump)
+- `chat-tool-entry` 의 `insertText` failed entry 가 있다면 reason 이 dispatcher guard 거절 메시지인지 검증
+- 38초 live 통과: paraCount 315→315 / para0 len 0→0 / insertText entries 0 (AI 가 prompt 가이드 따라 시도조차 안 함)
+
+해석: 0.4.9 prompt 가이드가 매우 효과적 — AI 가 양식 doc 인지하고 destructive `insertText(0,0,0,multiline)` 시도조차 안 함. 0.4.12 hard guard 는 fallback 으로 대비. layout 보존은 ✓, 단 자동 채움도 안 됨 (보수적 응답). 적극 채움은 추후 prompt 정밀화 후보.
+
 ### Test — NIM live e2e default 모델 gemma-4 + 사용자 실패 케이스 live 검증 (0.4.14)
 
 목적: 사용자 결정 (gemma-4 default for live tests) 적용 + 사용자 직접 보고된 "사업계획서 읽고 누락 부분 찾아줘" 시나리오를 live NIM 으로 검증.
