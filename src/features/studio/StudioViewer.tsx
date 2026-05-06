@@ -47,6 +47,8 @@ import {
   CanvasPool,
   clientToPage,
   getRenderMode,
+  parsePageLayerTree,
+  applyOverlayLayers,
   type RhwpDoc,
 } from '@/lib/rhwp-core';
 import { type PageDims } from '@/features/studio/utils/page-dims';
@@ -1002,6 +1004,17 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         }
         if (!alreadyMounted) {
           el.replaceChildren(canvas);
+        }
+        // chunk 104 (Phase 6.4): behind/front floating image overlays
+        // (워터마크 / 도장 등 wrap=behindText|inFrontOfText). Body-layer
+        // images (square / topAndBottom / inline) ride on the canvas
+        // itself. `getPageLayerTree` is the lib's source of truth for
+        // bbox + base64 + effect metadata.
+        try {
+          const overlays = parsePageLayerTree(doc.getPageLayerTree(idx));
+          applyOverlayLayers(el, idx, overlays, z);
+        } catch (err) {
+          console.warn(`[studio] page ${idx} overlay apply failed:`, err);
         }
         // Async <image> base64 decode may not complete on the first paint —
         // re-render at 200ms / 600ms covers most timings (rhwp-studio
