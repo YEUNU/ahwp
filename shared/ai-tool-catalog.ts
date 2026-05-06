@@ -777,7 +777,13 @@ const TOOL_DESCRIPTORS: AhwpToolDescriptor[] = [
   {
     name: 'getDocumentOutline',
     description:
-      '문서의 제목 단락 outline 조회 (paragraphIndex/level/text). Agent 가 새 단락을 어디에 넣을지 결정할 때 사용.',
+      '문서의 제목 단락 outline 조회 (paragraphIndex/level/text). Agent 가 새 단락을 어디에 넣을지 결정할 때 사용. **outline 이 비어있으면 doc 가 heading 스타일 (제목 N / 개요 N / Heading N) 미사용임 — 그땐 `getDocumentSummary` 로 fallback**.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'getDocumentSummary',
+    description:
+      '문서 구조 개요 — sectionCount + 각 section 의 paragraphCount / 비어있지 않은 단락 수 / 첫·마지막 채워진 단락 샘플 (text, 200자 cap). heading 스타일 없는 doc (사업계획서 양식 다수가 그러함) 의 "비어있는지 / 채워졌는지" 판정에 사용. read-only, 매 turn 1~2번 비용 미미.',
     inputSchema: { type: 'object', properties: {} },
   },
   {

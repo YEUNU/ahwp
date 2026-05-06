@@ -523,6 +523,16 @@ async function runOne(
         const data = viewer.getOutline();
         return { ok: true, tool: call.tool, data };
       }
+      case 'getDocumentSummary': {
+        const data = viewer.getDocumentSummary();
+        if (data === null)
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: 'getDocumentSummary-failed',
+          };
+        return { ok: true, tool: call.tool, data };
+      }
       case 'getStyleListJson': {
         const data = viewer.getStyleListJson();
         return { ok: true, tool: call.tool, data };
@@ -812,6 +822,7 @@ export function previewArgs(call: AhwpToolCall): string {
       return `(${call.args.paragraphIdx},${call.args.controlIdx})`;
     // === Phase 3 chunk 51 — read tools ===
     case 'getDocumentOutline':
+    case 'getDocumentSummary':
     case 'getStyleListJson':
     case 'getCaretPosition':
       return '(read)';

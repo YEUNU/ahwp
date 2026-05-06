@@ -69,6 +69,7 @@ export const AHWP_TOOL_NAMES = [
   'deleteBookmark',
   // Phase 3 chunk 51 — read-only Agent tools (양식 매칭 / 위치 결정)
   'getDocumentOutline',
+  'getDocumentSummary',
   'getStyleListJson',
   'getStyleAt',
   'getCharPropertiesAt',
@@ -96,6 +97,7 @@ export type AhwpToolName = (typeof AHWP_TOOL_NAMES)[number];
  */
 export const READONLY_TOOL_NAMES = new Set<AhwpToolName>([
   'getDocumentOutline',
+  'getDocumentSummary',
   'getStyleListJson',
   'getStyleAt',
   'getCharPropertiesAt',
@@ -399,6 +401,7 @@ export interface AhwpToolArgs {
   };
   // Phase 3 chunk 51 — read-only Agent tools
   getDocumentOutline: Record<string, never>;
+  getDocumentSummary: Record<string, never>;
   getStyleListJson: Record<string, never>;
   getStyleAt: { sectionIdx: number; paragraphIdx: number };
   getCharPropertiesAt: {

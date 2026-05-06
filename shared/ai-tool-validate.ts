@@ -585,6 +585,7 @@ function validateArgs<T extends AhwpToolName>(
     }
     // === Phase 3 chunk 51 — read-only Agent tools ===
     case 'getDocumentOutline':
+    case 'getDocumentSummary':
     case 'getStyleListJson':
     case 'getCaretPosition':
       return { ok: true, value: {} as AhwpToolArgs[T] };

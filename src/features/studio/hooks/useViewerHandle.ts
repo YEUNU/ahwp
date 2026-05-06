@@ -669,6 +669,64 @@ export function useViewerHandle(
           console.warn('[studio] scrollToParagraph failed:', err);
         }
       },
+      // chunk 0.4.5: AI fallback for docs without heading styles. When
+      // `getDocumentOutline` returns [], the AI has no way to judge
+      // whether the doc is filled — it would blindly call getTextRange
+      // on para 0 and conclude "empty". This summary returns per-section
+      // counts + first/last filled paragraph samples so the agent can
+      // make informed decisions.
+      getDocumentSummary: () => {
+        const doc = docRef.current;
+        if (!doc) return null;
+        try {
+          const sectionCount = doc.getSectionCount();
+          const TEXT_SAMPLE_CAP = 200;
+          const sections: {
+            sectionIdx: number;
+            paragraphCount: number;
+            nonEmptyCount: number;
+            firstFilled: { paragraphIdx: number; text: string } | null;
+            lastFilled: { paragraphIdx: number; text: string } | null;
+          }[] = [];
+          for (let s = 0; s < sectionCount; s++) {
+            const paraCount = doc.getParagraphCount(s);
+            let nonEmpty = 0;
+            let first: { paragraphIdx: number; text: string } | null = null;
+            let last: { paragraphIdx: number; text: string } | null = null;
+            const cap = Math.min(paraCount, 10000); // safety
+            for (let p = 0; p < cap; p++) {
+              const len = doc.getParagraphLength(s, p);
+              if (len === 0) continue;
+              let text: string;
+              try {
+                text = doc.getTextRange(
+                  s,
+                  p,
+                  0,
+                  Math.min(len, TEXT_SAMPLE_CAP),
+                );
+              } catch {
+                continue;
+              }
+              if (!text.trim()) continue;
+              nonEmpty += 1;
+              if (!first) first = { paragraphIdx: p, text };
+              last = { paragraphIdx: p, text };
+            }
+            sections.push({
+              sectionIdx: s,
+              paragraphCount: paraCount,
+              nonEmptyCount: nonEmpty,
+              firstFilled: first,
+              lastFilled: last,
+            });
+          }
+          return { sectionCount, sections };
+        } catch (err) {
+          console.warn('[studio] getDocumentSummary failed:', err);
+          return null;
+        }
+      },
       getOutline: () => {
         const doc = docRef.current;
         if (!doc) return [];

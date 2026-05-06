@@ -6,6 +6,17 @@
 
 ## [Unreleased]
 
+### Added — `getDocumentSummary` AI read tool — heading 없는 doc 의 "채워졌는지" 판정 (0.4.5)
+
+증상: 사용자가 사업계획서 양식 (heading 스타일 미사용 — 본문 / 표 셀로만 구성) 을 활성 탭으로 두고 "다 채워졌는지 확인해줘" 요청 시 AI 가 `getDocumentOutline` → `[]` → `getTextRange(0,0,0,0,...)` 첫 단락만 보고 "doc is empty" 결론. AI 가 paragraphCount / sectionCount 를 알 수단이 카탈로그에 없어 blind probe 실패.
+
+수정:
+
+- 새 read tool `getDocumentSummary` — `{ sectionCount, sections: [{ paragraphCount, nonEmptyCount, firstFilled, lastFilled }] }` 반환. heading 없어도 doc 이 얼마나 차 있는지 한 번에 판정 가능
+- `useViewerHandle.getDocumentSummary()` impl — 모든 section 의 paragraph 순회, 비어있지 않은 것 카운트 + 첫·마지막 채워진 단락 샘플 (200자 cap)
+- `getDocumentOutline` 카탈로그 description 에 fallback 안내 추가
+- catalog / validator / types / readonly-set 4 surface 일괄 갱신 (총 도구 60개)
+
 ### Fixed — workspace outline 추출 가 `개요 N` 스타일 누락 — AI cross-doc 읽기 실패 (0.4.4)
 
 증상: AI 에 "이 문서 확인해서 정합성 확인해줘" 같은 cross-doc 분석 요청 시 "파일 읽기 시도 했으나 못함". 사업계획서 / 보고서 양식 다수가 영향.

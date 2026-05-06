@@ -567,6 +567,24 @@ export interface ViewerHandle {
     text: string;
   }[];
   /**
+   * Doc structural summary — used by the AI agent's `getDocumentSummary`
+   * read tool when `getOutline()` returns empty (doc has no heading
+   * styles). Returns per-section paragraph counts + non-empty counts +
+   * sample first/last filled paragraph so the agent can judge whether
+   * the doc is "filled" without having to blindly probe paragraphs by
+   * trial-and-error indices.
+   */
+  getDocumentSummary: () => {
+    sectionCount: number;
+    sections: {
+      sectionIdx: number;
+      paragraphCount: number;
+      nonEmptyCount: number;
+      firstFilled: { paragraphIdx: number; text: string } | null;
+      lastFilled: { paragraphIdx: number; text: string } | null;
+    }[];
+  } | null;
+  /**
    * Capture the current viewer selection as a portable excerpt — chunk
    * 20. Returns null when no selection is active or the selection
    * spans multiple paragraphs (multi-paragraph excerpts are deferred:
