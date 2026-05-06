@@ -13,8 +13,9 @@ import type { ViewerHandle } from './types';
  * this won't churn during typing — but TOC follows behind by one
  * debounce cycle, which is fine for the navigation use case).
  *
- * Empty fallback: if the doc has no styles named "제목 1" / "Heading 1"
- * the panel shows a hint nudging the user to apply heading styles.
+ * Empty fallback: if the doc has no styles named "제목 N" / "개요 N" /
+ * "Heading N" the panel shows a hint nudging the user to apply heading
+ * styles.
  */
 
 export interface OutlineSidebarProps {
@@ -68,8 +69,8 @@ export function OutlineSidebar({
           className="px-3 py-4 text-[11px] leading-relaxed text-muted-foreground"
           data-testid="studio-outline-empty"
         >
-          단락 스타일을 "제목 1" / "제목 2" 등으로 지정하면 여기에 자동으로
-          목차가 표시됩니다.
+          단락 스타일을 "제목 1" / "제목 2" 또는 "개요 1" / "개요 2" 등으로
+          지정하면 여기에 자동으로 목차가 표시됩니다.
         </div>
       ) : (
         <ul
