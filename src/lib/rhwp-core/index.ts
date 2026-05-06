@@ -28,7 +28,6 @@ export type {
   ScrollerCoord,
 } from './coordinate-system';
 export { CanvasPool } from './canvas-pool';
-export { getRenderMode, setRenderMode, type RenderMode } from './render-mode';
 export {
   parsePageLayerTree,
   applyOverlayLayers,

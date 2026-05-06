@@ -6,6 +6,40 @@
 
 ## [Unreleased]
 
+### Changed — chunk 107: Phase 6.7 SVG 경로 제거 + Phase 6 완료 (0.4.0)
+
+Phase 6 (rhwp-studio view 계층 정합) 마지막 chunk. SVG 렌더 path 일괄 제거, Canvas 가 유일한 path. minor 버전 bump (0.3 → 0.4) — Phase 단위 milestone.
+
+- **`renderPageInto` SVG 분기 제거** — `renderPageSvg` / `DOMParser` / `<svg>` mount / L-004 `<text><title>` injection / `__studioPageDiag` 모두 삭제. Canvas 전용 dispatch 1줄
+- **`useDocumentLifecycle` page-0 dims 추출** — `renderPageSvg(0)` + `<svg width/height>` regex → `getPageInfo(0)` JSON 직접 파싱. SVG WASM 호출 0건 in lifecycle
+- **`utils/page-dims.ts` 재구성** — `parsePageDimensions` 가 SVG 문자열이 아니라 `getPageInfo` JSON 을 입력. 6 신규 단위 테스트
+- **forceRerender + viewport unmount + useDebugSurface + useUndoHistory** — 모든 dual-mode 분기 제거, canvas-only 통일
+- **`render-mode.ts` 모듈 + `localStorage.ahwp:render-mode` flag 삭제** — 불필요해짐
+- **e2e 정정** — `studio-image.spec.ts` 의 `svg image` 검사 → `getPageLayerTree` JSON 의 image op 검출. `studio-viewer.spec.ts:200` 도 동일
+- **`__studioDebug.getPageLayerTreeJson(idx)` 신규** — e2e 가 image 존재 검증할 수 있게 lib JSON 노출
+- **KNOWN_ISSUES L-004 갱신** — Canvas-only 시 SVG `<title>` tooltip 우회 불가. 후속: `getPageLayerTree` text op bbox + overlay tooltip 검토
+- **Phase 6 완료 게이트** — `grep renderPageSvg src/` 코멘트만 (호출 0건). e2e 26 케이스 (viewer/input/undo/canvas-mode) 통과
+
+### Changed — chunk 106: Phase 6.6 e2e selector mode-agnostic 정리 (0.3.48)
+
+`tests/e2e/*.spec.ts` 의 SVG-specific selector 를 mode-agnostic 으로 일괄 변경 — chunk 107 SVG 제거 후에도 동일 e2e 가 Canvas-only 환경에서 통과. `studio-viewer.spec.ts` (3 sites) / `studio-bigdoc.spec.ts` (8 sites, sed) / `studio-format.spec.ts` (1 site) 의 `locator('svg')` → `'svg, canvas'`.
+
+### Changed — chunk 105: Phase 6.5 find / selection / changed-paragraph mode 정합 (0.3.47)
+
+Inventory 결과 — 회귀 가드만 추가. 세 highlight (selection rect / find match / changed-paragraph stripe) 모두 이미 DOM `<div>` overlay 였음 (`PaperPage.tsx`). Canvas mode 에서 자동 동작. `tests/e2e/studio-canvas-overlays.spec.ts` 신규 — 회귀 가드 (selection rect + find match DOM overlay 검증).
+
+### Changed — chunk 104: Phase 6.4 behind/front overlay (getPageLayerTree) (0.3.46)
+
+Canvas mode 의 behind/front floating image (워터마크 / 도장 / 사인) 를 native overlay 로 정확히 그리도록.
+
+- **`page-layer-tree.ts` 신설** — `parsePageLayerTree` (`getPageLayerTree` JSON 트리에서 wrap=behindText|inFrontOfText image op 분리) + `applyOverlayLayers` (DOM 적용: behind div z-index=0 + front div z-index=2). bbox × zoom = CSS px. pointer-events: none. 6 단위 테스트
+- **CSS filter 매핑** — grayScale → `grayscale(100%)`, blackWhite → `grayscale + contrast(1000%)`, brightness/contrast 비례. 워터마크 → `mix-blend-mode: multiply`
+- **`renderCanvasPage` 통합** — 본문 canvas 렌더 직후 `getPageLayerTree` → parse → applyOverlayLayers
+
+### Changed — chunk 103b: Phase 6.3 follow-up dual-mode re-render hooks (0.3.45)
+
+Canvas mode 가 `useDebugSurface` (debug insertText) 와 `useUndoHistory` (snapshot restore) 에서도 redraw 동작. 이전엔 mounted 검사가 SVG 한정이라 Canvas 모드에서 누락. 두 hook 의 selector → `'svg, canvas'`.
+
 ### Changed — chunk 103: Phase 6.3 Canvas 본문 렌더 path (dual-mode) (0.3.44)
 
 `StudioViewer` 의 페이지 마운트 path 가 `localStorage.ahwp:render-mode` 에 따라 SVG / Canvas 로 분기. SVG (default) 는 0건 회귀. Canvas 는 `renderPageToCanvasFiltered("flow")` 호출 + `CanvasPool` 재사용 + 비동기 이미지 디코딩 200ms / 600ms 재렌더 (rhwp-studio scheduleReRender 패턴).

@@ -5,20 +5,19 @@ import { expect, test, type Page } from '@playwright/test';
 import { launchApp, type LaunchedApp } from './launch';
 
 /**
- * Canvas-mode smoke (chunk 103, Phase 6.3) — verifies that the new
- * `renderPageToCanvasFiltered` render path actually produces a sized
- * `<canvas>` element with non-zero backing-store pixels for a fixture
- * page.
+ * Canvas render smoke (chunk 103/107, Phase 6.3+) — verifies that
+ * `renderPageToCanvasFiltered` produces a sized `<canvas>` element with
+ * non-zero backing-store pixels for a fixture page.
  *
- * Default mode (`'svg'`) is covered by `studio-viewer.spec.ts`. This
- * spec sets `localStorage.ahwp:render-mode = 'canvas'` before reload.
+ * Pre-chunk-107 this spec set `localStorage.ahwp:render-mode='canvas'`
+ * because SVG was the default. Post-107 the SVG path is gone — Canvas
+ * is the only path. The localStorage seed is dropped accordingly.
  */
 
 const FIXTURE = path.resolve(__dirname, 'fixtures', 'blank.hwpx');
 
 async function activateCanvasMode(page: Page, fixture: string): Promise<void> {
   await page.evaluate(async (p) => {
-    window.localStorage.setItem('ahwp:render-mode', 'canvas');
     await window.api.session.set({ lastActivePath: p });
   }, fixture);
   await page.reload();

@@ -185,8 +185,10 @@ export function useDocumentLifecycle(opts: UseDocumentLifecycleOptions): void {
         localBridge = await WasmBridge.create(new Uint8Array(buffer));
         const localDoc = localBridge.doc;
         const total = localDoc.pageCount();
-        const svg0 = localDoc.renderPageSvg(0);
-        const dims = parsePageDimensions(svg0);
+        // chunk 107 (Phase 6.7): page-0 dims via `getPageInfo` JSON.
+        // Pre-107 used `renderPageSvg(0)` + `<svg width/height>` regex —
+        // SVG path is gone now that the renderer is canvas-only.
+        const dims = parsePageDimensions(localDoc.getPageInfo(0));
         if (!dims) throw new Error('Could not parse page-0 dimensions');
         console.info(
           `[studio] parse ${total} pages, page-0 ${dims.w}×${dims.h} in ${(performance.now() - tParse).toFixed(0)} ms`,
@@ -199,7 +201,6 @@ export function useDocumentLifecycle(opts: UseDocumentLifecycleOptions): void {
 
         bridgeRef.current = localBridge;
         docRef.current = localDoc;
-        cache.set(0, svg0);
 
         // Sync initial caret state from the doc.
         try {

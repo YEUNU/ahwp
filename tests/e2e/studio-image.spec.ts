@@ -106,14 +106,23 @@ test.describe('image insert', () => {
         ),
       )
       .toBe(true);
-    // The doc's first page SVG should now contain an <image> element.
-    const firstPage = page.getByTestId('studio-viewer-page').first();
-    await expect
-      .poll(async () => firstPage.locator('svg image').count())
-      .toBeGreaterThan(0);
-    const href =
-      (await firstPage.locator('svg image').first().getAttribute('href')) ??
-      (await firstPage.locator('svg image').first().getAttribute('xlink:href'));
-    expect(href).toMatch(/^data:image\//);
+    // chunk 107: post-SVG-removal — verify image presence via the lib's
+    // page-layer-tree (which lists every paint op including images, with
+    // base64 data URIs). Body-layer images live on the canvas pixels;
+    // floating images live in DOM `<img>` overlays. The layer tree is
+    // the unified source of truth.
+    const imagePresent = await page.evaluate(() => {
+      const dbg = (
+        window as Window & {
+          __studioDebug?: { getPageLayerTreeJson?: (idx: number) => string };
+        }
+      ).__studioDebug;
+      if (!dbg?.getPageLayerTreeJson) return false;
+      const json = dbg.getPageLayerTreeJson(0);
+      // Cheapest possible probe — the lib emits `"type":"image"` per
+      // image op in the JSON. base64 follows when the image has data.
+      return /"type":"image"/.test(json) && /"base64":"[^"]+"/.test(json);
+    });
+    expect(imagePresent).toBe(true);
   });
 });

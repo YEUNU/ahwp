@@ -414,6 +414,17 @@ export function useDebugSurface(opts: UseDebugSurfaceOptions): void {
       },
       getPageCount: (): number => pageCount,
       isDirty: (): boolean => dirtyRef.current,
+      // chunk 107: page-layer-tree JSON access for canvas-mode e2e
+      // (image presence detection now that SVG <image> selectors are gone).
+      getPageLayerTreeJson: (pageIdx: number): string => {
+        const doc = docRef.current;
+        if (!doc) return '';
+        try {
+          return doc.getPageLayerTree(pageIdx);
+        } catch {
+          return '';
+        }
+      },
       getCaret: (): {
         sectionIndex: number;
         paragraphIndex: number;
@@ -1246,16 +1257,9 @@ export function useDebugSurface(opts: UseDebugSurfaceOptions): void {
         doc.insertText(c.sectionIndex, c.paragraphIndex, c.charOffset, text);
         // Mirror what handleCompositionEnd would do post-doc-mutation.
         cacheRef.current.clear();
-        // chunk 103b: mode-agnostic — both 'svg' and 'canvas' children
-        // signal a mounted page. SVG path needs innerHTML wipe so the
-        // tagName check in renderPageInto re-fires; Canvas path can
-        // re-render in place.
+        // chunk 107: canvas-only — re-render in place onto the pooled canvas.
         pageRefsRef.current.forEach((el, idx) => {
-          const target = el?.querySelector('svg, canvas');
-          if (target) {
-            if (target.tagName.toLowerCase() === 'svg') {
-              el!.innerHTML = '';
-            }
+          if (el?.firstElementChild?.tagName.toLowerCase() === 'canvas') {
             renderPageInto(idx);
           }
         });

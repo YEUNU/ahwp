@@ -18,8 +18,8 @@ import { launchApp, type LaunchedApp } from './launch';
 const FIXTURE = path.resolve(__dirname, 'fixtures', 'blank.hwpx');
 
 async function activateCanvasMode(page: Page, fixture: string): Promise<void> {
+  // chunk 107: localStorage flag dropped — Canvas is the only render path now.
   await page.evaluate(async (p) => {
-    window.localStorage.setItem('ahwp:render-mode', 'canvas');
     await window.api.session.set({ lastActivePath: p });
   }, fixture);
   await page.reload();

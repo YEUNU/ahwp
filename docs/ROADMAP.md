@@ -271,11 +271,11 @@
 - [x] **chunk 101** — Phase 6.1: coordinate-system.ts ✅: 5 좌표 공간 (Client / Scroller / Page-CSS / Page / Canvas-px) 변환 유틸 6개 단일 모듈. StudioViewer hitTestAt + usePageMouseHandlers 4개 inline 변환 지점 함수 호출로 교체. pageDimsToCanvasSize 는 Phase 6.3 Canvas swap prep. 동작 변화 0건. studio-input/viewer/cells e2e 22 케이스 통과
 - [x] **chunk 102** — Phase 6.2: canvas-pool + dual-mode 인프라 ✅: `CanvasPool` (rhwp-studio 포팅 — acquire/release/releaseAll, viewport 스크롤 시 GC 완화). `getRenderMode()`/`setRenderMode()` (`localStorage.ahwp:render-mode`, fail-safe `'svg'`). 7 단위 테스트 신규. renderPageInto 분기는 chunk 103 본질로 deferred. 동작 변화 0건
 - [x] **chunk 103** — Phase 6.3: Canvas 본문 렌더 path (dual-mode) ✅: `renderCanvasPage` + DPR-aware backing store + zoom 변화 재렌더 + 비동기 디코딩 200ms/600ms 재렌더 + path cleanup + tests/e2e/studio-canvas-mode.spec.ts 3 케이스. SVG mode 회귀 0건 (29 e2e), Canvas mode 3 케이스 통과
-- [ ] **chunk 103b** — L-004 tooltip 대체 (`getPageLayerTree` text overlay) + `useDebugSurface` mode 분기 + per-page dims (`getPageInfo`)
-- [ ] **chunk 104** — Phase 6.4: behind/front overlay (`getPageLayerTree` 파싱) + 효과 CSS + 워터마크 multiply
-- [ ] **chunk 105** — Phase 6.5: find / changed-paragraph 하이라이트 mode 정합
-- [ ] **chunk 106** — Phase 6.6: e2e selector-DOM 의존 정리
-- [ ] **chunk 107** — Phase 6.7: SVG 경로 제거 + cleanup + KNOWN_ISSUES L-004 close
+- [x] **chunk 103b** — Phase 6.3 follow-up: dual-mode re-render hooks ✅ (0.3.45): `useDebugSurface` + `useUndoHistory` 의 mounted selector 가 SVG 한정 → `'svg, canvas'` 로. Canvas mode 에서도 debug insertText 와 snapshot restore 후 redraw 정상
+- [x] **chunk 104** — Phase 6.4: behind/front overlay (`getPageLayerTree`) ✅ (0.3.46): `page-layer-tree.ts` 신설 — `parsePageLayerTree` + `applyOverlayLayers`. behind/front div z-index 0/2, 효과 CSS (grayScale / brightness / contrast), 워터마크 multiply blend. 6 단위 테스트
+- [x] **chunk 105** — Phase 6.5: find / selection / changed-paragraph mode 정합 ✅ (0.3.47): inventory 결과 셋 모두 이미 DOM overlay (`PaperPage.tsx`) — 변경 0건. 회귀 가드 e2e 신규 (`tests/e2e/studio-canvas-overlays.spec.ts`)
+- [x] **chunk 106** — Phase 6.6: e2e selector mode-agnostic 정리 ✅ (0.3.48): SVG-specific `locator('svg')` 12 sites 를 `'svg, canvas'` 로. studio-viewer / studio-bigdoc / studio-format
+- [x] **chunk 107** — Phase 6.7: SVG 경로 제거 + Phase 6 완료 ✅ (0.4.0): `renderPageInto` SVG 분기 / `renderPageSvg` 호출 / DOMParser / `<svg>` mount / L-004 `<text><title>` / `__studioPageDiag` / `render-mode.ts` flag 모두 삭제. `useDocumentLifecycle` page-0 dims = `getPageInfo` JSON. `parsePageDimensions` JSON 파서 재작성. e2e 의 svg-image selector → `getPageLayerTree` JSON. minor 버전 0.3 → 0.4 bump
 
 검증 게이트: `grep renderPageSvg src/ tests/` → 0건. 워터마크/도장 fixture 시각 회귀 신규. DPR=1/2 좌표 정합. README/ARCHITECTURE/TECH_STACK 갱신.
 
