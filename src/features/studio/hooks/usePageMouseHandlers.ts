@@ -22,10 +22,8 @@ import {
   type SetStateAction,
   type MutableRefObject,
 } from 'react';
-import { HwpDocument } from '@/lib/rhwp-core';
+import type { RhwpDoc } from '@/lib/rhwp-core';
 import { primaryModifier } from '@/lib/platform';
-
-type RhwpDoc = InstanceType<typeof HwpDocument>;
 
 // 임의 shape — caller 가 보유한 useState/useRef 가 정확한 타입을 결정.
 

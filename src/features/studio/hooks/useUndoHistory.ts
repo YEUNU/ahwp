@@ -24,10 +24,8 @@ import {
   useRef,
   type MutableRefObject,
 } from 'react';
-import { HwpDocument } from '@/lib/rhwp-core';
+import type { RhwpDoc } from '@/lib/rhwp-core';
 import type { LifecycleCaret } from './useDocumentLifecycle';
-
-type RhwpDoc = InstanceType<typeof HwpDocument>;
 
 export const HISTORY_CAP = 100;
 

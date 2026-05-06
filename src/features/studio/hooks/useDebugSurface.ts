@@ -16,11 +16,10 @@ import {
   type SetStateAction,
   type MutableRefObject,
 } from 'react';
-import { HwpDocument } from '@/lib/rhwp-core';
+import { HwpDocument, type RhwpDoc } from '@/lib/rhwp-core';
 import type { CharFormatKey } from '../types';
 
 type ParaAlignment = 'left' | 'center' | 'right' | 'justify';
-type RhwpDoc = InstanceType<typeof HwpDocument>;
 
 // 임의 shape 의 ref / setter / state — 본 hook 은 모두 thin wrap. 정확
 // 한 타입 추론은 caller 가 보유한 useState/useRef 가 결정.

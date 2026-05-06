@@ -18,10 +18,8 @@
  * console.info 로그 / 에러 분기 모두 보존.
  */
 import { useEffect, type MutableRefObject } from 'react';
-import { ensureRhwpCore, HwpDocument } from '@/lib/rhwp-core';
+import { WasmBridge, type RhwpDoc } from '@/lib/rhwp-core';
 import { parsePageDimensions, type PageDims } from '../utils/page-dims';
-
-type RhwpDoc = InstanceType<typeof HwpDocument>;
 
 export type LifecyclePhase = 'mounting' | 'reading' | 'rendering' | 'ready';
 
@@ -90,6 +88,13 @@ export interface UseDocumentLifecycleOptions {
   path: string;
   // Refs (mutated by the hook). MutableRefObject (not RefObject) because we
   // re-assign `.current`. useRef with an initial value returns Mutable.
+  //
+  // chunk 100 (Phase 6.0): `bridgeRef` owns lifecycle (`WasmBridge.create` /
+  // `.dispose`); `docRef` is kept as a mirror of `bridge.doc` so the ~136
+  // existing `docRef.current?.X(...)` call sites in StudioViewer + 7 hooks
+  // continue working unchanged. Future chunks may migrate categories of
+  // method calls to the bridge as they gain bridge-specific logic.
+  bridgeRef: MutableRefObject<WasmBridge | null>;
   docRef: MutableRefObject<RhwpDoc | null>;
   caretRef: MutableRefObject<LifecycleCaret>;
   cacheRef: MutableRefObject<Map<number, string>>;
@@ -113,6 +118,7 @@ export interface UseDocumentLifecycleOptions {
 export function useDocumentLifecycle(opts: UseDocumentLifecycleOptions): void {
   const {
     path,
+    bridgeRef,
     docRef,
     caretRef,
     cacheRef,
@@ -134,7 +140,7 @@ export function useDocumentLifecycle(opts: UseDocumentLifecycleOptions): void {
 
   useEffect(() => {
     let cancelled = false;
-    let localDoc: RhwpDoc | null = null;
+    let localBridge: WasmBridge | null = null;
 
     // Capture the Map *value* (not the ref wrapper) for the async closure
     // and cleanup — `cache.clear()` / `cache.set()` mutate the Map's
@@ -158,7 +164,7 @@ export function useDocumentLifecycle(opts: UseDocumentLifecycleOptions): void {
         setCanRedo(false);
         setError(null);
         setPhase('mounting');
-        await ensureRhwpCore();
+        // chunk 100: WasmBridge.create() awaits ensureRhwpCore internally.
         if (cancelled) return;
 
         setPhase('reading');
@@ -171,13 +177,13 @@ export function useDocumentLifecycle(opts: UseDocumentLifecycleOptions): void {
 
         setPhase('rendering');
         const tParse = performance.now();
-        // We use HwpDocument's render/page-count methods directly. We don't
-        // construct HwpViewer — its constructor consumes the HwpDocument
-        // (`document.__destroy_into_raw()`), zeroing the doc's internal
-        // pointer and breaking subsequent exportHwpx() / insertText() calls.
-        // The doc itself exposes everything we need (pageCount,
-        // renderPageSvg, renderPageHtml).
-        localDoc = new HwpDocument(new Uint8Array(buffer));
+        // chunk 100 (Phase 6.0): construct via `WasmBridge.create` which
+        // owns lifecycle (`ensureRhwpCore` + `new HwpDocument(bytes)`).
+        // The local `doc` alias keeps the original render/parse codepath
+        // unchanged, and `docRef.current = bridge.doc` mirrors the inner
+        // HwpDocument so existing hook call sites continue working.
+        localBridge = await WasmBridge.create(new Uint8Array(buffer));
+        const localDoc = localBridge.doc;
         const total = localDoc.pageCount();
         const svg0 = localDoc.renderPageSvg(0);
         const dims = parsePageDimensions(svg0);
@@ -187,10 +193,11 @@ export function useDocumentLifecycle(opts: UseDocumentLifecycleOptions): void {
         );
 
         if (cancelled) {
-          localDoc.free();
+          localBridge.dispose();
           return;
         }
 
+        bridgeRef.current = localBridge;
         docRef.current = localDoc;
         cache.set(0, svg0);
 
@@ -292,13 +299,14 @@ export function useDocumentLifecycle(opts: UseDocumentLifecycleOptions): void {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : String(err));
         }
-        localDoc?.free();
+        localBridge?.dispose();
       }
     })();
 
     return () => {
       cancelled = true;
-      docRef.current?.free();
+      bridgeRef.current?.dispose();
+      bridgeRef.current = null;
       docRef.current = null;
       cache.clear();
       pageRefsRef.current = [];

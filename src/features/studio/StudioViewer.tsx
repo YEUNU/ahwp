@@ -37,8 +37,10 @@ import {
 } from 'react';
 import { Button } from '@/components/ui/button';
 import { hancomTitle } from '@/lib/hancom-tooltips';
-// `ensureRhwpCore` 는 R1.1 에서 useDocumentLifecycle 로 이동.
-import { HwpDocument } from '@/lib/rhwp-core';
+// `ensureRhwpCore` 는 R1.1 에서 useDocumentLifecycle 로 이동. chunk 100
+// (Phase 6.0): `RhwpDoc` 타입은 `@/lib/rhwp-core` 에서 단일 정의 import,
+// `WasmBridge` 가 lifecycle 소유.
+import { WasmBridge, type RhwpDoc } from '@/lib/rhwp-core';
 import { type PageDims } from '@/features/studio/utils/page-dims';
 // `relocateExcerpt` 는 R1.8 에서 useViewerHandle 로 이동.
 import { callCellOp } from '@/features/studio/utils/cell-op';
@@ -89,8 +91,6 @@ interface StudioViewerProps {
 }
 
 type Phase = 'mounting' | 'reading' | 'rendering' | 'ready';
-
-type RhwpDoc = InstanceType<typeof HwpDocument>;
 
 // `PageDims` 는 R1.0 에서 `utils/page-dims.ts` 로 추출됨.
 
@@ -536,6 +536,11 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     ref,
   ) {
     const scrollRef = useRef<HTMLDivElement>(null);
+    // chunk 100 (Phase 6.0): `bridgeRef` owns the underlying HwpDocument
+    // lifecycle (`WasmBridge.create()` / `.dispose()`). `docRef` is a
+    // mirror of `bridge.doc` so the existing ~136 `docRef.current?.X(...)`
+    // call sites in this file + 7 hooks continue to work unchanged.
+    const bridgeRef = useRef<WasmBridge | null>(null);
     const docRef = useRef<RhwpDoc | null>(null);
     const pageRefsRef = useRef<(HTMLDivElement | null)[]>([]);
     const cacheRef = useRef<Map<number, string>>(new Map());
@@ -884,6 +889,7 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
     // 로 분해 (utils 가 아닌 hook — useEffect + 의존 ref/setter 조합).
     useDocumentLifecycle({
       path,
+      bridgeRef,
       docRef,
       caretRef,
       cacheRef,

@@ -11,13 +11,11 @@
  * 보존. 70+ 메서드.
  */
 import { useImperativeHandle, type ForwardedRef } from 'react';
-import { HwpDocument } from '@/lib/rhwp-core';
+import type { RhwpDoc } from '@/lib/rhwp-core';
 import { relocateExcerpt } from '@/features/studio/utils/relocate-excerpt';
 import type { CharFormatKey, ViewerHandle } from '../types';
 import type { RhwpStyleAt } from '@shared/rhwp-types';
 import type { LifecycleCursorRect } from './useDocumentLifecycle';
-
-type RhwpDoc = InstanceType<typeof HwpDocument>;
 
 type ParaAlignment = 'left' | 'center' | 'right' | 'justify';
 
