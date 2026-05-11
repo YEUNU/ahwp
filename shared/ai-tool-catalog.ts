@@ -939,7 +939,7 @@ const TOOL_DESCRIPTORS: AhwpToolDescriptor[] = [
       type: 'object',
       properties: {
         sectionIdx: { type: 'integer', minimum: 0 },
-        maxResults: { type: 'integer', minimum: 1, maximum: 500 },
+        maxResults: { type: 'integer', minimum: 1, maximum: 5000 },
       },
     },
   },

@@ -1124,8 +1124,11 @@ test.describe('NVIDIA NIM — live smoke', () => {
           .__studioDebug!;
         return {
           paraCount: dbg.getParagraphCount!(0),
-          empty: dbg.getEmptyFormFields!({ sectionIdx: 0, maxResults: 200 })
-            .cellFields.length,
+          // 0.4.22 — cap 500 (200 은 truncate 으로 delta 측정 위양성).
+          empty: dbg.getEmptyFormFields!({
+            sectionIdx: 0,
+            maxResults: 5000,
+          }).cellFields.length,
         };
       });
 
@@ -1141,8 +1144,11 @@ test.describe('NVIDIA NIM — live smoke', () => {
           .__studioDebug!;
         return {
           paraCount: dbg.getParagraphCount!(0),
-          empty: dbg.getEmptyFormFields!({ sectionIdx: 0, maxResults: 200 })
-            .cellFields.length,
+          // 0.4.22 — cap 500 (200 은 truncate 으로 delta 측정 위양성).
+          empty: dbg.getEmptyFormFields!({
+            sectionIdx: 0,
+            maxResults: 5000,
+          }).cellFields.length,
         };
       });
 

@@ -6,6 +6,39 @@
 
 ## [Unreleased]
 
+### Fixed — Form-fill 4 단계 fix 로 in-place fill 도달 (0.4.22)
+
+증상 (사용자 보고): "AI 가 양식의 빈 곳에 넣는 게 아니라, 양식을 처음부터 만들어서 옆에 넣는다". 0.4.21 prompt + getEmptyFormFields 추가했어도 paraCount Δ=0 만 통과하고 실제 빈 cell 은 안 채워짐 (위양성).
+
+4 단계 fix:
+
+(1) **deletion/addition null coercion** — `parsePatchBlock` 가 `undefined`/`null` → `""` coerce. AI 가 빈 cell 채울 때 deletion 을 omit/null 로 보내도 통과 (배열/객체는 여전히 reject). LLM 입장에서 자연스러운 응답 허용. unit test 3 개 추가 (missing/null/array).
+
+(2) **prompt schema 인라인** — patches block 의 abstract schema 를 prompt 에 표시. `location.cell` 누락하면 body path 로 라우트되어 cell 밖 삽입된다는 사실 명시. "copy verbatim from getEmptyFormFields" 권장.
+
+(3) **maxResults cap 500→5000** — helper / validator / catalog 모두. 큰 양식 (cell 700+ 개) 에서 truncation 위양성 회피 — before/after 둘 다 cap hit 하면 delta 항상 0.
+
+(4) **e2e 어설션 정확화** — `paraCountΔ < 20` hard limit (`>5` console.warn 시그널). `filledCellDelta > 0` + `patches block emit` 추가 검증.
+
+라이브 검증 (gemma-4, 2 round 일관):
+
+```
+round 1 (가상 업체):  paraΔ=0  filled=4  patchesBlocks=1  1.1m
+round 2 (다른 회사):  paraΔ=0  filled=4  patchesBlocks=1  52s
+```
+
+이전 버전 비교:
+
+```
+0.4.18:  paraΔ=+10  (양식 dump 위양성)  6.9m
+0.4.19:  paraΔ=+16  (양식 dump 확실)     3.2m
+0.4.20:  paraΔ=+12  (양식 dump)          3.5m
+0.4.21:  paraΔ=0    (in-place X, fill X) 1.9m   ← 진전 시작
+0.4.22:  paraΔ=0    (in-place fill ✓)   ~1m   ← 사용자 의도 도달
+```
+
+unit 10/10 통과 / live 2/2 통과.
+
 ### Added — getEmptyFormFields discovery 도구 + form-fill workflow prompt (0.4.21)
 
 목표: AI 가 양식의 빈 cell 좌표를 trial-and-error 없이 deterministic 하게 알아내도록. 기존엔 "양식 채워줘" → AI 가 좌표 모름 → applyHtml 로 새 양식 통째 author → 원본 옆 dump (paraCount 폭증). Discovery 도구로 lookup 한 번에 좌표 + 라벨 + char-shape 받고 patches block 으로 in-place fill.

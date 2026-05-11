@@ -671,7 +671,7 @@ function validateArgs<T extends AhwpToolName>(
       const max = args.maxResults;
       if (max !== undefined) {
         const n = coerceNonNegInt(max);
-        if (n === null || n < 1 || n > 500)
+        if (n === null || n < 1 || n > 5000)
           return { ok: false, reason: 'maxResults-out-of-range' };
         out.maxResults = n;
       }
