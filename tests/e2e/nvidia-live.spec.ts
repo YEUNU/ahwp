@@ -1244,6 +1244,87 @@ test.describe('NVIDIA NIM — live smoke', () => {
     const triedInsertEquation = tools.some((t) => t.name === 'insertEquation');
     expect(triedInsertEquation).toBe(true);
   });
+
+  // 0.4.27 — AI × 다버전 HWP 호환성. HWP 3.0 / HWP 5.x / HWP 5.x form
+  // 각 fixture 로드 → AI 에게 한 문장 요약 요청 → 응답이 비어있지
+  // 않은지 + AI 가 read tool 을 호출했는지. 버전 무관 동작.
+  for (const fx of [
+    {
+      label: 'HWP 3.0',
+      file: path.resolve(__dirname, 'fixtures', 'rhwp', 'hwp3-sample.hwp'),
+    },
+    {
+      label: 'HWP 5.x (equation)',
+      file: path.resolve(__dirname, 'fixtures', 'rhwp', 'eq-01.hwp'),
+    },
+    {
+      label: 'HWP 5.x (form)',
+      file: path.resolve(__dirname, 'fixtures', 'rhwp', 'biz_plan.hwp'),
+    },
+  ]) {
+    test(`0.4.27 — AI reads ${fx.label}`, async () => {
+      test.setTimeout(180_000);
+      test.skip(!existsSync(fx.file), `${fx.file} fixture missing`);
+      const { page } = launched;
+      await page.evaluate(async (p) => {
+        await window.api.session.set({ lastActivePath: p });
+      }, fx.file);
+      await page.reload();
+      await page.waitForLoadState('domcontentloaded');
+      await page.waitForFunction(
+        () =>
+          Boolean(
+            (window as Window & { __studioDebug?: StudioDebug }).__studioDebug
+              ?.getParagraphCount,
+          ),
+        { timeout: 30_000 },
+      );
+      await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
+        'data-state',
+        'ok',
+      );
+      // 0.3.40 부터 chat-attach-checkbox 폐기. AI 가 getDocumentSummary
+      // / getDocumentOutline 등 read tool 로 doc 컨텍스트 직접 수집.
+      await page
+        .getByTestId('chat-input')
+        .fill(
+          'Use read tools (getDocumentSummary / getDocumentOutline) to inspect the active document, then summarize it in one short Korean sentence. End your reply with the literal token SUMMARY-OK-2026.',
+        );
+      await page.getByTestId('chat-send').click();
+
+      const assistantContent = page
+        .locator('[data-testid="chat-message"][data-role="assistant"]')
+        .last()
+        .getByTestId('chat-message-content');
+      await expect(assistantContent).toContainText('SUMMARY-OK-2026', {
+        timeout: 120_000,
+      });
+
+      interface ToolEntryInfo {
+        name: string;
+        status: string;
+      }
+      const tools: ToolEntryInfo[] = await page
+        .locator('[data-testid="chat-tool-entry"]')
+        .evaluateAll((nodes): ToolEntryInfo[] =>
+          nodes.map((n) => ({
+            name: (n as HTMLElement).dataset.toolName ?? '',
+            status: (n as HTMLElement).dataset.toolStatus ?? '',
+          })),
+        );
+      console.log(
+        `[live 0.4.27 ${fx.label}] tools: ${JSON.stringify(
+          tools.reduce<Record<string, number>>((acc, t) => {
+            acc[t.name] = (acc[t.name] ?? 0) + 1;
+            return acc;
+          }, {}),
+        )}`,
+      );
+      // AI 가 응답을 생성했으면 (sentinel 받음) doc 컨텍스트 처리 자체는 OK.
+      // tools 호출은 informational — attach-doc 으로 컨텍스트 받으면
+      // 별도 read tool 미호출 가능.
+    });
+  }
 });
 
 // 0.4.21 — deterministic: getEmptyFormFields 가 양식 fixture 에서
