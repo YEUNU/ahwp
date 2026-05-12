@@ -1183,6 +1183,67 @@ test.describe('NVIDIA NIM — live smoke', () => {
       expect(patchesBlocks > 0 || usedCellWrite).toBe(true);
     });
   }
+
+  // 0.4.26 — 0.4.24 신규 도구 (insertEquation) live smoke.
+  // 사용자가 "수식 삽입" 요청 → AI 가 insertEquation 호출 또는 적절한
+  // 대체 흐름 사용 확인. gemma-4 비결정성 허용 — informational.
+  test('0.4.26 — insertEquation tool LLM 호출', async () => {
+    test.setTimeout(180_000);
+    const { page } = launched;
+    test.skip(!existsSync(FIXTURE), 'tests/e2e/fixtures/blank.hwpx missing');
+    await page.evaluate(async (p) => {
+      await window.api.session.set({ lastActivePath: p });
+    }, FIXTURE);
+    await page.reload();
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForFunction(
+      () =>
+        Boolean(
+          (window as Window & { __studioDebug?: StudioDebug }).__studioDebug,
+        ),
+      { timeout: 30_000 },
+    );
+    await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
+      'data-state',
+      'ok',
+    );
+
+    await page
+      .getByTestId('chat-input')
+      .fill(
+        'Insert an equation control at the cursor with the quadratic formula: ax^2 + bx + c = 0. Use the insertEquation tool.',
+      );
+    await page.getByTestId('chat-send').click();
+    await expect(page.getByTestId('chat-send')).toBeVisible({
+      timeout: 120_000,
+    });
+    await page.waitForTimeout(2000);
+
+    interface ToolEntryInfo {
+      name: string;
+      status: string;
+    }
+    const tools: ToolEntryInfo[] = await page
+      .locator('[data-testid="chat-tool-entry"]')
+      .evaluateAll((nodes): ToolEntryInfo[] =>
+        nodes.map((n) => ({
+          name: (n as HTMLElement).dataset.toolName ?? '',
+          status: (n as HTMLElement).dataset.toolStatus ?? '',
+        })),
+      );
+    const counts = tools.reduce<Record<string, number>>((acc, t) => {
+      acc[t.name] = (acc[t.name] ?? 0) + 1;
+      return acc;
+    }, {});
+    console.log(
+      `[live 0.4.26 insertEquation] tools observed: ${JSON.stringify(counts)}`,
+    );
+    // AI 가 insertEquation 도구를 호출했는지만 검증 (성공/실패 무관).
+    // lib insertEquation 이 blank doc (0,0,0) 에서 panic 가능 — 그건
+    // lib 안정성 이슈. AI/UI integration 자체가 정상이면 PASS.
+    const triedInsertEquation = tools.some((t) => t.name === 'insertEquation');
+    expect(triedInsertEquation).toBe(true);
+  });
 });
 
 // 0.4.21 — deterministic: getEmptyFormFields 가 양식 fixture 에서
