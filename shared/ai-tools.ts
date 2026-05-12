@@ -80,6 +80,12 @@ export const AHWP_TOOL_NAMES = [
   'getCaretPosition',
   'findInDocument',
   'getCellInfo',
+  // 0.4.24 — @rhwp/core 0.7.11 신규 API
+  'insertEquation',
+  'deleteFootnote',
+  'deleteEquationControl',
+  'getColumnDef',
+  'getFootnoteAtCursor',
   // 0.4.21 — empty form-field discovery (양식 채우기 baseline)
   'getEmptyFormFields',
   // Phase 5 chunk 96 — outline-as-router workspace search
@@ -110,6 +116,8 @@ export const READONLY_TOOL_NAMES = new Set<AhwpToolName>([
   'getCaretPosition',
   'findInDocument',
   'getCellInfo',
+  'getColumnDef',
+  'getFootnoteAtCursor',
   'getEmptyFormFields',
   'searchWorkspaceOutlines',
   'readParagraphByPath',
@@ -439,6 +447,32 @@ export interface AhwpToolArgs {
     parentParaIdx: number;
     controlIdx: number;
     cellIdx: number;
+  };
+  // 0.4.24 — @rhwp/core 0.7.11 신규 API
+  insertEquation: {
+    sectionIdx: number;
+    paragraphIdx: number;
+    charOffset: number;
+    script: string;
+    fontSizeHwpunit?: number;
+    color?: number;
+  };
+  deleteFootnote: {
+    sectionIdx: number;
+    paragraphIdx: number;
+    controlIdx: number;
+  };
+  deleteEquationControl: {
+    sectionIdx: number;
+    parentParaIdx: number;
+    controlIdx: number;
+  };
+  getColumnDef: { sectionIdx: number };
+  getFootnoteAtCursor: {
+    sectionIdx: number;
+    paragraphIdx: number;
+    charOffset: number;
+    direction: 'forward' | 'backward';
   };
   // 0.4.21 — empty form-field enumeration
   getEmptyFormFields: {

@@ -729,6 +729,70 @@ async function runOne(
           return { ok: false, tool: call.tool, reason: 'getCellInfo-failed' };
         return { ok: true, tool: call.tool, data };
       }
+      // === 0.4.24 — @rhwp/core 0.7.11 신규 API ===
+      case 'insertEquation': {
+        const a = call.args;
+        const ok = viewer.irInsertEquation(
+          a.sectionIdx,
+          a.paragraphIdx,
+          a.charOffset,
+          a.script,
+          a.fontSizeHwpunit,
+          a.color,
+        );
+        return ok
+          ? { ok: true, tool: call.tool }
+          : { ok: false, tool: call.tool, reason: 'insertEquation-failed' };
+      }
+      case 'deleteFootnote': {
+        const a = call.args;
+        const ok = viewer.irDeleteFootnote(
+          a.sectionIdx,
+          a.paragraphIdx,
+          a.controlIdx,
+        );
+        return ok
+          ? { ok: true, tool: call.tool }
+          : { ok: false, tool: call.tool, reason: 'deleteFootnote-failed' };
+      }
+      case 'deleteEquationControl': {
+        const a = call.args;
+        const ok = viewer.irDeleteEquationControl(
+          a.sectionIdx,
+          a.parentParaIdx,
+          a.controlIdx,
+        );
+        return ok
+          ? { ok: true, tool: call.tool }
+          : {
+              ok: false,
+              tool: call.tool,
+              reason: 'deleteEquationControl-failed',
+            };
+      }
+      case 'getColumnDef': {
+        const a = call.args;
+        const data = viewer.irGetColumnDef(a.sectionIdx);
+        if (data === null)
+          return { ok: false, tool: call.tool, reason: 'getColumnDef-failed' };
+        return { ok: true, tool: call.tool, data };
+      }
+      case 'getFootnoteAtCursor': {
+        const a = call.args;
+        const data = viewer.irGetFootnoteAtCursor(
+          a.sectionIdx,
+          a.paragraphIdx,
+          a.charOffset,
+          a.direction,
+        );
+        if (data === null)
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: 'getFootnoteAtCursor-failed',
+          };
+        return { ok: true, tool: call.tool, data };
+      }
       case 'getEmptyFormFields': {
         const a = call.args;
         const data = viewer.getEmptyFormFields({
@@ -976,6 +1040,16 @@ export function previewArgs(call: AhwpToolCall): string {
     }
     case 'getCellInfo':
       return `cell=${call.args.cellIdx}`;
+    // === 0.4.24 — @rhwp/core 0.7.11 신규 ===
+    case 'insertEquation':
+      return `(${call.args.paragraphIdx},${call.args.charOffset})`;
+    case 'deleteFootnote':
+    case 'deleteEquationControl':
+      return `ctrl=${call.args.controlIdx}`;
+    case 'getColumnDef':
+      return `sec=${call.args.sectionIdx}`;
+    case 'getFootnoteAtCursor':
+      return `(${call.args.paragraphIdx},${call.args.charOffset}) ${call.args.direction}`;
     case 'getEmptyFormFields':
       return call.args.sectionIdx !== undefined
         ? `sec=${call.args.sectionIdx}`

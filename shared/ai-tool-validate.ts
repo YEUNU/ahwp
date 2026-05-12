@@ -660,6 +660,69 @@ function validateArgs<T extends AhwpToolName>(
       if (!v.ok) return v;
       return { ok: true, value: v.value as AhwpToolArgs[T] };
     }
+    // === 0.4.24 — @rhwp/core 0.7.11 신규 API ===
+    case 'insertEquation': {
+      const v = nonNegInts(args, ['sectionIdx', 'paragraphIdx', 'charOffset']);
+      if (!v.ok) return v;
+      const script = args.script;
+      if (typeof script !== 'string' || script.length === 0)
+        return { ok: false, reason: 'script-not-string' };
+      if (byteLen(script) > 16384)
+        return { ok: false, reason: 'script-too-large' };
+      const out: AhwpToolArgs['insertEquation'] = {
+        ...(v.value as {
+          sectionIdx: number;
+          paragraphIdx: number;
+          charOffset: number;
+        }),
+        script,
+      };
+      if (args.fontSizeHwpunit !== undefined) {
+        const n = coerceNonNegInt(args.fontSizeHwpunit);
+        if (n === null || n < 1)
+          return { ok: false, reason: 'fontSizeHwpunit-invalid' };
+        out.fontSizeHwpunit = n;
+      }
+      if (args.color !== undefined) {
+        const n = coerceNonNegInt(args.color);
+        if (n === null) return { ok: false, reason: 'color-invalid' };
+        out.color = n;
+      }
+      return { ok: true, value: out as AhwpToolArgs[T] };
+    }
+    case 'deleteFootnote': {
+      const v = nonNegInts(args, ['sectionIdx', 'paragraphIdx', 'controlIdx']);
+      if (!v.ok) return v;
+      return { ok: true, value: v.value as AhwpToolArgs[T] };
+    }
+    case 'deleteEquationControl': {
+      const v = nonNegInts(args, ['sectionIdx', 'parentParaIdx', 'controlIdx']);
+      if (!v.ok) return v;
+      return { ok: true, value: v.value as AhwpToolArgs[T] };
+    }
+    case 'getColumnDef': {
+      const v = nonNegInts(args, ['sectionIdx']);
+      if (!v.ok) return v;
+      return { ok: true, value: v.value as AhwpToolArgs[T] };
+    }
+    case 'getFootnoteAtCursor': {
+      const v = nonNegInts(args, ['sectionIdx', 'paragraphIdx', 'charOffset']);
+      if (!v.ok) return v;
+      const dir = args.direction;
+      if (dir !== 'forward' && dir !== 'backward')
+        return { ok: false, reason: 'direction-invalid' };
+      return {
+        ok: true,
+        value: {
+          ...(v.value as {
+            sectionIdx: number;
+            paragraphIdx: number;
+            charOffset: number;
+          }),
+          direction: dir,
+        } as AhwpToolArgs[T],
+      };
+    }
     case 'getEmptyFormFields': {
       const out: { sectionIdx?: number; maxResults?: number } = {};
       const sec = args.sectionIdx;

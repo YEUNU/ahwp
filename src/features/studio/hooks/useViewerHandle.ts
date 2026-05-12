@@ -1098,6 +1098,56 @@ export function useViewerHandle(
         ),
       irApplyStyle: (sec, para, styleId) =>
         irMutate('irApplyStyle', (doc) => doc.applyStyle(sec, para, styleId)),
+      // === 0.4.24 — @rhwp/core 0.7.11 신규 API wrappers ===
+      irInsertEquation: (
+        sec: number,
+        para: number,
+        charOff: number,
+        script: string,
+        fontSize?: number,
+        color?: number,
+      ) =>
+        irMutate('irInsertEquation', (doc) =>
+          doc.insertEquation(
+            sec,
+            para,
+            charOff,
+            script,
+            fontSize ?? 1000,
+            color ?? 0,
+          ),
+        ),
+      irDeleteFootnote: (sec: number, para: number, ctrl: number) =>
+        irMutate('irDeleteFootnote', (doc) =>
+          doc.deleteFootnote(sec, para, ctrl),
+        ),
+      irDeleteEquationControl: (sec: number, ppara: number, ctrl: number) =>
+        irMutate('irDeleteEquationControl', (doc) =>
+          doc.deleteEquationControl(sec, ppara, ctrl),
+        ),
+      irGetColumnDef: (sec: number) =>
+        irRead('irGetColumnDef', (doc) => {
+          const raw = doc.getColumnDef(sec);
+          try {
+            return JSON.parse(raw) as Record<string, unknown>;
+          } catch {
+            return null;
+          }
+        }),
+      irGetFootnoteAtCursor: (
+        sec: number,
+        para: number,
+        charOff: number,
+        direction: 'forward' | 'backward',
+      ) =>
+        irRead('irGetFootnoteAtCursor', (doc) => {
+          const raw = doc.getFootnoteAtCursor(sec, para, charOff, direction);
+          try {
+            return JSON.parse(raw) as Record<string, unknown>;
+          } catch {
+            return null;
+          }
+        }),
       irCreateTable: (sec, para, charOffset, rowCount, colCount) =>
         irMutate('irCreateTable', (doc) =>
           doc.createTable(sec, para, charOffset, rowCount, colCount),

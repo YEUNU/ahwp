@@ -931,6 +931,75 @@ const TOOL_DESCRIPTORS: AhwpToolDescriptor[] = [
       required: ['sectionIdx', 'parentParaIdx', 'controlIdx', 'cellIdx'],
     },
   },
+  // === 0.4.24 — @rhwp/core 0.7.11 신규 API ===
+  {
+    name: 'insertEquation',
+    description:
+      'Insert an equation control at the given coordinate. `script` is the equation source (HWP equation syntax). `fontSizeHwpunit` defaults to 1000 (10pt). `color` is an RGB int (default 0 = black).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sectionIdx: { type: 'integer', minimum: 0 },
+        paragraphIdx: { type: 'integer', minimum: 0 },
+        charOffset: { type: 'integer', minimum: 0 },
+        script: { type: 'string', maxLength: 16384 },
+        fontSizeHwpunit: { type: 'integer', minimum: 1 },
+        color: { type: 'integer', minimum: 0 },
+      },
+      required: ['sectionIdx', 'paragraphIdx', 'charOffset', 'script'],
+    },
+  },
+  {
+    name: 'deleteFootnote',
+    description: 'Delete a footnote control at the given coordinate.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sectionIdx: { type: 'integer', minimum: 0 },
+        paragraphIdx: { type: 'integer', minimum: 0 },
+        controlIdx: { type: 'integer', minimum: 0 },
+      },
+      required: ['sectionIdx', 'paragraphIdx', 'controlIdx'],
+    },
+  },
+  {
+    name: 'deleteEquationControl',
+    description: 'Delete an equation control at the given coordinate.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sectionIdx: { type: 'integer', minimum: 0 },
+        parentParaIdx: { type: 'integer', minimum: 0 },
+        controlIdx: { type: 'integer', minimum: 0 },
+      },
+      required: ['sectionIdx', 'parentParaIdx', 'controlIdx'],
+    },
+  },
+  {
+    name: 'getColumnDef',
+    description:
+      'Return the current column definition for a section: columnCount / columnType / sameWidth / spacing. Paired read for setColumnDef.',
+    inputSchema: {
+      type: 'object',
+      properties: { sectionIdx: { type: 'integer', minimum: 0 } },
+      required: ['sectionIdx'],
+    },
+  },
+  {
+    name: 'getFootnoteAtCursor',
+    description:
+      'Return the footnote marker at or near a cursor coordinate. direction "forward" or "backward" — the lib walks in that direction to find the nearest marker.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sectionIdx: { type: 'integer', minimum: 0 },
+        paragraphIdx: { type: 'integer', minimum: 0 },
+        charOffset: { type: 'integer', minimum: 0 },
+        direction: { type: 'string', enum: ['forward', 'backward'] },
+      },
+      required: ['sectionIdx', 'paragraphIdx', 'charOffset', 'direction'],
+    },
+  },
   {
     name: 'getEmptyFormFields',
     description:

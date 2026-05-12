@@ -666,6 +666,38 @@ export function useDebugSurface(opts: UseDebugSurfaceOptions): void {
         if (!doc) throw new Error('Document not loaded');
         return enumerateEmptyFormFields(doc, opts ?? {});
       },
+      // 0.4.24 — HWP3 외부 이미지 inject 흐름 (lib 0.7.11 신규).
+      //   getExternalImageBasenames() → JS 가 fetch 로 binary 로드 →
+      //   injectExternalImage(basename, data, displayPath) → 렌더러에
+      //   이미지 표시. HWP3 (구 95) doc 의 외부 이미지 참조 처리.
+      //   현재는 debug surface 만 — UI 흐름 (file picker → fetch → inject)
+      //   은 후속 chunk 에서 wire.
+      getExternalImageBasenames: (): string[] => {
+        const doc = docRef.current;
+        if (!doc) return [];
+        try {
+          const raw = doc.getExternalImageBasenames();
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? (parsed as string[]) : [];
+        } catch (err) {
+          console.warn('[studio] getExternalImageBasenames:', err);
+          return [];
+        }
+      },
+      injectExternalImage: (
+        basename: string,
+        data: Uint8Array,
+        displayPath: string,
+      ): number => {
+        const doc = docRef.current;
+        if (!doc) return -1;
+        try {
+          return doc.injectExternalImage(basename, data, displayPath);
+        } catch (err) {
+          console.warn('[studio] injectExternalImage:', err);
+          return -1;
+        }
+      },
       // 0.4.21 진단 — 빈 cell 발견 가능성 추적용. 처음 N paragraph 에서
       // 어떤 control 들이 있는지 + table dimensions 결과 dump.
       probeControls: (sectionIdx: number, maxParas: number): unknown => {

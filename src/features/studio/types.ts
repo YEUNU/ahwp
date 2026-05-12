@@ -632,6 +632,32 @@ export interface ViewerHandle {
       lastFilled: { paragraphIdx: number; text: string } | null;
     }[];
   } | null;
+  // === 0.4.24 — @rhwp/core 0.7.11 신규 API wrappers ===
+  irInsertEquation: (
+    sectionIdx: number,
+    paragraphIdx: number,
+    charOffset: number,
+    script: string,
+    fontSizeHwpunit?: number,
+    color?: number,
+  ) => boolean;
+  irDeleteFootnote: (
+    sectionIdx: number,
+    paragraphIdx: number,
+    controlIdx: number,
+  ) => boolean;
+  irDeleteEquationControl: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+  ) => boolean;
+  irGetColumnDef: (sectionIdx: number) => Record<string, unknown> | null;
+  irGetFootnoteAtCursor: (
+    sectionIdx: number,
+    paragraphIdx: number,
+    charOffset: number,
+    direction: 'forward' | 'backward',
+  ) => Record<string, unknown> | null;
   /**
    * 0.4.21 — empty form-field discovery. Walks every table cell in
    * the document and emits a coordinate for every cell whose only
