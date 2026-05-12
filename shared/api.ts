@@ -63,6 +63,7 @@ export type MenuAction =
   | 'insert:header-footer'
   | 'insert:bookmark'
   | 'insert:footnote'
+  | 'delete:footnote-at-cursor'
   | 'view:style-manager'
   | 'view:picture-props'
   | 'insert:equation'
@@ -392,6 +393,15 @@ export interface FolderApi {
    * unaffected (no IR mutation, no caret movement).
    */
   readParagraph: (req: ReadParagraphRequest) => Promise<ReadParagraphResult>;
+  /**
+   * 0.4.25 — HWP3 외부 이미지 inject 흐름용. 사용자가 폴더 선택 (dialog),
+   * 그 폴더 안에서 basenames 와 매칭되는 파일들의 bytes 를 일괄 반환.
+   * 매칭되지 않은 basename 은 결과 제외. 사용자 취소 / 폴더 read 실패
+   * 시 빈 배열.
+   */
+  resolveExternalImages: (
+    basenames: string[],
+  ) => Promise<{ basename: string; bytes: Uint8Array; fullPath: string }[]>;
 }
 
 export interface SessionState {

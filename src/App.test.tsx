@@ -79,6 +79,7 @@ describe('App', () => {
           skipped: 0,
         }),
         readParagraph: vi.fn().mockResolvedValue({ ok: false, reason: 'mock' }),
+        resolveExternalImages: vi.fn().mockResolvedValue([]),
       },
       secrets: {
         set: vi.fn().mockResolvedValue(undefined),

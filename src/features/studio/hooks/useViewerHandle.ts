@@ -1148,6 +1148,35 @@ export function useViewerHandle(
             return null;
           }
         }),
+      // 0.4.25 — HWP3 외부 이미지 (lib 0.7.11).
+      irGetExternalImageBasenames: (): string[] => {
+        const doc = docRef.current;
+        if (!doc) return [];
+        try {
+          const raw = doc.getExternalImageBasenames();
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? (parsed as string[]) : [];
+        } catch (err) {
+          console.warn('[studio] getExternalImageBasenames:', err);
+          return [];
+        }
+      },
+      irInjectExternalImage: (
+        basename: string,
+        bytes: Uint8Array,
+        displayPath: string,
+      ): number => {
+        const doc = docRef.current;
+        if (!doc) return -1;
+        try {
+          const result = doc.injectExternalImage(basename, bytes, displayPath);
+          refreshAfterMutation({ syncCaret: false });
+          return result;
+        } catch (err) {
+          console.warn('[studio] injectExternalImage:', err);
+          return -1;
+        }
+      },
       irCreateTable: (sec, para, charOffset, rowCount, colCount) =>
         irMutate('irCreateTable', (doc) =>
           doc.createTable(sec, para, charOffset, rowCount, colCount),

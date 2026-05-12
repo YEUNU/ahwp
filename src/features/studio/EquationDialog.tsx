@@ -31,12 +31,21 @@ export interface EquationDialogProps {
     fontSizeHwpunit?: number,
     color?: number,
   ) => string;
+  /** 0.4.25 — lib 0.7.11 의 insertEquation 으로 본문에 수식 control
+   *  삽입. caret 위치 (sec, para, charOff) 는 호출 측에서 결정. 성공
+   *  시 true, lib panic / docless 시 false. */
+  insertEquation?: (
+    script: string,
+    fontSizeHwpunit: number,
+    color: number,
+  ) => boolean;
 }
 
 export function EquationDialog({
   open,
   onOpenChange,
   renderEquation,
+  insertEquation,
 }: EquationDialogProps): JSX.Element {
   const [script, setScript] = useState<string>(SAMPLE_SCRIPT);
   const [svg, setSvg] = useState<string>('');
@@ -68,10 +77,10 @@ export function EquationDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent data-testid="equation-dialog" className="max-w-2xl gap-4">
         <DialogHeader>
-          <DialogTitle>수식 미리보기</DialogTitle>
+          <DialogTitle>수식</DialogTitle>
           <DialogDescription>
-            한컴 수식 문법으로 입력하면 SVG 미리보기를 보여줍니다. 본문 삽입은
-            후속 청크에서 지원됩니다.
+            한컴 수식 문법으로 입력하면 SVG 미리보기를 보여줍니다. 본문에 삽입
+            버튼으로 현재 캐럿 위치에 수식 컨트롤을 추가합니다.
           </DialogDescription>
         </DialogHeader>
 
@@ -121,6 +130,21 @@ export function EquationDialog({
           >
             닫기
           </Button>
+          {insertEquation ? (
+            <Button
+              type="button"
+              variant="default"
+              disabled={script.trim().length === 0 || svg.length === 0}
+              onClick={() => {
+                const ok = insertEquation(script, 1000, 0);
+                if (ok) onOpenChange(false);
+                else setError('수식 삽입에 실패했습니다.');
+              }}
+              data-testid="equation-insert"
+            >
+              본문에 삽입
+            </Button>
+          ) : null}
         </DialogFooter>
       </DialogContent>
     </Dialog>

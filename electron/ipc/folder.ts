@@ -722,6 +722,57 @@ export function registerFolderIpc(): void {
       return target;
     },
   );
+
+  // 0.4.25 — HWP3 외부 이미지 inject 용. 사용자가 폴더 선택 → 그 폴더
+  // (재귀 X) 안에서 basenames 와 매칭되는 파일들의 bytes 를 일괄 읽어
+  // 반환. 매칭되지 않은 basename 은 결과에 없음.
+  ipcMain.handle(
+    'folder:resolve-external-images',
+    async (
+      event,
+      basenames: string[],
+    ): Promise<{ basename: string; bytes: Uint8Array; fullPath: string }[]> => {
+      if (!Array.isArray(basenames) || basenames.length === 0) return [];
+      const window = BrowserWindow.fromWebContents(event.sender);
+      const result = await dialog.showOpenDialog(
+        window ?? new BrowserWindow({ show: false }),
+        {
+          title: '이미지 폴더 선택',
+          properties: ['openDirectory'],
+        },
+      );
+      if (result.canceled || result.filePaths.length === 0) return [];
+      const folder = result.filePaths[0];
+      const wanted = new Set(basenames.map((b) => b.toLowerCase()));
+      let entries: import('fs').Dirent[];
+      try {
+        entries = await fs.readdir(folder, { withFileTypes: true });
+      } catch {
+        return [];
+      }
+      const out: {
+        basename: string;
+        bytes: Uint8Array;
+        fullPath: string;
+      }[] = [];
+      for (const entry of entries) {
+        if (!entry.isFile()) continue;
+        const lower = entry.name.toLowerCase();
+        if (!wanted.has(lower)) continue;
+        // basenames 원본 case 로 매칭 (lib 가 case-sensitive 일 수 있음).
+        const original = basenames.find((b) => b.toLowerCase() === lower);
+        if (!original) continue;
+        const full = path.join(folder, entry.name);
+        try {
+          const buf = await fs.readFile(full);
+          out.push({ basename: original, bytes: buf, fullPath: full });
+        } catch {
+          /* skip unreadable */
+        }
+      }
+      return out;
+    },
+  );
 }
 
 /** Resolve a non-colliding path under `dir` based on `name`. */

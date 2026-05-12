@@ -658,6 +658,29 @@ export default function AppShell() {
         renderEquation={(script, fontSize, color) =>
           activeViewerRef()?.renderEquationSvg(script, fontSize, color) ?? ''
         }
+        insertEquation={(script, fontSize, color) => {
+          // 0.4.25 — lib 0.7.11 의 insertEquation 으로 본문 삽입.
+          // caret 좌표 read → irInsertEquation 호출.
+          const v = activeViewerRef();
+          if (!v) return false;
+          const caret = v.irGetCaretPosition() as {
+            sectionIndex?: number;
+            paragraphIndex?: number;
+            charOffset?: number;
+          } | null;
+          if (!caret) return false;
+          const sec = caret.sectionIndex ?? 0;
+          const para = caret.paragraphIndex ?? 0;
+          const charOff = caret.charOffset ?? 0;
+          return v.irInsertEquation(
+            sec,
+            para,
+            charOff,
+            script,
+            fontSize,
+            color,
+          );
+        }}
       />
       <ShapeDialog
         open={shapeOpen}

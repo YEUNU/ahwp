@@ -164,6 +164,10 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
         click: () => send(getWindow(), 'insert:footnote'),
       },
       {
+        label: '캐럿 위치의 각주 삭제',
+        click: () => send(getWindow(), 'delete:footnote-at-cursor'),
+      },
+      {
         label: '스타일 관리…',
         click: () => send(getWindow(), 'view:style-manager'),
       },

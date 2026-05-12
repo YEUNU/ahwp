@@ -658,6 +658,16 @@ export interface ViewerHandle {
     charOffset: number,
     direction: 'forward' | 'backward',
   ) => Record<string, unknown> | null;
+  /** 0.4.25 — HWP3 외부 이미지 (lib 0.7.11). doc 가 file path 참조하는
+   *  이미지의 basename list 반환 (e.g. ["oracle.gif", "rdb02.gif"]). */
+  irGetExternalImageBasenames: () => string[];
+  /** 0.4.25 — HWP3 외부 이미지 binary inject. JS 가 fetch / fs.readFile
+   *  로 bytes 받아 lib 에 주입 → renderer 가 표시. */
+  irInjectExternalImage: (
+    basename: string,
+    bytes: Uint8Array,
+    displayPath: string,
+  ) => number;
   /**
    * 0.4.21 — empty form-field discovery. Walks every table cell in
    * the document and emits a coordinate for every cell whose only

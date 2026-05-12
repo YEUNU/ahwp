@@ -90,6 +90,8 @@ const api: AhwpApi = {
     copy: (src, destDir) => ipcRenderer.invoke('folder:copy', src, destDir),
     listOutlines: (req) => ipcRenderer.invoke('folder:list-outlines', req),
     readParagraph: (req) => ipcRenderer.invoke('folder:read-paragraph', req),
+    resolveExternalImages: (basenames) =>
+      ipcRenderer.invoke('folder:resolve-external-images', basenames),
   },
   secrets: {
     set: (providerId, key) =>
