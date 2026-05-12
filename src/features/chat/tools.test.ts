@@ -18,6 +18,13 @@ function mockViewer(overrides: Partial<ViewerHandle> = {}): ViewerHandle {
     irGetTextRange: vi.fn(() => ''),
     irGetTextInCell: vi.fn(() => ''),
     irInsertTextInCell: vi.fn(() => true),
+    // 0.4.26 — 0.7.11 신규 API + 0.4.21 form-fields 의 mock defaults.
+    irInsertEquation: vi.fn(() => true),
+    irDeleteFootnote: vi.fn(() => true),
+    irDeleteEquationControl: vi.fn(() => true),
+    irGetColumnDef: vi.fn(() => ({})),
+    irGetFootnoteAtCursor: vi.fn(() => ({})),
+    getEmptyFormFields: vi.fn(() => ({ cellFields: [], truncated: false })),
     applyHtmlAtCaret: vi.fn(),
     snapshotParagraphs: () => new Map(),
     markChangedParagraphsSince: vi.fn(),
@@ -148,5 +155,131 @@ describe('runTools — insertText guards', () => {
     await runTools(viewer, items);
     expect(begin).toHaveBeenCalledTimes(1);
     expect(end).toHaveBeenCalledTimes(1);
+  });
+});
+
+// 0.4.26 — 0.4.24 신규 5 종 + 0.4.21 getEmptyFormFields dispatch 검증.
+describe('runTools — 0.7.11 신규 API dispatch', () => {
+  it('insertEquation: passes args through with default size/color', async () => {
+    const ins = vi.fn(() => true);
+    const viewer = mockViewer({ irInsertEquation: ins });
+    const items: AhwpPreflightItem[] = [
+      {
+        ok: true,
+        call: {
+          tool: 'insertEquation',
+          args: {
+            sectionIdx: 0,
+            paragraphIdx: 2,
+            charOffset: 3,
+            script: 'x^2 + y^2 = z^2',
+          },
+        },
+      },
+    ];
+    const results = await runTools(viewer, items);
+    expect(results[0].ok).toBe(true);
+    expect(ins).toHaveBeenCalledWith(
+      0,
+      2,
+      3,
+      'x^2 + y^2 = z^2',
+      undefined,
+      undefined,
+    );
+  });
+
+  it('deleteFootnote: routes (sec, para, ctrl)', async () => {
+    const del = vi.fn(() => true);
+    const viewer = mockViewer({ irDeleteFootnote: del });
+    const items: AhwpPreflightItem[] = [
+      {
+        ok: true,
+        call: {
+          tool: 'deleteFootnote',
+          args: { sectionIdx: 0, paragraphIdx: 5, controlIdx: 1 },
+        },
+      },
+    ];
+    const results = await runTools(viewer, items);
+    expect(results[0].ok).toBe(true);
+    expect(del).toHaveBeenCalledWith(0, 5, 1);
+  });
+
+  it('deleteEquationControl: routes (sec, parentPara, ctrl)', async () => {
+    const del = vi.fn(() => true);
+    const viewer = mockViewer({ irDeleteEquationControl: del });
+    const items: AhwpPreflightItem[] = [
+      {
+        ok: true,
+        call: {
+          tool: 'deleteEquationControl',
+          args: { sectionIdx: 0, parentParaIdx: 4, controlIdx: 2 },
+        },
+      },
+    ];
+    const results = await runTools(viewer, items);
+    expect(results[0].ok).toBe(true);
+    expect(del).toHaveBeenCalledWith(0, 4, 2);
+  });
+
+  it('getColumnDef: returns data on success', async () => {
+    const data = {
+      columnCount: 2,
+      columnType: 0,
+      sameWidth: 1,
+      spacingHu: 567,
+    };
+    const get = vi.fn(() => data);
+    const viewer = mockViewer({ irGetColumnDef: get });
+    const items: AhwpPreflightItem[] = [
+      {
+        ok: true,
+        call: { tool: 'getColumnDef', args: { sectionIdx: 0 } },
+      },
+    ];
+    const results = await runTools(viewer, items);
+    expect(results[0].ok).toBe(true);
+    if (results[0].ok) {
+      expect(results[0].data).toEqual(data);
+    }
+  });
+
+  it('getFootnoteAtCursor: passes direction through', async () => {
+    const get = vi.fn(() => ({ controlIdx: 1, paragraphIdx: 3 }));
+    const viewer = mockViewer({ irGetFootnoteAtCursor: get });
+    const items: AhwpPreflightItem[] = [
+      {
+        ok: true,
+        call: {
+          tool: 'getFootnoteAtCursor',
+          args: {
+            sectionIdx: 0,
+            paragraphIdx: 3,
+            charOffset: 10,
+            direction: 'backward',
+          },
+        },
+      },
+    ];
+    const results = await runTools(viewer, items);
+    expect(results[0].ok).toBe(true);
+    expect(get).toHaveBeenCalledWith(0, 3, 10, 'backward');
+  });
+
+  it('getEmptyFormFields: returns null → failed', async () => {
+    const get = vi.fn(() => null);
+    const viewer = mockViewer({ getEmptyFormFields: get });
+    const items: AhwpPreflightItem[] = [
+      {
+        ok: true,
+        call: { tool: 'getEmptyFormFields', args: {} },
+      },
+    ];
+    const results = await runTools(viewer, items);
+    expect(results[0].ok).toBe(false);
+    if (!results[0].ok) {
+      expect(results[0].reason).toBe('getEmptyFormFields-failed');
+    }
   });
 });

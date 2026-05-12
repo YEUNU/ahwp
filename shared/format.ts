@@ -5,7 +5,9 @@
  * `@rhwp/core`'s `HwpDocument.getSourceFormat()`.
  */
 
-export type HwpFormat = 'hwpx' | 'hwp' | 'unknown';
+export type HwpFormat = 'hwpx' | 'hwp' | 'hwp3' | 'unknown';
+
+const HWP3_MAGIC = 'HWP Document File V3.';
 
 export function detectHwpFormat(bytes: Uint8Array): HwpFormat {
   if (bytes.length < 4) return 'unknown';
@@ -18,7 +20,7 @@ export function detectHwpFormat(bytes: Uint8Array): HwpFormat {
   ) {
     return 'hwpx';
   }
-  // Microsoft Compound File Binary → HWP
+  // Microsoft Compound File Binary → HWP 5.x
   if (
     bytes[0] === 0xd0 &&
     bytes[1] === 0xcf &&
@@ -26,6 +28,18 @@ export function detectHwpFormat(bytes: Uint8Array): HwpFormat {
     bytes[3] === 0xe0
   ) {
     return 'hwp';
+  }
+  // 0.4.26 — HWP 3.0 signature: ASCII "HWP Document File V3." prefix.
+  // 한컴 한글 95~97 (HWP3) 의 plain binary container. CFB / ZIP 아님.
+  if (bytes.length >= HWP3_MAGIC.length) {
+    let match = true;
+    for (let i = 0; i < HWP3_MAGIC.length; i++) {
+      if (bytes[i] !== HWP3_MAGIC.charCodeAt(i)) {
+        match = false;
+        break;
+      }
+    }
+    if (match) return 'hwp3';
   }
   return 'unknown';
 }

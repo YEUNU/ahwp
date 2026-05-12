@@ -114,9 +114,11 @@ export async function ensureHwpxBytes(input: Uint8Array): Promise<Uint8Array> {
   const format = detectHwpFormat(input);
   if (format === 'unknown') {
     throw new Error(
-      'Unsupported input: bytes are neither HWP (CFB) nor HWPX (zip)',
+      'Unsupported input: bytes are not HWP (CFB) / HWPX (zip) / HWP 3.0',
     );
   }
+  // 0.4.26 — HWP 3.0 (legacy 한컴 한글 95~97) 도 lib 가 직접 처리. lib
+  // 가 panic 하면 그 시점에 surface — 미리 reject 안 함.
   return input;
 }
 

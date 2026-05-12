@@ -119,9 +119,11 @@ describe('App', () => {
     // No folder selected → left panel header shows "폴더" placeholder.
     expect(screen.getByText('폴더')).toBeInTheDocument();
     expect(screen.getByText('챗봇')).toBeInTheDocument();
-    // Welcome screen greeting (UI revamp — "Hello, ahwp" was removed
-    // when the marketing area was redesigned).
-    expect(screen.getByText('안녕하세요.')).toBeInTheDocument();
+    // Welcome screen visible — anchor on stable testids (locale-agnostic).
+    // jsdom 의 navigator.language 가 'en-US' 라 i18n 이 영어로 초기화
+    // 되어 '안녕하세요.' 텍스트 의존은 환경 fragile.
+    expect(screen.getByTestId('welcome-new-doc')).toBeInTheDocument();
+    expect(screen.getByTestId('welcome-open')).toBeInTheDocument();
   });
 
   it('calls ipc:ping on mount', async () => {

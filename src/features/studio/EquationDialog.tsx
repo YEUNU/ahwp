@@ -50,6 +50,10 @@ export function EquationDialog({
   const [script, setScript] = useState<string>(SAMPLE_SCRIPT);
   const [svg, setSvg] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
+  // 0.4.26 — 폰트 크기 (pt) + 색상 옵션. lib insertEquation 은 fontSize
+  // 를 HWPUNIT (pt × 100) 으로 받음. 색상은 RGB int (0xRRGGBB).
+  const [fontSizePt, setFontSizePt] = useState<number>(10);
+  const [color, setColor] = useState<string>('#000000');
 
   // Re-render preview on every script change. Driven by an effect so the
   // dialog re-renders both when the user types and when the dialog first
@@ -63,7 +67,9 @@ export function EquationDialog({
       setSvg('');
       return;
     }
-    const out = renderEquation(script, 1000, 0);
+    const fontHwpunit = Math.max(100, Math.round(fontSizePt * 100));
+    const colorInt = parseInt(color.replace('#', ''), 16) || 0;
+    const out = renderEquation(script, fontHwpunit, colorInt);
     if (out.length === 0) {
       setError('수식 렌더링에 실패했습니다. 문법을 확인하세요.');
       setSvg('');
@@ -71,7 +77,7 @@ export function EquationDialog({
       setError(null);
       setSvg(out);
     }
-  }, [open, script, renderEquation]);
+  }, [open, script, fontSizePt, color, renderEquation]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -95,6 +101,37 @@ export function EquationDialog({
             spellCheck={false}
           />
         </label>
+
+        <div className="flex flex-wrap items-end gap-3 text-xs">
+          <label className="flex flex-col gap-1">
+            <span className="text-muted-foreground">크기 (pt)</span>
+            <select
+              value={fontSizePt}
+              onChange={(e) => setFontSizePt(Number(e.target.value))}
+              data-testid="equation-font-size"
+              className="rounded-md border border-input bg-background px-2 py-1"
+            >
+              {[8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 72].map(
+                (s) => (
+                  <option key={s} value={s}>
+                    {s}pt
+                  </option>
+                ),
+              )}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-muted-foreground">색상</span>
+            <input
+              type="color"
+              value={color}
+              onChange={(e) => setColor(e.target.value)}
+              data-testid="equation-color"
+              className="h-7 w-12 cursor-pointer rounded border border-input bg-background"
+              aria-label="수식 색상"
+            />
+          </label>
+        </div>
 
         <section
           className="flex min-h-32 items-center justify-center rounded-md border border-border bg-card/50 p-4"
@@ -136,7 +173,9 @@ export function EquationDialog({
               variant="default"
               disabled={script.trim().length === 0 || svg.length === 0}
               onClick={() => {
-                const ok = insertEquation(script, 1000, 0);
+                const fontHwpunit = Math.max(100, Math.round(fontSizePt * 100));
+                const colorInt = parseInt(color.replace('#', ''), 16) || 0;
+                const ok = insertEquation(script, fontHwpunit, colorInt);
                 if (ok) onOpenChange(false);
                 else setError('수식 삽입에 실패했습니다.');
               }}

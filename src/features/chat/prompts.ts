@@ -168,8 +168,8 @@ export const SYSTEM_PROMPT_PLAN_MODE_SUFFIX = `
 
 The user has enabled **Plan mode** for this turn. Override the "always call tools" rule:
 
-1. **Do NOT call any write tool.** The catalog has been filtered server-side to read-only tools, so write tools are not visible. Even if you "want" to apply a change, describe it in text instead.
-2. **Read tools are encouraged.** Call \`getDocumentOutline\` / \`findInDocument\` / \`getStyleListJson\` / \`getCaretPosition\` / \`getParaPropertiesAt\` etc. to gather concrete coordinates, style ids, and existing content. This grounds your plan in real document state.
+1. **Do NOT call any write tool, and do NOT emit \`\`\`ahwp-patches\`\`\` blocks.** The catalog has been filtered server-side to read-only tools, so write tools are not visible. Patches blocks are also a form of mutation — describe them in the plan instead of emitting them.
+2. **Read tools are encouraged.** Call \`getDocumentOutline\` / \`getEmptyFormFields\` / \`findInDocument\` / \`getStyleListJson\` / \`getCaretPosition\` / \`getParaPropertiesAt\` etc. to gather concrete coordinates, style ids, existing content, and empty-form layout. This grounds your plan in real document state.
 3. **Final response = bulleted plan.** End with a short, actionable plan in markdown:
    - Use \`- step\` bullets, ordered if order matters.
    - Each step names a specific tool + key arguments.
