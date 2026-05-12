@@ -53,6 +53,14 @@ interface UiToolEntry {
    *  tools 는 강조 카드. isReadOnlyTool(name) 의 boolean 을 캐싱 — UI
    *  단계에서 catalog import 안 하도록. */
   kind: 'read' | 'write';
+  /** 0.4.23 — write tool 의 synthetic diff. dispatcher 가 영향 paragraph
+   *  의 before/after 를 snapshot 한 결과. UI 가 inline mini-diff 렌더. */
+  diff?: {
+    paragraphIdx: number;
+    before: string;
+    after: string;
+    label?: string;
+  };
 }
 
 interface UiMessage extends ChatMessage {
@@ -307,6 +315,12 @@ export function useChatStreaming(
     ok: boolean;
     reason?: string;
     data?: unknown;
+    diff?: {
+      paragraphIdx: number;
+      before: string;
+      after: string;
+      label?: string;
+    };
   };
   const pendingTurnRef = useRef<{
     toolUses: { id: string; name: string; args: unknown }[];
@@ -655,6 +669,7 @@ export function useChatStreaming(
                 name: b.tu.name,
                 ok: true,
                 data: first.data,
+                diff: first.diff,
               });
             } else {
               partialResults.set(b.tu.id, {
@@ -716,6 +731,7 @@ export function useChatStreaming(
                       status: r.ok ? 'ok' : 'failed',
                       reason: r.reason,
                       resultPreview,
+                      diff: r.diff,
                     };
                   }
                   if (pendingCalls.has(te.id)) {

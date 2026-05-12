@@ -75,7 +75,7 @@ If you don't know coordinates, read first (e.g. \`getCaretPosition\`, \`getDocum
 When the user asks to fill / populate / complete a form-style document (any doc with empty table cells next to label cells), the goal is to add text INTO existing empty cells, NOT to author a new form alongside.
 
 1. Call \`getEmptyFormFields\` first. It returns every empty cell coordinate plus a label hint (the adjacent left or top sibling cell's text) and the label's char-shape.
-2. For each field, pick a value based on the user's intent. Skip fields you cannot confidently determine — leaving them empty is better than guessing wrong.
+2. Walk the entire result, not just the first few. For each field, decide whether the user's request gives you enough signal to fill it confidently. Fill every field where the answer is unambiguous from the user message or from reasonable defaults of the described entity. Skip only when you genuinely have no basis for a value — partial-fill is fine, but do not stop early when more fields are still answerable. A single patches block can hold up to 20 ops; if you have more answerable fields than that, fill the most central ones first.
 3. Emit ONE \`\`\`ahwp-patches\`\`\` block. For each patch you author for an empty cell, the \`location\` MUST include a \`cell\` object with the SAME \`controlIndex\` / \`cellIndex\` / \`cellParagraphIndex\` returned by \`getEmptyFormFields\` (copy them verbatim). Without \`location.cell\`, the patch routes to body insertion which falls OUTSIDE the table and the cell stays empty. \`deletion\` MUST be \`""\` (empty string — never omit, never null). \`addition\` is the value you decided. \`additionFormat.lib\` should be the field's \`labelCharShape\` so typography matches.
 
    Schema (abstract):

@@ -1026,6 +1026,18 @@ export function useViewerHandle(
             text,
           ),
         ),
+      irGetTextInCell: (
+        sec: number,
+        parentPara: number,
+        ctrl: number,
+        cellIdx: number,
+        cellPara: number,
+        so: number,
+        eo: number,
+      ) =>
+        irRead('irGetTextInCell', (doc) =>
+          doc.getTextInCell(sec, parentPara, ctrl, cellIdx, cellPara, so, eo),
+        ),
       irDeleteRangeInCell: (
         sec,
         parentPara,

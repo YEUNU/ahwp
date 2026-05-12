@@ -75,6 +75,25 @@ const DEFAULT_MODELS: Record<ChatProviderId, string> = {
 
 const STORAGE_PROVIDER = 'ahwp:chat:provider';
 const STORAGE_MODELS = 'ahwp:chat:models';
+/** 0.4.23 — html 블록 자동 적용 토글. ON 이면 Accept/Reject 카드 표시
+ *  (DiffCard 풍), OFF (default) 면 기존 자동 적용 (chunk 99 follow-up). */
+const STORAGE_HTML_PREVIEW = 'ahwp:chat:html-preview';
+
+export function loadHtmlPreview(): boolean {
+  try {
+    return localStorage.getItem(STORAGE_HTML_PREVIEW) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function saveHtmlPreview(on: boolean): void {
+  try {
+    localStorage.setItem(STORAGE_HTML_PREVIEW, on ? '1' : '0');
+  } catch {
+    /* localStorage unavailable — silent */
+  }
+}
 // chunk 99 follow-up — autoApprove 토글 폐기. 모든 도구 즉시 dispatch.
 // 컨텍스트 자동 첨부도 폐기 (attachDoc / referencePaths) — 사용자가
 // 매뉴얼 발췌 chip 으로만 컨텍스트 추가.
@@ -112,6 +131,14 @@ interface UiToolEntry {
   resultPreview?: string;
   /** 0.4.17 — read 는 dim 한 줄, write 는 카드. */
   kind: 'read' | 'write';
+  /** 0.4.23 — write tool 의 synthetic diff (insertText / deleteRange /
+   *  insertTextInCell). 있으면 카드 안에 inline mini-diff 렌더. */
+  diff?: {
+    paragraphIdx: number;
+    before: string;
+    after: string;
+    label?: string;
+  };
 }
 
 function loadProvider(): ChatProviderId {
@@ -1538,12 +1565,17 @@ function Message({
   // (사업계획서 "다 채워졌는지 확인해줘" 류) fix. 명시적 ```html``` 블록
   // 은 의도적 payload 라 이전 동작 유지.
   const autoAppliedRef = useRef(false);
+  // 0.4.23 — html preview 토글. ON 이면 자동 적용 차단, Accept 카드 렌더.
+  const htmlPreviewMode = loadHtmlPreview();
+  const [htmlPreviewDismissed, setHtmlPreviewDismissed] = useState(false);
   useEffect(() => {
     if (autoAppliedRef.current) return;
     if (isUser || streaming) return;
     if (message.planMode) return;
     if (!htmlPayload) return;
     if (markdownFallback && !sectionMatch) return;
+    // 0.4.23 — preview ON 이면 자동 적용 안 함, Accept 버튼 대기.
+    if (htmlPreviewMode) return;
     autoAppliedRef.current = true;
     // microtask 양보 — setState 가 effect 본체에서 직접 발생하지 않게.
     queueMicrotask(handleApply);
@@ -1554,6 +1586,7 @@ function Message({
     htmlPayload,
     markdownFallback,
     sectionMatch,
+    htmlPreviewMode,
     handleApply,
   ]);
   const handleUndoApply = () => {
@@ -1857,7 +1890,61 @@ function Message({
           가 한 번 자동 dispatch (no-op button). plan mode 에선 인디케이터
           + execute button 으로 수동 흐름 유지. 자동 적용 후 ✓ 토스트만
           간략히 표시 — 사용자가 ⌘Z 로 undo 가능. */}
-        {htmlPayload && !message.planMode ? (
+        {/* 0.4.23 — html preview mode. Settings 토글 ON 시 자동 적용 차단 +
+          Accept/Reject 카드 표시. OFF (default) 면 기존 자동 적용 흐름. */}
+        {htmlPayload &&
+        !message.planMode &&
+        htmlPreviewMode &&
+        !applied &&
+        !htmlPreviewDismissed ? (
+          <div
+            className="mt-2 rounded border border-border bg-muted/30 p-2 shadow-xs"
+            data-testid="chat-html-preview-card"
+            data-section-match={sectionMatch ? sectionMatch.sectionNumber : ''}
+          >
+            <div className="mb-1 flex items-center gap-2 text-xs font-semibold">
+              <span>✏️</span>
+              <span>
+                {sectionMatch
+                  ? `${sectionMatch.sectionNumber} 섹션 교체 제안`
+                  : '문서 변경 제안'}
+              </span>
+              {sectionMatch ? (
+                <span className="font-normal text-muted-foreground">
+                  · {sectionMatch.headingText}
+                </span>
+              ) : null}
+            </div>
+            <pre className="mb-2 max-h-32 overflow-auto rounded border border-border/40 bg-background p-1 text-[10px] leading-snug">
+              {htmlPayload.length > 800
+                ? `${htmlPayload.slice(0, 800)}…`
+                : htmlPayload}
+            </pre>
+            <div className="flex gap-1">
+              <Button
+                type="button"
+                size="sm"
+                variant="default"
+                onClick={handleApply}
+                data-testid="chat-html-preview-accept"
+                className="h-6 px-2 text-[11px]"
+              >
+                Accept
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setHtmlPreviewDismissed(true)}
+                data-testid="chat-html-preview-reject"
+                className="h-6 px-2 text-[11px]"
+              >
+                Reject
+              </Button>
+            </div>
+          </div>
+        ) : null}
+        {htmlPayload && !message.planMode && !htmlPreviewMode ? (
           <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2 text-[11px] text-muted-foreground">
             {applied && !undone ? (
               <>
@@ -1886,6 +1973,30 @@ function Message({
             ) : (
               <span>적용 중…</span>
             )}
+          </div>
+        ) : null}
+        {htmlPayload && !message.planMode && htmlPreviewMode && applied ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2 text-[11px] text-muted-foreground">
+            <span data-testid="chat-action-applied-toast">
+              ✓{' '}
+              {sectionMatch
+                ? `기존 ${sectionMatch.sectionNumber} 섹션 교체 적용됨`
+                : markdownFallback
+                  ? '마크다운 적용됨'
+                  : 'HTML 적용됨'}
+            </span>
+            {onUndoApply ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={handleUndoApply}
+                data-testid="chat-action-undo-apply"
+                className="text-xs"
+              >
+                되돌리기
+              </Button>
+            ) : null}
           </div>
         ) : null}
         {htmlPayload && message.planMode ? (
@@ -2341,6 +2452,41 @@ function ToolEntryRow({
           </span>
         ) : null}
       </div>
+      {/* 0.4.23 — write tool synthetic diff. 항상 보이도록 (확장 X). */}
+      {entry.diff && entry.status === 'ok' ? (
+        <div
+          className="mt-1 rounded border border-border/50 bg-background/50 p-1 text-[10px]"
+          data-testid="chat-tool-diff"
+        >
+          {entry.diff.label ? (
+            <div className="mb-0.5 text-muted-foreground">
+              {entry.diff.label}
+            </div>
+          ) : null}
+          {entry.diff.before.length > 0 ? (
+            <div
+              className="rounded-sm bg-red-500/10 px-1 text-red-700 line-through dark:text-red-300"
+              data-testid="chat-tool-diff-before"
+            >
+              −{' '}
+              {entry.diff.before.length > 200
+                ? `${entry.diff.before.slice(0, 200)}…`
+                : entry.diff.before}
+            </div>
+          ) : null}
+          {entry.diff.after.length > 0 ? (
+            <div
+              className="rounded-sm bg-emerald-500/10 px-1 text-emerald-700 dark:text-emerald-300"
+              data-testid="chat-tool-diff-after"
+            >
+              +{' '}
+              {entry.diff.after.length > 200
+                ? `${entry.diff.after.slice(0, 200)}…`
+                : entry.diff.after}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {expanded && hasDetail ? (
         <pre
           data-testid="chat-tool-result"

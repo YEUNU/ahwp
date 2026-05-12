@@ -6,6 +6,18 @@
 
 ## [Unreleased]
 
+### Added — A+B+C 패키지: fill 확장 / html DiffCard / write tool synthetic diff (0.4.23)
+
+세 가지 UX 개선 (사용자 의도: "다 진행"):
+
+**(A) prompt: 더 많은 cell 채우도록** — 0.4.22 가 4 cells 만 채우던 한계 보강. 원칙 강화: "walk entire result, not just first few. fill every field where the answer is unambiguous from user message". 휴리스틱 X (필드 enumeration 없음, 원칙만).
+
+**(B) html 블록 DiffCard 미리보기 통합** — Settings 토글 "HTML 블록 미리보기" 신설 (default OFF, backward compat). ON 시 모델의 `\`\`\`html\`\`\``블록 자동 적용 차단 + Accept/Reject 카드 표시. patches block 의 DiffCard 흐름과 일관성 ↑. testid: chat-html-preview-card / chat-html-preview-accept / chat-html-preview-reject. localStorage key:`ahwp:chat:html-preview`.
+
+**(C) write tool synthetic diff** — Agent write tool 호출 시 영향 paragraph 의 before/after 를 dispatcher 가 snapshot, ToolEntryRow 안에 inline mini-diff 렌더 (red strikethrough / green addition). `AhwpToolResult.diff?` 신규 필드 + `UiToolEntry.diff` propagation. 현재 `insertText` / `deleteRange` / `insertTextInCell` 3 종 커버. `irGetTextInCell` ViewerHandle wrapper 추가 (lib `getTextInCell`).
+
+unit 5/5 통과 (tools.test.ts mockViewer 에 irGetTextRange/irGetTextInCell 추가).
+
 ### Fixed — Form-fill 4 단계 fix 로 in-place fill 도달 (0.4.22)
 
 증상 (사용자 보고): "AI 가 양식의 빈 곳에 넣는 게 아니라, 양식을 처음부터 만들어서 옆에 넣는다". 0.4.21 prompt + getEmptyFormFields 추가했어도 paraCount Δ=0 만 통과하고 실제 빈 cell 은 안 채워짐 (위양성).

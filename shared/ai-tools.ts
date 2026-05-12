@@ -473,9 +473,20 @@ export interface AhwpToolBlock {
  *
  * Phase 3 chunk 51 — read tool 의 결과는 `data` 에 JSON 으로 담음.
  * Agent loop 가 다음 turn 의 tool_result 메시지에 stringify 해서 모델
- * 에 회신. write tool 은 `data` 미사용 (success/failure 만 의미). */
+ * 에 회신. write tool 은 `data` 미사용 (success/failure 만 의미).
+ *
+ * 0.4.23 — write tool 의 synthetic diff. dispatcher 가 호출 전/후 영향
+ * paragraph 의 텍스트를 snapshot 하면 `diff` 에 담는다. UI 가 tool entry
+ * 옆에 inline DiffCard 로 렌더. 모델에는 전달 안 함 (UI 전용). */
+export interface ToolResultDiff {
+  paragraphIdx: number;
+  before: string;
+  after: string;
+  /** Display-only label. */
+  label?: string;
+}
 export type AhwpToolResult =
-  | { ok: true; tool: AhwpToolName; data?: unknown }
+  | { ok: true; tool: AhwpToolName; data?: unknown; diff?: ToolResultDiff }
   | { ok: false; tool: string; reason: string };
 
 /** Hard ceilings — anything bigger is rejected before dispatch. */

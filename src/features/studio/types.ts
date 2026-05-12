@@ -183,6 +183,16 @@ export interface ViewerHandle {
     charOffset: number,
     text: string,
   ) => boolean;
+  /** 0.4.23 — cell paragraph text reader. synthetic diff before/after용. */
+  irGetTextInCell: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+    cellIdx: number,
+    cellParaIdx: number,
+    startOffset: number,
+    endOffset: number,
+  ) => string | null;
   /** 0.4.20 — cell-level deleteRange. lib `deleteRangeInCell`. patches
    *  block 의 cell location 에서 텍스트 교체할 때 (deletion → addition
    *  순서) delete 단계용. */
