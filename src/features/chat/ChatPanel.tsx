@@ -431,7 +431,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const attachDoc = false;
     const setAttachDoc = (): void => {};
     // chunk 20 — excerpt chips. When non-empty, the system message
-    // injects a structured `[발췌]:` block instead of the whole-doc
+    // injects a structured `[Excerpts]:` block instead of the whole-doc
     // HTML (the toggle still appears but the docHtml path is suppressed).
     const [excerpts, setExcerpts] = useState<ExcerptAttachment[]>([]);
     // Toast for send-side blocking events (e.g. all chips went stale).
@@ -1475,8 +1475,9 @@ function Message({
 
   // Apply-HTML affordance — only on completed assistant messages that
   // contain a ```html``` fenced block AND when a viewer handle is
-  // available (onApplyHtml prop). Extract the first block; the
-  // SYSTEM_PROMPT_DOC_CONTEXT instructs the model to emit at most one.
+  // available (onApplyHtml prop). Extract the first block; the Agent
+  // guide restricts code-block emission to a single ahwp-patches block,
+  // but legacy / off-spec html responses are still parsed as a fallback.
   const htmlMatch =
     !isUser && !streaming && onApplyHtml
       ? HTML_BLOCK_RE.exec(message.content)

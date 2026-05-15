@@ -23,11 +23,19 @@ import { getAhwpToolCatalog } from '@shared/ai-tools';
 
 const ROUTER_TIMEOUT_MS = 30_000;
 
-/** 매 turn 항상 포함되는 도구 — 위치 결정 / 문서 구조 파악은 어떤
- *  편집 작업에서도 흔히 필요. router 가 깜빡 빠뜨려도 이 두 개는 보장. */
+/** 매 turn 항상 포함되는 도구 — 위치 / 구조 / 양식 파악과 가장 기본적인
+ *  본문 편집은 어떤 작업에서도 흔히 필요. router LLM 이 빠뜨려도 이 set
+ *  은 보장. getEmptyFormFields 는 form-fill workflow 진입을 항상 가능하게
+ *  해 "양식 채워줘" 류 query 가 router 의 깜빡임으로 silent 응답이 되는
+ *  회귀 방지 (0.4.14 회귀 가드). */
 const ALWAYS_INCLUDE: readonly AhwpToolName[] = [
   'getCaretPosition',
   'getDocumentOutline',
+  'getDocumentSummary',
+  'getEmptyFormFields',
+  'findInDocument',
+  'insertText',
+  'applyHtml',
 ];
 
 export interface ToolSelectionResult {

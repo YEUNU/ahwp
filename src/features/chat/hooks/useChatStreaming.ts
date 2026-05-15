@@ -366,9 +366,7 @@ export function useChatStreaming(
       const modelNow = modelRef.current;
       if (!modelNow || modelNow.length === 0) return;
       const transcript = finalMessages
-        .map(
-          (m) => `${m.role === 'user' ? '사용자' : '어시스턴트'}: ${m.content}`,
-        )
+        .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
         .join('\n')
         .slice(0, 4000);
       const req: ChatRequest = {
@@ -379,7 +377,7 @@ export function useChatStreaming(
           {
             role: 'system',
             content:
-              '다음은 사용자와 AI의 대화 일부야. 이 대화의 핵심 주제를 한국어 5단어 이내의 명사구로 요약해줘. 따옴표나 마침표 없이 본문만 출력. 예: "표 합계 행 추가", "이미지 정렬 문의".',
+              'Summarize the core topic of the following User/Assistant transcript as a noun phrase of 5 words or fewer. Match the language of the transcript (Korean transcript → Korean title, English → English title). Output the title only — no quotes, no period, no leading label.',
           },
           { role: 'user', content: transcript },
         ],
@@ -827,17 +825,17 @@ export function useChatStreaming(
       // Build provider-bound message list. The system message
       // composition picks one of three context strategies for the
       // *target* doc (the active tab):
-      //   (1) excerpts present  → `[발췌]:` block, narrowly anchored
-      //   (2) attach toggle on  → `[현재 문서]:` whole-doc HTML
+      //   (1) excerpts present  → `[Excerpts]:` block, narrowly anchored
+      //   (2) attach toggle on  → `[Active doc]:` whole-doc HTML
       //   (3) neither           → no target body in prompt (just refs)
       // Excerpts win over the toggle when both are set, per
       // memory/project_chat_context_pipeline.md priority rule.
       //
       // Reference docs (chunk 21) are appended as an additional
-      // `[참조 문서]:` block when the user has opted any in. They are
-      // read-only — write tools (chunk 19) still target the active doc
-      // by construction since the dispatcher hands them to the active
-      // viewer's IR.
+      // `[Reference docs]:` block when the user has opted any in. They
+      // are read-only — write tools (chunk 19) still target the active
+      // doc by construction since the dispatcher hands them to the
+      // active viewer's IR.
       // Phase 3 — Agent 모드는 toolUses / toolResult 도 같이 직렬화.
       // OpenAI 어댑터가 native (tool_calls / role='tool') 로 변환한다.
       const messages: ChatMessage[] = history.map((m) => ({

@@ -6,6 +6,16 @@
 
 ## [Unreleased]
 
+### Fixed — Prompt 일관성 + tool router ALWAYS_INCLUDE 확장 (0.4.28)
+
+LLM-facing prompt 가독성 + form-fill 라우팅 신뢰성 개선.
+
+- `SYSTEM_PROMPT_DOC_CONTEXT` 슬림화 — `[A]/[B]/[C]` 응답 형식 라우팅 중복 제거 (AGENT_GUIDE 로 일원화). context 태그 설명만 유지.
+- 발췌 라벨 통일 `[Excerpt]:` → `[Excerpts]:` (serializer 와 일치).
+- AGENT_GUIDE 의 chunk-97 "User approval gate" stale 문단 제거 (chunk 99 follow-up 에서 즉시 dispatch 로 전환됨). "Execution model" 섹션 신설 — write tool 즉시 실행 + 그룹 undo + `ahwp-patches` 만 Accept/Reject 카드.
+- 자동 타이틀 prompt + transcript 라벨 한국어 → 영어 (`feedback_english_prompts`).
+- `toolRouter.ALWAYS_INCLUDE` 2 → 7개 확장: `getDocumentSummary`, `getEmptyFormFields`, `findInDocument`, `insertText`, `applyHtml` 추가. router 가 phase 선택에서 빠뜨려도 form-fill / 기본 편집 트리거가 항상 보장됨.
+
 ### Added — A+B+C 패키지: fill 확장 / html DiffCard / write tool synthetic diff (0.4.23)
 
 세 가지 UX 개선 (사용자 의도: "다 진행"):

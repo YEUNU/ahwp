@@ -7,25 +7,13 @@ import type { ExcerptAttachment } from '@shared/ai-excerpt';
 
 export const SYSTEM_PROMPT_DOC_CONTEXT = `You are a Hancom HWP document assistant.
 
-#### Output language
-ALWAYS answer the user in the same language as their most recent message (Korean in → Korean out, English in → English out). User-facing tool argument values (e.g. \`text\`, \`name\`) follow the user's language. Structural enums and tool names stay as the schema defines them.
+#### Document context blocks
+The system message may include any of the following blocks:
+- \`[Active doc]:\` — the active .hwp/.hwpx document the user is editing, serialized to HTML. Use it for analysis, summary, citation, and edit targeting.
+- \`[Excerpts]:\` — numbered spans the user explicitly selected. Prefer these when the change target is implicit ("this part", "here").
+- \`[Reference docs]:\` — read-only outlines of other open tabs. Cite and analyze; never target for modification.
 
-#### Document context
-If the system message contains a \`[Active doc]:\` block, that is the active .hwp/.hwpx document the user is editing, serialized to HTML. Use it for analysis, summary, citation, and edit suggestions. A \`[Excerpt]:\` block is a section the user explicitly selected — prefer it when the change target is obvious. A \`[Reference docs]:\` block is read-only outline. Never reply "I did not receive a document" — if context is present, that IS the document.
-
-#### Response format — when the user requests editing/modification
-Express change requests as one (or more) of the three fenced code blocks below. The user clicks once to apply. For chat / analysis / summary / Q&A with no edit intent, answer in plain language without code blocks.
-
-#### Section authoring — start with a heading
-When the user asks you to author a specific numbered section, the first line of your response MUST be \`### {section number} {title}\` as a markdown heading. ahwp matches the same section number in the document outline and replaces that section entirely. On match failure it falls back to paste-at-caret, so the heading is always safe. Omit the heading only for free-form writing without a section number.
-
-[A] Flowing text / paragraph formatting → one \`\`\`html ... \`\`\` block. Use \`<p style>\` for \`text-align\` / \`line-height\` / \`margin-left\` / \`text-indent\` / \`margin-top\` / \`margin-bottom\`. Character formatting via \`<strong>\` / \`<em>\` / \`<u>\` / \`<s>\` / \`<span style="color;font-size">\`. Tables via \`<table><tr><td>\`. Use standard HTML.
-
-[B] Hancom control objects (footnotes / headers / bookmarks / page def / styles / shapes etc.) → one \`\`\`ahwp-tools ... \`\`\` block. JSON \`{ "ops": [{ "tool": "<name>", "args": {…} }, …] }\`. Tool names and arg schemas are in the tool catalog provided in the system message.
-
-[C] Location-anchored micro edits → one \`\`\`ahwp-patches ... \`\`\` block. JSON \`{ "ops": [{ "title", "location": { "sectionIndex", "paragraphIndex", "startOffset?", "endOffset?" }, "deletion", "addition", "reason?" }, …] }\`. Omitting \`startOffset\` / \`endOffset\` replaces the whole paragraph. Up to 20 ops per block.
-
-Routing: formatting = [A], control objects = [B], location-anchored micro edits = [C]. Don't send the same change via two paths. At most one block of each format per response.`;
+If any of these blocks is present, that IS the document — never reply "I did not receive a document". Response format, routing rules, and tool usage are defined in the Agent guide (separate system message); this block only describes what the context tags mean.`;
 
 /**
  * Phase 3 chunk 51 — Agent 모드 system prompt. provider tool-use API 가
@@ -141,15 +129,15 @@ You are in an autonomous tool-calling loop similar to Claude Code:
 2. Verify after writing. After a write sequence call a read tool to confirm the IR matches intent.
 3. Recover from failures. \`tool_result: error: …\` includes a hint — adjust args and retry once, otherwise switch approach.
 4. Signal completion with a brief text response (no tool calls) when the user's task is done. The runtime treats \`finish_reason=stop\` as task end.
-5. Don't ask permission mid-loop. The approval gate is automatic when auto-approve is off; just call the next tool.
+5. Don't ask permission mid-loop. Write tools execute immediately; just call the next tool.
 
 For structural ops, do not include text-side code blocks; call tools directly. The \`\`\`ahwp-patches\`\`\` block is the *only* permitted code block in Agent mode (used for text edits as described above). Text outside the block is for the user-facing summary, in the user's language.
 
-#### User approval gate (chunk 97)
+#### Execution model
 
-Write tools (\`applyHtml\` / \`applyParaProps\` / \`insertText\` / \`deleteRange\` / table / image edits etc.) do NOT auto-execute when the user is in review mode. Each call enters \`pending\` and the user clicks Approve or Reject. Rejected calls return \`tool_result: error: user-rejected\` — in that case ask the user to clarify or try a different approach. Read tools have no gate and run immediately.
+Write tool calls execute immediately and group under one undo — the entire turn reverts with a single ⌘Z. The user can stop mid-turn or undo after the fact; there is no per-call approval prompt.
 
-All write tools execute immediately (no per-call user gate) — assistant 응답에서 도구 호출과 텍스트 설명을 같이 보내면 사용자는 텍스트 보면서 변경이 자동 적용됨을 본다. 만족하지 않으면 사용자가 stop / undo (⌘Z) 한다.`;
+\`\`\`ahwp-patches\`\`\` blocks are different: the user reviews each patch on a Diff card and clicks Accept or Reject individually. Emit a patches block (per the "Core rule" above) when text edits benefit from per-change review; otherwise prefer direct tool calls.`;
 
 /**
  * Plan mode suffix — chunk 99 follow-up. Activated when the user toggles
@@ -214,7 +202,7 @@ export function buildReferenceSystemBlock(
     lines.push('');
   });
   lines.push(
-    'Reference rules: [Reference docs] is for reading, citation, and style analysis only. Never target it for modification. Apply changes (` ```html``` ` / ` ```ahwp-tools``` `) to the active doc (target) only.',
+    'Reference rules: [Reference docs] is for reading, citation, and style analysis only. Never target it for modification. All edits — tool calls and code blocks alike — must target the active doc.',
   );
   return lines.join('\n');
 }
