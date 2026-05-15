@@ -296,17 +296,26 @@ test.describe('studio format — chunk 5 (toolbar + char formatting)', () => {
         { timeout: 30_000 },
       );
 
-      // First page SVG should still carry font-weight="bold".
+      // First page should render (SVG mode pre-Phase6 / Canvas mode after).
       const firstPage = page.getByTestId('studio-viewer-page').first();
       await expect(firstPage.locator('svg, canvas').first()).toBeVisible({
         timeout: 15_000,
       });
+      // Phase 6 chunk 107 (0.4.0) — SVG render path 제거. Canvas 에는
+      // attribute-기반 검증이 불가능하므로 IR 단의 bold 속성을 확인.
+      // 재오픈 직후 caret 은 (0, 0, 0) — bold 로 입력했던 BOLDTEST 위치.
       await expect
         .poll(
-          async () => firstPage.locator('svg [font-weight="bold"]').count(),
+          () =>
+            page.evaluate(() => {
+              const dbg = (window as Window & { __studioDebug?: StudioDebug })
+                .__studioDebug;
+              if (!dbg) return null;
+              return Boolean(dbg.getActiveFormat().bold);
+            }),
           { timeout: 15_000 },
         )
-        .toBeGreaterThan(0);
+        .toBe(true);
     } finally {
       await rm(workDir, { recursive: true, force: true });
     }

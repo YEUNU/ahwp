@@ -56,6 +56,12 @@ test.describe('chat — tool entry UI (0.4.11)', () => {
     await page.getByTestId('chat-input').fill('TOOL:getCaretPosition:{}');
     await page.getByTestId('chat-send').click();
 
+    // 0.4.17 — read tool 들은 "🔍 자료 수집" 그룹 안에 collapse. 그룹 토글
+    // 먼저 펼친 뒤에야 개별 entry 가 노출됨.
+    const groupToggle = page.getByTestId('chat-tool-read-group-toggle').first();
+    await expect(groupToggle).toBeVisible({ timeout: 5000 });
+    await groupToggle.click();
+
     const entry = page
       .locator(
         '[data-testid="chat-tool-entry"][data-tool-name="getCaretPosition"]',
@@ -80,6 +86,11 @@ test.describe('chat — tool entry UI (0.4.11)', () => {
 
     await page.getByTestId('chat-input').fill('TOOL:getCaretPosition:{}');
     await page.getByTestId('chat-send').click();
+
+    // 0.4.17 — read group 펼치기.
+    const groupToggle = page.getByTestId('chat-tool-read-group-toggle').first();
+    await expect(groupToggle).toBeVisible({ timeout: 5000 });
+    await groupToggle.click();
 
     const entry = page
       .locator(
@@ -122,6 +133,11 @@ test.describe('chat — tool entry UI (0.4.11)', () => {
     // attribute 로 확인 가능.
     await page.getByTestId('chat-input').fill('TOOL:getCaretPosition:{}');
     await page.getByTestId('chat-send').click();
+
+    // 0.4.17 — read group 펼치기.
+    const groupToggle = page.getByTestId('chat-tool-read-group-toggle').first();
+    await expect(groupToggle).toBeVisible({ timeout: 5000 });
+    await groupToggle.click();
 
     // 결과 도착 직후 chevron 이 있어야 함을 확인 (대조군). running 윈도우
     // 가 너무 짧아 catch 가 어려우니 본 case 는 chevron 의 *존재 조건*

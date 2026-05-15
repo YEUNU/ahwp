@@ -232,41 +232,44 @@ test.describe('Phase 2 finale — chunks 29 / 30 / 34 / 35', () => {
     const { page } = launched;
 
     // Echo back an assistant turn that contains an html block. The fake
-    // provider yields the payload verbatim; the apply-html button shows
-    // up after streaming completes.
+    // provider yields the payload verbatim; chunk 99 follow-up auto-
+    // applies the block once streaming completes (no manual apply click).
     const reply =
       '여기:\n```html\n<p style="text-align:right;">RIGHTNESS</p>\n```';
     await page.getByTestId('chat-input').fill(`ECHO:${reply}`);
     await page.getByTestId('chat-send').click();
 
-    const applyBtn = page.getByTestId('chat-action-apply-html');
-    await expect(applyBtn).toBeVisible({ timeout: 10000 });
-    await applyBtn.click();
-    await expect(applyBtn).toContainText('적용됨');
+    // Wait for auto-apply to land — applied toast + undo affordance.
+    const appliedToast = page.getByTestId('chat-action-applied-toast');
+    await expect(appliedToast).toBeVisible({ timeout: 10000 });
 
     // Para 0's alignment should now be 'right'.
-    const beforeUndo = await page.evaluate(() => {
-      const dbg = (window as Window & { __studioDebug?: StudioDebug })
-        .__studioDebug!;
-      return dbg.getParaProps(0, 0).alignment as string;
-    });
-    expect(beforeUndo).toBe('right');
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const dbg = (window as Window & { __studioDebug?: StudioDebug })
+            .__studioDebug!;
+          return dbg.getParaProps(0, 0).alignment as string;
+        }),
+      )
+      .toBe('right');
 
-    // 되돌리기 button is visible right next to "✓ 적용됨".
+    // 되돌리기 button is visible right next to the applied toast.
     const undoBtn = page.getByTestId('chat-action-undo-apply');
     await expect(undoBtn).toBeVisible();
     await undoBtn.click();
 
-    // After undo, the affordance flips to "✓ 되돌림" briefly and then
-    // collapses; the doc's alignment should have reverted to its prior
-    // state (default = 'left' for the blank fixture).
-    await expect(applyBtn).toContainText('되돌림');
-    const afterUndo = await page.evaluate(() => {
-      const dbg = (window as Window & { __studioDebug?: StudioDebug })
-        .__studioDebug!;
-      return dbg.getParaProps(0, 0).alignment as string;
-    });
-    expect(afterUndo).not.toBe('right');
+    // After undo, the doc's alignment should revert to the prior state
+    // (default = 'left' for the blank fixture).
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const dbg = (window as Window & { __studioDebug?: StudioDebug })
+            .__studioDebug!;
+          return dbg.getParaProps(0, 0).alignment as string;
+        }),
+      )
+      .not.toBe('right');
   });
 
   test('chunk 30: history rename input swaps in on edit click', async () => {
