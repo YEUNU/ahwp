@@ -90,7 +90,9 @@ test.describe('settings dialog — flow', () => {
     await page.evaluate(async () => {
       await window.api.secrets.set('openai', 'stored-key');
     });
-    await page.getByTestId('chat-open-settings').click();
+    // 키가 있으면 `chat-open-settings` 버튼은 ChatPanel 의 empty-state 에서
+    // 사라짐 — TitleBar 의 설정 버튼으로 진입.
+    await page.getByTestId('titlebar-settings').click();
     // Input is empty → the IPC falls back to the stored key.
     await page.getByTestId('settings-test-openai').click();
     await expect(page.getByTestId('settings-ping-ok-openai')).toBeVisible();
@@ -101,7 +103,7 @@ test.describe('settings dialog — flow', () => {
     await page.evaluate(async () => {
       await window.api.secrets.set('openai', 'sk-fake');
     });
-    await page.getByTestId('chat-open-settings').click();
+    await page.getByTestId('titlebar-settings').click();
     await expect(page.getByTestId('settings-indicator-openai')).toContainText(
       '연결됨',
     );

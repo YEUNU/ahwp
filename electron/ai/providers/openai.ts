@@ -113,30 +113,36 @@ function shouldUseResponsesApi(model: string): boolean {
   return false;
 }
 
-/** /v1/responses 의 input 항목. messages → input 변환. */
-function toResponsesInputItem(m: ChatMessage): Record<string, unknown> {
+/** /v1/responses 의 input 항목. messages → input 변환.
+ *
+ * 한 ChatMessage 가 여러 input item 으로 펼쳐질 수 있다 (assistant 가
+ * 한 turn 에 여러 tool 호출 시). 호출 측에서 `flatMap` 사용. 0.4.7
+ * fix: 이전엔 다중 호출을 `{ type: 'list', items: [...] }` wrapper 로
+ * 보냈는데 Responses API 가 'list' 타입 모름 → 400 invalid_value. 이제
+ * 각 호출이 individual `type: 'function_call'` item 으로 평탄화. */
+function toResponsesInputItems(m: ChatMessage): Record<string, unknown>[] {
   if (m.role === 'tool' && m.toolResult) {
     // 직전 turn 의 tool 호출 결과 회신 — function_call_output.
-    return {
-      type: 'function_call_output',
-      call_id: m.toolResult.id,
-      output: m.toolResult.content,
-    };
+    return [
+      {
+        type: 'function_call_output',
+        call_id: m.toolResult.id,
+        output: m.toolResult.content,
+      },
+    ];
   }
   if (m.role === 'assistant' && m.toolUses && m.toolUses.length > 0) {
-    // assistant 가 도구 호출한 turn 은 function_call 항목들로 직렬화.
-    // assistant 메시지 본문이 있으면 별도 message 항목으로 추가 (caller
-    // 가 array 펼침은 안 해서, 본문 + 호출이 같은 turn 인 경우 호출만
-    // 직렬화하고 본문은 후속 turn 에서 다시 보내지 않으니 안전).
-    const calls = m.toolUses.map((u) => ({
+    // assistant 가 도구 호출한 turn 은 각 호출이 별도 function_call item.
+    // assistant 메시지 본문이 있어도 후속 turn 에서 재전송하지 않으니
+    // 호출 items 만 직렬화하면 충분.
+    return m.toolUses.map((u) => ({
       type: 'function_call',
       call_id: u.id,
       name: u.name,
       arguments: JSON.stringify(u.args ?? {}),
     }));
-    return calls.length === 1 ? calls[0] : { type: 'list', items: calls };
   }
-  return { role: m.role, content: m.content };
+  return [{ role: m.role, content: m.content }];
 }
 
 interface ResponsesEvent {
@@ -200,7 +206,7 @@ async function* chatViaResponses(
   const url = `${trimBaseUrl(opts.baseUrl)}/responses`;
   const body: Record<string, unknown> = {
     model: req.model,
-    input: req.messages.map(toResponsesInputItem),
+    input: req.messages.flatMap(toResponsesInputItems),
     stream: true,
     store: false,
   };
@@ -403,13 +409,20 @@ export const openaiProvider: Provider = {
 
     let usage: ChatUsage | undefined;
     let finishReason: ChatFinishReason = 'stop';
-    // Phase 3 — tool_calls 누적. OpenAI stream은 한 호출의 id/name/arguments
-    // 를 여러 chunk에 나눠 흘려서 보낸다 (특히 arguments JSON). index 별
-    // 슬롯에 append 하다가 finish_reason 받으면 yield.
-    const pendingToolCalls = new Map<
-      number,
-      { id: string; name: string; argsJson: string }
-    >();
+    // Phase 3 — tool_calls 누적. OpenAI stream 은 한 호출의 id/name/
+    // arguments 를 여러 chunk 에 나눠 흘려 보낸다 (특히 arguments JSON).
+    //
+    // 0.4.18 — id 기반 dedup. 일부 OpenAI-compatible provider (NVIDIA NIM
+    // gemma-4 확인) 는 parallel tool calls 를 같은 `index` (보통 0) 로
+    // 보내면서 id 만 다르게 — 이전엔 index 만 key 로 써서 args JSON 이
+    // 인접 호출 사이에 concat 되어 `{"query":"a"}{"query":"b"}` 처럼
+    // invalid JSON 으로 합쳐졌다. id 가 있을 땐 id 우선, 동일 index 에
+    // id 가 바뀌면 새 슬롯 시작.
+    const slots: Array<{ id: string; name: string; argsJson: string }> = [];
+    const slotById = new Map<string, number>();
+    /** 마지막으로 어떤 slot 이 이 index 에 활성이었는지 — id 없는
+     *  continuation chunk 가 합류할 때 lookup. */
+    const lastSlotByIndex = new Map<number, number>();
     try {
       for await (const data of parseSseStream(res.body)) {
         if (data === '[DONE]') {
@@ -429,18 +442,33 @@ export const openaiProvider: Provider = {
         const tcDeltas = choice?.delta?.tool_calls;
         if (Array.isArray(tcDeltas)) {
           for (const tc of tcDeltas) {
-            if (typeof tc.index !== 'number') continue;
-            const slot = pendingToolCalls.get(tc.index) ?? {
-              id: '',
-              name: '',
-              argsJson: '',
-            };
-            if (typeof tc.id === 'string') slot.id = tc.id;
+            const hasId = typeof tc.id === 'string' && tc.id.length > 0;
+            const hasIdx = typeof tc.index === 'number';
+            if (!hasId && !hasIdx) continue;
+
+            let slotIdx: number | undefined;
+            if (hasId) {
+              slotIdx = slotById.get(tc.id!);
+              if (slotIdx === undefined) {
+                slotIdx = slots.length;
+                slots.push({ id: tc.id!, name: '', argsJson: '' });
+                slotById.set(tc.id!, slotIdx);
+                if (hasIdx) lastSlotByIndex.set(tc.index!, slotIdx);
+              }
+            } else if (hasIdx) {
+              slotIdx = lastSlotByIndex.get(tc.index!);
+              if (slotIdx === undefined) {
+                slotIdx = slots.length;
+                slots.push({ id: '', name: '', argsJson: '' });
+                lastSlotByIndex.set(tc.index!, slotIdx);
+              }
+            }
+            if (slotIdx === undefined) continue;
+            const slot = slots[slotIdx];
             if (typeof tc.function?.name === 'string')
               slot.name = tc.function.name;
             if (typeof tc.function?.arguments === 'string')
               slot.argsJson += tc.function.arguments;
-            pendingToolCalls.set(tc.index, slot);
           }
         }
         if (choice?.finish_reason) {
@@ -455,10 +483,9 @@ export const openaiProvider: Provider = {
       }
       // Stream 종료 — 누적된 tool_calls 를 한꺼번에 emit. arguments 는
       // JSON 문자열로 들어오므로 parse 시도 (실패하면 raw 문자열 그대로).
-      const indices = Array.from(pendingToolCalls.keys()).sort((a, b) => a - b);
-      for (const idx of indices) {
-        const slot = pendingToolCalls.get(idx);
-        if (!slot || slot.name.length === 0) continue;
+      for (let i = 0; i < slots.length; i++) {
+        const slot = slots[i];
+        if (slot.name.length === 0) continue;
         let parsedArgs: unknown = {};
         try {
           parsedArgs =
@@ -468,7 +495,7 @@ export const openaiProvider: Provider = {
         }
         yield {
           type: 'tool-use',
-          id: slot.id || `call_${idx}`,
+          id: slot.id || `call_${i}`,
           name: slot.name,
           args: parsedArgs,
         };

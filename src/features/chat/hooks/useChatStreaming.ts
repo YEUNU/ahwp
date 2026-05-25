@@ -37,7 +37,7 @@ import {
   buildReferenceSystemBlock,
   buildExcerptSystemPrompt,
 } from '../prompts';
-import { selectToolsViaLlm } from '../toolRouter';
+import { selectToolsViaLlm, resetRouterCache } from '../toolRouter';
 
 interface UiToolEntry {
   id: string;
@@ -45,6 +45,22 @@ interface UiToolEntry {
   argsPreview: string;
   status: 'running' | 'ok' | 'failed';
   reason?: string;
+  /** 0.4.11 — JSON-stringified tool 결과 (read tools 의 data 또는 write
+   *  tools 의 ok/error). chat UI 의 확장 버튼 클릭 시 노출. read tools
+   *  는 16k cap, write tools 는 4k cap (advanceAgentLoop 정합). */
+  resultPreview?: string;
+  /** 0.4.17 — Claude Code 식 시각 분리. read tools 는 muted, write
+   *  tools 는 강조 카드. isReadOnlyTool(name) 의 boolean 을 캐싱 — UI
+   *  단계에서 catalog import 안 하도록. */
+  kind: 'read' | 'write';
+  /** 0.4.23 — write tool 의 synthetic diff. dispatcher 가 영향 paragraph
+   *  의 before/after 를 snapshot 한 결과. UI 가 inline mini-diff 렌더. */
+  diff?: {
+    paragraphIdx: number;
+    before: string;
+    after: string;
+    label?: string;
+  };
 }
 
 interface UiMessage extends ChatMessage {
@@ -274,6 +290,11 @@ export function useChatStreaming(
   const agentToolUsesRef = useRef<
     { id: string; name: string; args: unknown }[]
   >([]);
+  /** 0.4.19 — Agent loop 가 누적하는 도구 호출 이력. router phase-aware
+   *  결정에 사용. send/regenerate/stop 시 reset. ok/fail + 짧은 summary. */
+  const agentToolHistoryRef = useRef<
+    { name: string; ok: boolean; summary?: string }[]
+  >([]);
   const agentTurnDepthRef = useRef(0);
   const agentVerifiedExcerptsRef = useRef<ExcerptAttachment[]>([]);
   // chunk 99 follow-up — stop 버튼이 turn loop 도 강제 종료. flag 가
@@ -294,6 +315,12 @@ export function useChatStreaming(
     ok: boolean;
     reason?: string;
     data?: unknown;
+    diff?: {
+      paragraphIdx: number;
+      before: string;
+      after: string;
+      label?: string;
+    };
   };
   const pendingTurnRef = useRef<{
     toolUses: { id: string; name: string; args: unknown }[];
@@ -339,9 +366,7 @@ export function useChatStreaming(
       const modelNow = modelRef.current;
       if (!modelNow || modelNow.length === 0) return;
       const transcript = finalMessages
-        .map(
-          (m) => `${m.role === 'user' ? '사용자' : '어시스턴트'}: ${m.content}`,
-        )
+        .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
         .join('\n')
         .slice(0, 4000);
       const req: ChatRequest = {
@@ -352,7 +377,7 @@ export function useChatStreaming(
           {
             role: 'system',
             content:
-              '다음은 사용자와 AI의 대화 일부야. 이 대화의 핵심 주제를 한국어 5단어 이내의 명사구로 요약해줘. 따옴표나 마침표 없이 본문만 출력. 예: "표 합계 행 추가", "이미지 정렬 문의".',
+              'Summarize the core topic of the following User/Assistant transcript as a noun phrase of 5 words or fewer. Match the language of the transcript (Korean transcript → Korean title, English → English title). Output the title only — no quotes, no period, no leading label.',
           },
           { role: 'user', content: transcript },
         ],
@@ -429,6 +454,7 @@ export function useChatStreaming(
             name: evt.name,
             argsPreview,
             status: 'running',
+            kind: isReadOnlyTool(evt.name) ? 'read' : 'write',
           };
           setMessages((prev: any) =>
             prev.map((m: any) =>
@@ -578,20 +604,50 @@ export function useChatStreaming(
         // pendingCalls 는 더 이상 채워지지 않음 (legacy 호환 — 빈 Map
         // 유지해 아래 size>0 분기가 자연 dead code).
 
-        // Phase 1.5 — Parallel dispatch of read/auto-approved items.
-        // Each item gets its own dispatcher round-trip (true concurrency
-        // for IPC reads); writes within the same batch run sequentially
-        // inside dispatcher (tools.ts:runTools uses begin/endUndoGroup
-        // per call). turnTargetPathRef is captured per-item so a
-        // switchTargetDoc that ran above already has effect on writes
-        // sent in the same Promise.all (the batch sees the new ref).
+        // 0.4.10 — 다중 dispatch 시 read 와 write 분리:
+        //   reads  → Promise.allSettled (true 병렬, IR 무변경이라 안전)
+        //   writes → for-of 직렬 (race 차단 + AI 가 호출한 순서 보존)
+        // 이전엔 둘 다 병렬이라 다중 write 시 비결정적 interleaving 가능.
+        // (paragraph index shift 문제는 별개 — AI 가 bottom-up 순서로
+        //  호출하거나 매 write 사이 re-read 해야 함. prompt 가이드 참조.)
         if (parallelBatch.length > 0 && dispatcher) {
           const dispatch = dispatcher;
-          const settled = await Promise.allSettled(
-            parallelBatch.map((b) =>
+          const reads = parallelBatch.filter((b) => isReadOnlyTool(b.tu.name));
+          const writes = parallelBatch.filter(
+            (b) => !isReadOnlyTool(b.tu.name),
+          );
+
+          // reads — 병렬
+          const readResults = await Promise.allSettled(
+            reads.map((b) =>
               dispatch([{ ok: true, call: b.call }], turnTargetPathRef.current),
             ),
           );
+          // writes — 직렬 (AI 가 호출한 순서 보존)
+          const writeResults: typeof readResults = [];
+          for (const b of writes) {
+            try {
+              const v = await dispatch(
+                [{ ok: true, call: b.call }],
+                turnTargetPathRef.current,
+              );
+              writeResults.push({ status: 'fulfilled', value: v });
+            } catch (err) {
+              writeResults.push({ status: 'rejected', reason: err });
+            }
+          }
+          // 결과 병합 — parallelBatch 의 원래 순서 (id) 로 다시 매핑
+          const ordered: typeof readResults = [];
+          let ri = 0;
+          let wi = 0;
+          for (const b of parallelBatch) {
+            if (isReadOnlyTool(b.tu.name)) {
+              ordered.push(readResults[ri++]);
+            } else {
+              ordered.push(writeResults[wi++]);
+            }
+          }
+          const settled = ordered;
           for (let i = 0; i < parallelBatch.length; i++) {
             const b = parallelBatch[i];
             const s = settled[i];
@@ -611,6 +667,7 @@ export function useChatStreaming(
                 name: b.tu.name,
                 ok: true,
                 data: first.data,
+                diff: first.diff,
               });
             } else {
               partialResults.set(b.tu.id, {
@@ -621,6 +678,24 @@ export function useChatStreaming(
               });
             }
           }
+        }
+        // 0.4.19 — 도구 이력 누적. router 가 phase 판단에 사용.
+        for (const r of partialResults.values()) {
+          let summary: string | undefined;
+          if (!r.ok) summary = r.reason;
+          else if (r.data !== undefined) {
+            try {
+              const j = JSON.stringify(r.data);
+              summary = j.length > 120 ? `${j.slice(0, 120)}…` : j;
+            } catch {
+              /* ignore */
+            }
+          }
+          agentToolHistoryRef.current.push({
+            name: r.name,
+            ok: r.ok,
+            summary,
+          });
         }
 
         // UI 갱신 — 즉시 처리된 entries 는 ok/failed 로, write pending 은
@@ -634,10 +709,27 @@ export function useChatStreaming(
                 toolEntries: m.toolEntries.map((te: any) => {
                   if (partialResults.has(te.id)) {
                     const r = partialResults.get(te.id)!;
+                    let resultPreview: string | undefined;
+                    try {
+                      if (r.ok && r.data !== undefined) {
+                        let json = JSON.stringify(r.data, null, 2);
+                        const cap = isReadOnlyTool(r.name) ? 16384 : 4096;
+                        if (json.length > cap) json = json.slice(0, cap) + '…';
+                        resultPreview = json;
+                      } else if (r.ok) {
+                        resultPreview = `ok: ${r.name}`;
+                      } else {
+                        resultPreview = `error: ${r.reason ?? '?'}`;
+                      }
+                    } catch {
+                      resultPreview = '(non-serializable)';
+                    }
                     return {
                       ...te,
                       status: r.ok ? 'ok' : 'failed',
                       reason: r.reason,
+                      resultPreview,
+                      diff: r.diff,
                     };
                   }
                   if (pendingCalls.has(te.id)) {
@@ -677,6 +769,8 @@ export function useChatStreaming(
       agentTurnDepthRef.current = 0;
       setAgentTurn?.(0);
       agentToolUsesRef.current = [];
+      agentToolHistoryRef.current = [];
+      resetRouterCache();
       agentVerifiedExcerptsRef.current = [];
       assistantBufferRef.current = '';
       setStreaming(false);
@@ -731,17 +825,17 @@ export function useChatStreaming(
       // Build provider-bound message list. The system message
       // composition picks one of three context strategies for the
       // *target* doc (the active tab):
-      //   (1) excerpts present  → `[발췌]:` block, narrowly anchored
-      //   (2) attach toggle on  → `[현재 문서]:` whole-doc HTML
+      //   (1) excerpts present  → `[Excerpts]:` block, narrowly anchored
+      //   (2) attach toggle on  → `[Active doc]:` whole-doc HTML
       //   (3) neither           → no target body in prompt (just refs)
       // Excerpts win over the toggle when both are set, per
       // memory/project_chat_context_pipeline.md priority rule.
       //
       // Reference docs (chunk 21) are appended as an additional
-      // `[참조 문서]:` block when the user has opted any in. They are
-      // read-only — write tools (chunk 19) still target the active doc
-      // by construction since the dispatcher hands them to the active
-      // viewer's IR.
+      // `[Reference docs]:` block when the user has opted any in. They
+      // are read-only — write tools (chunk 19) still target the active
+      // doc by construction since the dispatcher hands them to the
+      // active viewer's IR.
       // Phase 3 — Agent 모드는 toolUses / toolResult 도 같이 직렬화.
       // OpenAI 어댑터가 native (tool_calls / role='tool') 로 변환한다.
       const messages: ChatMessage[] = history.map((m) => ({
@@ -763,7 +857,7 @@ export function useChatStreaming(
       } else if (attachDoc && getDocHtml) {
         const docHtml = getDocHtml();
         if (docHtml.length > 0) {
-          systemContent = `${SYSTEM_PROMPT_DOC_CONTEXT}\n\n[현재 문서]:\n${docHtml}`;
+          systemContent = `${SYSTEM_PROMPT_DOC_CONTEXT}\n\n[Active doc]:\n${docHtml}`;
         }
       }
       if (refOutlines.length > 0) {
@@ -801,6 +895,7 @@ export function useChatStreaming(
         provider,
         model,
         hasKey: !!opts.hasKey,
+        recentToolCalls: agentToolHistoryRef.current,
       });
       const allowed = new Set(selection.tools);
       request.tools = getAhwpToolCatalog()
@@ -850,6 +945,9 @@ export function useChatStreaming(
     if (text.length === 0 || streaming) return;
     // chunk 99 follow-up — 매 턴 시작 시 stop flag clear.
     agentStoppedRef.current = false;
+    // 0.4.19 — 새 user turn 시작 시 router 이력 + cache reset.
+    agentToolHistoryRef.current = [];
+    resetRouterCache();
 
     // Per-chip stale verification — chunk 20. Each chip's anchor is
     // re-read from the IR. Fresh = pass through. Relocated = update
@@ -1084,10 +1182,29 @@ export function useChatStreaming(
               if (r.reason === 'user-rejected') {
                 return { ...te, status: 'rejected', reason: r.reason };
               }
+              // 0.4.11 — 결과 JSON 미리 stringify 해 UI 의 확장 패널이
+              // 클릭 시 즉시 보여줄 수 있게. read tools 16k / write 4k cap
+              // (advanceAgentLoop 의 tool-result 메시지 cap 정합).
+              let resultPreview: string | undefined;
+              try {
+                if (r.ok && r.data !== undefined) {
+                  let json = JSON.stringify(r.data, null, 2);
+                  const cap = isReadOnlyTool(r.name) ? 16384 : 4096;
+                  if (json.length > cap) json = json.slice(0, cap) + '…';
+                  resultPreview = json;
+                } else if (r.ok) {
+                  resultPreview = `ok: ${r.name}`;
+                } else {
+                  resultPreview = `error: ${r.reason ?? '?'}`;
+                }
+              } catch {
+                resultPreview = '(non-serializable)';
+              }
               return {
                 ...te,
                 status: r.ok ? 'ok' : 'failed',
                 reason: r.reason,
+                resultPreview,
               };
             }),
           };

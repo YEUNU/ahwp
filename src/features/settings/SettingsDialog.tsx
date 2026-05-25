@@ -38,6 +38,7 @@ import {
   loadPlanModeDefault,
   savePlanModeDefault,
 } from '@/features/chat/hooks/useChatStreaming';
+import { loadHtmlPreview, saveHtmlPreview } from '@/features/chat/ChatPanel';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/app/use-theme';
 
@@ -369,6 +370,7 @@ function AiProvidersPane(): JSX.Element {
           </h3>
           <AgentSettingsRow />
           <PlanModeDefaultRow />
+          <HtmlPreviewRow />
         </div>
       </PaneBody>
       <PaneFooter hint="변경사항은 저장 버튼으로 반영됩니다. 키를 변경하려면 새 값을 입력하세요." />
@@ -458,6 +460,41 @@ function PlanModeDefaultRow(): JSX.Element {
         checked={planDefault}
         onChange={(e) => onChange(e.target.checked)}
         data-testid="settings-plan-mode-default-toggle"
+        className="mt-0.5 h-4 w-4 cursor-pointer accent-primary"
+      />
+    </label>
+  );
+}
+
+/**
+ * 0.4.23 — html 블록 자동 적용 토글. ON 이면 모델이 ```html``` 블록을
+ * emit 했을 때 자동 적용 대신 DiffCard 풍 Accept/Reject 카드 표시.
+ * OFF (default) 면 chunk 99 follow-up 의 자동 적용 흐름 유지 — 사용자가
+ * 만족 못하면 ⌘Z. patches block 의 Accept/Reject 흐름과 일관성 ↑.
+ */
+function HtmlPreviewRow(): JSX.Element {
+  const [preview, setPreview] = useState<boolean>(() => loadHtmlPreview());
+  const onChange = (next: boolean) => {
+    setPreview(next);
+    saveHtmlPreview(next);
+  };
+  return (
+    <label
+      className="flex cursor-pointer items-start justify-between gap-3 rounded-md border border-input bg-background px-3 py-2"
+      data-testid="settings-html-preview-row"
+    >
+      <div className="flex flex-col gap-0.5">
+        <span className="text-xs font-medium">HTML 블록 미리보기</span>
+        <span className="text-[10px] text-muted-foreground">
+          on=AI 의 ```html``` 블록을 자동 적용하지 않고 Accept/Reject 카드로
+          확인 (Diff 카드 흐름과 통일). off=자동 적용 (기본).
+        </span>
+      </div>
+      <input
+        type="checkbox"
+        checked={preview}
+        onChange={(e) => onChange(e.target.checked)}
+        data-testid="settings-html-preview-toggle"
         className="mt-0.5 h-4 w-4 cursor-pointer accent-primary"
       />
     </label>

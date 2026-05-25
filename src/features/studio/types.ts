@@ -170,6 +170,54 @@ export interface ViewerHandle {
     charOffset: number,
     text: string,
   ) => boolean;
+  /** 0.4.16 — cell-level text insert. 표 control 안의 특정 cell + cell-
+   *  paragraph + offset 에 raw 텍스트 삽입. AI 양식 채우기 시 표지 cell
+   *  의 빈 value 항목 (도입기업명 / 과제번호 등) 채울 때 사용. body-level
+   *  insertText 와 달리 표 layout 영향 없음. */
+  irInsertTextInCell: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+    cellIdx: number,
+    cellParaIdx: number,
+    charOffset: number,
+    text: string,
+  ) => boolean;
+  /** 0.4.23 — cell paragraph text reader. synthetic diff before/after용. */
+  irGetTextInCell: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+    cellIdx: number,
+    cellParaIdx: number,
+    startOffset: number,
+    endOffset: number,
+  ) => string | null;
+  /** 0.4.20 — cell-level deleteRange. lib `deleteRangeInCell`. patches
+   *  block 의 cell location 에서 텍스트 교체할 때 (deletion → addition
+   *  순서) delete 단계용. */
+  irDeleteRangeInCell: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+    cellIdx: number,
+    startCellParaIdx: number,
+    startOffset: number,
+    endCellParaIdx: number,
+    endOffset: number,
+  ) => boolean;
+  /** 0.4.20 — cell-level applyCharFormat. lib `applyCharFormatInCell`.
+   *  cell 내부에서 삽입한 영역에 char-shape 적용할 때. */
+  irApplyCharFormatInCell: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+    cellIdx: number,
+    cellParaIdx: number,
+    startOffset: number,
+    endOffset: number,
+    props: Record<string, unknown>,
+  ) => boolean;
   irDeleteRange: (
     sectionIdx: number,
     startParaIdx: number,
@@ -566,6 +614,84 @@ export interface ViewerHandle {
     level: number;
     text: string;
   }[];
+  /**
+   * Doc structural summary — used by the AI agent's `getDocumentSummary`
+   * read tool when `getOutline()` returns empty (doc has no heading
+   * styles). Returns per-section paragraph counts + non-empty counts +
+   * sample first/last filled paragraph so the agent can judge whether
+   * the doc is "filled" without having to blindly probe paragraphs by
+   * trial-and-error indices.
+   */
+  getDocumentSummary: () => {
+    sectionCount: number;
+    sections: {
+      sectionIdx: number;
+      paragraphCount: number;
+      nonEmptyCount: number;
+      firstFilled: { paragraphIdx: number; text: string } | null;
+      lastFilled: { paragraphIdx: number; text: string } | null;
+    }[];
+  } | null;
+  // === 0.4.24 — @rhwp/core 0.7.11 신규 API wrappers ===
+  irInsertEquation: (
+    sectionIdx: number,
+    paragraphIdx: number,
+    charOffset: number,
+    script: string,
+    fontSizeHwpunit?: number,
+    color?: number,
+  ) => boolean;
+  irDeleteFootnote: (
+    sectionIdx: number,
+    paragraphIdx: number,
+    controlIdx: number,
+  ) => boolean;
+  irDeleteEquationControl: (
+    sectionIdx: number,
+    parentParaIdx: number,
+    controlIdx: number,
+  ) => boolean;
+  irGetColumnDef: (sectionIdx: number) => Record<string, unknown> | null;
+  irGetFootnoteAtCursor: (
+    sectionIdx: number,
+    paragraphIdx: number,
+    charOffset: number,
+    direction: 'forward' | 'backward',
+  ) => Record<string, unknown> | null;
+  /** 0.4.25 — HWP3 외부 이미지 (lib 0.7.11). doc 가 file path 참조하는
+   *  이미지의 basename list 반환 (e.g. ["oracle.gif", "rdb02.gif"]). */
+  irGetExternalImageBasenames: () => string[];
+  /** 0.4.25 — HWP3 외부 이미지 binary inject. JS 가 fetch / fs.readFile
+   *  로 bytes 받아 lib 에 주입 → renderer 가 표시. */
+  irInjectExternalImage: (
+    basename: string,
+    bytes: Uint8Array,
+    displayPath: string,
+  ) => number;
+  /**
+   * 0.4.21 — empty form-field discovery. Walks every table cell in
+   * the document and emits a coordinate for every cell whose only
+   * paragraph has length 0 (= empty fillable spot). Includes a label
+   * hint (text of the adjacent left or top sibling cell) and the
+   * label's char-shape so the agent can apply matching typography.
+   * Deterministic, read-only, no IR mutation. Used as the discovery
+   * step for form-fill workflows so the LLM never has to guess
+   * coordinates by trial-and-error.
+   */
+  getEmptyFormFields: (opts?: { sectionIdx?: number; maxResults?: number }) => {
+    cellFields: {
+      location: {
+        sectionIndex: number;
+        paragraphIndex: number;
+        controlIndex: number;
+        cellIndex: number;
+        cellParagraphIndex: number;
+      };
+      labelHint: string;
+      labelCharShape?: Record<string, unknown>;
+    }[];
+    truncated: boolean;
+  } | null;
   /**
    * Capture the current viewer selection as a portable excerpt — chunk
    * 20. Returns null when no selection is active or the selection

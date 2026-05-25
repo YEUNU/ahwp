@@ -268,7 +268,12 @@ test.describe('chunk 91 — 한컴 툴팁 + 플랫폼 단축키', () => {
   });
 });
 
-test.describe('chunk 92 — SVG <title> 후처리', () => {
+// chunk 92 — SVG <title> 후처리 테스트 4종 제거 (Phase 6 chunk 107 / 0.4.0 에서
+// SVG render path 완전 제거됨). Canvas mode 의 L-004 narrow-column tooltip 은
+// `getPageTextLayout` per-run transparent overlay 로 복구 — 별도 회귀 가드
+// 신설 시 `tests/e2e/studio-canvas-overlays.spec.ts` 패턴 따라 추가할 것.
+
+test.describe.skip('chunk 92 — SVG <title> 후처리 (obsolete: Phase 6)', () => {
   test.skip(!existsSync(BLANK), 'fixtures/blank.hwpx missing');
 
   test.beforeEach(async () => {

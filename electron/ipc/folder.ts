@@ -108,9 +108,14 @@ function extractOutline(doc: RhwpDoc): OutlineItem[] {
   }
   const headingByStyleId = new Map<number, number>();
   for (const s of styles) {
+    // "제목 N" / "Heading N" — 표준 한컴 / 워드 호환. "개요 N" — 한컴
+    // 한국어 outline 스타일 (사업계획서 / 보고서 양식 다수 채용).
+    // 셋 다 picked up — 매칭은 number prefix 만 비교라 false positive
+    // 위험 미미. (`useViewerHandle.ts:getOutline` 와 동일 정합)
     const koMatch = s.name?.match(/^제목\s*(\d+)?/);
+    const koOutline = s.name?.match(/^개요\s*(\d+)?/);
     const enMatch = s.englishName?.match(/^Heading\s*(\d+)?/i);
-    const m = koMatch ?? enMatch;
+    const m = koMatch ?? koOutline ?? enMatch;
     if (m) {
       const level = m[1] ? Math.min(6, parseInt(m[1], 10)) : 1;
       headingByStyleId.set(s.id, level);
@@ -148,27 +153,56 @@ function extractOutline(doc: RhwpDoc): OutlineItem[] {
   return items;
 }
 
-type OutlineCache = Record<string, { mtime: number; outline: OutlineItem[] }>;
+type OutlineCacheEntries = Record<
+  string,
+  { mtime: number; outline: OutlineItem[] }
+>;
+
+interface OutlineCacheFile {
+  /** Cache schema version. Bump when the heading-detection rules in
+   *  `extractOutline` change so stale entries get re-parsed. */
+  version: number;
+  entries: OutlineCacheEntries;
+}
+
+// v1: original (제목 / Heading only)
+// v2: added 개요 style match — 0.4.4 fix for AI cross-doc read failure
+//     on Korean 사업계획서 양식 (uses 개요 N styles, not 제목 N).
+const OUTLINE_CACHE_VERSION = 2;
 
 function outlineCachePath(): string {
   return path.join(app.getPath('userData'), 'outline-cache.json');
 }
 
-async function loadOutlineCache(): Promise<OutlineCache> {
+async function loadOutlineCache(): Promise<OutlineCacheEntries> {
   try {
     const txt = await fs.readFile(outlineCachePath(), 'utf8');
-    const parsed = JSON.parse(txt);
-    if (parsed && typeof parsed === 'object') return parsed as OutlineCache;
+    const parsed = JSON.parse(txt) as Partial<OutlineCacheFile>;
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      parsed.version === OUTLINE_CACHE_VERSION &&
+      parsed.entries &&
+      typeof parsed.entries === 'object'
+    ) {
+      return parsed.entries;
+    }
+    // Mismatched / missing version — treat as empty so the next scan
+    // re-extracts every doc with the current rules.
   } catch {
     /* missing or corrupt — start fresh */
   }
   return {};
 }
 
-async function saveOutlineCache(cache: OutlineCache): Promise<void> {
+async function saveOutlineCache(entries: OutlineCacheEntries): Promise<void> {
   const dir = app.getPath('userData');
   await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(outlineCachePath(), JSON.stringify(cache), 'utf8');
+  const wrapped: OutlineCacheFile = {
+    version: OUTLINE_CACHE_VERSION,
+    entries,
+  };
+  await fs.writeFile(outlineCachePath(), JSON.stringify(wrapped), 'utf8');
 }
 
 export function registerFolderIpc(): void {
@@ -465,7 +499,7 @@ export function registerFolderIpc(): void {
       // Persist cache (best-effort, swallow errors). Drop entries for
       // paths that no longer appeared this scan to keep the cache from
       // growing unbounded across moved/deleted files.
-      const trimmed: OutlineCache = {};
+      const trimmed: OutlineCacheEntries = {};
       for (const e of out)
         trimmed[e.path] = { mtime: e.mtime, outline: e.outline };
       await saveOutlineCache(trimmed).catch(() => {});
@@ -686,6 +720,57 @@ export function registerFolderIpc(): void {
       // race that creates the file mid-call still bubbles up.
       await fs.cp(src, target, { recursive: true, force: false });
       return target;
+    },
+  );
+
+  // 0.4.25 — HWP3 외부 이미지 inject 용. 사용자가 폴더 선택 → 그 폴더
+  // (재귀 X) 안에서 basenames 와 매칭되는 파일들의 bytes 를 일괄 읽어
+  // 반환. 매칭되지 않은 basename 은 결과에 없음.
+  ipcMain.handle(
+    'folder:resolve-external-images',
+    async (
+      event,
+      basenames: string[],
+    ): Promise<{ basename: string; bytes: Uint8Array; fullPath: string }[]> => {
+      if (!Array.isArray(basenames) || basenames.length === 0) return [];
+      const window = BrowserWindow.fromWebContents(event.sender);
+      const result = await dialog.showOpenDialog(
+        window ?? new BrowserWindow({ show: false }),
+        {
+          title: '이미지 폴더 선택',
+          properties: ['openDirectory'],
+        },
+      );
+      if (result.canceled || result.filePaths.length === 0) return [];
+      const folder = result.filePaths[0];
+      const wanted = new Set(basenames.map((b) => b.toLowerCase()));
+      let entries: import('fs').Dirent[];
+      try {
+        entries = await fs.readdir(folder, { withFileTypes: true });
+      } catch {
+        return [];
+      }
+      const out: {
+        basename: string;
+        bytes: Uint8Array;
+        fullPath: string;
+      }[] = [];
+      for (const entry of entries) {
+        if (!entry.isFile()) continue;
+        const lower = entry.name.toLowerCase();
+        if (!wanted.has(lower)) continue;
+        // basenames 원본 case 로 매칭 (lib 가 case-sensitive 일 수 있음).
+        const original = basenames.find((b) => b.toLowerCase() === lower);
+        if (!original) continue;
+        const full = path.join(folder, entry.name);
+        try {
+          const buf = await fs.readFile(full);
+          out.push({ basename: original, bytes: buf, fullPath: full });
+        } catch {
+          /* skip unreadable */
+        }
+      }
+      return out;
     },
   );
 }

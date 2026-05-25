@@ -6,6 +6,360 @@
 
 ## [Unreleased]
 
+### Changed — @rhwp/core 0.7.12 + 네이티브 searchAllText 채택 (0.4.29)
+
+`@rhwp/core` 0.7.11 → 0.7.12 bump. Find 의 paragraph 텍스트 캐시 + `indexOf` 루프 (`useFindReplace.runFindSearch`) 를 lib 의 네이티브 `doc.searchAllText(query, false, false)` 호출로 치환. `findTextCacheRef` (`StudioViewer` / `useDocumentLifecycle` / `useDebugSurface` / `useFindReplace` 4 곳 wiring + mutation invalidation) 전부 제거. 동작 동일 — `include_cells=false` 로 기존 UI scope (top-level paragraph) 유지. 대소문자 무시·match 위치·count feedback 동일.
+
+### Fixed — Prompt 일관성 + tool router ALWAYS_INCLUDE 확장 (0.4.28)
+
+LLM-facing prompt 가독성 + form-fill 라우팅 신뢰성 개선.
+
+- `SYSTEM_PROMPT_DOC_CONTEXT` 슬림화 — `[A]/[B]/[C]` 응답 형식 라우팅 중복 제거 (AGENT_GUIDE 로 일원화). context 태그 설명만 유지.
+- 발췌 라벨 통일 `[Excerpt]:` → `[Excerpts]:` (serializer 와 일치).
+- AGENT_GUIDE 의 chunk-97 "User approval gate" stale 문단 제거 (chunk 99 follow-up 에서 즉시 dispatch 로 전환됨). "Execution model" 섹션 신설 — write tool 즉시 실행 + 그룹 undo + `ahwp-patches` 만 Accept/Reject 카드.
+- 자동 타이틀 prompt + transcript 라벨 한국어 → 영어 (`feedback_english_prompts`).
+- `toolRouter.ALWAYS_INCLUDE` 2 → 7개 확장: `getDocumentSummary`, `getEmptyFormFields`, `findInDocument`, `insertText`, `applyHtml` 추가. router 가 phase 선택에서 빠뜨려도 form-fill / 기본 편집 트리거가 항상 보장됨.
+
+### Added — A+B+C 패키지: fill 확장 / html DiffCard / write tool synthetic diff (0.4.23)
+
+세 가지 UX 개선 (사용자 의도: "다 진행"):
+
+**(A) prompt: 더 많은 cell 채우도록** — 0.4.22 가 4 cells 만 채우던 한계 보강. 원칙 강화: "walk entire result, not just first few. fill every field where the answer is unambiguous from user message". 휴리스틱 X (필드 enumeration 없음, 원칙만).
+
+**(B) html 블록 DiffCard 미리보기 통합** — Settings 토글 "HTML 블록 미리보기" 신설 (default OFF, backward compat). ON 시 모델의 `\`\`\`html\`\`\``블록 자동 적용 차단 + Accept/Reject 카드 표시. patches block 의 DiffCard 흐름과 일관성 ↑. testid: chat-html-preview-card / chat-html-preview-accept / chat-html-preview-reject. localStorage key:`ahwp:chat:html-preview`.
+
+**(C) write tool synthetic diff** — Agent write tool 호출 시 영향 paragraph 의 before/after 를 dispatcher 가 snapshot, ToolEntryRow 안에 inline mini-diff 렌더 (red strikethrough / green addition). `AhwpToolResult.diff?` 신규 필드 + `UiToolEntry.diff` propagation. 현재 `insertText` / `deleteRange` / `insertTextInCell` 3 종 커버. `irGetTextInCell` ViewerHandle wrapper 추가 (lib `getTextInCell`).
+
+unit 5/5 통과 (tools.test.ts mockViewer 에 irGetTextRange/irGetTextInCell 추가).
+
+### Fixed — Form-fill 4 단계 fix 로 in-place fill 도달 (0.4.22)
+
+증상 (사용자 보고): "AI 가 양식의 빈 곳에 넣는 게 아니라, 양식을 처음부터 만들어서 옆에 넣는다". 0.4.21 prompt + getEmptyFormFields 추가했어도 paraCount Δ=0 만 통과하고 실제 빈 cell 은 안 채워짐 (위양성).
+
+4 단계 fix:
+
+(1) **deletion/addition null coercion** — `parsePatchBlock` 가 `undefined`/`null` → `""` coerce. AI 가 빈 cell 채울 때 deletion 을 omit/null 로 보내도 통과 (배열/객체는 여전히 reject). LLM 입장에서 자연스러운 응답 허용. unit test 3 개 추가 (missing/null/array).
+
+(2) **prompt schema 인라인** — patches block 의 abstract schema 를 prompt 에 표시. `location.cell` 누락하면 body path 로 라우트되어 cell 밖 삽입된다는 사실 명시. "copy verbatim from getEmptyFormFields" 권장.
+
+(3) **maxResults cap 500→5000** — helper / validator / catalog 모두. 큰 양식 (cell 700+ 개) 에서 truncation 위양성 회피 — before/after 둘 다 cap hit 하면 delta 항상 0.
+
+(4) **e2e 어설션 정확화** — `paraCountΔ < 20` hard limit (`>5` console.warn 시그널). `filledCellDelta > 0` + `patches block emit` 추가 검증.
+
+라이브 검증 (gemma-4, 2 round 일관):
+
+```
+round 1 (가상 업체):  paraΔ=0  filled=4  patchesBlocks=1  1.1m
+round 2 (다른 회사):  paraΔ=0  filled=4  patchesBlocks=1  52s
+```
+
+이전 버전 비교:
+
+```
+0.4.18:  paraΔ=+10  (양식 dump 위양성)  6.9m
+0.4.19:  paraΔ=+16  (양식 dump 확실)     3.2m
+0.4.20:  paraΔ=+12  (양식 dump)          3.5m
+0.4.21:  paraΔ=0    (in-place X, fill X) 1.9m   ← 진전 시작
+0.4.22:  paraΔ=0    (in-place fill ✓)   ~1m   ← 사용자 의도 도달
+```
+
+unit 10/10 통과 / live 2/2 통과.
+
+### Added — getEmptyFormFields discovery 도구 + form-fill workflow prompt (0.4.21)
+
+목표: AI 가 양식의 빈 cell 좌표를 trial-and-error 없이 deterministic 하게 알아내도록. 기존엔 "양식 채워줘" → AI 가 좌표 모름 → applyHtml 로 새 양식 통째 author → 원본 옆 dump (paraCount 폭증). Discovery 도구로 lookup 한 번에 좌표 + 라벨 + char-shape 받고 patches block 으로 in-place fill.
+
+신규 read tool — `getEmptyFormFields(sectionIdx?, maxResults?)`:
+
+- 모든 table cell 을 walk 해 paragraph 길이 0 + paragraph count 1 인 cell 의 좌표 enumerate
+- 각 빈 cell 마다 label hint (left sibling 의 텍스트, 없으면 top sibling) + label 의 char-shape (font/size/bold) 동봉
+- 휴리스틱 X — paragraph 길이 검사만. 필드 이름 enumeration 없음
+- shared helper `enumerateEmptyFormFields` — useViewerHandle (AI dispatch) / useDebugSurface (deterministic e2e) 둘이 공유
+- 6 surface 동기화: catalog / validator / dispatcher / preview args / ViewerHandle types / \_\_studioDebug
+
+deterministic e2e 검증 (`tests/e2e/nvidia-live.spec.ts getEmptyFormFields — deterministic`):
+
+- 사업계획서 fixture 에서 빈 cell 200+ 개 발견, 라벨 32개 (도입기업명 / 공급기업명 / 과제번호 / 컨소시엄 참여 / 수행시 2026 etc.)
+- labelCharShape 가 lib props 모양으로 정상 반환
+
+Agent prompt — form-fill workflow:
+
+- "fill, don't author" 원칙 명시
+- 절차: getEmptyFormFields → 의도 매칭 → patches block (location.cell + additionFormat.lib = labelCharShape)
+- applyHtml / body insertText 는 form-fill 에서 사용 금지 ("새 양식 author 위험")
+- Sanity check directive: paragraphCount Δ < 5 — 그보다 크면 author 했다는 신호
+
+e2e 어설션 정확화 (0.4.14):
+
+- 기존: `filled = paraCount Δ > 0 OR para0 len Δ > 0` 위양성 (양식 dump 도 PASS)
+- 신규: paraCount Δ < 20 hard limit. Δ > 5 면 console.warn (튜닝 시그널)
+
+probeControls 진단 도구 (`__studioDebug`) — 빈 cell discovery 가 작동 안 할 때 lib `getControlTextPositions` / `getTableDimensions` 결과 dump. 초기 디버깅에서 `getControlTextPositions` 가 control descriptor 가 아니라 char offset 배열만 반환한다는 사실 (lib 문서 미상세) 발견 → enumerateEmptyFormFields 의 ctrlIdx 결정 로직 수정.
+
+### Changed — Patches schema 확장 (cell + charShape) + Agent text/structure 분기 (0.4.20)
+
+목표: 양식 cell 채우기 같은 텍스트 변경을 ahwp-patches 블록 (DiffCard 미리보기) 으로 표현 가능하게 schema 확장. Agent prompt 가 텍스트 vs 구조 명확히 분기. LLM 비결정성을 사용자 Accept/Reject 게이트가 흡수.
+
+patches schema (`shared/ai-patches.ts`):
+
+- `PatchLocation.cell?: { controlIndex, cellIndex, cellParagraphIndex }` 추가. 표 cell 내부 좌표 표현. paragraphIndex 는 표 control 의 anchor paragraph, startOffset/endOffset 은 cellParagraphIndex 안 char range
+- `PatchCharFormat.fontName?: string` (lib `name` 매핑) + `lib?: Record<string, unknown>` raw passthrough 추가. 모델이 `getCharPropertiesAt` 결과를 그대로 dump 가능 (key mapping 없이)
+- `patchFormatToLibProps(fmt)` 추가 — typed 키 (fontName/fontSize/textColor) 를 lib props_json 키 (name/size_hu/color int) 로 변환. lib raw 가 있으면 base 로, typed 가 그 위에 덮음
+- validator 가 cell 좌표 + lib passthrough 검증 (음수 / 잘못된 shape 거절)
+- 7 unit test 추가 (`shared/ai-patches.test.ts`) — backward compat / cell parsing / fontName+lib passthrough / lib props 매핑
+
+ViewerHandle wrappers (`src/features/studio/`):
+
+- `irDeleteRangeInCell` — lib `deleteRangeInCell`. cell patch 의 deletion 단계
+- `irApplyCharFormatInCell` — lib `applyCharFormatInCell`. cell 내부 삽입 영역 char format
+
+`AppShell.applyPatches` 라우팅 (`src/app/AppShell.tsx`):
+
+- location.cell 있으면 → irDeleteRangeInCell (deletion 길이 0 이면 skip) + irInsertTextInCell + 옵션 irApplyCharFormatInCell. cell 없으면 기존 body path
+- additionFormat 있으면 patchFormatToLibProps 로 매핑 후 (cell 여부 따라) applyCharFormat 또는 applyCharFormatInCell. 이전엔 typed 키를 lib 에 그대로 넘겨 size_hu / color int 변환 누락 — 이번에 fix
+- 모두 같은 undo group (turn 1회 ⌘Z)
+
+Agent prompt (`src/features/chat/prompts.ts`):
+
+- "Core rule" 갱신: text edits → ahwp-patches 블록 (사용자 Accept/Reject), structural ops → write tool. 두 경로 schema 모델에게 명시
+- patches 블록 schema 인라인 (location.cell / additionFormat.lib 등) — LLM 이 직접 schema 보고 생성
+- char-shape 매칭 절차: read tool 로 sibling char-props → additionFormat.lib 에 그대로 dump
+
+### Changed — Phase-aware tool router + 모든 LLM-facing prompt 영어 (0.4.19)
+
+목표: tool router 가 "정보 부족 → 검색 / 정보 충분 → 작성" 흐름을 자동 판단해 매 turn subset 을 phase 에 맞춰 좁힘. 사용자 지시: "정보가 부족하면 검색, 정보가 다 있으면 작성 이런식으로 알아서 되게 하고 싶은데" + "llm에 제공하는 프롬프트 다 영어로 사용해".
+
+router phase-aware (ⓑ):
+
+- `selectToolsViaLlm` signature 에 `recentToolCalls: { name; ok; summary? }[]` 추가. 비어있으면 turn 1 신호 → 사용자 query 만 보고 결정. 있으면 phase 판단.
+- router system prompt 에 phase 원칙 추가 (휴리스틱 X — 원칙만):
+  - 이력 빔 → query 만 보고 결정 / 좌표 모호하면 read 위주
+  - read 위주 + 좌표·구조 충분히 모임 → write 위주로 전환
+  - 직전 write 포함 → verify read 위주 (동일 write 반복 회피)
+  - read 결과 빔 / 부족 → 다른 read 시도
+  - same tool 여러번 fail → 다른 접근
+- `useChatStreaming` 에 `agentToolHistoryRef` 신설. tool dispatch 결과를 매번 push (name + ok + 결과/reason 의 120자 요약). send/regenerate/stop/turn-end 시 reset.
+- router cache (`cachedKey + cachedResult`) — 같은 query + 같은 history 면 LLM 호출 생략. phase 가 변하지 않은 turn 이 둘 이상이어도 추가 비용 0. `resetRouterCache()` 가 user message 시작 + turn 종료 시 호출.
+
+LLM-facing prompt 영어 변환:
+
+- `prompts.ts` — `SYSTEM_PROMPT_DOC_CONTEXT` 전체 영어 (output language directive 포함 — 사용자 응답 언어는 user 메시지 언어). `buildReferenceSystemBlock` / `buildExcerptSystemPrompt` 영어. `[현재 문서]:` → `[Active doc]:`, `[참조 문서]:` → `[Reference docs]:`, `[발췌]:` → `[Excerpts]:`.
+- `useChatStreaming` 의 doc context label 도 동기화.
+- `toolRouter.ts buildRouterSystemPrompt` / `buildRouterUserPrompt` 영어.
+- `shared/ai-tool-catalog.ts` 60+ tool description 모두 영어. 한컴 스타일 이름 (`제목 N` / `개요 N`) 만 매칭 식별자로 그대로 유지.
+- `feedback_english_prompts` memory 추가 — 향후 prompt 작성 시 영어 default.
+
+증상 1 — `findInDocument {"query":"도입기업명"}{"query":"과제번호"}{"query":"사업기간"...}` invalid JSON 으로 query-not-string 에러. 사용자 보고: "이것도 맨날 이렇고".
+
+근본 원인: `electron/ai/providers/openai.ts` 의 tool_calls SSE 누적이 `tc.index` 만 key 로 사용. NVIDIA NIM gemma-4 는 parallel tool calls 를 모두 같은 `index=0` 으로 emit (id 만 다름) — 이전 코드가 같은 슬롯에 args 를 무한 concat → JSON.parse 실패 → `__rawArguments` fallback → validator 가 `query` 필드 없다고 거절.
+
+수정: id 기반 dedup. `slotById` 맵 추가, `tc.id` 가 있으면 id 우선 lookup, 없으면 마지막으로 활성이었던 index slot continuation 으로 처리. 표준 OpenAI 스펙 (index unique per call) 도 backward compat — id 가 처음 나타날 때 indexToSlot 도 함께 갱신.
+
+증상 2 — `getDocumentOutline` 항상 `[]`. 사용자 보고: "왜 맨날 비어있어?".
+
+근본 원인 (버그 X — 데이터 미스매치): 사업계획서 양식 같은 일부 한글 doc 은 heading 스타일 (`제목 N` / `개요 N` / `Heading N`) 을 안 쓰고 본문 + 표 만으로 구성. `getOutline` 의 styleId → level 매핑이 빈 채로 시작 → 항상 빈 결과.
+
+진단 추가: outline 결과가 빈 경우 `console.info` 로 doc 의 styleList 전체 (`id:name/englishName, ...`) dump. 사용자 / 개발자가 어떤 스타일 이름이 있는지 즉시 확인 가능. 모델은 catalog description 에 이미 명시된 fallback (`getDocumentSummary`) 으로 우회.
+
+### Changed — Claude Code 식 chat tool UI + 양식 cell 채움 시 char-shape 매칭 가이드 (0.4.17)
+
+목표: chat panel 의 tool 호출 표시를 (a) read = 자료 수집 / write = 실제 작업 으로 시각 분리 (b) 인접 read 들을 하나의 접힘 그룹으로 묶기 (c) 양식 cell 채울 때 AI 가 인접 cell 의 글꼴/사이즈 를 명시 매칭 하도록 prompt 강화.
+
+UI A — read/write 시각 분리:
+
+- `UiToolEntry` 에 `kind: 'read' | 'write'` 필드 추가. `useChatStreaming` 의 entry 생성부에서 `isReadOnlyTool(name)` 으로 채움
+- `ToolEntryRow` 가 kind 기반 분기 — write 는 bordered 카드 (`bg-muted/30` + `shadow-xs` + `font-mono`), read 는 dim 한 줄 (`text-muted-foreground/60` + `text-[11px]`)
+- 아이콘 분리: write=`✏️`, read=`🔍` (이전 통일 `🔧` 폐기)
+
+UI B — 연속 read 묶음 처리:
+
+- `groupToolEntries(entries)` 가 인접 read entries 를 단일 `read-group` 으로 fold, write 는 run 을 끊음
+- `ReadGroup` 컴포넌트 — 진행중: "🔍 자료 수집 중 (n)" / 완료: "✓ 자료 수집 (n)" / 일부 실패: "⚠ 자료 수집 (k/n 성공)". 클릭 펼치면 개별 row
+- testid: `chat-tool-read-group` / `chat-tool-read-group-toggle` / `chat-tool-read-group-detail`. data-tool-kind=read|write
+
+(b1) — cell 채움 시 char-shape 명시 매칭:
+
+- `prompts.ts` Anchored-write workflow §2 에 cell 채움 후 sibling cell 의 `getCharPropertiesAt` → `applyCharFormat` 절차 추가. `applyCharFormat` 의 lib quirk (empty paragraph no-op) 도 같이 명시 — 텍스트 삽입 후에 format
+- `useDebugSurface.getCharProps(sec, para, off)` 노출 — deterministic e2e 검증용. 이전엔 lib 메서드만 있고 debug surface 없어 fixture 단위 검증 불가능했음
+- 인프라 확인: `getCharPropertiesAt` 는 이미 6 surface (이름/READONLY/Args/catalog/validator/dispatcher/ViewerHandle) 모두 wired — 추가 작업 X. 변경은 prompt + debug 만
+
+### Changed — prompt 휴리스틱 일괄 제거 + insertTextInCell 도구 추가 + 양식 채움 live 검증 (0.4.16)
+
+목표: 양식 doc 의 write-intent query 가 (a) layout 파손 X (b) 실제로 채움 (c) 휴리스틱 enumeration 없는 prompt. 사용자 지시 — "프롬프트 휴리스틱하게 쓰지마" + "양식에 맞게 내용 채울 때까지 시도".
+
+휴리스틱 sweep (모델로 가는 prompt surface 한정):
+
+- `prompts.ts SYSTEM_PROMPT_DOC_CONTEXT` — 도구 args few-shot 예시 (section name, color 값, specific Korean text 등) 일괄 제거. JSON args schema shape 만 남김
+- `prompts.ts SYSTEM_PROMPT_AGENT_GUIDE` — specific section number example / 한국어 field name enumeration / multi-position writes 의 wrong/right 코드 예시 모두 제거. 원칙 ("structured documents", "anchored writes", "cell context detection") 만 남김
+- `prompts.ts SYSTEM_PROMPT_PLAN_MODE_SUFFIX` — specific tool args 예시 제거
+- `ai-tool-catalog.ts` 도구 description 의 한국어 field name / 가상 시나리오 예시 제거 (`insertTextInCell` / `getDocumentSummary` / `switchTargetDoc`). 구조적 의미만 남김
+- `tools.ts insertText guard reason` — "양식 표지" specific 표현 제거. 구조적 패턴만 명시
+
+신규 도구 — cell-level write:
+
+- `insertTextInCell(sectionIdx, parentParaIdx, controlIdx, cellIdx, cellParaIdx, charOffset, text)` AI 도구 추가. 4 surface (catalog / validator / types / dispatcher) 정합 — 도구 카운트 60→61
+- `useViewerHandle.irInsertTextInCell` lib 의 `doc.insertTextInCell` thin wrapper
+
+Live 검증 (gemma-4 + 사업계획서 fixture + write-intent query):
+
+- 정리 전: paraCount 315→315, para0 len 0→0 (AI 가 아무 것도 안 함)
+- 정리 후: paraCount 315→325 (+10), para0 len 0→25 (+25), destructive insertText entries 0
+- 일관된 behavior — 연속 두 번 실행 모두 채움 + layout 보존
+- live test 에 "AI 가 실제 채웠는지" assertion 추가 (filled = paraCount 증가 OR para0 len 증가)
+
+메모리 박제: `feedback_no_heuristic_prompts.md` — system prompt 에 keyword enumeration / few-shot / 특정 양식·필드명 list 금지 원칙
+
+### Test — write-intent live regression (양식 layout 파손 가드) (0.4.15)
+
+목적: 사용자 두 번째 보고 케이스 — "양식에 내용 채워넣는 것" — live NIM 으로 검증. 가상 업체명 (테크플로우 / TechFlow) + 예지보전 사업으로 사업계획서 양식 채워달라는 query 후 표지 layout 보존 확인.
+
+신규 테스트:
+
+- `tests/e2e/nvidia-live.spec.ts` "0.4.14 회귀 — 양식 doc 의 write-intent query 가 표지 layout 파손 안 함"
+- `test.setTimeout(300_000)` — multi-turn agent + LLM 지연 대비 (default 60s 부족)
+- 양식 paragraph 0 길이 baseline + 100 안 넘는지 검증 (bug 인 경우 200+ 자 dump)
+- `chat-tool-entry` 의 `insertText` failed entry 가 있다면 reason 이 dispatcher guard 거절 메시지인지 검증
+- 38초 live 통과: paraCount 315→315 / para0 len 0→0 / insertText entries 0 (AI 가 prompt 가이드 따라 시도조차 안 함)
+
+해석: 0.4.9 prompt 가이드가 매우 효과적 — AI 가 양식 doc 인지하고 destructive `insertText(0,0,0,multiline)` 시도조차 안 함. 0.4.12 hard guard 는 fallback 으로 대비. layout 보존은 ✓, 단 자동 채움도 안 됨 (보수적 응답). 적극 채움은 추후 prompt 정밀화 후보.
+
+### Test — NIM live e2e default 모델 gemma-4 + 사용자 실패 케이스 live 검증 (0.4.14)
+
+목적: 사용자 결정 (gemma-4 default for live tests) 적용 + 사용자 직접 보고된 "사업계획서 읽고 누락 부분 찾아줘" 시나리오를 live NIM 으로 검증.
+
+- `tests/e2e/nvidia-live.spec.ts` default model `qwen/qwen3.5-122b-a10b` → `google/gemma-4-31b-it` 6 sites sed
+- chunk 48 의 dynamic model selector (`<select>`) 호환 — `localStorage.ahwp:chat:models` + `ahwp:chat:provider` 주입으로 fill / selectOption 우회
+- `chat-key-indicator` lucide 아이콘 전환 (text `●` 사용 안 함) — 5 sites `toHaveText(/●/)` → `toHaveAttribute('data-state', 'ok')`
+- 신규 테스트 "0.4.13 회귀 — 양식 doc 의 read-intent query 가 IR 변경 안 함" — 실제 사업계획서 fixture (`examples/4. [사업계획서] ... .hwp`) 활용, gemma-4 호출, "이 사업계획서 읽고 누락된 부분이 있는지 찾아줘" 같은 read query 후 paragraphCount + 첫 5단락 + applied-toast count 모두 무변경 검증. 26초 안에 통과 (live)
+- 메모리 박제: `feedback_default_test_model.md` — Playwright live test 의 default 는 항상 gemma-4 사용
+
+### Test — chat e2e 갱신 + 미커버 fix 회귀 가드 (0.4.13)
+
+목적: 사용자 검증 격차 메우기. 기존 stale 7건 (chunk 99 follow-up 0.3.40 부터 깨져 있던 것) 정정 + 본 세션 fix 의 회귀 가드 신규.
+
+stale 정정:
+
+- `chat-tools.spec.ts:195` "html and ahwp-tools both buttons render" — plan mode default ON 으로 button 노출 (0.3.40 부터 button 이 plan mode gate)
+- `chat-section-replace.spec.ts:160, 218` "outline 매치 / 비어있음 → 버튼 텍스트" 2건 — 동일 plan mode 활성화
+- `chat-multidoc.spec.ts:82, 103, 115, 126` "target chip / reference checkbox" 4건 — feature 자체 폐기 (`MultiDocChips` 제거 since 0.3.40) 라 `test.skip` + 사유 명시. 회귀 가드는 `chat-excerpt.spec.ts` (📌 발췌 첨부) 가 cover
+
+신규 회귀 가드:
+
+- `chat-section-replace.spec.ts` "0.4.6 회귀 — sectionMatch 없는 markdown 응답은 자동 적용 X" — paragraph 0 길이 사전/사후 비교 + applied-toast 카운트 0 검증. 사용자 보고 "조회인데 문서 mutate" 직접 가드
+- `chat-tool-ui.spec.ts` 신설 — 0.4.11 single-line truncate (행 높이 < 32px), chevron 노출, click → result panel + 재클릭 → 접힘. JSON 키 (sectionIndex/paragraphIndex) 매치로 result 정확성도 검증
+
+검증:
+✓ chat e2e 9 spec (43 passed, 9 skipped, 0 failed) — 본 세션 직전 7 failed 였던 것 0 건으로
+✓ studio e2e 16 passed, 10 skipped — 회귀 0건
+
+미커버 (의식적):
+
+- 0.4.10 multi-write 직렬화: fake provider 가 multi-tool emit 미지원 — 결정적 e2e 어려움. 코드 review 로 검증 (parallelBatch.filter(read/write) + Promise.allSettled vs for-of)
+- 0.4.8 Keychain cache: OS 의존 — e2e 환경에서 keychain prompt 자체 안 뜸
+- 0.4.9 prompt 가이드: 모델 동작 — e2e 비결정적
+
+### Fixed — `insertText(0,0,0,multiline)` dispatcher hard guard (0.4.12)
+
+증상: 0.4.9 의 prompt 가이드 추가 후에도 일부 LLM (gpt-5.x) 이 사업계획서 양식 doc 에서 또 `insertText(0,0,0,"...100+ 줄...")` 호출 → 표지 layout 파손 재발 (사용자 두 번째 보고).
+
+원인: prompt 만으로는 강제력 부족. router LLM 이 catalog subset 만 통과시키면 AI 가 applyHtml 옵션 자체 못 보는 경우도 있음.
+
+수정: dispatcher (`tools.ts:runOne`) 의 `insertText` 케이스에 hard guard. `sectionIdx === 0 && paragraphIdx === 0 && charOffset === 0 && text.includes('\\n')` 조합이면 IR mutation 없이 `{ ok: false, reason: 'insertText-at-doc-start-with-multiline-rejected: ...' }` 반환. AI 가 다음 turn 에 error 보고 applyHtml 또는 findInDocument anchor 로 재시도.
+
+회귀 가드: `tools.test.ts` 5 단위 테스트 — guard 거절 / single-line allow / non-(0,0,0) allow / (0,0,N>0) allow / undo group 일관성.
+
+### Changed — Tool 호출 UI 한 줄 truncate + 결과 확장 패널 (0.4.11)
+
+요청: AI 도구 호출 표시를 한 줄로, 결과는 확장 버튼 클릭 시에만 노출.
+
+- `chat-tool-entry` 행이 본격 single-line — 부모 flex 가 `min-w-0` + 자식 args span 이 `flex-1 truncate` 라 너비 안 넘김. 이전엔 truncate 가 있었지만 부모 min-w-0 부재로 wrap 발생 (스크린샷에서 "text-too-large" 가 두 줄 차지하던 이유)
+- 새 ▶ chevron 버튼 — 클릭 시 result panel (▼ 로 토글) 펼침. result 는 monospace `<pre>` (max-h-60, overflow-auto, JSON 2-space indent) 로 표시. result 없는 entry (running / pending) 는 chevron 숨김
+- `UiToolEntry.resultPreview` 필드 신규 — `useChatStreaming` 가 partialResults 도착 시 JSON.stringify 해 미리 저장. read tools 16k cap, write tools 4k cap (advanceAgentLoop 의 tool-result 메시지 cap 정합)
+- 새 `ToolEntryRow` 컴포넌트 — 행 + 확장 패널을 한 단위로 캡슐화. 기존 `data-testid` 모두 보존 (chat-tool-entry / chat-tool-approve / chat-tool-reject) + 신규 `chat-tool-expand`, `chat-tool-result`
+
+### Fixed — 다중 write tool 병렬 dispatch race + bottom-up 가이드 (0.4.10)
+
+증상: AI 가 한 turn 에 다중 write tool (예: `insertText` × 5) batch 시 비결정적 interleaving + paragraph index shift 로 의도 안 된 위치에 적용. 사용자: "다중 위치에 동시 작업할 때도 동작하나?"
+
+원인 두 갈래:
+
+- **JS-level 병렬 dispatch (코드 결함)**: `useChatStreaming.ts` 의 `Promise.allSettled(parallelBatch.map(...))` 가 read / write 구분 없이 모두 병렬 dispatch. write 가 race 가능. 코드 의도는 read 만 병렬이었는데 write 도 같이 휘말림
+- **Paragraph index shift (구조적 한계)**: write 1 이 paragraph 추가 시 후속 write 의 target idx 가 stale. AI 가 single read 의 idx 를 multi-write 에 재사용하면 어긋남
+
+수정:
+
+- 코드: `parallelBatch` 를 `reads` (`Promise.allSettled` 병렬) + `writes` (for-of 직렬, AI call 순서 보존) 로 분리. read 가속은 유지하면서 write race 차단. 결과 ordering 은 AI tool call 의 원래 순서대로 partialResults 에 매핑
+- prompt 가이드 신규 섹션 "Multi-position writes — paragraph indices SHIFT during a turn" — bottom-up 순서 / 매 write 전 anchor re-resolve / "reads parallel, writes serial" 명시 / 안전 패턴 (one write per turn) + wrong/right 예시
+
+이제 다중 write 도 race 없이 작동. 단 AI 가 bottom-up / re-resolve 안 하면 idx shift 는 여전 — prompt 로 유도.
+
+### Changed — Agent prompt + insertText description 강화 — 양식 doc layout 파손 방지 (0.4.9)
+
+증상: 사업계획서 양식 (표지 표 + 섹션 구조) 에서 "작성해줘" 요청 시 AI 가 `insertText(0,0,0,...)` 호출. 평문 + `\n` paragraph break 만 있어 표지 표 cell 안에 raw text dump → 양식 layout 망가짐. 사용자 보고: "문서 형식 하나도 안맞아".
+
+원인: prompt 가이드 가 양식 doc 에서의 insertText 위험 미언급. 도구 description 도 "raw 텍스트만 추가할 때 사용" 정도라 AI 가 (0,0,0) 호출의 destructive 결과를 인지 못 함.
+
+수정:
+
+- `prompts.ts` SYSTEM_PROMPT_AGENT_GUIDE 에 신규 섹션 "Form / template documents — DO NOT use insertText at (0,0,0)" 추가. 사업계획서 / 보고서 양식 다룰 때 4단계 체크리스트 (anchor 식별 → cell 여부 확인 → applyHtml 선호 → 100+ 줄 single insertText 금지)
+- `ai-tool-catalog.ts` insertText description 강화: "양식 doc 의 (0,0,0) 호출 금지" / "char-shape 만 상속" / "heading 혼합 시 applyHtml 사용" 명시 + 안전 사용처 예시
+
+향후 회귀 가드는 양식 doc fixture 로 e2e 추가 (사용자 실제 양식 .hwp 가 examples/ 에 있으면 활용).
+
+### Fixed — macOS Keychain prompt 가 매 채팅 turn 마다 반복 (0.4.8)
+
+증상: API 키 저장 후 채팅마다 macOS Keychain 인증 prompt 발생. 사용자 입장 — Settings 한 번 + 첫 채팅 한 번 = 최소 2회.
+
+원인: `getSecret` 이 매 호출마다 `safeStorage.decryptString` 호출. Keychain ACL = "Allow once" (사용자가 "Always Allow" 안 누름) 시 매 decrypt 가 새 access 로 간주되어 prompt. main-process 가 이미 trusted 인데도 매번 키 chain 재방문.
+
+수정: `electron/store/secrets.ts` 에 main-process plaintext 캐시 (`plaintextCache: Map<ProviderId, string>`) 추가. 첫 decrypt 후 캐시 — 같은 session 내 후속 `getSecret` 은 silent. `setSecret` 은 plaintext 그대로 캐시 warm-up. `deleteSecret` 는 캐시 invalidate. **renderer 노출 0** — `secrets:get` IPC 는 여전히 없음, 캐시는 main-process 메모리 한정.
+
+사용자 측 추가 권장: Keychain prompt 첫 등장 시 **"Always Allow"** 클릭 — 이후 모든 access 가 silent (이번 fix 포함 / 미포함 무관 효과).
+
+### Fixed — OpenAI Responses API 다중 tool 호출 turn 직렬화 시 `type:'list'` 400 에러 (0.4.7)
+
+증상: 한 turn 에 다중 tool call (예: `findInDocument` 12회 연속) 한 후 다음 turn 진입 시 OpenAI / NVIDIA NIM / Custom (OpenAI 호환) 모두 400 — `Invalid value: 'list'. Supported values are: 'function_call', 'function_call_output', 'message', 'reasoning', ...`. agent loop 가 도중에 stuck.
+
+원인: `electron/ai/providers/openai.ts:toResponsesInputItem` 가 ChatMessage → /v1/responses input item 변환 시, 한 assistant 메시지의 `toolUses` 가 2개 이상이면 임의의 wrapper `{ type: 'list', items: [...] }` 로 묶어 전송. Responses API 는 'list' 타입 미지원 → 즉시 reject.
+
+수정: 변환 함수 시그니처를 `Record → Record[]` 로 바꿔 한 assistant turn 의 N개 tool call 이 N개 individual `function_call` item 으로 평탄화. 호출 측은 `messages.map` → `messages.flatMap` 으로 spread. NVIDIA / Custom 어댑터가 `openaiProvider.chat` 에 위임하므로 같은 fix 가 셋 다 cover.
+
+### Fixed — Read-only 의도 query 가 markdown fallback 자동 적용으로 doc mutate (0.4.6)
+
+증상: "사업계획서 읽고, 다 채워졌는지 확인해줘" 같은 read-only 의도 요청 시 AI 가 read tool 호출 후 informational 텍스트 (옵션 나열 / 질문) 로 응답. Agent loop 의 final text 메시지는 `toolEntries` 가 비어있어 `markdownToHtml` fallback 이 발동, 변환된 HTML 이 active doc 에 자동 insert. 사용자 입장: "조회한 건데 문서 내용이 바뀌었네."
+
+원인: `ChatPanel.tsx` 의 auto-apply useEffect 가 `htmlPayload` 만 보고 dispatch. markdown fallback 의 출처 (사용자 의도) 무관. agent loop 의 마무리 conversational 응답이 markdown 패턴 (목록 / 강조 / 표) 만 가지면 그대로 적용.
+
+수정: markdown fallback 자동 적용은 `sectionMatch` (응답이 `### N.N.N ...` 같은 섹션 번호 heading 으로 시작) 가 매칭됐을 때만. 그 외 markdown 응답은 chat 안에 conversational 로 표시, 적용 X. 명시적 ` ```html``` ` 블록은 의도적 payload 라 기존 동작 유지 (sectionMatch 무관 적용).
+
+### Added — `getDocumentSummary` AI read tool — heading 없는 doc 의 "채워졌는지" 판정 (0.4.5)
+
+증상: 사용자가 사업계획서 양식 (heading 스타일 미사용 — 본문 / 표 셀로만 구성) 을 활성 탭으로 두고 "다 채워졌는지 확인해줘" 요청 시 AI 가 `getDocumentOutline` → `[]` → `getTextRange(0,0,0,0,...)` 첫 단락만 보고 "doc is empty" 결론. AI 가 paragraphCount / sectionCount 를 알 수단이 카탈로그에 없어 blind probe 실패.
+
+수정:
+
+- 새 read tool `getDocumentSummary` — `{ sectionCount, sections: [{ paragraphCount, nonEmptyCount, firstFilled, lastFilled }] }` 반환. heading 없어도 doc 이 얼마나 차 있는지 한 번에 판정 가능
+- `useViewerHandle.getDocumentSummary()` impl — 모든 section 의 paragraph 순회, 비어있지 않은 것 카운트 + 첫·마지막 채워진 단락 샘플 (200자 cap)
+- `getDocumentOutline` 카탈로그 description 에 fallback 안내 추가
+- catalog / validator / types / readonly-set 4 surface 일괄 갱신 (총 도구 60개)
+
+### Fixed — workspace outline 추출 가 `개요 N` 스타일 누락 — AI cross-doc 읽기 실패 (0.4.4)
+
+증상: AI 에 "이 문서 확인해서 정합성 확인해줘" 같은 cross-doc 분석 요청 시 "파일 읽기 시도 했으나 못함". 사업계획서 / 보고서 양식 다수가 영향.
+
+원인: `electron/ipc/folder.ts:extractOutline()` 가 heading 매칭 시 `^제목\s*N` / `^Heading\s*N` 만 픽업, **`^개요\s*N`** (한컴 한국어 outline 스타일, 사업계획서 양식 다수 채용) 누락. 같은 모듈인 `useViewerHandle.ts:getOutline()` 은 `개요` 매칭 포함하던 게 cross-doc 측에 미반영. AI 가 `searchWorkspaceOutlines` 호출 → 양식 doc 의 outline = `[]` → "navigatable 항목 없음" 으로 인식해 read 시도 자체 포기.
+
+수정:
+
+- `extractOutline()` 의 heading 매칭에 `koOutline = s.name?.match(/^개요\s*(\d+)?/)` 추가. 셋 다 (제목 / 개요 / Heading) 픽업하도록 `useViewerHandle.ts:getOutline()` 와 정합
+- `outline-cache.json` schema 에 `version` 필드 추가 (`OUTLINE_CACHE_VERSION = 2`). v1 캐시는 자동 무시 → 다음 scan 시 fresh 추출. 사용자가 캐시 파일 수동 삭제 안 해도 됨
+
+### Fixed — ChatPanel hasKey 가 secrets 변경 broadcast 미구독 (0.4.3)
+
+Settings 에서 API 키 입력 후에도 채팅 패널이 "키 설정 필요" 상태로 stale 했던 버그. `hasKey` state effect 가 deps `[provider]` 만 가지고 있어 같은 provider 의 키가 추가/삭제될 때 갱신 안 됐음. chunk 70 의 `secrets:changed` IPC broadcast 는 model prefetch 에만 hooked 되어 있었음.
+
+이제 `hasKey` effect 도 `window.api.secrets.onChanged()` 구독 — Settings 저장 즉시 반영. reload 불필요.
+
 ### Fixed — Phase 6 follow-up: L-004 Canvas-mode tooltip overlay (0.4.1)
 
 KNOWN_ISSUES L-004 (narrow-column 텍스트 잘림 hover tooltip) chunk 107 의 Canvas-only 전환 후 잠시 잃었던 affordance 복구. SVG `<text><title>` injection 의 직접 대체.

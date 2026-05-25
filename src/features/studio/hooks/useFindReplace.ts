@@ -8,8 +8,8 @@
  * 동작은 추출 전과 동일.
  *
  * 의존:
- *   - docRef, caretRef, pageRefsRef, selectionRef, scrollRef,
- *     findTextCacheRef — caller-side refs (StudioViewer 가 보유).
+ *   - docRef, caretRef, pageRefsRef, selectionRef, scrollRef —
+ *     caller-side refs (StudioViewer 가 보유).
  *   - sortRange, refreshAfterMutation — caller callbacks.
  *   - setCursorRect — caller useState setter.
  *
@@ -35,6 +35,19 @@ export interface FindMatch {
   paragraphIndex: number;
   offset: number;
   length: number;
+}
+
+interface RhwpSearchHit {
+  sec: number;
+  para: number;
+  charOffset: number;
+  length: number;
+  cellContext?: {
+    parentPara: number;
+    ctrlIdx: number;
+    cellIdx: number;
+    cellPara: number;
+  };
 }
 
 export interface FindHighlightRect {
@@ -75,7 +88,6 @@ export interface UseFindReplaceOptions {
   pageRefsRef: MutableRefObject<(HTMLDivElement | null)[]>;
   selectionRef: MutableRefObject<FindSelection | null>;
   scrollRef: MutableRefObject<HTMLDivElement | null>;
-  findTextCacheRef: MutableRefObject<Map<string, string> | null>;
   sortRange: FindSortRange;
   refreshAfterMutation: () => void;
   setCursorRect: (v: LifecycleCursorRect | null) => void;
@@ -134,8 +146,10 @@ export function useFindReplace(opts: UseFindReplaceOptions): FindReplaceHandle {
   });
 
   /**
-   * Search the doc for `query` (case-insensitive, lib's behavior).
-   * Builds a paragraph-text cache lazily, then indexOf-scans it.
+   * Search the doc for `query` (case-insensitive). Delegates to
+   * `@rhwp/core`'s native `searchAllText` (0.7.12+). `include_cells=false`
+   * matches the surrounding UI's scope — highlight rects + caret focus
+   * paths handle top-level paragraphs only, not table cells.
    */
   const runFindSearch = useCallback((query: string): void => {
     const o = optsRef.current;
@@ -146,45 +160,21 @@ export function useFindReplace(opts: UseFindReplaceOptions): FindReplaceHandle {
       setFindHighlightsByPage({});
       return;
     }
-    // Build the paragraph text cache on first run after the doc loads
-    // (or after a mutation cleared it). Entries are stored already-
-    // lowercased so the inner loop only needs indexOf on a primitive.
-    if (!o.findTextCacheRef.current) {
-      const cache = new Map<string, string>();
-      try {
-        const sectionCount = doc.getSectionCount();
-        for (let s = 0; s < sectionCount; s++) {
-          const paraCount = doc.getParagraphCount(s);
-          for (let p = 0; p < paraCount; p++) {
-            const text = doc.getTextRange(s, p, 0, 1_000_000);
-            if (!text) continue;
-            cache.set(`${s}:${p}`, text.toLowerCase());
-          }
-        }
-      } catch (err) {
-        console.warn('[studio] find cache build failed:', err);
-      }
-      o.findTextCacheRef.current = cache;
-    }
-    const lc = query.toLowerCase();
-    const matches: FindMatch[] = [];
-    const cache = o.findTextCacheRef.current;
-    for (const [key, haystack] of cache) {
-      const colon = key.indexOf(':');
-      const s = Number(key.slice(0, colon));
-      const p = Number(key.slice(colon + 1));
-      let from = 0;
-      while (from <= haystack.length - lc.length) {
-        const idx = haystack.indexOf(lc, from);
-        if (idx === -1) break;
-        matches.push({
-          sectionIndex: s,
-          paragraphIndex: p,
-          offset: idx,
-          length: query.length,
-        });
-        from = idx + Math.max(1, lc.length);
-      }
+    let matches: FindMatch[] = [];
+    try {
+      const hits = JSON.parse(
+        doc.searchAllText(query, false, false),
+      ) as RhwpSearchHit[];
+      matches = hits
+        .filter((h) => !h.cellContext)
+        .map((h) => ({
+          sectionIndex: h.sec,
+          paragraphIndex: h.para,
+          offset: h.charOffset,
+          length: h.length,
+        }));
+    } catch (err) {
+      console.warn('[studio] searchAllText failed:', err);
     }
     setFindMatches(matches);
     setFindIndex(0);
@@ -397,9 +387,6 @@ export function useFindReplace(opts: UseFindReplaceOptions): FindReplaceHandle {
         } catch {
           /* ignore — feedback text falls back to a generic message */
         }
-        // Invalidate the find text cache before re-running the search
-        // — the cached lowercase strings still hold the old matches.
-        o.findTextCacheRef.current = null;
         o.refreshAfterMutation();
         runFindSearch(query);
         setReplaceFeedback(

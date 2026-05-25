@@ -18,7 +18,7 @@ const FIXTURE = path.resolve(__dirname, 'fixtures', 'blank.hwpx');
 interface StudioDebug {
   insertText(s: number, p: number, c: number, t: string): string;
   exportBytes(): Uint8Array;
-  getParaText?(s: number, p: number): string;
+  getTextRange(s: number, p: number, start: number, end: number): string;
   canUndo(): boolean;
   undo(): void;
 }
@@ -59,6 +59,17 @@ async function openFixture(page: Page, fixture: string): Promise<void> {
   );
 }
 
+/** 0.4.6 — chunk 99 follow-up 의 patches 자동 acceptAll 을 우회. plan mode
+ *  를 켜서 Accept/Reject 가 'pending' 상태로 머무르도록 한 뒤, 명시적
+ *  버튼 클릭을 검증한다 (per-patch reject UI 흐름 회귀 가드). */
+async function enablePlanModeAndReload(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    localStorage.setItem('ahwp:chat:plan-mode-default', '1');
+  });
+  await page.reload();
+  await page.waitForLoadState('domcontentloaded');
+}
+
 test.describe('chat — chunk 55 Diff Viewer (ahwp-patches)', () => {
   test.skip(!existsSync(FIXTURE), 'tests/e2e/fixtures/blank.hwpx missing');
 
@@ -92,27 +103,23 @@ test.describe('chat — chunk 55 Diff Viewer (ahwp-patches)', () => {
     ].join('\n');
     await sendEcho(page, reply);
 
-    // DiffCard 가 가시 — 단일 패치이므로 SinglePatchCard 변형.
+    // DiffCard 가 가시 — 단일 패치이므로 SinglePatchCard 변형. chunk 99
+    // follow-up 의 자동 acceptAll 로 이미 적용되어 있다. 명시적 click 은
+    // 불필요 (auto-accept 가 microtask 안에서 처리 완료).
     await expect(page.getByTestId('diff-single-card')).toBeVisible();
     await expect(page.getByTestId('diff-line-del')).toContainText('before');
     await expect(page.getByTestId('diff-line-add')).toContainText('after');
 
-    // Accept.
-    await page.getByTestId('diff-accept-1').click();
-
-    // 문서 상태 검증 — exportBytes 후 본문 텍스트 추출. paragraph 0 의
-    // text 가 'after' 가 됐어야 함.
-    const txt = await page.evaluate(() => {
-      const dbg = (window as Window & { __studioDebug?: StudioDebug })
-        .__studioDebug!;
-      // getParaText 가 없는 빌드를 대비 — exportBytes 의 첫 100바이트
-      // 헥스가 변했는지로도 충분.
-      return dbg.getParaText ? dbg.getParaText(0, 0) : '';
-    });
-    if (txt) {
-      expect(txt).toContain('after');
-      expect(txt).not.toContain('before');
-    }
+    // 문서 상태 검증 — paragraph 0 의 text 가 'after' 가 됐어야 함.
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const dbg = (window as Window & { __studioDebug?: StudioDebug })
+            .__studioDebug!;
+          return dbg.getTextRange(0, 0, 0, 20);
+        }),
+      )
+      .toContain('after');
 
     // ⌘Z 로 묶음 undo. canUndo true 인 상태에서 undo 호출.
     const undone = await page.evaluate(() => {
@@ -164,15 +171,11 @@ test.describe('chat — chunk 55 Diff Viewer (ahwp-patches)', () => {
     ].join('\n');
     await sendEcho(page, reply);
 
-    // MultiPatchStack 가시 (StackedPatch 두 개).
+    // MultiPatchStack 가시 (StackedPatch 두 개). chunk 99 follow-up 의 자동
+    // acceptAll 로 둘 다 이미 accepted 상태 → 두 Accept 버튼 disabled.
     await expect(page.getByTestId('diff-multi-stack')).toBeVisible();
     await expect(page.getByTestId('diff-patch-1')).toBeVisible();
     await expect(page.getByTestId('diff-patch-2')).toBeVisible();
-
-    // Accept All 클릭.
-    await page.getByTestId('diff-accept-all').click();
-    // Accept All 후 두 패치 모두 accepted 가 되거나 적어도 disabled
-    // (재클릭 불가). check: Accept 버튼 disabled.
     await expect(page.getByTestId('diff-accept-1')).toBeDisabled();
     await expect(page.getByTestId('diff-accept-2')).toBeDisabled();
   });
@@ -180,6 +183,16 @@ test.describe('chat — chunk 55 Diff Viewer (ahwp-patches)', () => {
   test('multi patch — Reject 개별, accept 가능 / 부분 적용', async () => {
     const { page } = launched;
     await openFixture(page, FIXTURE);
+    // Plan mode 켜서 자동 acceptAll 우회 — per-patch reject/accept 버튼이
+    // 'pending' 상태로 머무르도록 한다 (chunk 99 follow-up 대응).
+    await enablePlanModeAndReload(page);
+    await page.waitForFunction(
+      () =>
+        Boolean(
+          (window as Window & { __studioDebug?: StudioDebug }).__studioDebug,
+        ),
+      { timeout: 30_000 },
+    );
 
     await page.evaluate(() => {
       const dbg = (window as Window & { __studioDebug?: StudioDebug })

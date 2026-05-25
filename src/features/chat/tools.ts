@@ -99,21 +99,123 @@ async function runOne(
           };
         return { ok: true, tool: call.tool };
       }
+      // === 0.4.16 — cell-level text insert (양식 표지 cell 채우기) ===
+      case 'insertTextInCell': {
+        const a = call.args;
+        const before =
+          viewer.irGetTextInCell(
+            a.sectionIdx,
+            a.parentParaIdx,
+            a.controlIdx,
+            a.cellIdx,
+            a.cellParaIdx,
+            0,
+            4096,
+          ) ?? '';
+        const ok = viewer.irInsertTextInCell(
+          a.sectionIdx,
+          a.parentParaIdx,
+          a.controlIdx,
+          a.cellIdx,
+          a.cellParaIdx,
+          a.charOffset,
+          a.text,
+        );
+        if (!ok)
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: 'insertTextInCell-failed',
+          };
+        const after =
+          viewer.irGetTextInCell(
+            a.sectionIdx,
+            a.parentParaIdx,
+            a.controlIdx,
+            a.cellIdx,
+            a.cellParaIdx,
+            0,
+            4096,
+          ) ?? '';
+        return {
+          ok: true,
+          tool: call.tool,
+          diff: {
+            paragraphIdx: a.parentParaIdx,
+            before,
+            after,
+            label: `cell #${a.cellIdx}`,
+          },
+        };
+      }
       // === Phase 3 chunk 45 — body edit primitives + char/para format ===
       case 'insertText': {
         const a = call.args;
+        // 0.4.12 hard guard — `insertText(0, 0, 0, "<multi-paragraph>")` 는
+        // 양식 / 보고서 doc 의 표지 표 cell 안에 dump 되어 layout 파손.
+        // 0.4.9 prompt 가이드만으론 일부 model 이 무시 (반복 보고). 다중
+        // paragraph (\n 포함) + 문서 시작 위치 조합은 거의 100% 의도와
+        // 다른 결과 → 거절. AI 는 error 받고 다음 turn 에 applyHtml 또는
+        // verified anchor (findInDocument) 로 재시도.
+        if (
+          a.sectionIdx === 0 &&
+          a.paragraphIdx === 0 &&
+          a.charOffset === 0 &&
+          a.text.includes('\n')
+        ) {
+          return {
+            ok: false,
+            tool: call.tool,
+            reason:
+              'insertText-at-doc-start-with-multiline-rejected: (sectionIdx=0, paragraphIdx=0, charOffset=0) + multi-paragraph 조합은 거부. 다중 paragraph + heading 혼합은 applyHtml 사용. 위치 한정 raw 텍스트면 findInDocument 로 anchor 먼저 식별. 단일 paragraph (no \\n) 짧은 텍스트는 동일 위치 재호출 OK.',
+          };
+        }
+        // 0.4.23 — synthetic diff. paragraph 텍스트 before/after snapshot.
+        const before =
+          viewer.irGetTextRange(
+            a.sectionIdx,
+            a.paragraphIdx,
+            0,
+            a.paragraphIdx,
+            10_000,
+          ) ?? '';
         const ok = viewer.irInsertText(
           a.sectionIdx,
           a.paragraphIdx,
           a.charOffset,
           a.text,
         );
-        return ok
-          ? { ok: true, tool: call.tool }
-          : { ok: false, tool: call.tool, reason: 'insertText-failed' };
+        if (!ok)
+          return { ok: false, tool: call.tool, reason: 'insertText-failed' };
+        const after =
+          viewer.irGetTextRange(
+            a.sectionIdx,
+            a.paragraphIdx,
+            0,
+            a.paragraphIdx,
+            10_000,
+          ) ?? '';
+        return {
+          ok: true,
+          tool: call.tool,
+          diff: {
+            paragraphIdx: a.paragraphIdx,
+            before,
+            after,
+            label: `섹션 ${a.sectionIdx} · 단락 ${a.paragraphIdx}`,
+          },
+        };
       }
       case 'deleteRange': {
         const a = call.args;
+        const before =
+          viewer.irGetTextRange(
+            a.sectionIdx,
+            a.startParagraphIdx,
+            0,
+            a.endParagraphIdx,
+            10_000,
+          ) ?? '';
         const ok = viewer.irDeleteRange(
           a.sectionIdx,
           a.startParagraphIdx,
@@ -121,9 +223,26 @@ async function runOne(
           a.endParagraphIdx,
           a.endOffset,
         );
-        return ok
-          ? { ok: true, tool: call.tool }
-          : { ok: false, tool: call.tool, reason: 'deleteRange-failed' };
+        if (!ok)
+          return { ok: false, tool: call.tool, reason: 'deleteRange-failed' };
+        const after =
+          viewer.irGetTextRange(
+            a.sectionIdx,
+            a.startParagraphIdx,
+            0,
+            a.startParagraphIdx,
+            10_000,
+          ) ?? '';
+        return {
+          ok: true,
+          tool: call.tool,
+          diff: {
+            paragraphIdx: a.startParagraphIdx,
+            before,
+            after,
+            label: `섹션 ${a.sectionIdx} · 단락 ${a.startParagraphIdx}-${a.endParagraphIdx}`,
+          },
+        };
       }
       case 'insertParagraph': {
         const a = call.args;
@@ -523,6 +642,16 @@ async function runOne(
         const data = viewer.getOutline();
         return { ok: true, tool: call.tool, data };
       }
+      case 'getDocumentSummary': {
+        const data = viewer.getDocumentSummary();
+        if (data === null)
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: 'getDocumentSummary-failed',
+          };
+        return { ok: true, tool: call.tool, data };
+      }
       case 'getStyleListJson': {
         const data = viewer.getStyleListJson();
         return { ok: true, tool: call.tool, data };
@@ -598,6 +727,84 @@ async function runOne(
         );
         if (data === null)
           return { ok: false, tool: call.tool, reason: 'getCellInfo-failed' };
+        return { ok: true, tool: call.tool, data };
+      }
+      // === 0.4.24 — @rhwp/core 0.7.11 신규 API ===
+      case 'insertEquation': {
+        const a = call.args;
+        const ok = viewer.irInsertEquation(
+          a.sectionIdx,
+          a.paragraphIdx,
+          a.charOffset,
+          a.script,
+          a.fontSizeHwpunit,
+          a.color,
+        );
+        return ok
+          ? { ok: true, tool: call.tool }
+          : { ok: false, tool: call.tool, reason: 'insertEquation-failed' };
+      }
+      case 'deleteFootnote': {
+        const a = call.args;
+        const ok = viewer.irDeleteFootnote(
+          a.sectionIdx,
+          a.paragraphIdx,
+          a.controlIdx,
+        );
+        return ok
+          ? { ok: true, tool: call.tool }
+          : { ok: false, tool: call.tool, reason: 'deleteFootnote-failed' };
+      }
+      case 'deleteEquationControl': {
+        const a = call.args;
+        const ok = viewer.irDeleteEquationControl(
+          a.sectionIdx,
+          a.parentParaIdx,
+          a.controlIdx,
+        );
+        return ok
+          ? { ok: true, tool: call.tool }
+          : {
+              ok: false,
+              tool: call.tool,
+              reason: 'deleteEquationControl-failed',
+            };
+      }
+      case 'getColumnDef': {
+        const a = call.args;
+        const data = viewer.irGetColumnDef(a.sectionIdx);
+        if (data === null)
+          return { ok: false, tool: call.tool, reason: 'getColumnDef-failed' };
+        return { ok: true, tool: call.tool, data };
+      }
+      case 'getFootnoteAtCursor': {
+        const a = call.args;
+        const data = viewer.irGetFootnoteAtCursor(
+          a.sectionIdx,
+          a.paragraphIdx,
+          a.charOffset,
+          a.direction,
+        );
+        if (data === null)
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: 'getFootnoteAtCursor-failed',
+          };
+        return { ok: true, tool: call.tool, data };
+      }
+      case 'getEmptyFormFields': {
+        const a = call.args;
+        const data = viewer.getEmptyFormFields({
+          sectionIdx: a.sectionIdx,
+          maxResults: a.maxResults,
+        });
+        if (data === null)
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: 'getEmptyFormFields-failed',
+          };
         return { ok: true, tool: call.tool, data };
       }
       // === Phase 5 chunk 96 — outline-as-router workspace search ===
@@ -741,6 +948,10 @@ export function previewArgs(call: AhwpToolCall): string {
       const t = call.args.text.replace(/\s+/g, ' ').trim();
       return `(${call.args.paragraphIdx},${call.args.charOffset}) "${t.length > 30 ? t.slice(0, 30) + '…' : t}"`;
     }
+    case 'insertTextInCell': {
+      const t = call.args.text.replace(/\s+/g, ' ').trim();
+      return `cell=${call.args.cellIdx} "${t.length > 30 ? t.slice(0, 30) + '…' : t}"`;
+    }
     case 'deleteRange':
       return `(${call.args.startParagraphIdx},${call.args.startOffset})~(${call.args.endParagraphIdx},${call.args.endOffset})`;
     case 'insertParagraph':
@@ -812,6 +1023,7 @@ export function previewArgs(call: AhwpToolCall): string {
       return `(${call.args.paragraphIdx},${call.args.controlIdx})`;
     // === Phase 3 chunk 51 — read tools ===
     case 'getDocumentOutline':
+    case 'getDocumentSummary':
     case 'getStyleListJson':
     case 'getCaretPosition':
       return '(read)';
@@ -828,6 +1040,20 @@ export function previewArgs(call: AhwpToolCall): string {
     }
     case 'getCellInfo':
       return `cell=${call.args.cellIdx}`;
+    // === 0.4.24 — @rhwp/core 0.7.11 신규 ===
+    case 'insertEquation':
+      return `(${call.args.paragraphIdx},${call.args.charOffset})`;
+    case 'deleteFootnote':
+    case 'deleteEquationControl':
+      return `ctrl=${call.args.controlIdx}`;
+    case 'getColumnDef':
+      return `sec=${call.args.sectionIdx}`;
+    case 'getFootnoteAtCursor':
+      return `(${call.args.paragraphIdx},${call.args.charOffset}) ${call.args.direction}`;
+    case 'getEmptyFormFields':
+      return call.args.sectionIdx !== undefined
+        ? `sec=${call.args.sectionIdx}`
+        : '(all)';
     case 'searchWorkspaceOutlines':
       return call.args.maxDocs ? `max=${call.args.maxDocs}` : '';
     case 'readParagraphByPath': {

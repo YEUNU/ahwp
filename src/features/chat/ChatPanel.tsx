@@ -75,6 +75,25 @@ const DEFAULT_MODELS: Record<ChatProviderId, string> = {
 
 const STORAGE_PROVIDER = 'ahwp:chat:provider';
 const STORAGE_MODELS = 'ahwp:chat:models';
+/** 0.4.23 — html 블록 자동 적용 토글. ON 이면 Accept/Reject 카드 표시
+ *  (DiffCard 풍), OFF (default) 면 기존 자동 적용 (chunk 99 follow-up). */
+const STORAGE_HTML_PREVIEW = 'ahwp:chat:html-preview';
+
+export function loadHtmlPreview(): boolean {
+  try {
+    return localStorage.getItem(STORAGE_HTML_PREVIEW) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function saveHtmlPreview(on: boolean): void {
+  try {
+    localStorage.setItem(STORAGE_HTML_PREVIEW, on ? '1' : '0');
+  } catch {
+    /* localStorage unavailable — silent */
+  }
+}
 // chunk 99 follow-up — autoApprove 토글 폐기. 모든 도구 즉시 dispatch.
 // 컨텍스트 자동 첨부도 폐기 (attachDoc / referencePaths) — 사용자가
 // 매뉴얼 발췌 chip 으로만 컨텍스트 추가.
@@ -108,6 +127,18 @@ interface UiToolEntry {
    *  거절 (dispatch 안 됨, tool_result 는 'user-rejected' 로 모델에 회신). */
   status: 'running' | 'ok' | 'failed' | 'pending' | 'rejected';
   reason?: string;
+  /** 0.4.11 — JSON-stringified tool 결과 (확장 버튼 노출). */
+  resultPreview?: string;
+  /** 0.4.17 — read 는 dim 한 줄, write 는 카드. */
+  kind: 'read' | 'write';
+  /** 0.4.23 — write tool 의 synthetic diff (insertText / deleteRange /
+   *  insertTextInCell). 있으면 카드 안에 inline mini-diff 렌더. */
+  diff?: {
+    paragraphIdx: number;
+    before: string;
+    after: string;
+    label?: string;
+  };
 }
 
 function loadProvider(): ChatProviderId {
@@ -400,7 +431,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const attachDoc = false;
     const setAttachDoc = (): void => {};
     // chunk 20 — excerpt chips. When non-empty, the system message
-    // injects a structured `[발췌]:` block instead of the whole-doc
+    // injects a structured `[Excerpts]:` block instead of the whole-doc
     // HTML (the toggle still appears but the docHtml path is suppressed).
     const [excerpts, setExcerpts] = useState<ExcerptAttachment[]>([]);
     // Toast for send-side blocking events (e.g. all chips went stale).
@@ -480,11 +511,18 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
     useEffect(() => {
       let cancelled = false;
-      void window.api.secrets.has(provider).then((v) => {
-        if (!cancelled) setHasKey(v);
-      });
+      const refresh = (): void => {
+        void window.api.secrets.has(provider).then((v) => {
+          if (!cancelled) setHasKey(v);
+        });
+      };
+      refresh();
+      // chunk 70 broadcast — Settings 에서 키 저장/삭제 시 즉시 반영
+      // (이전엔 deps=[provider] 만이라 같은 provider 키 추가 시 stale).
+      const unsubscribe = window.api.secrets.onChanged(refresh);
       return () => {
         cancelled = true;
+        unsubscribe();
       };
     }, [provider]);
 
@@ -1437,8 +1475,9 @@ function Message({
 
   // Apply-HTML affordance — only on completed assistant messages that
   // contain a ```html``` fenced block AND when a viewer handle is
-  // available (onApplyHtml prop). Extract the first block; the
-  // SYSTEM_PROMPT_DOC_CONTEXT instructs the model to emit at most one.
+  // available (onApplyHtml prop). Extract the first block; the Agent
+  // guide restricts code-block emission to a single ahwp-patches block,
+  // but legacy / off-spec html responses are still parsed as a fallback.
   const htmlMatch =
     !isUser && !streaming && onApplyHtml
       ? HTML_BLOCK_RE.exec(message.content)
@@ -1518,16 +1557,39 @@ function Message({
   // chunk 99 follow-up — 자동 적용. plan mode 가 아닌 일반 응답에서
   // ```html``` / markdown fallback / sectionMatch 가 결정되면 한 번만
   // dispatch. 사용자가 만족 못하면 stop / undo (⌘Z).
+  //
+  // 0.4.6 fix: markdown fallback 은 sectionMatch (`### N.N.N ...` 같은
+  // 섹션 번호 heading) 가 매칭됐을 때만 자동 적용. read-only agent loop
+  // 의 informational 마무리 (옵션 나열 / 질문 / 안내 같은 conversational
+  // 답변) 가 markdownToHtml 변환을 통과해도 sectionMatch 가 없으면
+  // 적용되지 않음. 사용자 의도가 "조회" 였는데 doc 이 mutate 되던 회귀
+  // (사업계획서 "다 채워졌는지 확인해줘" 류) fix. 명시적 ```html``` 블록
+  // 은 의도적 payload 라 이전 동작 유지.
   const autoAppliedRef = useRef(false);
+  // 0.4.23 — html preview 토글. ON 이면 자동 적용 차단, Accept 카드 렌더.
+  const htmlPreviewMode = loadHtmlPreview();
+  const [htmlPreviewDismissed, setHtmlPreviewDismissed] = useState(false);
   useEffect(() => {
     if (autoAppliedRef.current) return;
     if (isUser || streaming) return;
     if (message.planMode) return;
     if (!htmlPayload) return;
+    if (markdownFallback && !sectionMatch) return;
+    // 0.4.23 — preview ON 이면 자동 적용 안 함, Accept 버튼 대기.
+    if (htmlPreviewMode) return;
     autoAppliedRef.current = true;
     // microtask 양보 — setState 가 effect 본체에서 직접 발생하지 않게.
     queueMicrotask(handleApply);
-  }, [isUser, streaming, message.planMode, htmlPayload, handleApply]);
+  }, [
+    isUser,
+    streaming,
+    message.planMode,
+    htmlPayload,
+    markdownFallback,
+    sectionMatch,
+    htmlPreviewMode,
+    handleApply,
+  ]);
   const handleUndoApply = () => {
     if (!onUndoApply || undone) return;
     const ok = onUndoApply();
@@ -1746,75 +1808,21 @@ function Message({
             className="mt-2 flex flex-col gap-1 border-t border-border/50 pt-2 text-xs"
             data-testid="chat-tool-entries"
           >
-            {message.toolEntries.map((te) => (
-              <div
-                key={te.id}
-                className={cn(
-                  'flex items-center gap-2 font-mono',
-                  te.status === 'failed' && 'text-destructive',
-                )}
-                data-testid="chat-tool-entry"
-                data-tool-name={te.name}
-                data-tool-status={te.status}
-                title={te.reason ?? ''}
-              >
-                <span
-                  className={cn(
-                    te.status === 'failed'
-                      ? 'text-destructive'
-                      : 'text-muted-foreground',
-                  )}
-                >
-                  {te.status === 'running'
-                    ? '⏳'
-                    : te.status === 'ok'
-                      ? '✓'
-                      : te.status === 'pending'
-                        ? '⏸'
-                        : te.status === 'rejected'
-                          ? '↩'
-                          : '✗'}
-                </span>
-                <span className="font-semibold">🔧 {te.name}</span>
-                <span
-                  className={cn(
-                    'truncate',
-                    te.status === 'failed'
-                      ? 'text-destructive/80'
-                      : 'text-muted-foreground',
-                  )}
-                >
-                  {te.argsPreview}
-                </span>
-                {te.status === 'failed' && te.reason ? (
-                  <span className="text-destructive">{te.reason}</span>
-                ) : null}
-                {te.status === 'pending' && onResolveApproval ? (
-                  <span className="ml-auto flex shrink-0 gap-1">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="default"
-                      onClick={() => void onResolveApproval(te.id, true)}
-                      data-testid="chat-tool-approve"
-                      className="h-6 px-2 text-[10px]"
-                    >
-                      승인
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => void onResolveApproval(te.id, false)}
-                      data-testid="chat-tool-reject"
-                      className="h-6 px-2 text-[10px]"
-                    >
-                      거절
-                    </Button>
-                  </span>
-                ) : null}
-              </div>
-            ))}
+            {groupToolEntries(message.toolEntries).map((g) =>
+              g.kind === 'read-group' ? (
+                <ReadGroup
+                  key={g.id}
+                  entries={g.entries}
+                  onResolveApproval={onResolveApproval ?? null}
+                />
+              ) : (
+                <ToolEntryRow
+                  key={g.entry.id}
+                  entry={g.entry}
+                  onResolveApproval={onResolveApproval ?? null}
+                />
+              ),
+            )}
             {/* 모두 승인 / 거절 — pending 이 둘 이상일 때만 보임. */}
             {(() => {
               const pendingIds = (message.toolEntries ?? [])
@@ -1883,7 +1891,61 @@ function Message({
           가 한 번 자동 dispatch (no-op button). plan mode 에선 인디케이터
           + execute button 으로 수동 흐름 유지. 자동 적용 후 ✓ 토스트만
           간략히 표시 — 사용자가 ⌘Z 로 undo 가능. */}
-        {htmlPayload && !message.planMode ? (
+        {/* 0.4.23 — html preview mode. Settings 토글 ON 시 자동 적용 차단 +
+          Accept/Reject 카드 표시. OFF (default) 면 기존 자동 적용 흐름. */}
+        {htmlPayload &&
+        !message.planMode &&
+        htmlPreviewMode &&
+        !applied &&
+        !htmlPreviewDismissed ? (
+          <div
+            className="mt-2 rounded border border-border bg-muted/30 p-2 shadow-xs"
+            data-testid="chat-html-preview-card"
+            data-section-match={sectionMatch ? sectionMatch.sectionNumber : ''}
+          >
+            <div className="mb-1 flex items-center gap-2 text-xs font-semibold">
+              <span>✏️</span>
+              <span>
+                {sectionMatch
+                  ? `${sectionMatch.sectionNumber} 섹션 교체 제안`
+                  : '문서 변경 제안'}
+              </span>
+              {sectionMatch ? (
+                <span className="font-normal text-muted-foreground">
+                  · {sectionMatch.headingText}
+                </span>
+              ) : null}
+            </div>
+            <pre className="mb-2 max-h-32 overflow-auto rounded border border-border/40 bg-background p-1 text-[10px] leading-snug">
+              {htmlPayload.length > 800
+                ? `${htmlPayload.slice(0, 800)}…`
+                : htmlPayload}
+            </pre>
+            <div className="flex gap-1">
+              <Button
+                type="button"
+                size="sm"
+                variant="default"
+                onClick={handleApply}
+                data-testid="chat-html-preview-accept"
+                className="h-6 px-2 text-[11px]"
+              >
+                Accept
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setHtmlPreviewDismissed(true)}
+                data-testid="chat-html-preview-reject"
+                className="h-6 px-2 text-[11px]"
+              >
+                Reject
+              </Button>
+            </div>
+          </div>
+        ) : null}
+        {htmlPayload && !message.planMode && !htmlPreviewMode ? (
           <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2 text-[11px] text-muted-foreground">
             {applied && !undone ? (
               <>
@@ -1912,6 +1974,30 @@ function Message({
             ) : (
               <span>적용 중…</span>
             )}
+          </div>
+        ) : null}
+        {htmlPayload && !message.planMode && htmlPreviewMode && applied ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2 text-[11px] text-muted-foreground">
+            <span data-testid="chat-action-applied-toast">
+              ✓{' '}
+              {sectionMatch
+                ? `기존 ${sectionMatch.sectionNumber} 섹션 교체 적용됨`
+                : markdownFallback
+                  ? '마크다운 적용됨'
+                  : 'HTML 적용됨'}
+            </span>
+            {onUndoApply ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={handleUndoApply}
+                data-testid="chat-action-undo-apply"
+                className="text-xs"
+              >
+                되돌리기
+              </Button>
+            ) : null}
           </div>
         ) : null}
         {htmlPayload && message.planMode ? (
@@ -2150,6 +2236,266 @@ function Message({
           ) : null}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * 0.4.17 — Claude Code 식 tool entry grouping. 인접한 read entries 는
+ * 하나의 ReadGroup 으로 접고, write entries 는 카드로 단독 렌더.
+ * 정렬 보존 + write 가 read run 을 끊는 동작 보장.
+ */
+type ToolEntryGroup =
+  | { kind: 'read-group'; id: string; entries: UiToolEntry[] }
+  | { kind: 'write'; entry: UiToolEntry };
+
+function groupToolEntries(entries: UiToolEntry[]): ToolEntryGroup[] {
+  const out: ToolEntryGroup[] = [];
+  let buffer: UiToolEntry[] = [];
+  const flush = (): void => {
+    if (buffer.length === 0) return;
+    out.push({ kind: 'read-group', id: `rg-${buffer[0].id}`, entries: buffer });
+    buffer = [];
+  };
+  for (const e of entries) {
+    if (e.kind === 'read') {
+      buffer.push(e);
+    } else {
+      flush();
+      out.push({ kind: 'write', entry: e });
+    }
+  }
+  flush();
+  return out;
+}
+
+/**
+ * 0.4.17 — 인접한 read tool 호출들을 하나의 접힘 row 로 표시.
+ * 진행중: "🔍 자료 수집 중 (n)". 완료: "✓ 자료 수집 (n)" + 펼치기.
+ * 펼치면 개별 ToolEntryRow (read 스타일).
+ */
+function ReadGroup({
+  entries,
+  onResolveApproval,
+}: {
+  entries: UiToolEntry[];
+  onResolveApproval: ((id: string, accept: boolean) => void) | null;
+}): JSX.Element {
+  const [expanded, setExpanded] = useState(false);
+  const running = entries.some((e) => e.status === 'running');
+  const failed = entries.filter((e) => e.status === 'failed').length;
+  const total = entries.length;
+  const summary = running
+    ? `자료 수집 중 (${total})`
+    : failed > 0
+      ? `자료 수집 (${total - failed}/${total} 성공)`
+      : `자료 수집 (${total})`;
+  return (
+    <div
+      data-testid="chat-tool-read-group"
+      data-tool-status={running ? 'running' : failed > 0 ? 'failed' : 'ok'}
+      data-count={total}
+    >
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        data-testid="chat-tool-read-group-toggle"
+        data-expanded={expanded ? 'true' : 'false'}
+        className={cn(
+          'flex w-full min-w-0 items-center gap-2 rounded px-1 py-0.5 text-left text-[11px] text-muted-foreground/80 hover:bg-muted/40 hover:text-muted-foreground',
+          failed > 0 && 'text-destructive/80',
+        )}
+        aria-label={expanded ? '읽기 그룹 접기' : '읽기 그룹 펼치기'}
+      >
+        <span className="shrink-0">
+          {running ? '⏳' : failed > 0 ? '⚠' : '✓'}
+        </span>
+        <span className="shrink-0">🔍</span>
+        <span className="min-w-0 flex-1 truncate italic">{summary}</span>
+        <span className="shrink-0 text-[10px]">{expanded ? '▼' : '▶'}</span>
+      </button>
+      {expanded ? (
+        <div
+          className="mt-1 flex flex-col gap-0.5 border-l border-border/40 pl-2"
+          data-testid="chat-tool-read-group-detail"
+        >
+          {entries.map((e) => (
+            <ToolEntryRow
+              key={e.id}
+              entry={e}
+              onResolveApproval={onResolveApproval}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * 0.4.11 — 한 줄 tool 호출 row + 확장 가능한 result 패널.
+ * 한 row 에 status icon / 🔧 / name / argsPreview (truncate) / chevron.
+ * chevron 클릭 시 result preview (JSON or status string) 가 monospace
+ * panel 로 펼쳐짐. 결과가 없으면 (running / pending) chevron 숨김.
+ *
+ * 0.4.17 — kind='read' 는 dim한 muted 한 줄, kind='write' 는 강조 카드.
+ */
+function ToolEntryRow({
+  entry,
+  onResolveApproval,
+}: {
+  entry: UiToolEntry;
+  onResolveApproval: ((id: string, accept: boolean) => void) | null;
+}): JSX.Element {
+  const [expanded, setExpanded] = useState(false);
+  const hasDetail =
+    entry.resultPreview !== undefined && entry.resultPreview.length > 0;
+  const statusGlyph =
+    entry.status === 'running'
+      ? '⏳'
+      : entry.status === 'ok'
+        ? '✓'
+        : entry.status === 'pending'
+          ? '⏸'
+          : entry.status === 'rejected'
+            ? '↩'
+            : '✗';
+  const isWrite = entry.kind === 'write';
+  return (
+    <div
+      data-testid="chat-tool-entry"
+      data-tool-name={entry.name}
+      data-tool-status={entry.status}
+      data-tool-kind={entry.kind}
+      title={entry.reason ?? ''}
+      className={cn(
+        isWrite &&
+          'rounded border border-border/60 bg-muted/30 px-2 py-1.5 shadow-xs',
+      )}
+    >
+      <div
+        className={cn(
+          'flex min-w-0 items-center gap-2',
+          isWrite ? 'font-mono' : 'font-mono text-[11px]',
+          entry.status === 'failed' && 'text-destructive',
+        )}
+      >
+        <span
+          className={cn(
+            'shrink-0',
+            entry.status === 'failed'
+              ? 'text-destructive'
+              : isWrite
+                ? 'text-foreground/80'
+                : 'text-muted-foreground/70',
+          )}
+        >
+          {statusGlyph}
+        </span>
+        <span
+          className={cn(
+            'shrink-0',
+            isWrite ? 'font-semibold' : 'font-medium text-muted-foreground/80',
+          )}
+        >
+          {isWrite ? '✏️' : '🔍'} {entry.name}
+        </span>
+        <span
+          className={cn(
+            'min-w-0 flex-1 truncate',
+            entry.status === 'failed'
+              ? 'text-destructive/80'
+              : isWrite
+                ? 'text-muted-foreground'
+                : 'text-muted-foreground/60',
+          )}
+        >
+          {entry.argsPreview}
+          {entry.status === 'failed' && entry.reason
+            ? ` — ${entry.reason}`
+            : ''}
+        </span>
+        {hasDetail ? (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            data-testid="chat-tool-expand"
+            data-expanded={expanded ? 'true' : 'false'}
+            className="shrink-0 rounded px-1 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground"
+            aria-label={expanded ? '결과 접기' : '결과 펼치기'}
+            title={expanded ? '결과 접기' : '결과 펼치기'}
+          >
+            {expanded ? '▼' : '▶'}
+          </button>
+        ) : null}
+        {entry.status === 'pending' && onResolveApproval ? (
+          <span className="ml-auto flex shrink-0 gap-1">
+            <Button
+              type="button"
+              size="sm"
+              variant="default"
+              onClick={() => void onResolveApproval(entry.id, true)}
+              data-testid="chat-tool-approve"
+              className="h-6 px-2 text-[10px]"
+            >
+              승인
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => void onResolveApproval(entry.id, false)}
+              data-testid="chat-tool-reject"
+              className="h-6 px-2 text-[10px]"
+            >
+              거절
+            </Button>
+          </span>
+        ) : null}
+      </div>
+      {/* 0.4.23 — write tool synthetic diff. 항상 보이도록 (확장 X). */}
+      {entry.diff && entry.status === 'ok' ? (
+        <div
+          className="mt-1 rounded border border-border/50 bg-background/50 p-1 text-[10px]"
+          data-testid="chat-tool-diff"
+        >
+          {entry.diff.label ? (
+            <div className="mb-0.5 text-muted-foreground">
+              {entry.diff.label}
+            </div>
+          ) : null}
+          {entry.diff.before.length > 0 ? (
+            <div
+              className="rounded-sm bg-red-500/10 px-1 text-red-700 line-through dark:text-red-300"
+              data-testid="chat-tool-diff-before"
+            >
+              −{' '}
+              {entry.diff.before.length > 200
+                ? `${entry.diff.before.slice(0, 200)}…`
+                : entry.diff.before}
+            </div>
+          ) : null}
+          {entry.diff.after.length > 0 ? (
+            <div
+              className="rounded-sm bg-emerald-500/10 px-1 text-emerald-700 dark:text-emerald-300"
+              data-testid="chat-tool-diff-after"
+            >
+              +{' '}
+              {entry.diff.after.length > 200
+                ? `${entry.diff.after.slice(0, 200)}…`
+                : entry.diff.after}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {expanded && hasDetail ? (
+        <pre
+          data-testid="chat-tool-result"
+          className="mt-1 max-h-60 overflow-auto rounded border border-border/50 bg-muted/30 p-2 text-[10px] leading-relaxed"
+        >
+          {entry.resultPreview}
+        </pre>
+      ) : null}
     </div>
   );
 }

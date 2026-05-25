@@ -165,6 +165,25 @@ export function useDispatchMenuAction(
         setBookmarkOpen(true);
       } else if (action === 'insert:footnote') {
         setFootnoteOpen(true);
+      } else if (action === 'delete:footnote-at-cursor') {
+        // 0.4.25 — lib 0.7.11. getFootnoteAtCursor → deleteFootnote.
+        const v = activeViewerRef();
+        if (!v) return;
+        const caret = v.irGetCaretPosition() as {
+          sectionIndex?: number;
+          paragraphIndex?: number;
+          charOffset?: number;
+        } | null;
+        if (!caret) return;
+        const sec = caret.sectionIndex ?? 0;
+        const para = caret.paragraphIndex ?? 0;
+        const off = caret.charOffset ?? 0;
+        const info = v.irGetFootnoteAtCursor(sec, para, off, 'backward') as {
+          controlIdx?: number;
+          paragraphIdx?: number;
+        } | null;
+        if (!info || typeof info.controlIdx !== 'number') return;
+        v.irDeleteFootnote(sec, info.paragraphIdx ?? para, info.controlIdx);
       } else if (action === 'view:style-manager') {
         setStyleManagerOpen(true);
       } else if (action === 'insert:equation') {

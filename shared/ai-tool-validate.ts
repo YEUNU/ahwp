@@ -245,6 +245,24 @@ function validateArgs<T extends AhwpToolName>(
         return { ok: false, reason: 'text-too-large' };
       return { ok: true, value: { ...v.value, text } as AhwpToolArgs[T] };
     }
+    // 0.4.16 — cell-level text insert
+    case 'insertTextInCell': {
+      const v = nonNegInts(args, [
+        'sectionIdx',
+        'parentParaIdx',
+        'controlIdx',
+        'cellIdx',
+        'cellParaIdx',
+        'charOffset',
+      ]);
+      if (!v.ok) return v;
+      const text = args.text;
+      if (typeof text !== 'string')
+        return { ok: false, reason: 'text-not-string' };
+      if (byteLen(text) > AHWP_TOOL_LIMITS.maxTextBytes)
+        return { ok: false, reason: 'text-too-large' };
+      return { ok: true, value: { ...v.value, text } as AhwpToolArgs[T] };
+    }
     case 'deleteRange': {
       const v = nonNegInts(args, [
         'sectionIdx',
@@ -585,6 +603,7 @@ function validateArgs<T extends AhwpToolName>(
     }
     // === Phase 3 chunk 51 — read-only Agent tools ===
     case 'getDocumentOutline':
+    case 'getDocumentSummary':
     case 'getStyleListJson':
     case 'getCaretPosition':
       return { ok: true, value: {} as AhwpToolArgs[T] };
@@ -640,6 +659,86 @@ function validateArgs<T extends AhwpToolName>(
       ]);
       if (!v.ok) return v;
       return { ok: true, value: v.value as AhwpToolArgs[T] };
+    }
+    // === 0.4.24 — @rhwp/core 0.7.11 신규 API ===
+    case 'insertEquation': {
+      const v = nonNegInts(args, ['sectionIdx', 'paragraphIdx', 'charOffset']);
+      if (!v.ok) return v;
+      const script = args.script;
+      if (typeof script !== 'string' || script.length === 0)
+        return { ok: false, reason: 'script-not-string' };
+      if (byteLen(script) > 16384)
+        return { ok: false, reason: 'script-too-large' };
+      const out: AhwpToolArgs['insertEquation'] = {
+        ...(v.value as {
+          sectionIdx: number;
+          paragraphIdx: number;
+          charOffset: number;
+        }),
+        script,
+      };
+      if (args.fontSizeHwpunit !== undefined) {
+        const n = coerceNonNegInt(args.fontSizeHwpunit);
+        if (n === null || n < 1)
+          return { ok: false, reason: 'fontSizeHwpunit-invalid' };
+        out.fontSizeHwpunit = n;
+      }
+      if (args.color !== undefined) {
+        const n = coerceNonNegInt(args.color);
+        if (n === null) return { ok: false, reason: 'color-invalid' };
+        out.color = n;
+      }
+      return { ok: true, value: out as AhwpToolArgs[T] };
+    }
+    case 'deleteFootnote': {
+      const v = nonNegInts(args, ['sectionIdx', 'paragraphIdx', 'controlIdx']);
+      if (!v.ok) return v;
+      return { ok: true, value: v.value as AhwpToolArgs[T] };
+    }
+    case 'deleteEquationControl': {
+      const v = nonNegInts(args, ['sectionIdx', 'parentParaIdx', 'controlIdx']);
+      if (!v.ok) return v;
+      return { ok: true, value: v.value as AhwpToolArgs[T] };
+    }
+    case 'getColumnDef': {
+      const v = nonNegInts(args, ['sectionIdx']);
+      if (!v.ok) return v;
+      return { ok: true, value: v.value as AhwpToolArgs[T] };
+    }
+    case 'getFootnoteAtCursor': {
+      const v = nonNegInts(args, ['sectionIdx', 'paragraphIdx', 'charOffset']);
+      if (!v.ok) return v;
+      const dir = args.direction;
+      if (dir !== 'forward' && dir !== 'backward')
+        return { ok: false, reason: 'direction-invalid' };
+      return {
+        ok: true,
+        value: {
+          ...(v.value as {
+            sectionIdx: number;
+            paragraphIdx: number;
+            charOffset: number;
+          }),
+          direction: dir,
+        } as AhwpToolArgs[T],
+      };
+    }
+    case 'getEmptyFormFields': {
+      const out: { sectionIdx?: number; maxResults?: number } = {};
+      const sec = args.sectionIdx;
+      if (sec !== undefined) {
+        const n = coerceNonNegInt(sec);
+        if (n === null) return { ok: false, reason: 'sectionIdx-invalid' };
+        out.sectionIdx = n;
+      }
+      const max = args.maxResults;
+      if (max !== undefined) {
+        const n = coerceNonNegInt(max);
+        if (n === null || n < 1 || n > 5000)
+          return { ok: false, reason: 'maxResults-out-of-range' };
+        out.maxResults = n;
+      }
+      return { ok: true, value: out as AhwpToolArgs[T] };
     }
     // === Phase 5 chunk 96 — workspace outline router ===
     case 'searchWorkspaceOutlines': {

@@ -74,12 +74,20 @@ async function openBoth(page: Page): Promise<void> {
 test.describe('chat — chunk 21 multi-doc context', () => {
   test.skip(!existsSync(FIXTURE), 'tests/e2e/fixtures/blank.hwpx missing');
 
+  // chunk 99 follow-up (0.3.40): "컨텍스트 자동 첨부 폐기" — 사용자
+  // 요청으로 chat-attach-toggle / STORAGE_ATTACH_DOC / MultiDocChips
+  // (auto multi-doc reference) 모두 제거. 사용자가 매뉴얼로 📌 발췌
+  // 첨부 또는 selection rect 드래그로만 컨텍스트 추가. 본 spec 의 chip-
+  // 기반 케이스 (target chip / reference checkbox / outline 자동 첨부)
+  // 모두 의미 무효. 회귀 가드는 chat-excerpt.spec.ts (📌 발췌 첨부) 가
+  // 대신 cover. 첫 케이스만 "UI 가 사라진 상태" 회귀 가드로 유지.
+
   test('strip is hidden when no docs are open', async () => {
     const { page } = launched;
     await expect(page.getByTestId('chat-multidoc-chips')).toHaveCount(0);
   });
 
-  test('single open tab — target chip locked, no reference checkboxes', async () => {
+  test.skip('single open tab — target chip locked, no reference checkboxes', async () => {
     const { page } = launched;
     await page.evaluate(async (p) => {
       await window.api.session.set({ lastActivePath: p });
@@ -100,7 +108,7 @@ test.describe('chat — chunk 21 multi-doc context', () => {
     await expect(page.getByTestId('chat-multidoc-checkbox')).toHaveCount(0);
   });
 
-  test('two open tabs — second tab shows reference checkbox unchecked', async () => {
+  test.skip('two open tabs — second tab shows reference checkbox unchecked', async () => {
     const { page } = launched;
     await openBoth(page);
 
@@ -112,7 +120,7 @@ test.describe('chat — chunk 21 multi-doc context', () => {
     await expect(chips.nth(1)).toContainText('📚');
   });
 
-  test('checking a reference flips data-role and shows amber state', async () => {
+  test.skip('checking a reference flips data-role and shows amber state', async () => {
     const { page } = launched;
     await openBoth(page);
     const chips = page.getByTestId('chat-multidoc-chip');
@@ -123,7 +131,7 @@ test.describe('chat — chunk 21 multi-doc context', () => {
     await expect(chips.nth(1)).toHaveAttribute('data-role', 'unused');
   });
 
-  test('reference outline lands in system prompt when sending a turn', async () => {
+  test.skip('reference outline lands in system prompt when sending a turn', async () => {
     const { page } = launched;
     await openBoth(page);
 

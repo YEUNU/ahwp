@@ -18,6 +18,7 @@ import {
 } from 'react';
 import { HwpDocument, type RhwpDoc } from '@/lib/rhwp-core';
 import type { CharFormatKey } from '../types';
+import { enumerateEmptyFormFields } from '@/features/studio/utils/empty-form-fields';
 
 type ParaAlignment = 'left' | 'center' | 'right' | 'justify';
 
@@ -51,7 +52,6 @@ export interface UseDebugSurfaceOptions {
   composingRef: MutableRefObject<boolean>;
   changedParaTimerRef: MutableRefObject<number | null>;
   cacheRef: MutableRefObject<Map<number, string>>;
-  findTextCacheRef: MutableRefObject<Map<string, string> | null>;
   // setters
   setDirty: (v: boolean) => void;
   setCursorRect: AnySetState;
@@ -645,6 +645,111 @@ export function useDebugSurface(opts: UseDebugSurfaceOptions): void {
         const doc = docRef.current;
         if (!doc) throw new Error('Document not loaded');
         return JSON.parse(doc.getParaPropertiesAt(sectionIdx, paraIdx));
+      },
+      getCharProps: (
+        sectionIdx: number,
+        paraIdx: number,
+        charOffset: number,
+      ): unknown => {
+        const doc = docRef.current;
+        if (!doc) throw new Error('Document not loaded');
+        return JSON.parse(
+          doc.getCharPropertiesAt(sectionIdx, paraIdx, charOffset),
+        );
+      },
+      getEmptyFormFields: (opts?: {
+        sectionIdx?: number;
+        maxResults?: number;
+      }): unknown => {
+        const doc = docRef.current;
+        if (!doc) throw new Error('Document not loaded');
+        return enumerateEmptyFormFields(doc, opts ?? {});
+      },
+      // 0.4.24 — HWP3 외부 이미지 inject 흐름 (lib 0.7.11 신규).
+      //   getExternalImageBasenames() → JS 가 fetch 로 binary 로드 →
+      //   injectExternalImage(basename, data, displayPath) → 렌더러에
+      //   이미지 표시. HWP3 (구 95) doc 의 외부 이미지 참조 처리.
+      //   현재는 debug surface 만 — UI 흐름 (file picker → fetch → inject)
+      //   은 후속 chunk 에서 wire.
+      getExternalImageBasenames: (): string[] => {
+        const doc = docRef.current;
+        if (!doc) return [];
+        try {
+          const raw = doc.getExternalImageBasenames();
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? (parsed as string[]) : [];
+        } catch (err) {
+          console.warn('[studio] getExternalImageBasenames:', err);
+          return [];
+        }
+      },
+      injectExternalImage: (
+        basename: string,
+        data: Uint8Array,
+        displayPath: string,
+      ): number => {
+        const doc = docRef.current;
+        if (!doc) return -1;
+        try {
+          return doc.injectExternalImage(basename, data, displayPath);
+        } catch (err) {
+          console.warn('[studio] injectExternalImage:', err);
+          return -1;
+        }
+      },
+      // 0.4.21 진단 — 빈 cell 발견 가능성 추적용. 처음 N paragraph 에서
+      // 어떤 control 들이 있는지 + table dimensions 결과 dump.
+      probeControls: (sectionIdx: number, maxParas: number): unknown => {
+        const doc = docRef.current;
+        if (!doc) throw new Error('Document not loaded');
+        const out: {
+          p: number;
+          positions: string;
+          tableDims: Record<number, string>;
+        }[] = [];
+        const cnt = Math.min(doc.getParagraphCount(sectionIdx), maxParas);
+        for (let p = 0; p < cnt; p++) {
+          let positions: string;
+          try {
+            positions = doc.getControlTextPositions(sectionIdx, p);
+          } catch (err) {
+            positions = `err:${(err as Error).message}`;
+          }
+          const tableDims: Record<number, string> = {};
+          if (positions && positions !== '[]') {
+            try {
+              const parsed = JSON.parse(positions);
+              if (Array.isArray(parsed)) {
+                for (const pos of parsed) {
+                  const ctrlIdx =
+                    typeof pos?.controlIndex === 'number'
+                      ? pos.controlIndex
+                      : typeof pos?.controlIdx === 'number'
+                        ? pos.controlIdx
+                        : typeof pos?.index === 'number'
+                          ? pos.index
+                          : -1;
+                  if (ctrlIdx < 0) continue;
+                  try {
+                    tableDims[ctrlIdx] = doc.getTableDimensions(
+                      sectionIdx,
+                      p,
+                      ctrlIdx,
+                    );
+                  } catch (err) {
+                    tableDims[ctrlIdx] = `err:${(err as Error).message}`;
+                  }
+                }
+              }
+            } catch {
+              /* ignore */
+            }
+          }
+          if (positions !== '[]' || Object.keys(tableDims).length > 0) {
+            out.push({ p, positions, tableDims });
+          }
+        }
+        return out;
       },
       // Raw escape hatch — lets e2e probes try alternate prop key names
       // when the lib's input schema diverges from its output schema.

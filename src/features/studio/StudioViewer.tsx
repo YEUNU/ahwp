@@ -901,16 +901,6 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       useState(false);
     /** Inline rows × cols input for insert-table — open from toolbar. */
     const [tablePickerOpen, setTablePickerOpen] = useState(false);
-    /**
-     * Cached lowercased paragraph text for Find. Built lazily on the
-     * first non-empty search; keyed by `${sec}:${para}` so multi-section
-     * docs don't collide. `runFindSearch` reuses this on subsequent
-     * keystrokes — without the cache, every keystroke re-issued
-     * getTextRange across all paragraphs (4ms × N para per keystroke).
-     * Invalidated by `refreshAfterMutation` since edits change paragraph
-     * text and break the offsets we'd return as match positions.
-     */
-    const findTextCacheRef = useRef<Map<string, string> | null>(null);
     // Active formatting state on the caret's paragraph — drives toolbar
     // pressed-state. Recomputed after every mutation / caret move.
     const [activeFormat, setActiveFormat] = useState<{
@@ -945,7 +935,6 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       pageRefsRef,
       dirtyRef,
       historyRef,
-      findTextCacheRef,
       setDirty,
       setCanUndo,
       setCanRedo,
@@ -1582,9 +1571,6 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           }
         }
         cacheRef.current.clear();
-        // Mutations change paragraph text → drop the find text cache so
-        // subsequent searches re-extract from the doc.
-        findTextCacheRef.current = null;
         // Page count can change (insertPageBreak, table insert spanning
         // a page, large insertText pushing content to a new page). Only
         // setState if the value actually changed to avoid extra renders.
@@ -3104,7 +3090,6 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       pageRefsRef,
       selectionRef,
       scrollRef,
-      findTextCacheRef,
       sortRange,
       refreshAfterMutation,
       setCursorRect,
@@ -3927,7 +3912,6 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       composingRef,
       changedParaTimerRef,
       cacheRef,
-      findTextCacheRef,
       setDirty,
       setCursorRect,
       setChangedParaRects,
@@ -4153,6 +4137,60 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
         window.clearTimeout(t);
       };
     }, [phase, dirty, pageCount]);
+
+    // 0.4.25 — HWP3 외부 이미지 banner state. phase=ready 직후 doc 가
+    // 외부 이미지 file path 를 참조하는지 검사. 결과 있으면 사용자
+    // banner 노출.
+    const [externalImageBasenames, setExternalImageBasenames] = useState<
+      string[]
+    >([]);
+    const [externalImageDismissed, setExternalImageDismissed] = useState(false);
+    useEffect(() => {
+      if (phase !== 'ready') {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setExternalImageBasenames([]);
+
+        setExternalImageDismissed(false);
+        return;
+      }
+      const doc = docRef.current;
+      if (!doc) return;
+      try {
+        const raw = doc.getExternalImageBasenames();
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setExternalImageBasenames(parsed as string[]);
+        }
+      } catch {
+        /* no external images or HWP3 not supported on this doc */
+      }
+    }, [phase]);
+    const handleResolveExternalImages = useCallback(async () => {
+      if (externalImageBasenames.length === 0) return;
+      try {
+        const matches = await window.api.folder.resolveExternalImages(
+          externalImageBasenames,
+        );
+        if (matches.length === 0) return;
+        const doc = docRef.current;
+        if (!doc) return;
+        for (const m of matches) {
+          try {
+            doc.injectExternalImage(m.basename, m.bytes, m.fullPath);
+          } catch (err) {
+            console.warn(
+              '[studio] injectExternalImage failed:',
+              m.basename,
+              err,
+            );
+          }
+        }
+        refreshAfterMutation({ syncCaret: false });
+        setExternalImageBasenames([]);
+      } catch (err) {
+        console.warn('[studio] resolveExternalImages failed:', err);
+      }
+    }, [externalImageBasenames, refreshAfterMutation]);
 
     return (
       <div
@@ -4598,6 +4636,39 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
             </div>
           </div>
         )}
+
+        {/* 0.4.25 — HWP3 외부 이미지 banner. 사용자 폴더 선택 → 일괄
+          inject. 사용자가 닫으면 다음 doc 로드 까지 hidden. */}
+        {externalImageBasenames.length > 0 && !externalImageDismissed ? (
+          <div
+            className="flex items-center gap-3 border-b border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs"
+            data-testid="hwp3-external-images-banner"
+          >
+            <span className="flex-1">
+              이 문서는 외부 이미지 {externalImageBasenames.length}개를
+              참조합니다 ({externalImageBasenames.slice(0, 3).join(', ')}
+              {externalImageBasenames.length > 3 ? ', …' : ''}).
+            </span>
+            <Button
+              size="sm"
+              variant="default"
+              onClick={() => void handleResolveExternalImages()}
+              className="h-6 px-2 text-[11px]"
+              data-testid="hwp3-external-images-resolve"
+            >
+              이미지 폴더 선택…
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setExternalImageDismissed(true)}
+              className="h-6 px-2 text-[11px]"
+              data-testid="hwp3-external-images-dismiss"
+            >
+              닫기
+            </Button>
+          </div>
+        ) : null}
 
         <div
           ref={scrollRef}

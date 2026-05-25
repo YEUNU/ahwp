@@ -67,8 +67,11 @@ export const AHWP_TOOL_NAMES = [
   'createHeaderFooter',
   'deleteHeaderFooter',
   'deleteBookmark',
+  // 0.4.16 — cell-level write (양식 표지 cell 채우기)
+  'insertTextInCell',
   // Phase 3 chunk 51 — read-only Agent tools (양식 매칭 / 위치 결정)
   'getDocumentOutline',
+  'getDocumentSummary',
   'getStyleListJson',
   'getStyleAt',
   'getCharPropertiesAt',
@@ -77,6 +80,14 @@ export const AHWP_TOOL_NAMES = [
   'getCaretPosition',
   'findInDocument',
   'getCellInfo',
+  // 0.4.24 — @rhwp/core 0.7.11 신규 API
+  'insertEquation',
+  'deleteFootnote',
+  'deleteEquationControl',
+  'getColumnDef',
+  'getFootnoteAtCursor',
+  // 0.4.21 — empty form-field discovery (양식 채우기 baseline)
+  'getEmptyFormFields',
   // Phase 5 chunk 96 — outline-as-router workspace search
   'searchWorkspaceOutlines',
   'readParagraphByPath',
@@ -96,6 +107,7 @@ export type AhwpToolName = (typeof AHWP_TOOL_NAMES)[number];
  */
 export const READONLY_TOOL_NAMES = new Set<AhwpToolName>([
   'getDocumentOutline',
+  'getDocumentSummary',
   'getStyleListJson',
   'getStyleAt',
   'getCharPropertiesAt',
@@ -104,6 +116,9 @@ export const READONLY_TOOL_NAMES = new Set<AhwpToolName>([
   'getCaretPosition',
   'findInDocument',
   'getCellInfo',
+  'getColumnDef',
+  'getFootnoteAtCursor',
+  'getEmptyFormFields',
   'searchWorkspaceOutlines',
   'readParagraphByPath',
   // chunk 99 follow-up — switchTargetDoc 는 IR 을 변경하지 않으므로
@@ -397,8 +412,19 @@ export interface AhwpToolArgs {
     paragraphIdx: number;
     controlIdx: number;
   };
+  // 0.4.16 — cell-level write
+  insertTextInCell: {
+    sectionIdx: number;
+    parentParaIdx: number;
+    controlIdx: number;
+    cellIdx: number;
+    cellParaIdx: number;
+    charOffset: number;
+    text: string;
+  };
   // Phase 3 chunk 51 — read-only Agent tools
   getDocumentOutline: Record<string, never>;
+  getDocumentSummary: Record<string, never>;
   getStyleListJson: Record<string, never>;
   getStyleAt: { sectionIdx: number; paragraphIdx: number };
   getCharPropertiesAt: {
@@ -421,6 +447,37 @@ export interface AhwpToolArgs {
     parentParaIdx: number;
     controlIdx: number;
     cellIdx: number;
+  };
+  // 0.4.24 — @rhwp/core 0.7.11 신규 API
+  insertEquation: {
+    sectionIdx: number;
+    paragraphIdx: number;
+    charOffset: number;
+    script: string;
+    fontSizeHwpunit?: number;
+    color?: number;
+  };
+  deleteFootnote: {
+    sectionIdx: number;
+    paragraphIdx: number;
+    controlIdx: number;
+  };
+  deleteEquationControl: {
+    sectionIdx: number;
+    parentParaIdx: number;
+    controlIdx: number;
+  };
+  getColumnDef: { sectionIdx: number };
+  getFootnoteAtCursor: {
+    sectionIdx: number;
+    paragraphIdx: number;
+    charOffset: number;
+    direction: 'forward' | 'backward';
+  };
+  // 0.4.21 — empty form-field enumeration
+  getEmptyFormFields: {
+    sectionIdx?: number;
+    maxResults?: number;
   };
   // Phase 5 chunk 96 — outline-as-router workspace search
   searchWorkspaceOutlines: { maxDocs?: number };
@@ -450,9 +507,20 @@ export interface AhwpToolBlock {
  *
  * Phase 3 chunk 51 — read tool 의 결과는 `data` 에 JSON 으로 담음.
  * Agent loop 가 다음 turn 의 tool_result 메시지에 stringify 해서 모델
- * 에 회신. write tool 은 `data` 미사용 (success/failure 만 의미). */
+ * 에 회신. write tool 은 `data` 미사용 (success/failure 만 의미).
+ *
+ * 0.4.23 — write tool 의 synthetic diff. dispatcher 가 호출 전/후 영향
+ * paragraph 의 텍스트를 snapshot 하면 `diff` 에 담는다. UI 가 tool entry
+ * 옆에 inline DiffCard 로 렌더. 모델에는 전달 안 함 (UI 전용). */
+export interface ToolResultDiff {
+  paragraphIdx: number;
+  before: string;
+  after: string;
+  /** Display-only label. */
+  label?: string;
+}
 export type AhwpToolResult =
-  | { ok: true; tool: AhwpToolName; data?: unknown }
+  | { ok: true; tool: AhwpToolName; data?: unknown; diff?: ToolResultDiff }
   | { ok: false; tool: string; reason: string };
 
 /** Hard ceilings — anything bigger is rejected before dispatch. */

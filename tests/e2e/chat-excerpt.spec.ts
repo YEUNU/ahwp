@@ -123,22 +123,11 @@ test.describe('chat — chunk 20 excerpt attachment', () => {
     await expect(page.getByTestId('chat-excerpt-chip')).toHaveCount(0);
   });
 
-  test('attach toggle disables when chips present (excerpts win)', async () => {
-    const { page } = launched;
-    await openFixture(page, FIXTURE);
-    await seedSelection(page, 'foobar', 0, 3);
-
-    const toggle = page.getByTestId('chat-attach-checkbox');
-    await expect(toggle).toBeEnabled();
-
-    await page.getByTestId('chat-capture-excerpt').click();
-    await expect(toggle).toBeDisabled();
-
-    // Remove the chip → toggle re-enabled.
-    await page.getByTestId('chat-excerpt-remove').click();
-    await expect(page.getByTestId('chat-excerpt-chip')).toHaveCount(0);
-    await expect(toggle).toBeEnabled();
-  });
+  // chunk 75 — attach toggle UI 폐기. ChatPanel 의 `attachDoc`/`setAttachDoc`
+  // 가 stub (`attachDoc = false`) 으로 고정되고 `chat-attach-checkbox` testid
+  // 가 사라졌음. 사용자는 발췌 chip 으로만 컨텍스트를 첨부. 본 케이스는
+  // toggle 상호작용 자체가 사라져 검증할 동작이 없음.
+  test.skip('attach toggle disables when chips present (excerpts win) — obsolete', () => {});
 
   test('chip remove × button drops it from state', async () => {
     const { page } = launched;

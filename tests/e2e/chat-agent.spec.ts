@@ -125,6 +125,13 @@ test.describe('chat — Phase 3 Agent 모드', () => {
     await enableAutoApprove();
     await page.getByTestId('chat-input').fill('TOOL:getCaretPosition:{}');
     await page.getByTestId('chat-send').click();
+
+    // 0.4.17 — read tool 들은 "🔍 자료 수집" 그룹 안에 collapse. 펼친 뒤에야
+    // 개별 entry 가 노출됨.
+    const groupToggle = page.getByTestId('chat-tool-read-group-toggle').first();
+    await expect(groupToggle).toBeVisible({ timeout: 5000 });
+    await groupToggle.click();
+
     const entry = page
       .locator(
         '[data-testid="chat-tool-entry"][data-tool-name="getCaretPosition"]',

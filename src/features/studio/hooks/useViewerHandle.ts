@@ -13,6 +13,7 @@
 import { useImperativeHandle, type ForwardedRef } from 'react';
 import type { RhwpDoc } from '@/lib/rhwp-core';
 import { relocateExcerpt } from '@/features/studio/utils/relocate-excerpt';
+import { enumerateEmptyFormFields } from '@/features/studio/utils/empty-form-fields';
 import type { CharFormatKey, ViewerHandle } from '../types';
 import type { RhwpStyleAt } from '@shared/rhwp-types';
 import type { LifecycleCursorRect } from './useDocumentLifecycle';
@@ -669,6 +670,76 @@ export function useViewerHandle(
           console.warn('[studio] scrollToParagraph failed:', err);
         }
       },
+      // chunk 0.4.5: AI fallback for docs without heading styles. When
+      // `getDocumentOutline` returns [], the AI has no way to judge
+      // whether the doc is filled — it would blindly call getTextRange
+      // on para 0 and conclude "empty". This summary returns per-section
+      // counts + first/last filled paragraph samples so the agent can
+      // make informed decisions.
+      getDocumentSummary: () => {
+        const doc = docRef.current;
+        if (!doc) return null;
+        try {
+          const sectionCount = doc.getSectionCount();
+          const TEXT_SAMPLE_CAP = 200;
+          const sections: {
+            sectionIdx: number;
+            paragraphCount: number;
+            nonEmptyCount: number;
+            firstFilled: { paragraphIdx: number; text: string } | null;
+            lastFilled: { paragraphIdx: number; text: string } | null;
+          }[] = [];
+          for (let s = 0; s < sectionCount; s++) {
+            const paraCount = doc.getParagraphCount(s);
+            let nonEmpty = 0;
+            let first: { paragraphIdx: number; text: string } | null = null;
+            let last: { paragraphIdx: number; text: string } | null = null;
+            const cap = Math.min(paraCount, 10000); // safety
+            for (let p = 0; p < cap; p++) {
+              const len = doc.getParagraphLength(s, p);
+              if (len === 0) continue;
+              let text: string;
+              try {
+                text = doc.getTextRange(
+                  s,
+                  p,
+                  0,
+                  Math.min(len, TEXT_SAMPLE_CAP),
+                );
+              } catch {
+                continue;
+              }
+              if (!text.trim()) continue;
+              nonEmpty += 1;
+              if (!first) first = { paragraphIdx: p, text };
+              last = { paragraphIdx: p, text };
+            }
+            sections.push({
+              sectionIdx: s,
+              paragraphCount: paraCount,
+              nonEmptyCount: nonEmpty,
+              firstFilled: first,
+              lastFilled: last,
+            });
+          }
+          return { sectionCount, sections };
+        } catch (err) {
+          console.warn('[studio] getDocumentSummary failed:', err);
+          return null;
+        }
+      },
+      // 0.4.21 — empty form-field discovery. Delegates to the standalone
+      // helper so __studioDebug + AI dispatch share the same impl.
+      getEmptyFormFields: (opts) => {
+        const doc = docRef.current;
+        if (!doc) return null;
+        try {
+          return enumerateEmptyFormFields(doc, opts ?? {});
+        } catch (err) {
+          console.warn('[studio] getEmptyFormFields failed:', err);
+          return null;
+        }
+      },
       getOutline: () => {
         const doc = docRef.current;
         if (!doc) return [];
@@ -687,7 +758,27 @@ export function useViewerHandle(
             headingByStyleId.set(s.id, level);
           }
         }
-        if (headingByStyleId.size === 0) return [];
+        if (headingByStyleId.size === 0) {
+          // 0.4.18 — 진단. doc 의 styleList 에 heading 스타일이 하나도
+          // 없다는 신호 — 사업계획서 양식 / 본문-only 문서 등에서 흔하다.
+          // catalog description 이 모델에게 "outline 비면 getDocumentSummary
+          // fallback" 을 안내하지만, 사용자가 의아해할 때 콘솔에서 어떤
+          // 스타일이 있었는지 즉시 확인할 수 있도록 names dump.
+          if (styleList.length > 0) {
+            const names = styleList
+              .map(
+                (s) =>
+                  `${s.id}:${s.name}${s.englishName ? `/${s.englishName}` : ''}`,
+              )
+              .join(', ');
+            console.info(
+              `[studio] getOutline: heading-style 미발견 (제목 N / 개요 N / Heading N 매칭 없음). 문서 스타일 목록: ${names}`,
+            );
+          } else {
+            console.info('[studio] getOutline: styleList 가 비어있음.');
+          }
+          return [];
+        }
         const items: {
           paragraphIndex: number;
           level: number;
@@ -912,6 +1003,85 @@ export function useViewerHandle(
         irMutate('irInsertText', (doc) =>
           doc.insertText(sec, para, charOffset, text),
         ),
+      // 0.4.16 — AI 양식 채우기용 cell-level write. parent paragraph 가
+      // 표 control 인 경우 그 안의 특정 cell + 특정 cellPara + offset 에
+      // 텍스트 삽입. body-level insertText 와 달리 표 layout 보존.
+      irInsertTextInCell: (
+        sec,
+        parentPara,
+        ctrl,
+        cellIdx,
+        cellPara,
+        charOff,
+        text,
+      ) =>
+        irMutate('irInsertTextInCell', (doc) =>
+          doc.insertTextInCell(
+            sec,
+            parentPara,
+            ctrl,
+            cellIdx,
+            cellPara,
+            charOff,
+            text,
+          ),
+        ),
+      irGetTextInCell: (
+        sec: number,
+        parentPara: number,
+        ctrl: number,
+        cellIdx: number,
+        cellPara: number,
+        so: number,
+        eo: number,
+      ) =>
+        irRead('irGetTextInCell', (doc) =>
+          doc.getTextInCell(sec, parentPara, ctrl, cellIdx, cellPara, so, eo),
+        ),
+      irDeleteRangeInCell: (
+        sec,
+        parentPara,
+        ctrl,
+        cellIdx,
+        startCellPara,
+        startOff,
+        endCellPara,
+        endOff,
+      ) =>
+        irMutate('irDeleteRangeInCell', (doc) =>
+          doc.deleteRangeInCell(
+            sec,
+            parentPara,
+            ctrl,
+            cellIdx,
+            startCellPara,
+            startOff,
+            endCellPara,
+            endOff,
+          ),
+        ),
+      irApplyCharFormatInCell: (
+        sec,
+        parentPara,
+        ctrl,
+        cellIdx,
+        cellPara,
+        startOff,
+        endOff,
+        props,
+      ) =>
+        irMutate('irApplyCharFormatInCell', (doc) =>
+          doc.applyCharFormatInCell(
+            sec,
+            parentPara,
+            ctrl,
+            cellIdx,
+            cellPara,
+            startOff,
+            endOff,
+            JSON.stringify(props),
+          ),
+        ),
       irDeleteRange: (sec, sp, so, ep, eo) =>
         irMutate('irDeleteRange', (doc) =>
           doc.deleteRange(sec, sp, so, ep, eo),
@@ -928,6 +1098,85 @@ export function useViewerHandle(
         ),
       irApplyStyle: (sec, para, styleId) =>
         irMutate('irApplyStyle', (doc) => doc.applyStyle(sec, para, styleId)),
+      // === 0.4.24 — @rhwp/core 0.7.11 신규 API wrappers ===
+      irInsertEquation: (
+        sec: number,
+        para: number,
+        charOff: number,
+        script: string,
+        fontSize?: number,
+        color?: number,
+      ) =>
+        irMutate('irInsertEquation', (doc) =>
+          doc.insertEquation(
+            sec,
+            para,
+            charOff,
+            script,
+            fontSize ?? 1000,
+            color ?? 0,
+          ),
+        ),
+      irDeleteFootnote: (sec: number, para: number, ctrl: number) =>
+        irMutate('irDeleteFootnote', (doc) =>
+          doc.deleteFootnote(sec, para, ctrl),
+        ),
+      irDeleteEquationControl: (sec: number, ppara: number, ctrl: number) =>
+        irMutate('irDeleteEquationControl', (doc) =>
+          doc.deleteEquationControl(sec, ppara, ctrl),
+        ),
+      irGetColumnDef: (sec: number) =>
+        irRead('irGetColumnDef', (doc) => {
+          const raw = doc.getColumnDef(sec);
+          try {
+            return JSON.parse(raw) as Record<string, unknown>;
+          } catch {
+            return null;
+          }
+        }),
+      irGetFootnoteAtCursor: (
+        sec: number,
+        para: number,
+        charOff: number,
+        direction: 'forward' | 'backward',
+      ) =>
+        irRead('irGetFootnoteAtCursor', (doc) => {
+          const raw = doc.getFootnoteAtCursor(sec, para, charOff, direction);
+          try {
+            return JSON.parse(raw) as Record<string, unknown>;
+          } catch {
+            return null;
+          }
+        }),
+      // 0.4.25 — HWP3 외부 이미지 (lib 0.7.11).
+      irGetExternalImageBasenames: (): string[] => {
+        const doc = docRef.current;
+        if (!doc) return [];
+        try {
+          const raw = doc.getExternalImageBasenames();
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? (parsed as string[]) : [];
+        } catch (err) {
+          console.warn('[studio] getExternalImageBasenames:', err);
+          return [];
+        }
+      },
+      irInjectExternalImage: (
+        basename: string,
+        bytes: Uint8Array,
+        displayPath: string,
+      ): number => {
+        const doc = docRef.current;
+        if (!doc) return -1;
+        try {
+          const result = doc.injectExternalImage(basename, bytes, displayPath);
+          refreshAfterMutation({ syncCaret: false });
+          return result;
+        } catch (err) {
+          console.warn('[studio] injectExternalImage:', err);
+          return -1;
+        }
+      },
       irCreateTable: (sec, para, charOffset, rowCount, colCount) =>
         irMutate('irCreateTable', (doc) =>
           doc.createTable(sec, para, charOffset, rowCount, colCount),
