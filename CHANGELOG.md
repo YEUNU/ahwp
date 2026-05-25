@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+## [0.4.29] - 2026-05-25
+
+> v0.4.2 이후 `[Unreleased]` 에 누적되어 있던 0.4.3 ~ 0.4.28 의 모든 entries 도 본 릴리스(`25df6e7` main 머지)에 포함. 청크별 디테일은 `git log v0.4.2..v0.4.29` 참조.
+
 ### Changed — @rhwp/core 0.7.12 + 네이티브 searchAllText 채택 (0.4.29)
 
 `@rhwp/core` 0.7.11 → 0.7.12 bump. Find 의 paragraph 텍스트 캐시 + `indexOf` 루프 (`useFindReplace.runFindSearch`) 를 lib 의 네이티브 `doc.searchAllText(query, false, false)` 호출로 치환. `findTextCacheRef` (`StudioViewer` / `useDocumentLifecycle` / `useDebugSurface` / `useFindReplace` 4 곳 wiring + mutation invalidation) 전부 제거. 동작 동일 — `include_cells=false` 로 기존 UI scope (top-level paragraph) 유지. 대소문자 무시·match 위치·count feedback 동일.
