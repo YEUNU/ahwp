@@ -19,6 +19,9 @@ export default tseslint.config(
       // tsconfig — including them confuses typescript-eslint with
       // duplicate TSConfigRootDirs (parsing error on every .ts file).
       '.claude',
+      // Phase 7 — rhwp-studio fork as submodule. We don't lint upstream
+      // source from inside ahwp; the submodule has its own toolchain.
+      'vendor',
       'scripts/inspect-*.mjs',
       'scripts/check-*.mjs',
       '*.config.cjs',

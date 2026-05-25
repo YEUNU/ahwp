@@ -53,10 +53,11 @@ ahwp/
   - `npm run vendor:rhwp:setup` — `@rhwp/core` artifacts 를 `vendor/rhwp/pkg/` 로 복사
   - `npm run vendor:rhwp:build` — setup + rhwp-studio vite build
   - 빌드 통과 검증 ✅
-- [ ] **A2** — bridge method 확장
-  - `vendor/rhwp/rhwp-studio/src/main.ts` 의 postMessage switch 에 AI tools 가 호출하는 ~50 method 추가 (read 9 + write 45)
-  - caret / selection / doc-change 이벤트 emit (`rhwp-event`) 추가
-  - rhwp-studio 빌드 재검증
+- [~] **A2** — bridge method 확장 (in progress — 6/~50 메서드 완료)
+  - 1차 6 method 추가: `getSectionCount` / `getParagraphCount` / `getTextRange` / `searchAllText` / `insertText` / `getCaretPosition`
+  - vite build 에 `--base=./` 추가 (file:// + Electron resources 호환)
+  - 회귀 PoC `tests/e2e/rhwp-bridge-poc.spec.ts` — chromium + 내부 http server 로 dist 띄우고 8 단계 시퀀스 (ready → loadFile → 6 method → unknown error) 검증, 2/2 통과 ✅
+  - 잔여: 나머지 ~45 method 일괄 추가 + caret / selection / doc-change `rhwp-event` emit. Phase A2 후속 iteration 에서 batch 로.
 
 ### Phase B — ahwp 측 bridge client
 
