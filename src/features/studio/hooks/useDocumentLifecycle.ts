@@ -101,7 +101,6 @@ export interface UseDocumentLifecycleOptions {
   pageRefsRef: MutableRefObject<(HTMLDivElement | null)[]>;
   dirtyRef: MutableRefObject<boolean>;
   historyRef: MutableRefObject<LifecycleHistory>;
-  findTextCacheRef: MutableRefObject<Map<string, string> | null>;
   // Setters (React state)
   setDirty: (v: boolean) => void;
   setCanUndo: (v: boolean) => void;
@@ -125,7 +124,6 @@ export function useDocumentLifecycle(opts: UseDocumentLifecycleOptions): void {
     pageRefsRef,
     dirtyRef,
     historyRef,
-    findTextCacheRef,
     setDirty,
     setCanUndo,
     setCanRedo,
@@ -155,7 +153,6 @@ export function useDocumentLifecycle(opts: UseDocumentLifecycleOptions): void {
     pageRefsRef.current = [];
     dirtyRef.current = false;
     historyRef.current = { entries: [], index: -1 };
-    findTextCacheRef.current = null;
 
     void (async () => {
       try {

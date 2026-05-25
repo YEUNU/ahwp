@@ -52,7 +52,6 @@ export interface UseDebugSurfaceOptions {
   composingRef: MutableRefObject<boolean>;
   changedParaTimerRef: MutableRefObject<number | null>;
   cacheRef: MutableRefObject<Map<number, string>>;
-  findTextCacheRef: MutableRefObject<Map<string, string> | null>;
   // setters
   setDirty: (v: boolean) => void;
   setCursorRect: AnySetState;

@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### Changed — @rhwp/core 0.7.12 + 네이티브 searchAllText 채택 (0.4.29)
+
+`@rhwp/core` 0.7.11 → 0.7.12 bump. Find 의 paragraph 텍스트 캐시 + `indexOf` 루프 (`useFindReplace.runFindSearch`) 를 lib 의 네이티브 `doc.searchAllText(query, false, false)` 호출로 치환. `findTextCacheRef` (`StudioViewer` / `useDocumentLifecycle` / `useDebugSurface` / `useFindReplace` 4 곳 wiring + mutation invalidation) 전부 제거. 동작 동일 — `include_cells=false` 로 기존 UI scope (top-level paragraph) 유지. 대소문자 무시·match 위치·count feedback 동일.
+
 ### Fixed — Prompt 일관성 + tool router ALWAYS_INCLUDE 확장 (0.4.28)
 
 LLM-facing prompt 가독성 + form-fill 라우팅 신뢰성 개선.

@@ -901,16 +901,6 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       useState(false);
     /** Inline rows × cols input for insert-table — open from toolbar. */
     const [tablePickerOpen, setTablePickerOpen] = useState(false);
-    /**
-     * Cached lowercased paragraph text for Find. Built lazily on the
-     * first non-empty search; keyed by `${sec}:${para}` so multi-section
-     * docs don't collide. `runFindSearch` reuses this on subsequent
-     * keystrokes — without the cache, every keystroke re-issued
-     * getTextRange across all paragraphs (4ms × N para per keystroke).
-     * Invalidated by `refreshAfterMutation` since edits change paragraph
-     * text and break the offsets we'd return as match positions.
-     */
-    const findTextCacheRef = useRef<Map<string, string> | null>(null);
     // Active formatting state on the caret's paragraph — drives toolbar
     // pressed-state. Recomputed after every mutation / caret move.
     const [activeFormat, setActiveFormat] = useState<{
@@ -945,7 +935,6 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       pageRefsRef,
       dirtyRef,
       historyRef,
-      findTextCacheRef,
       setDirty,
       setCanUndo,
       setCanRedo,
@@ -1582,9 +1571,6 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
           }
         }
         cacheRef.current.clear();
-        // Mutations change paragraph text → drop the find text cache so
-        // subsequent searches re-extract from the doc.
-        findTextCacheRef.current = null;
         // Page count can change (insertPageBreak, table insert spanning
         // a page, large insertText pushing content to a new page). Only
         // setState if the value actually changed to avoid extra renders.
@@ -3104,7 +3090,6 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       pageRefsRef,
       selectionRef,
       scrollRef,
-      findTextCacheRef,
       sortRange,
       refreshAfterMutation,
       setCursorRect,
@@ -3927,7 +3912,6 @@ export const StudioViewer = forwardRef<ViewerHandle, StudioViewerProps>(
       composingRef,
       changedParaTimerRef,
       cacheRef,
-      findTextCacheRef,
       setDirty,
       setCursorRect,
       setChangedParaRects,
