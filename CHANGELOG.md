@@ -6,6 +6,29 @@
 
 ## [Unreleased]
 
+## [0.6.9] - 2026-05-26
+
+### Fixed — macOS auto-update "ZIP file not provided" 에러
+
+사용자 보고: macOS 사용자가 업데이트 확인 시 `ZIP file not provided`
+에러. 원인 — `electron-updater` 가 macOS 에서 incremental update + atomic
+swap 을 위해 **ZIP** 형식이 필요한데 우리는 DMG 만 publish 하고 있었음.
+DMG 는 사용자 fresh install 용도 (마운트 + 드래그) 이고 auto-update 에는
+부적합.
+
+**Fix**: `package.json` 의 `build.mac.target` 에 `zip` 추가 (`["dmg", "zip"]`).
+DMG 는 fresh install / 첫 배포용으로 유지, ZIP 은 auto-update 가 사용.
+`latest-mac.yml` 이 자동으로 ZIP 을 참조 → updater 정상 작동.
+
+다음 0.6.9+ release 부터 macOS 사용자 auto-update 가 silently 작동.
+
+### Note — 기존 release 처리
+
+0.6.4 / 0.6.5 / 0.6.6 / 0.6.7 / 0.6.8 (모두 DMG 만) 은 macOS 사용자가
+auto-update 로 받을 수 없음. 0.6.9 가 publish 되면 그게 새 latest 가
+되고, 모든 기존 사용자는 0.6.9 로 jump. (단 첫 jump 는 user 가 0.6.9
+DMG 를 수동 다운로드해야 — 이후부턴 ZIP auto-update 자동.)
+
 ## [0.6.8] - 2026-05-26
 
 ### Added — 자동 다운로드 기본 활성화 + Settings 토글
