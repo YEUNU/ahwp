@@ -6,6 +6,34 @@
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-05-26
+
+### Fixed — 24 broken AI tools 복원 + 이중변환 bug fix
+
+0.5.0 의 StudioViewer 폐기로 깨졌던 AI 도구들을 BridgeIrHelper composite
+로 재구현. 사용자 입장에선 rhwp-mode 에서 "이 단락 가운데 정렬",
+"글자 14pt", "각주 추가", "표 합계", "문서 목차" 같은 자연어 명령이
+다시 동작.
+
+**복원 도구 (24)**: applyHtml / applyAlignment / applyFontSize /
+applyTextColor / toggleCharFormat / insertFootnote / addBookmark /
+setHeaderFooterText / applyPageDef / createNamedStyle / createRectShape /
+applyCellStyle / applyParaProps / setTableProperties / setCellProperties /
+evaluateTableFormula / setPictureProperties / deletePictureControl /
+deleteBookmark / getDocumentOutline / getDocumentSummary / getStyleListJson /
+getEmptyFormFields / insertPicture.
+
+**이중변환 bug fix (2)**: tools.ts 의 setShapeProperties / setSectionDef
+case 가 ahwp 측에서 `JSON.stringify(props)` 호출 후 wasm-bridge 가 또
+stringify → wasm 이 doubly-encoded string 받아 parse 실패. 객체 그대로
+전달로 수정.
+
+**일관성 원칙**: ahwp tools.ts 는 객체 그대로 helper 에 전달 (JSON.stringify
+절대 X). helper 가 single serialization point — WASM 타겟이 string 받는
+메서드 (applyCharFormat / applyParaFormat) 만 한 번 stringify, object
+받는 메서드 (setShapeProperties / setTableProperties / setCellProperties /
+setPictureProperties / setPageDef / setSectionDef) 는 passthrough.
+
 ## [0.5.0] - 2026-05-26
 
 ### BREAKING — 자체 StudioViewer 폐기, rhwp-studio 가 유일 편집기 (Phase 7 E2 완료)
