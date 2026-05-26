@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-ahwp — Electron + React desktop app for viewing/editing Korean HWP/HWPX documents with AI assistance. **0.6.0 — mixed-format workspace** (current `0.6.0` — 워크스페이스에 PDF/DOCX/Excel/TXT/MD 등 혼합. 편집은 여전히 HWP/HWPX 만; 그 외는 AI read-only 컨텍스트 + 클릭 시 OS 기본 앱 위임). 라이브 provider: OpenAI / NVIDIA NIM / Google Gemini / custom OpenAI-호환 (Ollama/vLLM/LM Studio/on-prem). Anthropic 어댑터만 키 결정 대기.
+ahwp — Electron + React desktop app for viewing/editing Korean HWP/HWPX documents with AI assistance. **0.6.x — mixed-format workspace** (current `0.6.1` — 워크스페이스에 PDF/DOCX/Excel/TXT/MD/CSV/JSON/XML/HTML 등 혼합. 편집은 여전히 HWP/HWPX 만; 그 외는 AI read-only 컨텍스트 (실제 binary 라이브러리 round-trip 검증됨) + 클릭 시 OS 기본 앱 위임. Search 패널 / family 별 트리 아이콘 / per-family size cap). 라이브 provider: OpenAI / NVIDIA NIM / Google Gemini / custom OpenAI-호환 (Ollama/vLLM/LM Studio/on-prem). Anthropic 어댑터만 키 결정 대기.
 
 **아키텍처**: ahwp 는 **Electron shell + AI Chat panel** 만 책임. 편집 UI 는 `vendor/rhwp/rhwp-studio` (편집기 라이브러리, iframe 으로 임베드) 가 전부 제공. iframe ↔ parent 통신은 `ahwp-studio://` 커스텀 protocol + postMessage bridge.
 
