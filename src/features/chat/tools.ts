@@ -10,6 +10,7 @@ import type {
   AhwpToolResult,
 } from '@shared/ai-tools';
 import type { ViewerHandle } from '@/features/studio/types';
+import type { BridgeIrHelper } from '@/features/rhwp-studio/bridge-ir-helper';
 
 /** Run an op against the viewer. Returns a result describing what
  * happened — IR throws are caught and recorded as `ir-throw:<msg>` so
@@ -18,10 +19,16 @@ import type { ViewerHandle } from '@/features/studio/types';
  * chunk 96 — async because the new `searchWorkspaceOutlines` /
  * `readParagraphByPath` tools dispatch through main-process IPC.
  * Existing IR-call tools wrap their sync result in Promise.resolve
- * via the natural async function semantics. */
+ * via the natural async function semantics.
+ *
+ * Phase D2b — `helper` 가 non-null 이면 일부 case 는 BridgeIrHelper 로
+ * 라우팅한다 (rhwp-studio iframe 의 IR 사용). null 이면 기존 viewer.irX
+ * 경로 그대로. 단계적 마이그레이션 — 모든 case 가 helper 를 쓰는 건
+ * D2c 이후. */
 async function runOne(
   viewer: ViewerHandle,
   call: AhwpToolCall,
+  helper: BridgeIrHelper | null = null,
 ): Promise<AhwpToolResult> {
   try {
     switch (call.tool) {
@@ -100,43 +107,73 @@ async function runOne(
         return { ok: true, tool: call.tool };
       }
       // === 0.4.16 — cell-level text insert (양식 표지 cell 채우기) ===
+      // Phase D2b — helper 라우팅. helper 의 getTextInCell / insertTextInCell
+      // 가 wasm-bridge 의 동명 메서드와 1:1 passthrough.
       case 'insertTextInCell': {
         const a = call.args;
-        const before =
-          viewer.irGetTextInCell(
-            a.sectionIdx,
-            a.parentParaIdx,
-            a.controlIdx,
-            a.cellIdx,
-            a.cellParaIdx,
-            0,
-            4096,
-          ) ?? '';
-        const ok = viewer.irInsertTextInCell(
-          a.sectionIdx,
-          a.parentParaIdx,
-          a.controlIdx,
-          a.cellIdx,
-          a.cellParaIdx,
-          a.charOffset,
-          a.text,
-        );
+        const before = helper
+          ? await helper.getTextInCell(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.cellIdx,
+              a.cellParaIdx,
+              0,
+              4096,
+            )
+          : (viewer.irGetTextInCell(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.cellIdx,
+              a.cellParaIdx,
+              0,
+              4096,
+            ) ?? '');
+        const ok = helper
+          ? await helper.insertTextInCell(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.cellIdx,
+              a.cellParaIdx,
+              a.charOffset,
+              a.text,
+            )
+          : viewer.irInsertTextInCell(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.cellIdx,
+              a.cellParaIdx,
+              a.charOffset,
+              a.text,
+            );
         if (!ok)
           return {
             ok: false,
             tool: call.tool,
             reason: 'insertTextInCell-failed',
           };
-        const after =
-          viewer.irGetTextInCell(
-            a.sectionIdx,
-            a.parentParaIdx,
-            a.controlIdx,
-            a.cellIdx,
-            a.cellParaIdx,
-            0,
-            4096,
-          ) ?? '';
+        const after = helper
+          ? await helper.getTextInCell(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.cellIdx,
+              a.cellParaIdx,
+              0,
+              4096,
+            )
+          : (viewer.irGetTextInCell(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.cellIdx,
+              a.cellParaIdx,
+              0,
+              4096,
+            ) ?? '');
         return {
           ok: true,
           tool: call.tool,
@@ -171,30 +208,52 @@ async function runOne(
           };
         }
         // 0.4.23 — synthetic diff. paragraph 텍스트 before/after snapshot.
-        const before =
-          viewer.irGetTextRange(
-            a.sectionIdx,
-            a.paragraphIdx,
-            0,
-            a.paragraphIdx,
-            10_000,
-          ) ?? '';
-        const ok = viewer.irInsertText(
-          a.sectionIdx,
-          a.paragraphIdx,
-          a.charOffset,
-          a.text,
-        );
+        // Phase D2b — helper 가 있으면 bridge 라우팅, 없으면 viewer.irX.
+        const before = helper
+          ? await helper.getTextRange(
+              a.sectionIdx,
+              a.paragraphIdx,
+              0,
+              a.paragraphIdx,
+              10_000,
+            )
+          : (viewer.irGetTextRange(
+              a.sectionIdx,
+              a.paragraphIdx,
+              0,
+              a.paragraphIdx,
+              10_000,
+            ) ?? '');
+        const ok = helper
+          ? await helper.insertText(
+              a.sectionIdx,
+              a.paragraphIdx,
+              a.charOffset,
+              a.text,
+            )
+          : viewer.irInsertText(
+              a.sectionIdx,
+              a.paragraphIdx,
+              a.charOffset,
+              a.text,
+            );
         if (!ok)
           return { ok: false, tool: call.tool, reason: 'insertText-failed' };
-        const after =
-          viewer.irGetTextRange(
-            a.sectionIdx,
-            a.paragraphIdx,
-            0,
-            a.paragraphIdx,
-            10_000,
-          ) ?? '';
+        const after = helper
+          ? await helper.getTextRange(
+              a.sectionIdx,
+              a.paragraphIdx,
+              0,
+              a.paragraphIdx,
+              10_000,
+            )
+          : (viewer.irGetTextRange(
+              a.sectionIdx,
+              a.paragraphIdx,
+              0,
+              a.paragraphIdx,
+              10_000,
+            ) ?? '');
         return {
           ok: true,
           tool: call.tool,
@@ -882,6 +941,7 @@ async function runOne(
 export async function runTools(
   viewer: ViewerHandle,
   items: AhwpPreflightItem[],
+  helper: BridgeIrHelper | null = null,
 ): Promise<AhwpToolResult[]> {
   const out: AhwpToolResult[] = [];
   viewer.beginUndoGroup();
@@ -891,7 +951,7 @@ export async function runTools(
         out.push({ ok: false, tool: item.tool, reason: item.reason });
         continue;
       }
-      out.push(await runOne(viewer, item.call));
+      out.push(await runOne(viewer, item.call, helper));
     }
   } finally {
     viewer.endUndoGroup();

@@ -283,3 +283,160 @@ describe('runTools — 0.7.11 신규 API dispatch', () => {
     }
   });
 });
+
+// Phase D2b — helper (BridgeIrHelper) 경로 회귀. tools.ts 의 insertText /
+// insertTextInCell case 가 helper 가용 시 viewer.irX 대신 helper.X 를
+// 부르고, 결과 (특히 diff before/after) 가 helper 로부터 계산되는지
+// 확인. helper 는 minimal stub — 실제 RhwpBridge round-trip 은 별도 e2e.
+describe('runTools — Phase D2b helper routing', () => {
+  // BridgeIrHelper 의 method 시그너처를 만족하는 최소 stub. 시그너처
+  // 자체는 `as unknown as BridgeIrHelper` 로 우회 — args 는 rest 로 받고
+  // 필요한 인덱스만 사용.
+  function makeHelperStub(): {
+    helper: import('@/features/rhwp-studio/bridge-ir-helper').BridgeIrHelper;
+    calls: string[];
+  } {
+    const calls: string[] = [];
+    const helper = {
+      async getTextRange(...args: unknown[]): Promise<string> {
+        const sp = args[1] as number;
+        calls.push(`getTextRange#${sp}`);
+        return `text-${sp}`;
+      },
+      async getTextInCell(...args: unknown[]): Promise<string> {
+        void args;
+        calls.push('getTextInCell');
+        return 'cell-text';
+      },
+      async insertText(...args: unknown[]): Promise<boolean> {
+        const text = args[3] as string;
+        calls.push(`insertText:${text}`);
+        return true;
+      },
+      async insertTextInCell(...args: unknown[]): Promise<boolean> {
+        const text = args[6] as string;
+        calls.push(`insertTextInCell:${text}`);
+        return true;
+      },
+    } as unknown as import('@/features/rhwp-studio/bridge-ir-helper').BridgeIrHelper;
+    return { helper, calls };
+  }
+
+  it('insertText routes to helper when provided — viewer.irX not called', async () => {
+    const irInsertText = vi.fn(() => true);
+    const irGetTextRange = vi.fn(() => 'v');
+    const viewer = mockViewer({ irInsertText, irGetTextRange });
+    const { helper, calls } = makeHelperStub();
+    const items: AhwpPreflightItem[] = [
+      {
+        ok: true,
+        call: {
+          tool: 'insertText',
+          args: {
+            sectionIdx: 0,
+            paragraphIdx: 3,
+            charOffset: 0,
+            text: 'hello',
+          },
+        },
+      },
+    ];
+    const results = await runTools(viewer, items, helper);
+    expect(results[0].ok).toBe(true);
+    // viewer.irX 가 호출 안 됨.
+    expect(irInsertText).not.toHaveBeenCalled();
+    expect(irGetTextRange).not.toHaveBeenCalled();
+    // helper 가 before/insert/after 순서로 호출.
+    expect(calls).toEqual([
+      'getTextRange#3',
+      'insertText:hello',
+      'getTextRange#3',
+    ]);
+    // diff 가 helper 응답으로 계산 (단락 #3 → 'text-3').
+    if (results[0].ok && results[0].diff) {
+      expect(results[0].diff.before).toBe('text-3');
+      expect(results[0].diff.after).toBe('text-3');
+    }
+  });
+
+  it('insertText without helper falls back to viewer.irX', async () => {
+    const irInsertText = vi.fn(() => true);
+    const irGetTextRange = vi.fn(() => 'old');
+    const viewer = mockViewer({ irInsertText, irGetTextRange });
+    const items: AhwpPreflightItem[] = [
+      {
+        ok: true,
+        call: {
+          tool: 'insertText',
+          args: {
+            sectionIdx: 0,
+            paragraphIdx: 2,
+            charOffset: 0,
+            text: 'x',
+          },
+        },
+      },
+    ];
+    const results = await runTools(viewer, items);
+    expect(results[0].ok).toBe(true);
+    expect(irInsertText).toHaveBeenCalledTimes(1);
+    // diff 의 before/after 둘 다 viewer 응답으로 채워짐 → 2 회 호출.
+    expect(irGetTextRange).toHaveBeenCalledTimes(2);
+  });
+
+  it('insertTextInCell routes to helper when provided', async () => {
+    const irInsertTextInCell = vi.fn(() => true);
+    const irGetTextInCell = vi.fn(() => 'old-cell');
+    const viewer = mockViewer({ irInsertTextInCell, irGetTextInCell });
+    const { helper, calls } = makeHelperStub();
+    const items: AhwpPreflightItem[] = [
+      {
+        ok: true,
+        call: {
+          tool: 'insertTextInCell',
+          args: {
+            sectionIdx: 0,
+            parentParaIdx: 5,
+            controlIdx: 0,
+            cellIdx: 1,
+            cellParaIdx: 0,
+            charOffset: 0,
+            text: 'X',
+          },
+        },
+      },
+    ];
+    const results = await runTools(viewer, items, helper);
+    expect(results[0].ok).toBe(true);
+    expect(irInsertTextInCell).not.toHaveBeenCalled();
+    expect(irGetTextInCell).not.toHaveBeenCalled();
+    expect(calls).toEqual([
+      'getTextInCell',
+      'insertTextInCell:X',
+      'getTextInCell',
+    ]);
+  });
+
+  it('insertText hard-guard still fires before helper — guard runs unconditionally', async () => {
+    const viewer = mockViewer();
+    const { helper, calls } = makeHelperStub();
+    const items: AhwpPreflightItem[] = [
+      {
+        ok: true,
+        call: {
+          tool: 'insertText',
+          args: {
+            sectionIdx: 0,
+            paragraphIdx: 0,
+            charOffset: 0,
+            text: 'Title\n\nBody',
+          },
+        },
+      },
+    ];
+    const results = await runTools(viewer, items, helper);
+    expect(results[0].ok).toBe(false);
+    // guard 가 helper 호출 전에 reject.
+    expect(calls).toHaveLength(0);
+  });
+});
