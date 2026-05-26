@@ -6,6 +6,31 @@
 
 ## [Unreleased]
 
+## [0.6.10] - 2026-05-26
+
+### Fixed — CI publish job 403 (workflow 권한 + structural fix 누적)
+
+0.6.4~0.6.9 까지의 release fail 누적 원인 정리.
+
+**근본 원인 1 — Repo 의 default workflow 권한이 `read`**:
+
+- workflow 파일에서 `permissions: contents: write` 선언해도 repo 기본값
+  못 넘음. `gh release edit` 가 403 → publish job 실패. 사용자가
+  repo Settings → Actions → Workflow permissions → "Read and write" 로 수정.
+
+**근본 원인 2 — Publish job 의 `actions/checkout` 도 403** (0.6.10):
+
+- publish job 은 코드 필요 없음 (gh CLI 호출만). checkout 제거 + build
+  job 의 output 으로 tag 받음 (이미 0.6.9 에서 적용됨).
+
+**근본 원인 3 — macOS auto-update 가 ZIP 필요** (0.6.9 에서 적용):
+
+- `mac.target` 에 zip 추가 (`["dmg", "zip"]`).
+
+**누적 효과**: 0.6.10 부터 publish 흐름 정상. `latest-mac.yml` 이 ZIP
+참조하면서 공개 → 기존 0.6.7 사용자 (Mac) 가 처음에는 0.6.10 DMG 한 번
+수동 받아야 하고, 이후엔 모든 버전 auto-update 자동.
+
 ## [0.6.9] - 2026-05-26
 
 ### Fixed — macOS auto-update "ZIP file not provided" 에러
