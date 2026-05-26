@@ -100,8 +100,10 @@ ahwp/
   - [x] **E2b** — AppShell 이 `rhwpHandlesRef = Map<tabKey, RhwpEditorHandle>` 로 탭별 핸들 추적. runTools 라우팅 우선순위: (1) useRhwpEditor + active tab handle bridge, (2) `__rhwpDebug.getBridge()`, (3) viewer.irX fallback.
   - [x] **E2c** — useSaveFlow 에 optional `exportOverride` 추가. useRhwpEditor 모드면 `handle.exportHwp()` (bridge.invoke('exportHwp')) 가 viewer.exportBytes() 대체. file:save / saveAs / autosave 모두 동일 경로.
   - [x] **E2d 1단계** — rhwp-mode 가 default. `ahwp:use-rhwp-editor='0'` 명시 시에만 legacy StudioViewer 모드. launch.ts 가 기존 e2e 호환 위해 자동 '0' 주입. user 측 사용자 의도 — "rhwp-studio 를 Electron 에 렌더링하고 AI 자동 작성만 ahwp 가 담당" — 완성. legacy 모드는 기존 사용자 / 회귀 테스트 위해 유지.
-  - [ ] **E2e 점진 삭제** (선택) — 별도 deprecation 일정. legacy 모드 사용자가 충분히 적어지면 `src/features/studio/` (~5000 라인) + 의존 e2e (~30) 일괄 삭제. 본 작업은 사용자 마이그레이션 시간이 필요하므로 즉시 진행 X.
-- [x] **E3** — 0.5.0 major release 는 E2e 와 같이. 현재는 0.4.31 patch — rhwp-mode default flip 은 사용자 노출 큰 변경이지만 호환 mode 가 살아있어 breaking 아님.
+  - [x] **E2e** — 0.5.0 에서 `src/features/studio/` (~5000 라인) + studio 의존 e2e (~63) 일괄 삭제. legacy 모드 폐기. rhwp-studio iframe 이 유일 편집기.
+- [x] **E3** — 0.5.0 major release 출시 (2026-05-26). 후속 stabilization patch:
+  - **0.5.1** (2026-05-26) — 0.5.0 의 StudioViewer 폐기로 깨졌던 24 AI tools 복원 (applyHtml / applyAlignment / applyFontSize / applyTextColor / toggleCharFormat / insertFootnote / addBookmark / setHeaderFooterText / applyPageDef / createNamedStyle / createRectShape / applyCellStyle / applyParaProps / setTableProperties / setCellProperties / evaluateTableFormula / setPictureProperties / deletePictureControl / deleteBookmark / getDocumentOutline / getDocumentSummary / getStyleListJson / getEmptyFormFields / insertPicture) via `BridgeIrHelper` composite. 이중변환 bug 2건 (setShapeProperties / setSectionDef) fix — single serialization point (helper) 원칙.
+  - **0.5.2** (2026-05-26) — `applyPatches` 핸들러 회귀 fix. 0.5.0 에서 `activeViewerRef()` 호출 경로 그대로 → rhwp-mode 에선 null → ahwp-patches 자동 적용이 silently no-op. AppShell 핸들러를 `BridgeIrHelper` 기반 async 로 재배선 (body: deleteRange + insertText + applyCharFormat / cell: invokeOk InCell 시퀀스). `ChatPanel.onApplyPatches` 시그너처 → `Promise<boolean[]>`. live OpenAI e2e (`chat-rhwp-mode-live.spec.ts`) 의 context-aware multi-step 케이스 ("사업비 +100만원 해줘") 통과.
 
 ## 리스크
 
