@@ -18,6 +18,13 @@ export interface UseSaveFlowOptions {
   replaceTabPath: (oldPath: string, newPath: string) => void;
   setFolderRoot: Dispatch<SetStateAction<string | null>>;
   showNotice: (text: string, kind?: 'info' | 'warn') => void;
+  /**
+   * Phase 7 E2c — `useRhwpEditor` 모드 등에서 활성 탭의 bytes 를 viewer
+   * 대신 다른 경로로 얻고 싶을 때. non-null 반환 시 viewer.exportBytes
+   * 를 건너뜀. AppShell 의 RhwpEditorHandle.exportHwp() 가 hook 으로
+   * 들어온다.
+   */
+  exportOverride?: () => Promise<Uint8Array | null>;
 }
 
 export interface SaveFlowHandle {
@@ -38,6 +45,7 @@ export function useSaveFlow(opts: UseSaveFlowOptions): SaveFlowHandle {
     replaceTabPath,
     setFolderRoot,
     showNotice,
+    exportOverride,
   } = opts;
 
   const openFromDialog = useCallback(async () => {
@@ -64,6 +72,18 @@ export function useSaveFlow(opts: UseSaveFlowOptions): SaveFlowHandle {
   }, [setFolderRoot]);
 
   const exportBytes = useCallback(async (): Promise<Uint8Array | null> => {
+    // Phase E2c — override 가 non-null 반환하면 viewer 경유 X.
+    if (exportOverride) {
+      const t0 = performance.now();
+      const bytes = await exportOverride();
+      if (bytes) {
+        console.info(
+          `[ahwp] export(rhwp) ${(bytes.byteLength / 1024 / 1024).toFixed(2)}MB in ${(performance.now() - t0).toFixed(0)}ms`,
+        );
+        return bytes;
+      }
+      // override 가 null 반환 — viewer fallback.
+    }
     const handle = activeViewerRef();
     if (!handle) return null;
     const t0 = performance.now();
@@ -72,7 +92,7 @@ export function useSaveFlow(opts: UseSaveFlowOptions): SaveFlowHandle {
       `[ahwp] export ${(bytes.byteLength / 1024 / 1024).toFixed(2)}MB in ${(performance.now() - t0).toFixed(0)}ms`,
     );
     return bytes;
-  }, [activeViewerRef]);
+  }, [activeViewerRef, exportOverride]);
 
   const saveAsCurrent = useCallback(async () => {
     const tab = activeTab;

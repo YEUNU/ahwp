@@ -387,6 +387,17 @@ export default function AppShell() {
     replaceTabPath,
     setFolderRoot,
     showNotice,
+    // Phase 7 E2c — useRhwpEditor 모드일 때 활성 탭의 RhwpEditor handle
+    // 에서 직접 bytes 추출. viewer.exportBytes() 우회.
+    exportOverride: useRhwpEditor
+      ? async (): Promise<Uint8Array | null> => {
+          const key = activeTab?.key;
+          if (!key) return null;
+          const handle = rhwpHandlesRef.current.get(key);
+          if (!handle) return null;
+          return await handle.exportHwp();
+        }
+      : undefined,
   });
 
   // ⌘W / Ctrl+W: close the active tab. Bound at the document level
