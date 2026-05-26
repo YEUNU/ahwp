@@ -4,14 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-ahwp — Electron + React desktop app for viewing/editing Korean HWP/HWPX documents with AI assistance. **Phase 1~5 대부분 완료** (current `0.4.31`, chunks 1~99 + chunk 99 follow-up batch + Phase 7 인프라 + rhwp-mode dual-render). 라이브 provider: OpenAI / NVIDIA NIM / Google Gemini / custom OpenAI-호환 (Ollama/vLLM/LM Studio/on-prem). Anthropic 어댑터만 키 결정 대기.
+ahwp — Electron + React desktop app for viewing/editing Korean HWP/HWPX documents with AI assistance. **Phase 7 완료, 0.5.0 출시** (current `0.5.0`). 라이브 provider: OpenAI / NVIDIA NIM / Google Gemini / custom OpenAI-호환 (Ollama/vLLM/LM Studio/on-prem). Anthropic 어댑터만 키 결정 대기.
 
-**Phase 7 진행 중** (`docs/PHASE7_PLAN.md`) — rhwp-studio iframe 임베드로 자체 StudioViewer (~5000 라인) 대체. A1 / A2 / B / C / D1-D5 / E1 / E2a-c 완료. `localStorage['ahwp:use-rhwp-editor']='1'` 로 rhwp-mode 활성 — AppShell 이 활성 탭에 RhwpEditor 마운트, AI runTools + file save 모두 bridge 경유. 남은: E2d (StudioViewer 폐기, ~5000 라인 + ~30 e2e) + E3 (0.5.0 release).
+**아키텍처**: ahwp 는 **Electron shell + AI Chat panel** 만 책임. 편집 UI 는 `vendor/rhwp/rhwp-studio` (편집기 라이브러리, iframe 으로 임베드) 가 전부 제공. iframe ↔ parent 통신은 `ahwp-studio://` 커스텀 protocol + postMessage bridge.
 
 핵심 능력:
 
-- 풀 편집기 — visual-line caret nav / shift+click selection / drag auto-scroll, table cell editing v4 (cell-block TSV copy/paste) + table·cell·picture props + cell style + table formula, multi-line headers/footers + odd/even/both 템플릿, image insert, control clipboard (⌘⇧C/V), HTML export, find/replace, undo·redo (snapshot 100 cap), 페이지 설정 / 책갈피 / 각주 / 스타일 / 도형 / 수식 미리보기.
-- AI 어시스턴트 — provider native tool calling + read 9 / write 45 / cross-doc + 라우팅 1 = **55 tools**. Outline-aware section replace (chunk 99 follow-up — `### 2.7.4 ...` 응답이 기존 섹션 자동 교체, 중복 X). **Plan mode 기본 ON** (Claude Code 식 dry-run, write 차단, "이 계획대로 실행" 버튼 / "건너뛰기" / 같은 prompt 재전송으로 1회 우회). Agent turn cap 50 (Settings 1~200), parallel read dispatch (IPC `searchWorkspaceOutlines` / `readParagraphByPath` 동시), grouped undo per turn, "되돌리기" 토스트, multi-paragraph 발췌, multi-doc context (target + reference + auto-open via `switchTargetDoc`), Diff Viewer (Q5 — Accept/Reject 카드), 자동 제목 요약, 채팅 히스토리 SQLite + 인라인 rename.
+- **편집기 = rhwp-studio iframe** — 메뉴 / 툴바 / 서식 / 표 편집 / 페이지 설정 / 책갈피 / 각주 / 스타일 / 도형 / 수식 / Find&Replace 등 모든 편집 UI 가 iframe 내부 rhwp-studio (vendored at `vendor/rhwp/rhwp-studio`) 가 제공. file:save / file:open 은 `RhwpEditorHandle.exportHwp` / `bridge.loadFile` 경유.
+- AI 어시스턴트 — provider native tool calling + read 9 / write 45 / cross-doc + 라우팅 1 = **55 tools**. AI tools 의 IR 호출은 모두 `BridgeIrHelper` 경유 (iframe 내부 rhwp-core 의 WasmBridge 메서드 ~230개를 generic dispatcher 로 노출). Outline-aware section replace, **Plan mode 기본 ON** (Claude Code 식 dry-run, write 차단), Agent turn cap 50, parallel read dispatch, grouped undo per turn, multi-paragraph 발췌, multi-doc context, Diff Viewer (Accept/Reject), 자동 제목 요약, 채팅 히스토리 SQLite + 인라인 rename.
 - VS Code-style 폴더 트리 + chokidar + cross-tab external-change detection, browser-style 탭 (pin + drag reorder + context menu), command palette (⌘K) + shortcut cheatsheet, BYOK Settings 4탭 (일반 / AI 공급자 / 단축키 / 정보), provider 모델 드롭다운 (provider `/v1/models` 24h 캐시 + 시작 시 키-등록된 provider 병렬 pre-fetch), 자체 호스팅 crash reporter (chunk 63), i18next ko/en + 한컴 한글 매뉴얼 명칭 호버 툴팁 + 플랫폼 단축키 표기.
 
 See `docs/PROGRESS.md` for the up-to-date phase status — never assume features named in the README are implemented yet.

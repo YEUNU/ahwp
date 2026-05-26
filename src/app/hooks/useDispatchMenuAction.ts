@@ -15,7 +15,7 @@ import {
   type SetStateAction,
 } from 'react';
 import type { MenuAction } from '@shared/api';
-import type { ViewerHandle } from '@/features/studio/types';
+import type { ViewerHandle } from '@/features/chat/viewer-handle-types';
 
 export interface UseDispatchMenuActionOptions {
   activeViewerRef: () => ViewerHandle | null;

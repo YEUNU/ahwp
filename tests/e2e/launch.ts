@@ -44,16 +44,9 @@ export async function launchApp(
   });
   const page = await app.firstWindow();
   await page.waitForLoadState('domcontentloaded');
-  // Phase 7 E2d — rhwp-mode 가 기본이라 기존 studio-* spec 들이 깨짐.
-  // launch 시 명시적으로 legacy 모드를 켜준다. Phase 7 spec 은 각자
-  // beforeEach 에서 '1' 로 다시 덮어쓴다.
-  await page.evaluate(() => {
-    if (window.localStorage.getItem('ahwp:use-rhwp-editor') === null) {
-      window.localStorage.setItem('ahwp:use-rhwp-editor', '0');
-    }
-  });
-  await page.reload();
-  await page.waitForLoadState('domcontentloaded');
+  // Phase 7 E2 — legacy StudioViewer 폐기 완료. rhwp-mode 가 유일 mode.
+  // 모든 e2e 가 default 로 rhwp-mode 에서 동작 (`ahwp:use-rhwp-editor`
+  // unset → AppShell 가 default true 로 처리).
   return {
     app,
     page,

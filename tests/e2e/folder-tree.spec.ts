@@ -114,7 +114,7 @@ test.describe('folder tree — left panel', () => {
     await expect(page.getByTestId('welcome-new-doc')).toBeVisible();
   });
 
-  test('clicking a .hwp file opens it in the studio viewer', async () => {
+  test('clicking a .hwp file opens it in the rhwp-editor', async () => {
     const { page } = launched;
     // Replace the placeholder a.hwp with a valid blank doc, since the fixture
     // file is just text. file:new gives us a real CFB file we can rename.
@@ -136,7 +136,8 @@ test.describe('folder tree — left panel', () => {
       .filter({ hasText: 'a.hwp' })
       .first()
       .click();
-    await expect(page.getByTestId('studio-viewer')).toBeVisible({
+    // Phase 7 E2 — 가운데 편집 영역은 rhwp-editor iframe.
+    await expect(page.getByTestId('rhwp-editor-iframe')).toBeVisible({
       timeout: 30_000,
     });
   });

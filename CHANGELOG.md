@@ -6,6 +6,52 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-26
+
+### BREAKING — 자체 StudioViewer 폐기, rhwp-studio 가 유일 편집기 (Phase 7 E2 완료)
+
+ahwp 의 자체 편집 UI (StudioViewer ~5000 라인 + 8 hook + 16 dialog)
+를 완전 폐기하고 `rhwp-studio` iframe (@rhwp/editor 0.7.12) 으로 대체.
+사용자 제품 비전 — "rhwp-studio 를 Electron 에 렌더링하고 AI 자동 작성만
+ahwp 가 담당" — 의 1.0 (= 0.5.0 major) 완성형.
+
+**Removed (~5000+ 라인 + 63 e2e spec)**:
+
+- `src/features/studio/` 전체:
+  - `StudioViewer.tsx` (main viewer, ~5000 라인)
+  - 8 hook (useViewerHandle / useFindReplace / useDocumentLifecycle /
+    useDebugSurface / useImeComposition / usePageMouseHandlers /
+    useViewerKeyboard / useGetCellInfoComposite 등)
+  - 16 dialog (PageSetup / HeaderFooter / Bookmark / Footnote /
+    StyleManager / CharFormat / ParaFormat / Equation / Shape /
+    TableCellProps / PictureProps / CellStylePicker / TableFormula /
+    VersionHistory / OutlineSidebar / TabBar)
+- `tests/e2e/` 63 spec — `__studioDebug.*` 의존하던 모든 studio-\* /
+  legacy chat 회귀 / dialogs-ui / file-dialog-mock 등.
+- AppShell 의 dialog 임포트 16 개 + JSX 280 라인 + StudioViewer mount
+  - outline sidebar + `useRhwpEditor` feature flag.
+- `launch.ts` 의 legacy 모드 강제 (`ahwp:use-rhwp-editor=0`) 제거 —
+  모든 e2e 가 default rhwp-mode 에서 동작.
+
+**Vendored**:
+
+- `src/features/studio/types.ts` → `src/features/chat/viewer-handle-types.ts`.
+  ViewerHandle type 정의만 보존 (tools.ts 의 NULL_VIEWER_STUB Proxy 가
+  실 사용에서 throw — rhwp-mode 가 default 라 의미 X. type-only import).
+
+**Kept (Phase 7 인프라)**:
+
+- `vendor/rhwp` git submodule (YEUNU/rhwp, ahwp-bridge 브랜치) — rhwp-studio
+  fork 의 postMessage bridge 확장.
+- `ahwp-studio://` Electron protocol + CSP `frame-src` + extraResources.
+- `RhwpBridge` 클라이언트 + `RhwpEditor` 컴포넌트 + `BridgeIrHelper`.
+- AppShell 가 탭별 RhwpEditor handle 추적 + save 흐름 `bridge.exportHwp`
+  경유. AI runTools 가 활성 탭의 bridge 로 자동 라우팅.
+
+**Migration**: 사용자 액션 불필요 — 기존 `localStorage['ahwp:use-rhwp-editor']`
+값 무시되고 항상 rhwp-studio 모드로 동작. 모든 편집 기능 (메뉴 / 툴바
+/ 다이얼로그 / 단축키) 은 iframe 내부 rhwp-studio 가 제공.
+
 ### Fixed — CI 가 vendor/rhwp submodule init + studio dist 빌드 (0.4.33)
 
 v0.4.32 release CI 가 submodule 미초기화 상태로 빌드 → packaged 앱에

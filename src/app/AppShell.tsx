@@ -29,40 +29,10 @@ import { buildActionItems } from '@/features/cmdk/items';
 import { FolderTree } from '@/features/files/FolderTree';
 import { SearchPanel } from '@/features/files/SearchPanel';
 import { SettingsDialog } from '@/features/settings/SettingsDialog';
-import { BookmarkDialog } from '@/features/studio/BookmarkDialog';
-import { EquationDialog } from '@/features/studio/EquationDialog';
-import { FootnoteDialog } from '@/features/studio/FootnoteDialog';
-import { HeaderFooterDialog } from '@/features/studio/HeaderFooterDialog';
-import { PageSetupDialog } from '@/features/studio/PageSetupDialog';
-import { ShapeDialog } from '@/features/studio/ShapeDialog';
-import { OutlineSidebar } from '@/features/studio/OutlineSidebar';
-import { StudioViewer } from '@/features/studio/StudioViewer';
-// Phase 7 E2 — RhwpEditor 가용 옵션. localStorage 'ahwp:use-rhwp-editor'
-// 가 '1' 일 때 StudioViewer 대신 마운트.
+// Phase 7 E2 — 자체 StudioViewer + 부속 dialog 들을 모두 폐기. 편집 UI 는
+// rhwp-studio iframe 이 자체 제공. ahwp 는 RhwpEditor (iframe 마운트)
+// + AI Chat panel 만 책임.
 import { RhwpEditor } from '@/features/rhwp-studio/RhwpEditor';
-import { VersionHistoryDialog } from '@/features/studio/VersionHistoryDialog';
-import { StyleManagerDialog } from '@/features/studio/StyleManagerDialog';
-import { CharFormatDialog } from '@/features/studio/CharFormatDialog';
-import { ParaFormatDialog } from '@/features/studio/ParaFormatDialog';
-import {
-  CellPropsDialog,
-  TablePropsDialog,
-  type CellPropsContext,
-  type TablePropsContext,
-} from '@/features/studio/TableCellPropsDialog';
-import {
-  PicturePropsDialog,
-  type PictureRef,
-} from '@/features/studio/PicturePropsDialog';
-import {
-  CellStylePickerDialog,
-  type CellStylePickerCtx,
-  type StyleOption,
-} from '@/features/studio/CellStylePickerDialog';
-import {
-  TableFormulaDialog,
-  type FormulaCellContext,
-} from '@/features/studio/TableFormulaDialog';
 import { TabBar } from '@/app/TabBar';
 import { TitleBar } from './TitleBar';
 import { WelcomePane } from './WelcomePane';
@@ -113,71 +83,35 @@ export default function AppShell() {
   const [settingsTab, setSettingsTab] = useState<
     'general' | 'ai' | 'shortcuts' | 'about'
   >('ai');
-  const [pageSetupOpen, setPageSetupOpen] = useState(false);
-  const [hfOpen, setHfOpen] = useState(false);
-  const [bookmarkOpen, setBookmarkOpen] = useState(false);
-  const [footnoteOpen, setFootnoteOpen] = useState(false);
-  const [styleManagerOpen, setStyleManagerOpen] = useState(false);
-  const [charFormatOpen, setCharFormatOpen] = useState(false);
-  const [charFormatInitial, setCharFormatInitial] = useState<{
+  // Phase 7 E2 — pageSetup setter 만 유지 (메뉴 액션이 menu:page-setup
+  // 을 트리거할 수 있어서 stub. dialog 본체는 rhwp-studio 내부 UI 가 처리).
+  const [, setPageSetupOpen] = useState(false);
+  // 나머지 dialog open state 들은 모두 rhwp-studio 가 자체 UI 로 제공 —
+  // setters 만 메뉴 액션 호환용으로 stub.
+  const [, setHfOpen] = useState(false);
+  const [, setBookmarkOpen] = useState(false);
+  const [, setFootnoteOpen] = useState(false);
+  const [, setStyleManagerOpen] = useState(false);
+  const [, setCharFormatOpen] = useState(false);
+  const [, setCharFormatInitial] = useState<{
     bold: boolean;
     italic: boolean;
     underline: boolean;
     instance: number;
   }>({ bold: false, italic: false, underline: false, instance: 0 });
-  const [paraFormatOpen, setParaFormatOpen] = useState(false);
-  const [equationOpen, setEquationOpen] = useState(false);
-  const [shapeOpen, setShapeOpen] = useState(false);
-  // chunk 38 — table / cell properties dialogs.
-  const [tablePropsOpen, setTablePropsOpen] = useState(false);
-  const [cellPropsOpen, setCellPropsOpen] = useState(false);
-  // chunk 39 — picture properties dialog.
-  const [picturePropsOpen, setPicturePropsOpen] = useState(false);
-  // chunk 42 — cell style picker (KNOWN_ISSUES L-006 workaround).
-  const [cellStylePickerOpen, setCellStylePickerOpen] = useState(false);
-  // chunk 34 — table-formula recalc dialog. Captures the right-clicked
-  // cell's coords at open time; the dialog state only carries the ctx
-  // until apply / cancel.
-  const [formulaOpen, setFormulaOpen] = useState(false);
-  const [formulaCtx, setFormulaCtx] = useState<FormulaCellContext | null>(null);
+  const [, setParaFormatOpen] = useState(false);
+  const [, setEquationOpen] = useState(false);
+  const [, setShapeOpen] = useState(false);
+  const [, setPicturePropsOpen] = useState(false);
   // R3 (2차) — notice → useNotice hook.
   const { notice, showNotice, dismissNotice } = useNotice();
   // chunk 50 — command palette (⌘K). Open state lives here so any
   // sub-component (welcome screen, future help button) can also
   // trigger it.
   const [paletteOpen, setPaletteOpen] = useState(false);
-  // Phase 7 E2d — rhwp-mode 가 기본. legacy StudioViewer 모드는
-  // 'ahwp:use-rhwp-editor' 를 '0' 으로 명시한 경우에만. legacy 모드는
-  // 기존 e2e 회귀 호환용으로만 유지 — 정식 deprecated.
-  //
-  // E2e 향후 작업 — `src/features/studio/` (~5000 라인) + 의존 e2e (~30)
-  // 일괄 삭제. tried in this session: deletion 시도하면 AppShell 96 +
-  // hooks 40 = 136 TypeScript 에러 cascade. 안전한 deletion 은 다음
-  // 순서대로 별도 세션에서 진행 권장:
-  //   1) 본 AppShell 의 studio dialog import + JSX rendering 14 개를
-  //      `!useRhwpEditor` 로 감싸기 (legacy 모드 keep, rhwp-mode 에선
-  //      DOM 미렌더).
-  //   2) `useDispatchMenuAction` / `useSaveFlow` / `useTabManagement` 의
-  //      `ViewerHandle` 타입을 optional 화 (`ViewerHandle | null`) 또는
-  //      각자 helper 기반 alt path 추가.
-  //   3) tools.ts 의 `ViewerHandle` import 제거 — runOne signature 를
-  //      `viewer: ViewerHandle | null` 이미 허용. 47 fallback `viewer.irX`
-  //      호출이 NULL_VIEWER_STUB 으로 throw 하므로 의존 제거 가능.
-  //   4) `src/features/studio/` 일괄 git rm. import 에러는 위 단계로
-  //      이미 해소된 상태.
-  //   5) `__studioDebug` 의존 e2e ~30 spec 정리 — 대부분 삭제 (rhwp-studio
-  //      iframe 의 자체 UI 가 동일 기능 제공). `studio-find-native` 같은
-  //      `__rhwpDebug` 기반 spec 은 유지.
-  const [useRhwpEditor] = useState<boolean>(() => {
-    try {
-      return window.localStorage.getItem('ahwp:use-rhwp-editor') !== '0';
-    } catch {
-      return true;
-    }
-  });
-  // Phase 7 E2b — 탭별 RhwpEditor handle 추적. AI runTools 가 활성
-  // 탭의 bridge 를 직접 잡고 BridgeIrHelper 로 wrap. __rhwpDebug 의존
-  // 제거. handle 은 onReady 가 fire 된 뒤에만 의미가 있음.
+  // Phase 7 E2 — 탭별 RhwpEditor handle 추적. AI runTools 가 활성 탭의
+  // bridge 를 직접 잡고 BridgeIrHelper 로 wrap. handle 은 onReady 가
+  // fire 된 뒤에만 의미가 있음.
   const rhwpHandlesRef = useRef(
     new Map<
       string,
@@ -196,29 +130,12 @@ export default function AppShell() {
   // sidebar that lists "제목 1/2/3" headings extracted from the active
   // doc. `outlineKey` bumps when any tab's dirty flips so the sidebar
   // refreshes without polling.
-  const [outlineOpen, setOutlineOpen] = useState(false);
-  const [outlineKey, setOutlineKey] = useState(0);
-  // chunk 61 — ruler toggle. Drives StudioViewer's `showRuler` prop;
-  // persisted across the session via localStorage so users don't have
-  // to re-enable on every launch.
-  const [showRuler, setShowRuler] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem('ahwp:show-ruler') === '1';
-    } catch {
-      return false;
-    }
-  });
-  useEffect(() => {
-    try {
-      localStorage.setItem('ahwp:show-ruler', showRuler ? '1' : '0');
-    } catch {
-      /* localStorage can throw under hardened CSP */
-    }
-  }, [showRuler]);
-  // chunk 53 — shortcut cheatsheet (⌘/) — 이제 Settings 의 단축키 탭으로
-  // 라우팅. setSettingsTab('shortcuts') + setSettingsOpen(true).
-  // chunk 62 — version history dialog.
-  const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
+  const [, setOutlineOpen] = useState(false);
+  const [, setOutlineKey] = useState(0);
+  // showRuler 는 StudioViewer 전용이었음 — 폐기. setter stub.
+  const [, setShowRuler] = useState(false);
+  // versionHistoryOpen 도 폐기 — rhwp-studio 의 자체 history UI 사용.
+  const [, setVersionHistoryOpen] = useState(false);
   const sessionRestoredRef = useRef(false);
 
   // R3 (2차) — tab management → useTabManagement hook.
@@ -239,8 +156,6 @@ export default function AppShell() {
     closeTabsToRight,
     copyTabPath,
     revealTab,
-    refCallbackFor,
-    dirtyCallbacks,
   } = useTabManagement({ setOutlineKey });
 
   useEffect(() => {
@@ -403,17 +318,16 @@ export default function AppShell() {
     replaceTabPath,
     setFolderRoot,
     showNotice,
-    // Phase 7 E2c — useRhwpEditor 모드일 때 활성 탭의 RhwpEditor handle
-    // 에서 직접 bytes 추출. viewer.exportBytes() 우회.
-    exportOverride: useRhwpEditor
-      ? async (): Promise<Uint8Array | null> => {
-          const key = activeTab?.key;
-          if (!key) return null;
-          const handle = rhwpHandlesRef.current.get(key);
-          if (!handle) return null;
-          return await handle.exportHwp();
-        }
-      : undefined,
+    // Phase 7 E2 — 활성 탭의 RhwpEditor handle 에서 직접 bytes 추출.
+    // legacy viewer.exportBytes() 경로는 폐기. handle 이 아직 ready 안
+    // 됐으면 null → useSaveFlow 가 대체 에러 처리.
+    exportOverride: async (): Promise<Uint8Array | null> => {
+      const key = activeTab?.key;
+      if (!key) return null;
+      const handle = rhwpHandlesRef.current.get(key);
+      if (!handle) return null;
+      return await handle.exportHwp();
+    },
   });
 
   // ⌘W / Ctrl+W: close the active tab. Bound at the document level
@@ -611,314 +525,11 @@ export default function AppShell() {
         onOpenChange={setPaletteOpen}
         items={paletteItems}
       />
-      <VersionHistoryDialog
-        open={versionHistoryOpen}
-        onOpenChange={setVersionHistoryOpen}
-        activePath={activeTab?.path ?? null}
-        onRestore={async (p, filename) => {
-          // chunk 62 — restore flow. Pull bytes from main, then route
-          // through file.save so the regular save pipeline (HWPX route,
-          // .bak, watcher suppression, draft clear, version creation
-          // for the restored point) takes effect. Tab key bumps to
-          // remount the viewer.
-          const buf = await window.api.file.readVersion({ path: p, filename });
-          if (!buf) {
-            window.alert('해당 버전을 읽을 수 없습니다.');
-            return;
-          }
-          await window.api.file.save({ path: p, bytes: buf });
-          setTabsState((prev) =>
-            prev.map((t) =>
-              t.path === p ? { ...t, key: makeTabKey(), dirty: false } : t,
-            ),
-          );
-          showNotice('이전 버전으로 복원되었습니다.', 'info');
-        }}
-      />
       <SettingsDialog
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         initialTab={settingsTab}
       />
-      {/* E2e — studio dialog 들은 rhwp-mode (default) 에선 DOM 미렌더.
-        legacy 모드 (`ahwp:use-rhwp-editor=0`) 에선 기존 동작 유지. */}
-      {!useRhwpEditor && (
-        <>
-          <PageSetupDialog
-            open={pageSetupOpen}
-            onOpenChange={setPageSetupOpen}
-            getCurrentPageDef={() =>
-              activeViewerRef()?.getPageDef() as
-                | import('@shared/rhwp-types').RhwpPageDef
-                | null
-            }
-            onApply={(props) =>
-              activeViewerRef()?.applyPageDef(props as Record<string, unknown>)
-            }
-          />
-          <HeaderFooterDialog
-            open={hfOpen}
-            onOpenChange={setHfOpen}
-            getCurrent={(sec, isHeader, applyTo) =>
-              activeViewerRef()?.getHeaderFooter(sec, isHeader, applyTo) ?? null
-            }
-            onApply={(sec, isHeader, applyTo, text) =>
-              activeViewerRef()?.setHeaderFooterText(
-                sec,
-                isHeader,
-                applyTo,
-                text,
-              )
-            }
-          />
-          <BookmarkDialog
-            open={bookmarkOpen}
-            onOpenChange={setBookmarkOpen}
-            getBookmarks={() => activeViewerRef()?.getBookmarks() ?? null}
-            onAdd={(name) => activeViewerRef()?.addBookmarkAtCaret(name)}
-            onDelete={(sec, para, ctrlIdx) =>
-              activeViewerRef()?.deleteBookmarkAt(sec, para, ctrlIdx)
-            }
-          />
-          <FootnoteDialog
-            open={footnoteOpen}
-            onOpenChange={setFootnoteOpen}
-            onInsert={(text) => activeViewerRef()?.insertFootnoteAtCaret(text)}
-          />
-          <StyleManagerDialog
-            open={styleManagerOpen}
-            onOpenChange={setStyleManagerOpen}
-            getStyleList={() => activeViewerRef()?.getStyleListJson() ?? null}
-            onCreate={(name, englishName) =>
-              activeViewerRef()?.createNamedStyle(name, englishName) ?? null
-            }
-            onRename={(id, name, englishName) =>
-              activeViewerRef()?.renameStyle(id, name, englishName) ?? false
-            }
-            onDelete={(id) => activeViewerRef()?.deleteStyleById(id) ?? false}
-          />
-          <CharFormatDialog
-            key={charFormatInitial.instance}
-            open={charFormatOpen}
-            onOpenChange={setCharFormatOpen}
-            viewerRef={activeViewerRef}
-            initial={{
-              bold: charFormatInitial.bold,
-              italic: charFormatInitial.italic,
-              underline: charFormatInitial.underline,
-            }}
-          />
-          <ParaFormatDialog
-            open={paraFormatOpen}
-            onOpenChange={setParaFormatOpen}
-            viewerRef={activeViewerRef}
-          />
-          <EquationDialog
-            open={equationOpen}
-            onOpenChange={setEquationOpen}
-            renderEquation={(script, fontSize, color) =>
-              activeViewerRef()?.renderEquationSvg(script, fontSize, color) ??
-              ''
-            }
-            insertEquation={(script, fontSize, color) => {
-              // 0.4.25 — lib 0.7.11 의 insertEquation 으로 본문 삽입.
-              // caret 좌표 read → irInsertEquation 호출.
-              const v = activeViewerRef();
-              if (!v) return false;
-              const caret = v.irGetCaretPosition() as {
-                sectionIndex?: number;
-                paragraphIndex?: number;
-                charOffset?: number;
-              } | null;
-              if (!caret) return false;
-              const sec = caret.sectionIndex ?? 0;
-              const para = caret.paragraphIndex ?? 0;
-              const charOff = caret.charOffset ?? 0;
-              return v.irInsertEquation(
-                sec,
-                para,
-                charOff,
-                script,
-                fontSize,
-                color,
-              );
-            }}
-          />
-          <ShapeDialog
-            open={shapeOpen}
-            onOpenChange={setShapeOpen}
-            onInsert={(width, height, opts) =>
-              activeViewerRef()?.createRectShapeAtCaret(width, height, opts) ??
-              null
-            }
-          />
-          <TablePropsDialog
-            open={tablePropsOpen}
-            onOpenChange={setTablePropsOpen}
-            getCurrent={() => {
-              const v = activeViewerRef();
-              if (!v) return null;
-              const c = v.getActiveCellContext();
-              if (!c) return null;
-              const props = v.getTableProps(
-                c.sectionIndex,
-                c.parentParaIdx,
-                c.controlIdx,
-              );
-              if (!props) return null;
-              const ctx: TablePropsContext = {
-                sectionIdx: c.sectionIndex,
-                parentParaIdx: c.parentParaIdx,
-                controlIdx: c.controlIdx,
-              };
-              return { ctx, props };
-            }}
-            onApply={(ctx, props) => {
-              activeViewerRef()?.setTableProps(
-                ctx.sectionIdx,
-                ctx.parentParaIdx,
-                ctx.controlIdx,
-                props,
-              );
-            }}
-          />
-          <PicturePropsDialog
-            open={picturePropsOpen}
-            onOpenChange={setPicturePropsOpen}
-            enumeratePictures={() => {
-              const v = activeViewerRef();
-              if (!v) return [];
-              return v.enumeratePictures().map((p) => ({
-                sectionIdx: p.sectionIdx,
-                parentParaIdx: p.parentParaIdx,
-                controlIdx: p.controlIdx,
-                label: p.label,
-              }));
-            }}
-            getProps={(ref: PictureRef) =>
-              activeViewerRef()?.getPictureProps(
-                ref.sectionIdx,
-                ref.parentParaIdx,
-                ref.controlIdx,
-              ) ?? null
-            }
-            onApply={(ref, props) => {
-              activeViewerRef()?.setPictureProps(
-                ref.sectionIdx,
-                ref.parentParaIdx,
-                ref.controlIdx,
-                props,
-              );
-            }}
-            onDelete={(ref) => {
-              activeViewerRef()?.deletePictureControl(
-                ref.sectionIdx,
-                ref.parentParaIdx,
-                ref.controlIdx,
-              );
-            }}
-          />
-          <CellStylePickerDialog
-            open={cellStylePickerOpen}
-            onOpenChange={setCellStylePickerOpen}
-            getCurrentCell={() => {
-              const v = activeViewerRef();
-              if (!v) return null;
-              const c = v.getActiveCellContext();
-              if (!c) return null;
-              const ctx: CellStylePickerCtx = {
-                sectionIdx: c.sectionIndex,
-                parentParaIdx: c.parentParaIdx,
-                controlIdx: c.controlIdx,
-                cellIdx: c.cellIdx,
-              };
-              return ctx;
-            }}
-            getStyles={() => {
-              const v = activeViewerRef();
-              if (!v) return [];
-              const list = v.getStyleListJson() ?? [];
-              return list
-                .map((s): StyleOption | null => {
-                  const id = (s as { id?: unknown }).id;
-                  const name = (s as { name?: unknown }).name;
-                  const englishName = (s as { englishName?: unknown })
-                    .englishName;
-                  if (typeof id !== 'number' || typeof name !== 'string')
-                    return null;
-                  return {
-                    id,
-                    name,
-                    englishName:
-                      typeof englishName === 'string' ? englishName : undefined,
-                  };
-                })
-                .filter((x): x is StyleOption => x !== null);
-            }}
-            onApply={(ctx, styleId) => {
-              activeViewerRef()?.applyCellStyle(
-                ctx.sectionIdx,
-                ctx.parentParaIdx,
-                ctx.controlIdx,
-                ctx.cellIdx,
-                0, // cellPara — apply to the first para of the cell
-                styleId,
-              );
-            }}
-          />
-          <TableFormulaDialog
-            open={formulaOpen}
-            onOpenChange={setFormulaOpen}
-            ctx={formulaCtx}
-            onEvaluate={(ctx, formula, writeResult) => {
-              const v = activeViewerRef();
-              if (!v) return null;
-              return v.evaluateTableFormula(
-                ctx.sectionIndex,
-                ctx.parentParaIdx,
-                ctx.controlIdx,
-                ctx.targetRow,
-                ctx.targetCol,
-                formula,
-                writeResult,
-              );
-            }}
-          />
-          <CellPropsDialog
-            open={cellPropsOpen}
-            onOpenChange={setCellPropsOpen}
-            getCurrent={() => {
-              const v = activeViewerRef();
-              if (!v) return null;
-              const c = v.getActiveCellContext();
-              if (!c) return null;
-              const props = v.getCellProps(
-                c.sectionIndex,
-                c.parentParaIdx,
-                c.controlIdx,
-                c.cellIdx,
-              );
-              if (!props) return null;
-              const ctx: CellPropsContext = {
-                sectionIdx: c.sectionIndex,
-                parentParaIdx: c.parentParaIdx,
-                controlIdx: c.controlIdx,
-                cellIdx: c.cellIdx,
-              };
-              return { ctx, props };
-            }}
-            onApply={(ctx, props) => {
-              activeViewerRef()?.setCellProps(
-                ctx.sectionIdx,
-                ctx.parentParaIdx,
-                ctx.controlIdx,
-                ctx.cellIdx,
-                props,
-              );
-            }}
-          />
-        </>
-      )}
       <div className="flex h-screen flex-col bg-background text-foreground">
         <TitleBar
           activeFileName={
@@ -1085,104 +696,34 @@ export default function AppShell() {
                           data-tab-key={tab.key}
                           data-tab-active={isActive ? 'true' : 'false'}
                         >
-                          {useRhwpEditor ? (
-                            // Phase 7 E2a/b — rhwp-studio iframe 마운트
-                            // + handle 추적. AI tool 라우팅은 E2b 의
-                            // runTools 분기 (아래) 가 직접 잡는다.
-                            <RhwpEditor
-                              key={tab.key}
-                              ref={(h) => {
-                                if (h) rhwpHandlesRef.current.set(tab.key, h);
-                                else rhwpHandlesRef.current.delete(tab.key);
-                              }}
-                              onReady={async (bridge) => {
-                                try {
-                                  const buf = await window.api.file.read(
-                                    tab.path,
-                                  );
-                                  await bridge.loadFile(buf, tab.path, true);
-                                } catch (err) {
-                                  console.error(
-                                    '[AppShell] rhwp-editor doc load failed:',
-                                    err,
-                                  );
-                                }
-                              }}
-                              onError={(err) => {
-                                console.warn(
-                                  '[AppShell] RhwpEditor error:',
+                          <RhwpEditor
+                            key={tab.key}
+                            ref={(h) => {
+                              if (h) rhwpHandlesRef.current.set(tab.key, h);
+                              else rhwpHandlesRef.current.delete(tab.key);
+                            }}
+                            onReady={async (bridge) => {
+                              try {
+                                const buf = await window.api.file.read(
+                                  tab.path,
+                                );
+                                await bridge.loadFile(buf, tab.path, true);
+                              } catch (err) {
+                                console.error(
+                                  '[AppShell] rhwp-editor doc load failed:',
                                   err,
                                 );
-                              }}
-                            />
-                          ) : (
-                            <StudioViewer
-                              path={tab.path}
-                              isActive={isActive}
-                              onDirtyChange={dirtyCallbacks.get(tab.key)}
-                              ref={refCallbackFor(tab.key)}
-                              showRuler={showRuler}
-                              onOpenTableProps={() => setTablePropsOpen(true)}
-                              onOpenCellProps={() => setCellPropsOpen(true)}
-                              onOpenCellStylePicker={() =>
-                                setCellStylePickerOpen(true)
                               }
-                              onAiCommand={(prompt) => {
-                                // chunk 56 — viewer's selection menu fires a
-                                // composed AI prompt; we forward to the
-                                // ChatPanel imperative handle so the request
-                                // streams immediately. Skip if no handle yet
-                                // (panel not mounted) — that should never
-                                // happen at this point of the flow.
-                                chatRef.current?.prefillAndSend(prompt);
-                              }}
-                              onOpenFormula={() => {
-                                // Resolve the right-clicked cell coords into
-                                // a row/col pair via the table dimensions
-                                // exposed on the active viewer. The cell
-                                // context menu has already moved caret into
-                                // the cell, so getActiveCellContext returns
-                                // the click's coordinates.
-                                const v = activeViewerRef();
-                                if (!v) return;
-                                const cell = v.getActiveCellContext();
-                                if (!cell) return;
-                                const tableProps = v.getTableProps(
-                                  cell.sectionIndex,
-                                  cell.parentParaIdx,
-                                  cell.controlIdx,
-                                );
-                                const colCount =
-                                  typeof tableProps?.['colCount'] === 'number'
-                                    ? (tableProps['colCount'] as number)
-                                    : 1;
-                                const targetRow = Math.floor(
-                                  cell.cellIdx / colCount,
-                                );
-                                const targetCol = cell.cellIdx % colCount;
-                                setFormulaCtx({
-                                  sectionIndex: cell.sectionIndex,
-                                  parentParaIdx: cell.parentParaIdx,
-                                  controlIdx: cell.controlIdx,
-                                  targetRow,
-                                  targetCol,
-                                });
-                                setFormulaOpen(true);
-                              }}
-                            />
-                          )}
+                            }}
+                            onError={(err) => {
+                              console.warn('[AppShell] RhwpEditor error:', err);
+                            }}
+                          />
                         </div>
                       );
                     })
                   )}
                 </div>
-                {!useRhwpEditor && outlineOpen && tabsState.length > 0 && (
-                  <OutlineSidebar
-                    getViewer={activeViewerRef}
-                    refreshKey={outlineKey + (activeIndex << 8)}
-                    onClose={() => setOutlineOpen(false)}
-                  />
-                )}
               </div>
             </main>
           </Panel>
@@ -1276,29 +817,14 @@ export default function AppShell() {
                     const v = targetPath
                       ? lookupByPath(targetPath)
                       : activeViewerRef();
-                    // Phase E1/E2b — bridge 라우팅 우선순위:
-                    //   1) useRhwpEditor 모드: 활성 탭의 RhwpEditor handle 사용
-                    //   2) __rhwpDebug.getBridge() (debug surface 마운트 상태)
-                    //   3) helper=null → 기존 viewer.irX 경로
+                    // Phase 7 E2 — 활성 탭의 RhwpEditor handle 에서 직접
+                    // bridge 추출. legacy __rhwpDebug fallback 은 폐기.
                     let bridge: import('@/lib/rhwp-bridge').RhwpBridge | null =
                       null;
-                    if (useRhwpEditor) {
-                      const activeKey = activeTab?.key;
-                      if (activeKey) {
-                        const handle = rhwpHandlesRef.current.get(activeKey);
-                        bridge = handle?.bridge ?? null;
-                      }
-                    } else {
-                      const dbg = (
-                        window as unknown as {
-                          __rhwpDebug?: {
-                            getBridge():
-                              | import('@/lib/rhwp-bridge').RhwpBridge
-                              | null;
-                          };
-                        }
-                      ).__rhwpDebug;
-                      bridge = dbg?.getBridge() ?? null;
+                    const activeKey = activeTab?.key;
+                    if (activeKey) {
+                      const handle = rhwpHandlesRef.current.get(activeKey);
+                      bridge = handle?.bridge ?? null;
                     }
                     if (!v && !bridge) {
                       // rhwp-mode 가 아니고 viewer 도 없음 → 호출 불가.

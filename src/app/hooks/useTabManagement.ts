@@ -19,7 +19,7 @@ import {
   type SetStateAction,
 } from 'react';
 import { type TabDescriptor } from '@/app/TabBar';
-import type { ViewerHandle } from '@/features/studio/types';
+import type { ViewerHandle } from '@/features/chat/viewer-handle-types';
 
 export interface TabState extends TabDescriptor {
   /** Stable React key — survives re-orderings (tabs aren't reorderable

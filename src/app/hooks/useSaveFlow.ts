@@ -8,7 +8,7 @@
  */
 import { useCallback, type Dispatch, type SetStateAction } from 'react';
 import { correctExtension } from '@shared/format';
-import type { ViewerHandle } from '@/features/studio/types';
+import type { ViewerHandle } from '@/features/chat/viewer-handle-types';
 import type { TabState } from './useTabManagement';
 
 export interface UseSaveFlowOptions {
