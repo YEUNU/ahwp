@@ -146,17 +146,14 @@ export default function AppShell() {
   // sub-component (welcome screen, future help button) can also
   // trigger it.
   const [paletteOpen, setPaletteOpen] = useState(false);
-  // Phase 7 E2a — localStorage flag 'ahwp:use-rhwp-editor' 가 '1' 이면
-  // StudioViewer 대신 RhwpEditor 마운트. 본 모드에선 AppShell 의
-  // viewer-dependent toolbar / dialog / menu action 들이 동작 안 함
-  // (rhwp-studio iframe 이 자체 UI 제공). dev / e2e 검증 용도. 정식
-  // UI 통합은 E2 의 나머지 단계 (~5000 라인 폐기 + 통합) 에서.
-  // useState 초기값은 즉시 결정 — flag 변경 시 페이지 reload 필요.
+  // Phase 7 E2d — rhwp-mode 가 기본. legacy StudioViewer 모드는
+  // 'ahwp:use-rhwp-editor' 를 '0' 으로 명시한 경우에만. legacy 모드는
+  // 기존 e2e 회귀 호환용으로만 유지 — 정식 deprecated.
   const [useRhwpEditor] = useState<boolean>(() => {
     try {
-      return window.localStorage.getItem('ahwp:use-rhwp-editor') === '1';
+      return window.localStorage.getItem('ahwp:use-rhwp-editor') !== '0';
     } catch {
-      return false;
+      return true;
     }
   });
   // Phase 7 E2b — 탭별 RhwpEditor handle 추적. AI runTools 가 활성

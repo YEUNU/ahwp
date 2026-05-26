@@ -78,13 +78,13 @@ test.describe('Phase E2a — AppShell rhwp-mode RhwpEditor mount', () => {
     // 본 spec 은 마운트 + src 만 확인. 통합 시나리오는 D5 회귀가 담당.
   });
 
-  test('default (flag absent) still mounts StudioViewer — no regression', async () => {
+  test('legacy mode (flag=0) still mounts StudioViewer — no regression', async () => {
     const { page } = launched;
     await page.waitForLoadState('domcontentloaded');
     await page.evaluate(
       async ({ p }) => {
-        // flag 제거 — 기본은 StudioViewer.
-        window.localStorage.removeItem('ahwp:use-rhwp-editor');
+        // E2d — default flipped to rhwp-mode. legacy 모드는 명시적 '0'.
+        window.localStorage.setItem('ahwp:use-rhwp-editor', '0');
         await window.api.session.set({ lastActivePath: p });
       },
       { p: FIXTURE },
