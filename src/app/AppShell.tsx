@@ -63,7 +63,7 @@ import {
   TableFormulaDialog,
   type FormulaCellContext,
 } from '@/features/studio/TableFormulaDialog';
-import { TabBar } from '@/features/studio/TabBar';
+import { TabBar } from '@/app/TabBar';
 import { TitleBar } from './TitleBar';
 import { WelcomePane } from './WelcomePane';
 
@@ -640,271 +640,285 @@ export default function AppShell() {
         onOpenChange={setSettingsOpen}
         initialTab={settingsTab}
       />
-      <PageSetupDialog
-        open={pageSetupOpen}
-        onOpenChange={setPageSetupOpen}
-        getCurrentPageDef={() =>
-          activeViewerRef()?.getPageDef() as
-            | import('@shared/rhwp-types').RhwpPageDef
-            | null
-        }
-        onApply={(props) =>
-          activeViewerRef()?.applyPageDef(props as Record<string, unknown>)
-        }
-      />
-      <HeaderFooterDialog
-        open={hfOpen}
-        onOpenChange={setHfOpen}
-        getCurrent={(sec, isHeader, applyTo) =>
-          activeViewerRef()?.getHeaderFooter(sec, isHeader, applyTo) ?? null
-        }
-        onApply={(sec, isHeader, applyTo, text) =>
-          activeViewerRef()?.setHeaderFooterText(sec, isHeader, applyTo, text)
-        }
-      />
-      <BookmarkDialog
-        open={bookmarkOpen}
-        onOpenChange={setBookmarkOpen}
-        getBookmarks={() => activeViewerRef()?.getBookmarks() ?? null}
-        onAdd={(name) => activeViewerRef()?.addBookmarkAtCaret(name)}
-        onDelete={(sec, para, ctrlIdx) =>
-          activeViewerRef()?.deleteBookmarkAt(sec, para, ctrlIdx)
-        }
-      />
-      <FootnoteDialog
-        open={footnoteOpen}
-        onOpenChange={setFootnoteOpen}
-        onInsert={(text) => activeViewerRef()?.insertFootnoteAtCaret(text)}
-      />
-      <StyleManagerDialog
-        open={styleManagerOpen}
-        onOpenChange={setStyleManagerOpen}
-        getStyleList={() => activeViewerRef()?.getStyleListJson() ?? null}
-        onCreate={(name, englishName) =>
-          activeViewerRef()?.createNamedStyle(name, englishName) ?? null
-        }
-        onRename={(id, name, englishName) =>
-          activeViewerRef()?.renameStyle(id, name, englishName) ?? false
-        }
-        onDelete={(id) => activeViewerRef()?.deleteStyleById(id) ?? false}
-      />
-      <CharFormatDialog
-        key={charFormatInitial.instance}
-        open={charFormatOpen}
-        onOpenChange={setCharFormatOpen}
-        viewerRef={activeViewerRef}
-        initial={{
-          bold: charFormatInitial.bold,
-          italic: charFormatInitial.italic,
-          underline: charFormatInitial.underline,
-        }}
-      />
-      <ParaFormatDialog
-        open={paraFormatOpen}
-        onOpenChange={setParaFormatOpen}
-        viewerRef={activeViewerRef}
-      />
-      <EquationDialog
-        open={equationOpen}
-        onOpenChange={setEquationOpen}
-        renderEquation={(script, fontSize, color) =>
-          activeViewerRef()?.renderEquationSvg(script, fontSize, color) ?? ''
-        }
-        insertEquation={(script, fontSize, color) => {
-          // 0.4.25 — lib 0.7.11 의 insertEquation 으로 본문 삽입.
-          // caret 좌표 read → irInsertEquation 호출.
-          const v = activeViewerRef();
-          if (!v) return false;
-          const caret = v.irGetCaretPosition() as {
-            sectionIndex?: number;
-            paragraphIndex?: number;
-            charOffset?: number;
-          } | null;
-          if (!caret) return false;
-          const sec = caret.sectionIndex ?? 0;
-          const para = caret.paragraphIndex ?? 0;
-          const charOff = caret.charOffset ?? 0;
-          return v.irInsertEquation(
-            sec,
-            para,
-            charOff,
-            script,
-            fontSize,
-            color,
-          );
-        }}
-      />
-      <ShapeDialog
-        open={shapeOpen}
-        onOpenChange={setShapeOpen}
-        onInsert={(width, height, opts) =>
-          activeViewerRef()?.createRectShapeAtCaret(width, height, opts) ?? null
-        }
-      />
-      <TablePropsDialog
-        open={tablePropsOpen}
-        onOpenChange={setTablePropsOpen}
-        getCurrent={() => {
-          const v = activeViewerRef();
-          if (!v) return null;
-          const c = v.getActiveCellContext();
-          if (!c) return null;
-          const props = v.getTableProps(
-            c.sectionIndex,
-            c.parentParaIdx,
-            c.controlIdx,
-          );
-          if (!props) return null;
-          const ctx: TablePropsContext = {
-            sectionIdx: c.sectionIndex,
-            parentParaIdx: c.parentParaIdx,
-            controlIdx: c.controlIdx,
-          };
-          return { ctx, props };
-        }}
-        onApply={(ctx, props) => {
-          activeViewerRef()?.setTableProps(
-            ctx.sectionIdx,
-            ctx.parentParaIdx,
-            ctx.controlIdx,
-            props,
-          );
-        }}
-      />
-      <PicturePropsDialog
-        open={picturePropsOpen}
-        onOpenChange={setPicturePropsOpen}
-        enumeratePictures={() => {
-          const v = activeViewerRef();
-          if (!v) return [];
-          return v.enumeratePictures().map((p) => ({
-            sectionIdx: p.sectionIdx,
-            parentParaIdx: p.parentParaIdx,
-            controlIdx: p.controlIdx,
-            label: p.label,
-          }));
-        }}
-        getProps={(ref: PictureRef) =>
-          activeViewerRef()?.getPictureProps(
-            ref.sectionIdx,
-            ref.parentParaIdx,
-            ref.controlIdx,
-          ) ?? null
-        }
-        onApply={(ref, props) => {
-          activeViewerRef()?.setPictureProps(
-            ref.sectionIdx,
-            ref.parentParaIdx,
-            ref.controlIdx,
-            props,
-          );
-        }}
-        onDelete={(ref) => {
-          activeViewerRef()?.deletePictureControl(
-            ref.sectionIdx,
-            ref.parentParaIdx,
-            ref.controlIdx,
-          );
-        }}
-      />
-      <CellStylePickerDialog
-        open={cellStylePickerOpen}
-        onOpenChange={setCellStylePickerOpen}
-        getCurrentCell={() => {
-          const v = activeViewerRef();
-          if (!v) return null;
-          const c = v.getActiveCellContext();
-          if (!c) return null;
-          const ctx: CellStylePickerCtx = {
-            sectionIdx: c.sectionIndex,
-            parentParaIdx: c.parentParaIdx,
-            controlIdx: c.controlIdx,
-            cellIdx: c.cellIdx,
-          };
-          return ctx;
-        }}
-        getStyles={() => {
-          const v = activeViewerRef();
-          if (!v) return [];
-          const list = v.getStyleListJson() ?? [];
-          return list
-            .map((s): StyleOption | null => {
-              const id = (s as { id?: unknown }).id;
-              const name = (s as { name?: unknown }).name;
-              const englishName = (s as { englishName?: unknown }).englishName;
-              if (typeof id !== 'number' || typeof name !== 'string')
-                return null;
-              return {
-                id,
-                name,
-                englishName:
-                  typeof englishName === 'string' ? englishName : undefined,
+      {/* E2e — studio dialog 들은 rhwp-mode (default) 에선 DOM 미렌더.
+        legacy 모드 (`ahwp:use-rhwp-editor=0`) 에선 기존 동작 유지. */}
+      {!useRhwpEditor && (
+        <>
+          <PageSetupDialog
+            open={pageSetupOpen}
+            onOpenChange={setPageSetupOpen}
+            getCurrentPageDef={() =>
+              activeViewerRef()?.getPageDef() as
+                | import('@shared/rhwp-types').RhwpPageDef
+                | null
+            }
+            onApply={(props) =>
+              activeViewerRef()?.applyPageDef(props as Record<string, unknown>)
+            }
+          />
+          <HeaderFooterDialog
+            open={hfOpen}
+            onOpenChange={setHfOpen}
+            getCurrent={(sec, isHeader, applyTo) =>
+              activeViewerRef()?.getHeaderFooter(sec, isHeader, applyTo) ?? null
+            }
+            onApply={(sec, isHeader, applyTo, text) =>
+              activeViewerRef()?.setHeaderFooterText(
+                sec,
+                isHeader,
+                applyTo,
+                text,
+              )
+            }
+          />
+          <BookmarkDialog
+            open={bookmarkOpen}
+            onOpenChange={setBookmarkOpen}
+            getBookmarks={() => activeViewerRef()?.getBookmarks() ?? null}
+            onAdd={(name) => activeViewerRef()?.addBookmarkAtCaret(name)}
+            onDelete={(sec, para, ctrlIdx) =>
+              activeViewerRef()?.deleteBookmarkAt(sec, para, ctrlIdx)
+            }
+          />
+          <FootnoteDialog
+            open={footnoteOpen}
+            onOpenChange={setFootnoteOpen}
+            onInsert={(text) => activeViewerRef()?.insertFootnoteAtCaret(text)}
+          />
+          <StyleManagerDialog
+            open={styleManagerOpen}
+            onOpenChange={setStyleManagerOpen}
+            getStyleList={() => activeViewerRef()?.getStyleListJson() ?? null}
+            onCreate={(name, englishName) =>
+              activeViewerRef()?.createNamedStyle(name, englishName) ?? null
+            }
+            onRename={(id, name, englishName) =>
+              activeViewerRef()?.renameStyle(id, name, englishName) ?? false
+            }
+            onDelete={(id) => activeViewerRef()?.deleteStyleById(id) ?? false}
+          />
+          <CharFormatDialog
+            key={charFormatInitial.instance}
+            open={charFormatOpen}
+            onOpenChange={setCharFormatOpen}
+            viewerRef={activeViewerRef}
+            initial={{
+              bold: charFormatInitial.bold,
+              italic: charFormatInitial.italic,
+              underline: charFormatInitial.underline,
+            }}
+          />
+          <ParaFormatDialog
+            open={paraFormatOpen}
+            onOpenChange={setParaFormatOpen}
+            viewerRef={activeViewerRef}
+          />
+          <EquationDialog
+            open={equationOpen}
+            onOpenChange={setEquationOpen}
+            renderEquation={(script, fontSize, color) =>
+              activeViewerRef()?.renderEquationSvg(script, fontSize, color) ??
+              ''
+            }
+            insertEquation={(script, fontSize, color) => {
+              // 0.4.25 — lib 0.7.11 의 insertEquation 으로 본문 삽입.
+              // caret 좌표 read → irInsertEquation 호출.
+              const v = activeViewerRef();
+              if (!v) return false;
+              const caret = v.irGetCaretPosition() as {
+                sectionIndex?: number;
+                paragraphIndex?: number;
+                charOffset?: number;
+              } | null;
+              if (!caret) return false;
+              const sec = caret.sectionIndex ?? 0;
+              const para = caret.paragraphIndex ?? 0;
+              const charOff = caret.charOffset ?? 0;
+              return v.irInsertEquation(
+                sec,
+                para,
+                charOff,
+                script,
+                fontSize,
+                color,
+              );
+            }}
+          />
+          <ShapeDialog
+            open={shapeOpen}
+            onOpenChange={setShapeOpen}
+            onInsert={(width, height, opts) =>
+              activeViewerRef()?.createRectShapeAtCaret(width, height, opts) ??
+              null
+            }
+          />
+          <TablePropsDialog
+            open={tablePropsOpen}
+            onOpenChange={setTablePropsOpen}
+            getCurrent={() => {
+              const v = activeViewerRef();
+              if (!v) return null;
+              const c = v.getActiveCellContext();
+              if (!c) return null;
+              const props = v.getTableProps(
+                c.sectionIndex,
+                c.parentParaIdx,
+                c.controlIdx,
+              );
+              if (!props) return null;
+              const ctx: TablePropsContext = {
+                sectionIdx: c.sectionIndex,
+                parentParaIdx: c.parentParaIdx,
+                controlIdx: c.controlIdx,
               };
-            })
-            .filter((x): x is StyleOption => x !== null);
-        }}
-        onApply={(ctx, styleId) => {
-          activeViewerRef()?.applyCellStyle(
-            ctx.sectionIdx,
-            ctx.parentParaIdx,
-            ctx.controlIdx,
-            ctx.cellIdx,
-            0, // cellPara — apply to the first para of the cell
-            styleId,
-          );
-        }}
-      />
-      <TableFormulaDialog
-        open={formulaOpen}
-        onOpenChange={setFormulaOpen}
-        ctx={formulaCtx}
-        onEvaluate={(ctx, formula, writeResult) => {
-          const v = activeViewerRef();
-          if (!v) return null;
-          return v.evaluateTableFormula(
-            ctx.sectionIndex,
-            ctx.parentParaIdx,
-            ctx.controlIdx,
-            ctx.targetRow,
-            ctx.targetCol,
-            formula,
-            writeResult,
-          );
-        }}
-      />
-      <CellPropsDialog
-        open={cellPropsOpen}
-        onOpenChange={setCellPropsOpen}
-        getCurrent={() => {
-          const v = activeViewerRef();
-          if (!v) return null;
-          const c = v.getActiveCellContext();
-          if (!c) return null;
-          const props = v.getCellProps(
-            c.sectionIndex,
-            c.parentParaIdx,
-            c.controlIdx,
-            c.cellIdx,
-          );
-          if (!props) return null;
-          const ctx: CellPropsContext = {
-            sectionIdx: c.sectionIndex,
-            parentParaIdx: c.parentParaIdx,
-            controlIdx: c.controlIdx,
-            cellIdx: c.cellIdx,
-          };
-          return { ctx, props };
-        }}
-        onApply={(ctx, props) => {
-          activeViewerRef()?.setCellProps(
-            ctx.sectionIdx,
-            ctx.parentParaIdx,
-            ctx.controlIdx,
-            ctx.cellIdx,
-            props,
-          );
-        }}
-      />
+              return { ctx, props };
+            }}
+            onApply={(ctx, props) => {
+              activeViewerRef()?.setTableProps(
+                ctx.sectionIdx,
+                ctx.parentParaIdx,
+                ctx.controlIdx,
+                props,
+              );
+            }}
+          />
+          <PicturePropsDialog
+            open={picturePropsOpen}
+            onOpenChange={setPicturePropsOpen}
+            enumeratePictures={() => {
+              const v = activeViewerRef();
+              if (!v) return [];
+              return v.enumeratePictures().map((p) => ({
+                sectionIdx: p.sectionIdx,
+                parentParaIdx: p.parentParaIdx,
+                controlIdx: p.controlIdx,
+                label: p.label,
+              }));
+            }}
+            getProps={(ref: PictureRef) =>
+              activeViewerRef()?.getPictureProps(
+                ref.sectionIdx,
+                ref.parentParaIdx,
+                ref.controlIdx,
+              ) ?? null
+            }
+            onApply={(ref, props) => {
+              activeViewerRef()?.setPictureProps(
+                ref.sectionIdx,
+                ref.parentParaIdx,
+                ref.controlIdx,
+                props,
+              );
+            }}
+            onDelete={(ref) => {
+              activeViewerRef()?.deletePictureControl(
+                ref.sectionIdx,
+                ref.parentParaIdx,
+                ref.controlIdx,
+              );
+            }}
+          />
+          <CellStylePickerDialog
+            open={cellStylePickerOpen}
+            onOpenChange={setCellStylePickerOpen}
+            getCurrentCell={() => {
+              const v = activeViewerRef();
+              if (!v) return null;
+              const c = v.getActiveCellContext();
+              if (!c) return null;
+              const ctx: CellStylePickerCtx = {
+                sectionIdx: c.sectionIndex,
+                parentParaIdx: c.parentParaIdx,
+                controlIdx: c.controlIdx,
+                cellIdx: c.cellIdx,
+              };
+              return ctx;
+            }}
+            getStyles={() => {
+              const v = activeViewerRef();
+              if (!v) return [];
+              const list = v.getStyleListJson() ?? [];
+              return list
+                .map((s): StyleOption | null => {
+                  const id = (s as { id?: unknown }).id;
+                  const name = (s as { name?: unknown }).name;
+                  const englishName = (s as { englishName?: unknown })
+                    .englishName;
+                  if (typeof id !== 'number' || typeof name !== 'string')
+                    return null;
+                  return {
+                    id,
+                    name,
+                    englishName:
+                      typeof englishName === 'string' ? englishName : undefined,
+                  };
+                })
+                .filter((x): x is StyleOption => x !== null);
+            }}
+            onApply={(ctx, styleId) => {
+              activeViewerRef()?.applyCellStyle(
+                ctx.sectionIdx,
+                ctx.parentParaIdx,
+                ctx.controlIdx,
+                ctx.cellIdx,
+                0, // cellPara — apply to the first para of the cell
+                styleId,
+              );
+            }}
+          />
+          <TableFormulaDialog
+            open={formulaOpen}
+            onOpenChange={setFormulaOpen}
+            ctx={formulaCtx}
+            onEvaluate={(ctx, formula, writeResult) => {
+              const v = activeViewerRef();
+              if (!v) return null;
+              return v.evaluateTableFormula(
+                ctx.sectionIndex,
+                ctx.parentParaIdx,
+                ctx.controlIdx,
+                ctx.targetRow,
+                ctx.targetCol,
+                formula,
+                writeResult,
+              );
+            }}
+          />
+          <CellPropsDialog
+            open={cellPropsOpen}
+            onOpenChange={setCellPropsOpen}
+            getCurrent={() => {
+              const v = activeViewerRef();
+              if (!v) return null;
+              const c = v.getActiveCellContext();
+              if (!c) return null;
+              const props = v.getCellProps(
+                c.sectionIndex,
+                c.parentParaIdx,
+                c.controlIdx,
+                c.cellIdx,
+              );
+              if (!props) return null;
+              const ctx: CellPropsContext = {
+                sectionIdx: c.sectionIndex,
+                parentParaIdx: c.parentParaIdx,
+                controlIdx: c.controlIdx,
+                cellIdx: c.cellIdx,
+              };
+              return { ctx, props };
+            }}
+            onApply={(ctx, props) => {
+              activeViewerRef()?.setCellProps(
+                ctx.sectionIdx,
+                ctx.parentParaIdx,
+                ctx.controlIdx,
+                ctx.cellIdx,
+                props,
+              );
+            }}
+          />
+        </>
+      )}
       <div className="flex h-screen flex-col bg-background text-foreground">
         <TitleBar
           activeFileName={
@@ -1162,7 +1176,7 @@ export default function AppShell() {
                     })
                   )}
                 </div>
-                {outlineOpen && tabsState.length > 0 && (
+                {!useRhwpEditor && outlineOpen && tabsState.length > 0 && (
                   <OutlineSidebar
                     getViewer={activeViewerRef}
                     refreshKey={outlineKey + (activeIndex << 8)}

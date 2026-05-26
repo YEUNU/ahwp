@@ -18,7 +18,7 @@ import {
   type RefCallback,
   type SetStateAction,
 } from 'react';
-import { type TabDescriptor } from '@/features/studio/TabBar';
+import { type TabDescriptor } from '@/app/TabBar';
 import type { ViewerHandle } from '@/features/studio/types';
 
 export interface TabState extends TabDescriptor {
