@@ -83,7 +83,10 @@ ahwp/
   - `src/features/rhwp-studio/debug-surface.ts` — `window.__rhwpDebug.mount/unmount/getBridge` 노출. createRoot + RhwpEditor portal mount. mount() 는 ready resolve 까지 await 한 bridge 를 반환.
   - `src/main.tsx` 의 top-level 에서 `installRhwpDebugSurface()` — Phase D 후반 / E 에서 viewer 자체 교체 전, dev / e2e / 콘솔 디버깅 용도.
   - e2e `tests/e2e/rhwp-studio-debug-mount.spec.ts` — 실제 ahwp Electron 띄우고 React lifecycle 거쳐 RhwpEditor mount → bridge.ready / invokeWasm / unmount → bridge null. 2/2 통과 ✅
-- [ ] **D2** — 55 AI tools 의 `viewerHandle.irX(...)` 호출 전부 `bridge.invokeWasm(...)` 로 치환. tools.ts (`src/features/chat/tools.ts`) 가 가장 큰 작업. ir 메서드 1:1 매핑 + async 전환.
+- [~] **D2** — 55 AI tools 의 `viewerHandle.irX(...)` → `bridge` 경유 (사실상 D2a/D2b/... 여러 sub-chunk).
+  - [x] **D2a** — `BridgeIrHelper` 클래스 (12 메서드: getSectionCount / getParagraphCount / getParagraphLength / getCaretPosition / getTextRange (composite) / getTextInCell / searchAllText / insertText / deleteText / insertTextInCell). useViewerHandle 의 composite 로직 (cross-para getTextRange) 그대로 옮김. JSON `{"ok":...}` 응답 파싱 isOk(). unit 12/12 (mock bridge) + e2e 2/2 (실제 iframe, insertText/deleteText round-trip). tools.ts 는 아직 viewerHandle 직접 사용 — D2b 에서 wiring.
+  - [ ] **D2b** — tools.ts 가 `bridge` 사용 가능한 경우 BridgeIrHelper 로 라우팅 (viewerHandle fallback 유지). 기존 tests 유지 + bridge mode 신규 cases.
+  - [ ] **D2c** — 남은 ir* (apply*, create*, insert/delete* table·shape·footnote·picture 등) 를 BridgeIrHelper 에 추가. tools.ts 의 모든 case 가 helper 경유.
 - [ ] **D3** — file open/save IPC 가 `bridge.loadFile` / `bridge.invokeWasm('exportHwp')` 경유하도록 재구성. ahwp 측 in-process `@rhwp/core` 인스턴스 단계적 폐기.
 - [ ] **D4** — Diff Viewer / Plan mode / 그룹 undo — bridge event (caret/selection/doc-mutated) 위에 재구현. Phase A2 후속의 event channel 추가 필요.
 - [ ] **D5** — AI 회귀 e2e 통과 확인 (기존 chat / agent / form-fill spec 들이 새 경로로 통과).
