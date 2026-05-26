@@ -6,6 +6,18 @@
 
 ## [Unreleased]
 
+### Fixed — CI 가 vendor/rhwp submodule init + studio dist 빌드 (0.4.33)
+
+v0.4.32 release CI 가 submodule 미초기화 상태로 빌드 → packaged 앱에
+rhwp-studio dist 누락 (electron-builder 가 missing extraResources 를
+silent skip). 본 release 부터 fix.
+
+- `.gitmodules` url: edwardkim/rhwp → YEUNU/rhwp (user fork). `ahwp-bridge` 브랜치의 5 commit 이 fork 에 push 되어 CI / 다른 환경에서도 init 가능.
+- `release.yml`: `actions/checkout` 에 `submodules: recursive` + 빌드 스텝 앞에 `npm run vendor:rhwp:build` 추가. rhwp-mode 가 packaged 빌드에서 정상 작동.
+
+v0.4.32 의 release artifacts 는 폐기 — 본 release (v0.4.33) 가 첫
+정상 Phase 7 release.
+
 ### Changed — rhwp-mode 가 default (Phase 7 E2d 1단계, 0.4.32)
 
 `localStorage['ahwp:use-rhwp-editor']` 미설정 또는 '1' = rhwp-mode (새
