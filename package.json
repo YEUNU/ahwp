@@ -1,6 +1,6 @@
 {
   "name": "ahwp",
-  "version": "0.6.8",
+  "version": "0.6.9",
   "private": true,
   "description": "AI-powered HWP/HWPX desktop editor",
   "author": "ahwp contributors",
@@ -101,7 +101,8 @@
     ],
     "mac": {
       "target": [
-        "dmg"
+        "dmg",
+        "zip"
       ],
       "artifactName": "${productName}-${version}.${ext}"
     },
