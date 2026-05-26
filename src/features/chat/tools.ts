@@ -25,11 +25,26 @@ import type { BridgeIrHelper } from '@/features/rhwp-studio/bridge-ir-helper';
  * 라우팅한다 (rhwp-studio iframe 의 IR 사용). null 이면 기존 viewer.irX
  * 경로 그대로. 단계적 마이그레이션 — 모든 case 가 helper 를 쓰는 건
  * D2c 이후. */
+/**
+ * viewer 가 null 일 때 (rhwp-mode + StudioViewer 미마운트) 사용하는 stub.
+ * 어떤 메서드든 호출되면 throw — 호출자가 helper 우선 경로로 흐르도록
+ * 강제. 단, 일부 ahwp-side 도구 (applyHtml / applyAlignment 등 composite
+ * non-ir 케이스) 는 helper 커버리지 없음 → AI 가 호출 시 error 로 fail.
+ */
+const NULL_VIEWER_STUB = new Proxy({} as ViewerHandle, {
+  get(_t, prop) {
+    throw new Error(
+      `viewer.${String(prop)} called in rhwp-mode (no StudioViewer). 도구는 bridge 경유 가능한 ir* 메서드만 지원합니다.`,
+    );
+  },
+});
+
 async function runOne(
-  viewer: ViewerHandle,
+  viewerOrNull: ViewerHandle | null,
   call: AhwpToolCall,
   helper: BridgeIrHelper | null = null,
 ): Promise<AhwpToolResult> {
+  const viewer: ViewerHandle = viewerOrNull ?? NULL_VIEWER_STUB;
   try {
     switch (call.tool) {
       case 'applyHtml': {
@@ -1189,12 +1204,15 @@ async function runOne(
  * (rather than N entries, one per op). The bracket holds even if some
  * ops throw — we always end the group in a finally. */
 export async function runTools(
-  viewer: ViewerHandle,
+  viewer: ViewerHandle | null,
   items: AhwpPreflightItem[],
   helper: BridgeIrHelper | null = null,
 ): Promise<AhwpToolResult[]> {
   const out: AhwpToolResult[] = [];
-  viewer.beginUndoGroup();
+  // Phase 7 E2c — rhwp-mode 에선 viewer 가 null 일 수 있음 (StudioViewer
+  // 미마운트). helper 가 있어야 의미 있는 동작 — undo group / snapshot 은
+  // rhwp-studio 가 iframe 안에서 자체 관리하므로 skip.
+  viewer?.beginUndoGroup();
   try {
     for (const item of items) {
       if (!item.ok) {
@@ -1204,7 +1222,7 @@ export async function runTools(
       out.push(await runOne(viewer, item.call, helper));
     }
   } finally {
-    viewer.endUndoGroup();
+    viewer?.endUndoGroup();
   }
   return out;
 }

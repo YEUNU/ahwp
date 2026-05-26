@@ -1246,17 +1246,6 @@ export default function AppShell() {
                     const v = targetPath
                       ? lookupByPath(targetPath)
                       : activeViewerRef();
-                    if (!v) {
-                      if (targetPath) {
-                        return items.map((it) => ({
-                          ok: false,
-                          tool: it.ok ? it.call.tool : it.tool,
-                          reason: `target-doc-not-mounted:${targetPath}`,
-                        }));
-                      }
-                      return [];
-                    }
-                    const before = v.snapshotParagraphs();
                     // Phase E1/E2b — bridge 라우팅 우선순위:
                     //   1) useRhwpEditor 모드: 활성 탭의 RhwpEditor handle 사용
                     //   2) __rhwpDebug.getBridge() (debug surface 마운트 상태)
@@ -1281,13 +1270,25 @@ export default function AppShell() {
                       ).__rhwpDebug;
                       bridge = dbg?.getBridge() ?? null;
                     }
+                    if (!v && !bridge) {
+                      // rhwp-mode 가 아니고 viewer 도 없음 → 호출 불가.
+                      if (targetPath) {
+                        return items.map((it) => ({
+                          ok: false,
+                          tool: it.ok ? it.call.tool : it.tool,
+                          reason: `target-doc-not-mounted:${targetPath}`,
+                        }));
+                      }
+                      return [];
+                    }
+                    const before = v?.snapshotParagraphs();
                     const helper = bridge
                       ? new (
                           await import('@/features/rhwp-studio/bridge-ir-helper')
                         ).BridgeIrHelper(bridge)
                       : null;
                     const results = await runTools(v, items, helper);
-                    v.markChangedParagraphsSince(before);
+                    if (v && before) v.markChangedParagraphsSince(before);
                     return results;
                   }}
                   captureExcerpt={() =>
