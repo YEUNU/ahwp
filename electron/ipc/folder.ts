@@ -19,6 +19,11 @@ import type {
   WorkspaceOutlineResult,
 } from '../../shared/api';
 import { loadRhwpCore } from '../hwp/converter';
+import {
+  extractText as extractReadableText,
+  isReadable,
+  type ExtractedText,
+} from '../files/readable-formats';
 import { app } from 'electron';
 
 /**
@@ -97,6 +102,45 @@ interface OutlineItem {
   paragraphIndex: number;
   level: number;
   text: string;
+}
+
+/**
+ * Non-HWP outline derivation — 0.6.0. ExtractedText 의 headings 를
+ * OutlineItem[] 로 변환. paragraphIndex 는 chunk index — readParagraphByPath
+ * 가 같은 chunks 로 재추출해서 (sectionIdx=0, paragraphIdx=i) 좌표로
+ * `chunks[i]` 를 반환하므로 의미적으로 일치.
+ *
+ * headings 가 없는 포맷 (TXT, JSON 등) 은 각 chunk 의 첫 80자를 fallback
+ * heading 으로 노출 — AI 가 "어느 chunk 에 어떤 내용이 있는지" 를 파악하기
+ * 위한 최소한의 시그널.
+ */
+function outlineFromExtracted(extracted: ExtractedText): OutlineItem[] {
+  const items: OutlineItem[] = [];
+  if (extracted.headings.length > 0) {
+    // headings → chunks 중 substring match 로 paragraphIndex 추론.
+    // No match 면 0 으로 fallback (AI 는 적어도 heading text 는 활용 가능).
+    for (const h of extracted.headings) {
+      const idx = extracted.chunks.findIndex((c) => c.includes(h));
+      items.push({
+        paragraphIndex: idx >= 0 ? idx : 0,
+        level: 1,
+        text: h.length > 200 ? h.slice(0, 200) : h,
+      });
+      if (items.length >= 200) break;
+    }
+    return items;
+  }
+  // Fallback — chunks 의 첫 80자를 heading 처럼 노출.
+  for (let i = 0; i < Math.min(extracted.chunks.length, 50); i++) {
+    const first = extracted.chunks[i].split(/\n/)[0].trim();
+    if (!first) continue;
+    items.push({
+      paragraphIndex: i,
+      level: 1,
+      text: first.length > 80 ? first.slice(0, 80) + '…' : first,
+    });
+  }
+  return items;
 }
 
 function extractOutline(doc: RhwpDoc): OutlineItem[] {
@@ -247,7 +291,10 @@ export function registerFolderIpc(): void {
 
       const MAX_DEPTH = 5;
       const MAX_FILES = 200;
-      const MAX_FILE_BYTES = 5 * 1024 * 1024;
+      // 0.6.0 — 30MB 상한 (PDF 보고서급도 통과). 비-HWP 는 extractText
+      // 내부에서 per-family cap (PDF 30/DOCX 15/Excel 15/평문 5MB) 재검증.
+      // HWP 는 historically 5MB 였지만 cap 의미는 metadata + raw fs.stat 단계만.
+      const MAX_FILE_BYTES = 30 * 1024 * 1024;
       const MAX_HITS = 50;
       const PER_FILE_SNIPPETS = 5;
 
@@ -270,11 +317,7 @@ export function registerFolderIpc(): void {
             if (cur.depth + 1 < MAX_DEPTH) {
               queue.push({ dir: full, depth: cur.depth + 1 });
             }
-          } else if (
-            e.isFile() &&
-            (e.name.toLowerCase().endsWith('.hwp') ||
-              e.name.toLowerCase().endsWith('.hwpx'))
-          ) {
+          } else if (e.isFile() && isReadable(e.name)) {
             candidates.push(full);
             if (candidates.length >= MAX_FILES) break;
           }
@@ -297,6 +340,54 @@ export function registerFolderIpc(): void {
         }
         if (stat.size > MAX_FILE_BYTES) {
           skipped += 1;
+          continue;
+        }
+        // 0.6.0 — non-HWP 포맷은 extractText.chunks 에서 substring grep.
+        // sectionIndex=0 (HWP 외엔 section 없음), paragraphIndex = chunk
+        // index. snippets shape 은 HWP 와 identical.
+        const lower = filePath.toLowerCase();
+        const isHwp = lower.endsWith('.hwp') || lower.endsWith('.hwpx');
+        if (!isHwp) {
+          try {
+            const extracted = await extractReadableText(filePath);
+            const snippets: FolderSearchHit['snippets'] = [];
+            let total = 0;
+            for (let i = 0; i < extracted.chunks.length; i++) {
+              const text = extracted.chunks[i];
+              const idx = text.toLowerCase().indexOf(q);
+              if (idx >= 0) {
+                total += 1;
+                if (snippets.length < PER_FILE_SNIPPETS) {
+                  const start = Math.max(0, idx - 30);
+                  const end = Math.min(text.length, idx + query.length + 30);
+                  snippets.push({
+                    sectionIndex: 0,
+                    paragraphIndex: i,
+                    preview: text.slice(start, end),
+                    matchOffset: idx - start,
+                    matchLength: query.length,
+                  });
+                }
+                if (
+                  snippets.length >= PER_FILE_SNIPPETS &&
+                  total > snippets.length * 4
+                ) {
+                  break;
+                }
+              }
+            }
+            scanned += 1;
+            if (snippets.length > 0) {
+              hits.push({
+                path: filePath,
+                filename: path.basename(filePath),
+                matchCount: total,
+                snippets,
+              });
+            }
+          } catch {
+            skipped += 1;
+          }
           continue;
         }
         let bytes: Buffer;
@@ -398,7 +489,10 @@ export function registerFolderIpc(): void {
         return { status: 'no-root', entries: [], scanned: 0, skipped: 0 };
 
       const MAX_DEPTH = 5;
-      const MAX_FILE_BYTES = 5 * 1024 * 1024;
+      // 0.6.0 — 30MB 상한 (PDF 보고서급도 통과). 비-HWP 는 extractText
+      // 내부에서 per-family cap (PDF 30/DOCX 15/Excel 15/평문 5MB) 재검증.
+      // HWP 는 historically 5MB 였지만 cap 의미는 metadata + raw fs.stat 단계만.
+      const MAX_FILE_BYTES = 30 * 1024 * 1024;
 
       const queue: { dir: string; depth: number }[] = [
         { dir: rootPath, depth: 0 },
@@ -419,11 +513,7 @@ export function registerFolderIpc(): void {
             if (cur.depth + 1 < MAX_DEPTH) {
               queue.push({ dir: full, depth: cur.depth + 1 });
             }
-          } else if (
-            e.isFile() &&
-            (e.name.toLowerCase().endsWith('.hwp') ||
-              e.name.toLowerCase().endsWith('.hwpx'))
-          ) {
+          } else if (e.isFile() && isReadable(e.name)) {
             candidates.push(full);
             if (candidates.length >= requestedMax) break;
           }
@@ -461,7 +551,42 @@ export function registerFolderIpc(): void {
           scanned += 1;
           continue;
         }
-        // Cache miss — parse + extract.
+        // Cache miss — parse + extract. HWP/HWPX 는 @rhwp/core, 그 외는
+        // readable-formats 의 extractText (PDF/DOCX/Excel/...) 로 dispatch.
+        const lower = filePath.toLowerCase();
+        const isHwp = lower.endsWith('.hwp') || lower.endsWith('.hwpx');
+        if (!isHwp) {
+          // 0.6.0 — non-HWP 포맷 (PDF/DOCX/Excel/CSV/TXT/MD/JSON/XML/HTML)
+          // 의 outline 은 extractText.headings → outlineFromExtracted 변환.
+          // 큰 binary (PDF/DOCX) 추출은 main process 메모리에 부담이므로
+          // 5MB 상한 (extractText 가 자체 체크).
+          try {
+            const extracted = await extractReadableText(filePath);
+            const outline = outlineFromExtracted(extracted);
+            out.push({
+              path: filePath,
+              filename: path.basename(filePath),
+              mtime,
+              outline,
+            });
+            cache[filePath] = { mtime, outline };
+            scanned += 1;
+          } catch (err) {
+            // 추출 실패는 partial — 사용자에게 모두-실패 만 noise. 빈
+            // outline 으로라도 entry 유지하면 AI 가 적어도 파일 존재
+            // 인식 가능.
+            console.warn('[outlines] extract failed:', filePath, err);
+            out.push({
+              path: filePath,
+              filename: path.basename(filePath),
+              mtime,
+              outline: [],
+            });
+            scanned += 1;
+            parseFailed = true;
+          }
+          continue;
+        }
         let bytes: Buffer;
         try {
           bytes = await fs.readFile(filePath);
@@ -541,8 +666,41 @@ export function registerFolderIpc(): void {
           ? Math.min(10, req.contextParagraphs)
           : 2;
       const lower = req.path.toLowerCase();
-      if (!lower.endsWith('.hwp') && !lower.endsWith('.hwpx')) {
+      if (!isReadable(lower)) {
         return { ok: false, reason: 'unsupported-extension' };
+      }
+      // Non-HWP 포맷: extractText + chunk index lookup. sectionIdx 는 항상
+      // 0 (HWP 외엔 section 개념 X), paragraphIdx 는 chunks[i] 직접 매핑.
+      const isHwp = lower.endsWith('.hwp') || lower.endsWith('.hwpx');
+      if (!isHwp) {
+        if (req.sectionIdx !== 0) {
+          return { ok: false, reason: 'out-of-range' };
+        }
+        try {
+          const extracted = await extractReadableText(req.path);
+          if (req.paragraphIdx >= extracted.chunks.length) {
+            return { ok: false, reason: 'out-of-range' };
+          }
+          const text = extracted.chunks[req.paragraphIdx];
+          const context: { paragraphIdx: number; text: string }[] = [];
+          if (ctx > 0) {
+            for (
+              let p = req.paragraphIdx - ctx;
+              p <= req.paragraphIdx + ctx;
+              p++
+            ) {
+              if (p === req.paragraphIdx) continue;
+              if (p < 0 || p >= extracted.chunks.length) continue;
+              context.push({ paragraphIdx: p, text: extracted.chunks[p] });
+            }
+          }
+          // 너무 큰 chunk 는 4KB 로 trim (HWP 경로와 동일 정책).
+          const capped = text.length > 4096 ? text.slice(0, 4096) : text;
+          return { ok: true, text: capped, context };
+        } catch (err) {
+          console.warn('[read-paragraph] extract failed:', req.path, err);
+          return { ok: false, reason: 'parse-error' };
+        }
       }
       let bytes: Buffer;
       try {

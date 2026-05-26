@@ -6,6 +6,76 @@
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-05-26
+
+### Hardened — 0.6.0 mixed-format workspace 검증 + UX 폴리시
+
+0.6.0 의 "100% functional" 목표를 위한 후속 polish.
+
+**Binary 포맷 라이브러리 가정 검증**:
+
+- 실제 PDF (hand-crafted minimal byte) / DOCX (jszip 으로 minimal zip 빌드) /
+  Excel (exceljs 자체 writer) 의 extractText round-trip 통과.
+- pdf-parse@2.4.5 의 `PDFParse` class API, mammoth 의 `convertToHtml` heading
+  추출, exceljs 의 `eachSheet`/`eachRow` API 가 우리 wrapping 과 정합.
+
+**Search 패널 확장** (`folder:search-text`):
+
+- 이전엔 .hwp/.hwpx 만 grep 가능 → 이제 PDF/DOCX/Excel/CSV/TXT/MD/JSON/XML/HTML
+  본문도 검색. 매치 snippet 은 sectionIndex=0 + paragraphIndex=chunkIdx 로 노출.
+
+**AI tool description 갱신**:
+
+- `searchWorkspaceOutlines` / `readParagraphByPath` 의 description 에 non-HWP
+  coordinate semantics 명시 (sectionIdx=0, paragraphIdx=chunk index). prompts.ts
+  의 Cross-doc workflow 섹션도 같이.
+
+**Per-family size cap** — PDF 30MB / DOCX·Excel 15MB / 평문 5MB / HWP 5MB.
+보고서급 PDF 도 통과하면서 메모리 보호. folder.ts 의 listing-cap 도 30MB 로
+완화 (실제 cap 은 extractText 내부에서 family 별 재검증).
+
+**Tree icons** — FolderTree 가 family 별 lucide 아이콘 변별:
+
+- HWP/HWPX = FileType 푸른색 / PDF = FileText 붉은색 / DOCX = FileText 진청색
+- xlsx/csv = FileSpreadsheet 녹색 / md/txt/json/xml/html = FileText 회색
+
+**Tests**: +3 binary extractor (PDF/DOCX/Excel) + +1 e2e (search-text across formats).
+175 unit + 40 e2e. typecheck OK.
+
+## [0.6.0] - 2026-05-26
+
+### Added — Mixed-format workspace (PDF / DOCX / Excel / TXT / MD / 등)
+
+워크스페이스가 더 이상 `.hwp / .hwpx` 만 보이지 않습니다. AI 의
+`searchWorkspaceOutlines` / `readParagraphByPath` 도 동일하게 확장 —
+사용자가 같은 폴더에 둔 PDF 사업비 실적 보고서 / DOCX 중간보고서 /
+Excel 예산표 등을 AI 가 직접 읽고 cross-reference 가능.
+
+**지원 포맷 (read-only)**:
+
+- PDF (`pdf-parse@2.4.5`)
+- DOCX (`mammoth`)
+- Excel xlsx/xls (`exceljs`) + CSV/TSV (built-in)
+- TXT / MD / Markdown
+- JSON / XML / HTML
+
+**의미적 정합**:
+
+- HWP/HWPX 외 포맷은 single section (sectionIdx=0) + chunks[] 로 표현.
+  `readParagraphByPath(path, 0, i)` 가 chunks[i] 반환.
+- Outline 추출 — MD 의 `#`, HTML 의 `<hN>`, DOCX 의 heading style,
+  Excel 의 sheet name, CSV 의 column header 가 모두 OutlineItem 으로 노출.
+- AI 가 자연어 "두 문서 비교해줘" 할 때 양쪽 모두 동등 컨텍스트 인식.
+
+**편집은 여전히 HWP/HWPX 만** — rhwp-studio 의 한계. 트리에서 PDF 등을
+클릭하면 `shell.openPath` 로 OS 기본 앱 위임 (`file:open-external` IPC).
+
+**추가 신규 IPC**: `file:open-external`.
+**5MB / 200 chunk 상한** — main process 메모리 보호.
+
+**Tests**: shared/file-formats (12) + electron/files/readable-formats (10) +
+e2e workspace-mixed-formats (6) + folder-tree update (1). 총 +29 spec.
+
 ## [0.5.2] - 2026-05-26
 
 ### Fixed — Diff Viewer patches 가 rhwp-mode 에서 실제 IR 까지 도달

@@ -46,6 +46,7 @@ const api: AhwpApi = {
     createVersion: (req) => ipcRenderer.invoke('file:create-version', req),
     listVersions: (p) => ipcRenderer.invoke('file:list-versions', p),
     readVersion: (req) => ipcRenderer.invoke('file:read-version', req),
+    openExternal: (p) => ipcRenderer.invoke('file:open-external', p),
     onExternalChange: (handler) => {
       const listener = (
         _event: IpcRendererEvent,

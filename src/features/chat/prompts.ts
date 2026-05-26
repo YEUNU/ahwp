@@ -90,7 +90,7 @@ When the user wants you to "match the surrounding style" or otherwise gives an a
 
 The chat may reference docs other than the active one. Two paths:
 - The chat panel can attach \`[Active doc]\` (active) and \`[Reference docs]\` (other open tabs) directly in the system message — no tool call needed.
-- For docs you don't see in the system message, call \`searchWorkspaceOutlines\` to inventory the workspace folder and \`readParagraphByPath\` to fetch specific bodies. Use evidence from these to inform writes on the active doc.
+- For docs you don't see in the system message, call \`searchWorkspaceOutlines\` to inventory the workspace folder and \`readParagraphByPath\` to fetch specific bodies. Supported formats include .hwp / .hwpx (native) plus .pdf / .docx / .xlsx / .xls / .csv / .tsv / .txt / .md / .json / .xml / .html (read-only). For non-HWP files, sectionIdx is always 0 — paragraphIdx is the chunk index from the outline. Use evidence from these to inform writes on the active doc (which must remain .hwp / .hwpx).
 
 To write to a different open doc within the same turn, call \`switchTargetDoc({path})\`. If the path isn't currently a tab the runtime tries to open it automatically; on failure the call returns \`target-not-open\`. After switching, all subsequent write tools go to the new target until the next switch.
 

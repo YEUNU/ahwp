@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import chokidar, { type FSWatcher } from 'chokidar';
 import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
@@ -83,6 +83,23 @@ export function registerFileIpc(): void {
   ipcMain.handle('file:list-recent', async (): Promise<RecentFile[]> => {
     return listRecent();
   });
+
+  // 0.6.0 — non-editable 파일 (PDF / DOCX / Excel 등) 클릭 시 OS 기본 앱으로
+  // 위임. shell.openPath 는 success 시 빈 문자열, fail 시 에러 메시지 반환
+  // (Electron convention). 보안: file:// 만 허용 (실제로 shell.openPath
+  // 은 임의 URL 거부) + 존재 검증.
+  ipcMain.handle(
+    'file:open-external',
+    async (_event, filePath: string): Promise<string> => {
+      if (typeof filePath !== 'string' || !filePath) {
+        return 'invalid-path';
+      }
+      if (!(await exists(filePath))) {
+        return 'file-not-found';
+      }
+      return await shell.openPath(filePath);
+    },
+  );
 
   ipcMain.handle(
     'file:read',

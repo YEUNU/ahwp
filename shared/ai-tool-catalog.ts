@@ -1016,7 +1016,7 @@ const TOOL_DESCRIPTORS: AhwpToolDescriptor[] = [
   {
     name: 'searchWorkspaceOutlines',
     description:
-      'Inventory every .hwp / .hwpx in the current folder tree (workspace): filename plus heading-paragraph outline (paragraphIndex / level / text) for each. Use when the user refers to a doc that is not attached and only describes it conceptually — identify candidate docs / paragraphs here, then call readParagraphByPath to fetch the bodies. maxDocs 1-200 (default 50). Response scales with folder size — call only when needed.',
+      'Inventory every readable file in the current folder tree (workspace): filename plus heading outline (paragraphIndex / level / text) for each. Supported formats: .hwp / .hwpx (native, editable) + .pdf / .docx / .xlsx / .xls / .csv / .tsv / .txt / .md / .json / .xml / .html (read-only). For non-HWP files, sectionIndex is always 0 and paragraphIndex addresses chunk-level units (PDF page-or-paragraph / DOCX heading run / spreadsheet sheet / Markdown section). Use when the user refers to a doc that is not attached and only describes it conceptually — identify candidate docs / paragraphs here, then call readParagraphByPath to fetch the bodies. maxDocs 1-200 (default 50). Response scales with folder size — call only when needed.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1027,7 +1027,7 @@ const TOOL_DESCRIPTORS: AhwpToolDescriptor[] = [
   {
     name: 'readParagraphByPath',
     description:
-      'Fetch a specific paragraph body + surrounding context from any .hwp / .hwpx file. Pass path / paragraphIndex from a searchWorkspaceOutlines response directly. The active doc IR is not modified (no mutation, no caret movement). contextParagraphs 0-10 (default 2 — fetches 2 paragraphs on each side). Per-paragraph cap 4KB.',
+      'Fetch a specific paragraph body + surrounding context from any readable file in the workspace. Pass path / sectionIdx / paragraphIdx from a searchWorkspaceOutlines response directly. For non-HWP files (.pdf / .docx / .xlsx / .csv / .txt / .md / .json / .xml / .html), sectionIdx MUST be 0 — paragraphIdx addresses chunk units within the extracted text. For .hwp / .hwpx, normal IR (sectionIdx, paragraphIdx) coordinates apply. The active doc IR is never modified (no mutation, no caret movement). contextParagraphs 0-10 (default 2 — fetches 2 chunks on each side). Per-chunk cap 4KB.',
     inputSchema: {
       type: 'object',
       properties: {

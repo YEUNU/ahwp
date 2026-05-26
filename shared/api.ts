@@ -193,6 +193,12 @@ export interface FileApi {
    * Wraps Electron's webUtils.getPathForFile (replacement for the removed File.path).
    */
   getPathForFile: (file: File) => string;
+  /**
+   * 0.6.0 — non-editable 파일 (PDF / DOCX / Excel / 등) 클릭 시 OS 기본
+   * 앱으로 위임. `shell.openPath` wrap. 성공 시 빈 문자열, 실패 시 에러
+   * 메시지 반환 (Electron 의 convention 그대로).
+   */
+  openExternal: (path: string) => Promise<string>;
 }
 
 export interface ClipboardApi {

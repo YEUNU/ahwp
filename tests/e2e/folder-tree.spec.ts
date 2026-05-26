@@ -104,14 +104,23 @@ test.describe('folder tree — left panel', () => {
     expect(fileNames.some((n) => n.includes('fresh.hwp'))).toBe(true);
   });
 
-  test('clicking a non-hwp file is a no-op (does not crash)', async () => {
+  test('clicking a readable non-editable file does not open as tab (delegates to OS)', async () => {
     const { page } = launched;
+    // 0.6.0 — non-HWP readable (PDF/DOCX/Excel/TXT/MD/JSON/...) 클릭 시
+    // useSaveFlow.openByPath 가 isEditable() 분기로 window.api.file.openExternal
+    // 을 호출. 본 spec 은 "탭이 안 열린다" + "에러 없이 완료" 만 검증
+    // (실제 shell.openPath 는 OS 가 결정 — headless / CI 환경에선 fail
+    // 해도 무관). contextBridge 객체는 frozen 이라 monkeypatch 불가.
     const txt = page
       .getByTestId('folder-tree-file')
       .filter({ hasText: 'notes.txt' });
     await txt.click();
-    // No error popup; viewer still on welcome screen since no .hwp opened.
+    // 탭 mount 없음 — welcome 화면 그대로.
     await expect(page.getByTestId('welcome-new-doc')).toBeVisible();
+    // 잠시 대기 후에도 rhwp-editor iframe 은 안 마운트.
+    await page.waitForTimeout(500);
+    const iframeCount = await page.getByTestId('rhwp-editor-iframe').count();
+    expect(iframeCount).toBe(0);
   });
 
   test('clicking a .hwp file opens it in the rhwp-editor', async () => {
