@@ -131,6 +131,97 @@ describe('runTools — insertText guards', () => {
     expect(results[0].ok).toBe(true);
   });
 
+  it('rejects applyHtml when caret=(0,0,0) on non-empty doc — parallel guard (0.6.7)', async () => {
+    // helper 모드 한정 가드. caret=(0,0,0) + paragraphCount > 1 면 reject.
+    const viewer = mockViewer();
+    const helper = {
+      async getCaretPosition() {
+        return { sectionIndex: 0, paragraphIndex: 0, charOffset: 0 };
+      },
+      async getParagraphCount() {
+        return 8; // non-trivial 문서 (양식 / 보고서)
+      },
+      async getParagraphLength() {
+        return 0;
+      },
+      async applyHtmlAtCaret() {
+        return true;
+      },
+    } as unknown as import('@/features/rhwp-studio/bridge-ir-helper').BridgeIrHelper;
+    const items: AhwpPreflightItem[] = [
+      {
+        ok: true,
+        call: {
+          tool: 'applyHtml',
+          args: { html: '<h1>제목</h1><p>본문</p>' },
+        },
+      },
+    ];
+    const results = await runTools(viewer, items, helper);
+    expect(results[0].ok).toBe(false);
+    expect(results[0].ok ? null : results[0].reason).toMatch(
+      /applyHtml-at-doc-start-rejected/,
+    );
+  });
+
+  it('allows applyHtml when caret=(0,0,0) on fresh-blank doc', async () => {
+    const viewer = mockViewer();
+    const applyMock = vi.fn(async () => true);
+    const helper = {
+      async getCaretPosition() {
+        return { sectionIndex: 0, paragraphIndex: 0, charOffset: 0 };
+      },
+      async getParagraphCount() {
+        return 1;
+      },
+      async getParagraphLength() {
+        return 0;
+      },
+      applyHtmlAtCaret: applyMock,
+    } as unknown as import('@/features/rhwp-studio/bridge-ir-helper').BridgeIrHelper;
+    const items: AhwpPreflightItem[] = [
+      {
+        ok: true,
+        call: {
+          tool: 'applyHtml',
+          args: { html: '<p>첫 문장</p>' },
+        },
+      },
+    ];
+    const results = await runTools(viewer, items, helper);
+    expect(results[0].ok).toBe(true);
+    expect(applyMock).toHaveBeenCalledWith('<p>첫 문장</p>');
+  });
+
+  it('allows applyHtml when caret is NOT (0,0,0) — anchor moved first', async () => {
+    const viewer = mockViewer();
+    const applyMock = vi.fn(async () => true);
+    const helper = {
+      async getCaretPosition() {
+        return { sectionIndex: 0, paragraphIndex: 5, charOffset: 0 };
+      },
+      async getParagraphCount() {
+        return 12;
+      },
+      async getParagraphLength() {
+        return 30;
+      },
+      applyHtmlAtCaret: applyMock,
+    } as unknown as import('@/features/rhwp-studio/bridge-ir-helper').BridgeIrHelper;
+    const items: AhwpPreflightItem[] = [
+      {
+        ok: true,
+        call: {
+          tool: 'applyHtml',
+          args: { html: '<h2>1.1 목표</h2><p>본문</p>' },
+        },
+      },
+    ];
+    const results = await runTools(viewer, items, helper);
+    expect(results[0].ok).toBe(true);
+    expect(applyMock).toHaveBeenCalled();
+  });
+
   it('begins + ends undo group exactly once even when guard rejects', async () => {
     const begin = vi.fn();
     const end = vi.fn();
@@ -658,15 +749,19 @@ describe('runTools — Phase E2-finalize 24 restored composites', () => {
     ];
     const results = await runTools(viewer, items, helper);
     expect(results.every((r) => r.ok)).toBe(true);
+    // 0.6.7 — applyHtml 의 pre-check 가 getCaretPosition 한 번 호출 (caret
+    // != (0,0,0) 이면 guard 통과, applyHtmlAtCaret 진행).
     expect(log.map((c) => c.fn)).toEqual([
       'setPageDef',
       'setHeaderFooterText',
+      'getCaretPosition',
       'applyHtmlAtCaret',
     ]);
     expect(log[0].args[0]).toBe(0);
     expect(log[0].args[1]).toEqual({ marginLeft: 1000 }); // 객체 그대로
     expect(log[1].args).toEqual([0, true, 0, '머리말']);
-    expect(log[2].args[0]).toBe('<h1>Hi</h1>');
+    // log[2] = getCaretPosition (guard pre-check)
+    expect(log[3].args[0]).toBe('<h1>Hi</h1>');
   });
 
   it('createNamedStyle / createRectShape / applyCellStyle / evaluateTableFormula / insertPicture', async () => {

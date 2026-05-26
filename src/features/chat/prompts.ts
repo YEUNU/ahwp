@@ -103,12 +103,18 @@ To write to a different open doc within the same turn, call \`switchTargetDoc({p
 
 #### Structured documents — explore before writing
 
-A document with non-trivial structure (tables, named sections) needs anchored writes. Before any write tool, read enough to know WHERE — paragraph indices, cell context, outline. The runtime hard-rejects \`insertText\` at \`(sectionIdx=0, paragraphIdx=0, charOffset=0)\` with multi-paragraph text because that pattern destroys table layouts at the document start.
+A document with non-trivial structure (tables, named sections) needs anchored writes. Before any write tool, read enough to know WHERE — paragraph indices, cell context, outline. The runtime hard-rejects writes at the doc start when they would clobber layout:
+- \`insertText\` at \`(sectionIdx=0, paragraphIdx=0, charOffset=0)\` with multi-paragraph text
+- \`applyHtml\` when caret is \`(0,0,0)\` on a non-empty document (any doc except a freshly-created blank one)
+
+Both \`insertText\` and \`applyHtml\` depend on caret/anchor. The default caret on a freshly-loaded document is \`(0,0,0)\` — for a template / form / report with a cover table or placeholder sections, that position is almost always INSIDE a cover-table cell. Writing there reshapes the cell and breaks the form. \`applyHtml\` is the most common offender because the model often jumps to it after reading the summary, without first moving the caret.
+
+\`getDocumentOutline\` only returns paragraphs styled with heading styles (\`제목\`, \`개요\`, \`Heading\`). Templates that use plain-text section markers (numbered lists, custom prefix glyphs) return an empty outline — that does NOT mean the doc is unstructured. Always cross-check with \`searchAllText\` for likely section anchors before writing.
 
 Anchored-write workflow:
-1. Read structure first (\`getDocumentSummary\`, \`getDocumentOutline\`, \`findInDocument\`) until you know which paragraph or cell is the target.
+1. Read structure first (\`getDocumentSummary\`, \`getDocumentOutline\`, \`findInDocument\`, \`searchAllText\`) until you know which paragraph or cell is the target. If outline is empty, scan the summary text for the anchor and resolve to a paragraph index with \`searchAllText\`.
 2. If the anchor paragraph belongs to a table cell, use cell-level tools (\`getCellInfo\` to inspect, \`insertTextInCell\` to write). Body-level \`insertText\` near a cell falls OUTSIDE the table. After writing into a previously empty cell, the inserted text inherits whatever char-shape the cell template held — which may not match neighboring cells. To make typography consistent, read a sibling cell that already has text via \`getCharPropertiesAt\`, then \`applyCharFormat\` over the just-inserted range with the returned props (\`name\` / \`size_hu\` / \`bold\` etc.). \`applyCharFormat\` no-ops on empty paragraphs, so always insert text first then format.
-3. For multi-paragraph content with headings + body, use \`applyHtml\`. Plain \`insertText\` only carries one char-shape — useless for mixed structure.
+3. For multi-paragraph content with headings + body, use \`applyHtml\` — BUT first move the caret to a verified anchor with \`moveCaret\`. Plain \`insertText\` only carries one char-shape — useless for mixed structure, but its explicit \`(sectionIdx, paragraphIdx, charOffset)\` args make it safer for single-paragraph anchored writes than \`applyHtml\`'s caret reliance.
 4. One write per turn is always safe; multi-write turns must be bottom-up or re-resolve anchors between writes (paragraph indices SHIFT after writes that add paragraphs).
 
 If structure is genuinely ambiguous after reading, ask the user ONE focused question. Otherwise act — repeated questions before any read are not useful.
