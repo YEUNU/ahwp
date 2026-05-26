@@ -34,12 +34,11 @@ jobs:
         os: [macos-latest, windows-latest, ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
-        # NB: submodules 는 default (off). Phase 7 의 vendor/rhwp pointer
-        # 는 local-only `ahwp-bridge` branch (edwardkim/rhwp 상에 없음)
-        # 라 fetch 시도가 실패한다. electron-builder 는 `build.files`
-        # 가 dist + dist-electron 뿐이라 vendor 미초기화여도 무관. user
-        # fork 가 push 되고 Phase C (resources 동봉) 가 합쳐지면 그때
-        # `submodules: recursive` 로 전환.
+        with:
+          # Phase 7 — vendor/rhwp submodule (YEUNU/rhwp 의 ahwp-bridge
+          # 브랜치) 가 electron-builder 의 `extraResources` 경유로 packaged
+          # 빌드에 동봉. 미초기화 시 rhwp-mode 작동 안 함.
+          submodules: recursive
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -50,9 +49,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build & publish
+      - name: Build rhwp-studio (submodule) + ahwp
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          npm run vendor:rhwp:build
           npx vite build
           npx electron-builder --publish always
