@@ -6,6 +6,22 @@
 
 ## [Unreleased]
 
+### Added — Phase 7 E2a/b/c rhwp-mode UI 통합 (0.4.31)
+
+`ahwp:use-rhwp-editor` localStorage flag 기반 dual-mode. flag=1 이면
+AppShell 의 활성 탭에 StudioViewer 대신 RhwpEditor 마운트.
+
+- **AppShell rhwp-mode** — flag=1 일 때 활성 탭 자리에 RhwpEditor. onReady → file:read → bridge.loadFile 자동.
+- **per-tab handle tracking** — `rhwpHandlesRef = Map<tabKey, RhwpEditorHandle>`. runTools 가 활성 탭 bridge → BridgeIrHelper 로 wrap. `__rhwpDebug` 의존 제거.
+- **save flow override** — `useSaveFlow.exportOverride` 옵션. useRhwpEditor 모드면 file:save / saveAs / autosave 가 `handle.exportHwp()` (bridge.invoke('exportHwp')) 사용. viewer 경유 X.
+
+본 모드에선 AppShell 의 viewer-dependent toolbar / dialog / menu action
+(~20 개) 가 동작 안 함 — rhwp-studio iframe 의 자체 UI 가 그 자리를
+담당. StudioViewer 코드 폐기 (E2d) + 0.5.0 major release (E3) 는 별도
+세션.
+
+e2e — appshell-rhwp-mode 2/2 통과.
+
 ### Added — Phase 7 rhwp-studio bridge 인프라 (0.4.30)
 
 ahwp 가 자체 StudioViewer (`@rhwp/core` 직접 호출) 위에 약 5000 라인의

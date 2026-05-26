@@ -94,9 +94,13 @@ ahwp/
 
 ### Phase E — 자체 Studio 제거
 
-- [x] **E1** — AppShell.runTools 호출이 `__rhwpDebug.getBridge()` 가 non-null 이면 자동으로 BridgeIrHelper 를 만들어 3번째 인자로 전달. dual-mode — bridge 없으면 기존 viewer 경로. dynamic import 로 bridge-ir-helper 가 항상 번들될 필요 X.
-- [ ] **E2** — `src/features/studio/` 폐기 — StudioViewer + 8 hook + 모든 dialog / utility (~5000 라인). 본 청크는 미루어진 상태 — UI 검증 충분히 누적된 다음 진행. 관련 e2e (~30) 도 동시 정리 필요.
-- [ ] **E3** — CLAUDE.md / ARCHITECTURE.md / KNOWN_ISSUES.md 갱신 + CHANGELOG + 메이저 version bump (0.4.x → 0.5.0).
+- [x] **E1** — AppShell.runTools 호출이 `__rhwpDebug.getBridge()` 가 non-null 이면 자동으로 BridgeIrHelper 를 만들어 3번째 인자로 전달. dual-mode — bridge 없으면 기존 viewer 경로.
+- [~] **E2** — rhwp-mode flag + AppShell 통합 (a/b/c 완료, d 부분 = StudioViewer 폐기 미진행).
+  - [x] **E2a** — localStorage `ahwp:use-rhwp-editor` flag. true 일 때 활성 탭의 StudioViewer 자리에 RhwpEditor 마운트, onReady 콜백이 file:read → bridge.loadFile 자동 fire. e2e — iframe 마운트 + src=ahwp-studio:// 확인 + 회귀 (flag absent) 1+1 통과.
+  - [x] **E2b** — AppShell 이 `rhwpHandlesRef = Map<tabKey, RhwpEditorHandle>` 로 탭별 핸들 추적. runTools 라우팅 우선순위: (1) useRhwpEditor + active tab handle bridge, (2) `__rhwpDebug.getBridge()`, (3) viewer.irX fallback.
+  - [x] **E2c** — useSaveFlow 에 optional `exportOverride` 추가. useRhwpEditor 모드면 `handle.exportHwp()` (bridge.invoke('exportHwp')) 가 viewer.exportBytes() 대체. file:save / saveAs / autosave 모두 동일 경로.
+  - [ ] **E2d** — `src/features/studio/` 폐기 (StudioViewer + 8 hook + 모든 dialog / utility ~5000 라인). 의존 import 정리. 관련 e2e ~30 spec 정리. **별도 세션 권장** — UI 검증 충분히 누적된 다음.
+- [ ] **E3** — CLAUDE.md / ARCHITECTURE.md / KNOWN_ISSUES.md 갱신 + CHANGELOG + 메이저 version bump (0.4.x → 0.5.0). E2d 와 같이.
 
 ## 리스크
 
