@@ -149,6 +149,25 @@ export default function AppShell() {
   // Phase 7 E2d — rhwp-mode 가 기본. legacy StudioViewer 모드는
   // 'ahwp:use-rhwp-editor' 를 '0' 으로 명시한 경우에만. legacy 모드는
   // 기존 e2e 회귀 호환용으로만 유지 — 정식 deprecated.
+  //
+  // E2e 향후 작업 — `src/features/studio/` (~5000 라인) + 의존 e2e (~30)
+  // 일괄 삭제. tried in this session: deletion 시도하면 AppShell 96 +
+  // hooks 40 = 136 TypeScript 에러 cascade. 안전한 deletion 은 다음
+  // 순서대로 별도 세션에서 진행 권장:
+  //   1) 본 AppShell 의 studio dialog import + JSX rendering 14 개를
+  //      `!useRhwpEditor` 로 감싸기 (legacy 모드 keep, rhwp-mode 에선
+  //      DOM 미렌더).
+  //   2) `useDispatchMenuAction` / `useSaveFlow` / `useTabManagement` 의
+  //      `ViewerHandle` 타입을 optional 화 (`ViewerHandle | null`) 또는
+  //      각자 helper 기반 alt path 추가.
+  //   3) tools.ts 의 `ViewerHandle` import 제거 — runOne signature 를
+  //      `viewer: ViewerHandle | null` 이미 허용. 47 fallback `viewer.irX`
+  //      호출이 NULL_VIEWER_STUB 으로 throw 하므로 의존 제거 가능.
+  //   4) `src/features/studio/` 일괄 git rm. import 에러는 위 단계로
+  //      이미 해소된 상태.
+  //   5) `__studioDebug` 의존 e2e ~30 spec 정리 — 대부분 삭제 (rhwp-studio
+  //      iframe 의 자체 UI 가 동일 기능 제공). `studio-find-native` 같은
+  //      `__rhwpDebug` 기반 spec 은 유지.
   const [useRhwpEditor] = useState<boolean>(() => {
     try {
       return window.localStorage.getItem('ahwp:use-rhwp-editor') !== '0';
