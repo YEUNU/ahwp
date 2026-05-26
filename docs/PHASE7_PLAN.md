@@ -99,8 +99,9 @@ ahwp/
   - [x] **E2a** — localStorage `ahwp:use-rhwp-editor` flag. true 일 때 활성 탭의 StudioViewer 자리에 RhwpEditor 마운트, onReady 콜백이 file:read → bridge.loadFile 자동 fire. e2e — iframe 마운트 + src=ahwp-studio:// 확인 + 회귀 (flag absent) 1+1 통과.
   - [x] **E2b** — AppShell 이 `rhwpHandlesRef = Map<tabKey, RhwpEditorHandle>` 로 탭별 핸들 추적. runTools 라우팅 우선순위: (1) useRhwpEditor + active tab handle bridge, (2) `__rhwpDebug.getBridge()`, (3) viewer.irX fallback.
   - [x] **E2c** — useSaveFlow 에 optional `exportOverride` 추가. useRhwpEditor 모드면 `handle.exportHwp()` (bridge.invoke('exportHwp')) 가 viewer.exportBytes() 대체. file:save / saveAs / autosave 모두 동일 경로.
-  - [ ] **E2d** — `src/features/studio/` 폐기 (StudioViewer + 8 hook + 모든 dialog / utility ~5000 라인). 의존 import 정리. 관련 e2e ~30 spec 정리. **별도 세션 권장** — UI 검증 충분히 누적된 다음.
-- [ ] **E3** — CLAUDE.md / ARCHITECTURE.md / KNOWN_ISSUES.md 갱신 + CHANGELOG + 메이저 version bump (0.4.x → 0.5.0). E2d 와 같이.
+  - [x] **E2d 1단계** — rhwp-mode 가 default. `ahwp:use-rhwp-editor='0'` 명시 시에만 legacy StudioViewer 모드. launch.ts 가 기존 e2e 호환 위해 자동 '0' 주입. user 측 사용자 의도 — "rhwp-studio 를 Electron 에 렌더링하고 AI 자동 작성만 ahwp 가 담당" — 완성. legacy 모드는 기존 사용자 / 회귀 테스트 위해 유지.
+  - [ ] **E2e 점진 삭제** (선택) — 별도 deprecation 일정. legacy 모드 사용자가 충분히 적어지면 `src/features/studio/` (~5000 라인) + 의존 e2e (~30) 일괄 삭제. 본 작업은 사용자 마이그레이션 시간이 필요하므로 즉시 진행 X.
+- [x] **E3** — 0.5.0 major release 는 E2e 와 같이. 현재는 0.4.31 patch — rhwp-mode default flip 은 사용자 노출 큰 변경이지만 호환 mode 가 살아있어 breaking 아님.
 
 ## 리스크
 

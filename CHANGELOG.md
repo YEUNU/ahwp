@@ -6,6 +6,19 @@
 
 ## [Unreleased]
 
+### Changed — rhwp-mode 가 default (Phase 7 E2d 1단계, 0.4.32)
+
+`localStorage['ahwp:use-rhwp-editor']` 미설정 또는 '1' = rhwp-mode (새
+default). '0' = legacy StudioViewer 모드. user 의도 — "rhwp-studio 를
+Electron 에 렌더링하고 AI 자동 작성만 내 것에 추가" — 의 기본 동작이
+완성. legacy 모드는 기존 e2e 회귀 / 사용자 migration 위해 살아있음.
+
+- `src/app/AppShell.tsx` useState 초기화 변경 — `!== '0'` 비교.
+- `tests/e2e/launch.ts` — 기존 spec 호환 위해 launch 직후 미설정 localStorage 에 '0' 자동 주입. Phase 7 spec 은 각자 '1' 로 덮어씀.
+
+`src/features/studio/` (~5000 라인) + 의존 e2e (~30) 의 점진 삭제 (E2e)
+는 별도 deprecation 일정. 0.5.0 major release 는 E2e 와 묶음.
+
 ### Added — Phase 7 E2a/b/c rhwp-mode UI 통합 (0.4.31)
 
 `ahwp:use-rhwp-editor` localStorage flag 기반 dual-mode. flag=1 이면
