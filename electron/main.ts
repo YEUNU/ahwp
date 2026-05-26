@@ -12,11 +12,19 @@ import { registerFolderIpc, shutdownFolderIpc } from './ipc/folder';
 import { registerSecretsIpc } from './ipc/secrets';
 import { registerSessionIpc } from './ipc/session';
 import { buildAppMenu } from './menu';
+import {
+  registerRhwpStudioProtocol,
+  registerRhwpStudioSchemeAsPrivileged,
+} from './rhwp-studio-protocol';
 
 // chunk 63 — initialize crash reporter as early as possible. Native
 // minidumps are wired before any window opens; the JS handlers catch
 // errors that fire during startup.
 initCrashReporter();
+
+// Phase 7 — `ahwp-studio://` scheme privilege 등록은 반드시 app.ready
+// 이전이어야 함. 실제 file 응답 handler 는 app.whenReady() 뒤에 install.
+registerRhwpStudioSchemeAsPrivileged();
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
 
@@ -181,6 +189,8 @@ function registerIpcHandlers(): void {
 }
 
 void app.whenReady().then(() => {
+  // Phase 7 — file 응답 handler. scheme privilege 는 위쪽에서 사전 등록.
+  registerRhwpStudioProtocol();
   registerIpcHandlers();
   // Menu actions target the currently-focused window (chunk 65 —
   // multi-window). Falls back to the most recent window when nothing

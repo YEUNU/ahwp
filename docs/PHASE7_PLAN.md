@@ -69,11 +69,13 @@ ahwp/
 
 ### Phase C — iframe 임베드 + 호스팅
 
-- [ ] vite build 산출물을 ahwp electron resources 에 동봉 (electron-builder `extraResources`)
-- [ ] dev 모드 — `vendor/rhwp/rhwp-studio/dist/index.html` 을 `file://` 로 로드
-- [ ] prod 모드 — `process.resourcesPath/rhwp-studio/index.html` 로드
-- [ ] CSP `frame-src` 재허용 (chunk 6 정책 역행)
-- [ ] React `<RhwpEditor>` 컴포넌트 — bridge instance 보유 + iframe 마운트
+- [x] `ahwp-studio://` 커스텀 protocol 등록 (`electron/rhwp-studio-protocol.ts`). standard / secure / supportFetchAPI / corsEnabled / stream privilege. path traversal 가드.
+- [x] dev 경로: `vendor/rhwp/rhwp-studio/dist`. prod 경로: `process.resourcesPath/rhwp-studio`. `app.isPackaged` 로 자동 분기.
+- [x] electron-builder `extraResources` — `vendor/rhwp/rhwp-studio/dist` → `Resources/rhwp-studio/`.
+- [x] `npm run build` / `build:dir` / `build:all` 가 `vendor:rhwp:build` 를 자동 선행.
+- [x] CSP `frame-src 'self' ahwp-studio:` + `connect-src ahwp-studio:` 추가 (`index.html`).
+- [x] `src/features/rhwp-studio/RhwpEditor.tsx` — forwardRef + iframe + 자동 bridge 생성/destroy + ready/onError 콜백. `RhwpEditorHandle` 로 bridge/iframe 노출. `eslint-disable-next-line react-hooks/exhaustive-deps` 로 src 상수 lifecycle 보장.
+- [x] Electron e2e `tests/e2e/rhwp-studio-electron.spec.ts` — 실제 Electron 띄우고 page.evaluate 로 iframe 마운트 → protocol 응답 / CSP allow / ready+wasm 라운드트립 / 404 / path-traversal 차단 3 케이스. 3/3 통과 ✅
 
 ### Phase D — AI tool 재배선
 
