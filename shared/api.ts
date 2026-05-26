@@ -586,6 +586,54 @@ export interface AhwpApi {
   secrets: SecretsApi;
   ai: AiApi;
   chatHistory: ChatHistoryApi;
+  updater: UpdaterApi;
+}
+
+/**
+ * 0.6.2 — auto-updater surface. main 에 `electron-updater` (chunk 53) 가
+ * 이미 GitHub Releases 와 wire 되어 있지만 UI 는 비어있었다. 본 API 는
+ * autoUpdater 의 이벤트를 renderer 로 broadcast + 사용자 액션 (지금 받기 /
+ * 재시작 설치) 을 main 으로 보내는 양방향 채널.
+ *
+ * dev (`!app.isPackaged`) 에선 모든 액션이 즉시 reject — packaged build
+ * 에서만 의미 있음. e2e 는 `AHWP_UPDATER_FAKE` env 로 fake event sequence
+ * 주입.
+ */
+export type UpdaterStatus =
+  | 'idle' // 아직 check 안 함
+  | 'checking' // checkForUpdates 진행 중
+  | 'up-to-date' // 현재 버전이 최신
+  | 'available' // 새 버전 있음 (다운로드 전)
+  | 'downloading' // 다운로드 진행 중 (progressPercent 같이)
+  | 'downloaded' // 다운로드 끝, 재시작 대기
+  | 'error'; // 어디선가 실패
+
+export interface UpdaterState {
+  status: UpdaterStatus;
+  /** 최신 release 버전 (`available`/`downloading`/`downloaded` 시). */
+  version?: string;
+  /** `downloading` 일 때 0-100. */
+  progressPercent?: number;
+  /** `error` 일 때 사용자에게 보일 메시지. */
+  errorMessage?: string;
+  /** dev 모드 / `AHWP_DISABLE_UPDATER=1` 면 false → UI 는 noop 유지. */
+  enabled: boolean;
+}
+
+export interface UpdaterApi {
+  /** 현 상태 snapshot. 첫 mount 시 useEffect 에서 가져와 초기 화면. */
+  getState: () => Promise<UpdaterState>;
+  /** Manual "지금 확인". 결과는 onEvent 로 흘러옴. */
+  checkNow: () => Promise<void>;
+  /** `available` 상태에서 사용자가 "지금 받기" 누름. */
+  downloadUpdate: () => Promise<void>;
+  /** `downloaded` 상태에서 "재시작해서 설치" 누름. 앱 종료 + 설치. */
+  quitAndInstall: () => Promise<void>;
+  /**
+   * autoUpdater 의 모든 이벤트 broadcast 구독. handler 가 매 state 전환
+   * 시 호출. unsubscriber 반환.
+   */
+  onEvent: (handler: (state: UpdaterState) => void) => () => void;
 }
 
 declare global {

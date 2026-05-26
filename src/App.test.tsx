@@ -107,6 +107,13 @@ describe('App', () => {
         rename: vi.fn().mockResolvedValue({ ok: true }),
         delete: vi.fn().mockResolvedValue({ ok: true }),
       },
+      updater: {
+        getState: vi.fn().mockResolvedValue({ status: 'idle', enabled: false }),
+        checkNow: vi.fn().mockResolvedValue(undefined),
+        downloadUpdate: vi.fn().mockResolvedValue(undefined),
+        quitAndInstall: vi.fn().mockResolvedValue(undefined),
+        onEvent: vi.fn().mockReturnValue(() => {}),
+      },
     };
     Object.defineProperty(window, 'api', {
       value: mockApi,

@@ -35,6 +35,7 @@ import { SettingsDialog } from '@/features/settings/SettingsDialog';
 import { RhwpEditor } from '@/features/rhwp-studio/RhwpEditor';
 import { TabBar } from '@/app/TabBar';
 import { TitleBar } from './TitleBar';
+import { UpdateBanner } from '@/features/updater/UpdateBanner';
 import { WelcomePane } from './WelcomePane';
 
 /**
@@ -540,6 +541,7 @@ export default function AppShell() {
           dirty={activeTab?.dirty ?? false}
           onOpenSettings={() => setSettingsOpen(true)}
         />
+        <UpdateBanner />
         {notice && (
           <div
             data-testid="app-notice"
