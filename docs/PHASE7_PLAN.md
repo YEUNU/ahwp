@@ -62,9 +62,10 @@ ahwp/
 
 ### Phase B — ahwp 측 bridge client
 
-- [ ] `RhwpBridge` 클래스 — request id tracking + Promise resolve + event listener registry
-- [ ] iframe lifecycle (load / ready ping / destroy)
-- [ ] 타입 정의 — `shared/rhwp-bridge.ts` 에 method 시그니처 typed wrapping
+- [x] `shared/rhwp-bridge.ts` — wire 프로토콜 타입 (RhwpRequest / RhwpResponse / RhwpEvent / RhwpWasmParams / RhwpLoadResult / RhwpCaretPosition / RhwpSearchHit).
+- [x] `src/lib/rhwp-bridge.ts` — `RhwpBridge` 클래스. id req-res tracking + timeout + event listener registry + destroy lifecycle. `invoke` / `invokeWasm` / `loadFile` / `ready` / `on` / `destroy`. `crypto.randomUUID` 우선 + fallback id generator.
+- [x] `src/lib/rhwp-bridge.test.ts` — vitest 12 cases (mock contentWindow): invoke 라운드트립 / invokeWasm 래핑 / 동시 호출 / 에러 / 타임아웃 / 이벤트 sub-unsub / 핸들러 throw isolation / 다른 출처 메시지 무시 / destroy cleanup / loadFile 바이트 변환. 12/12 통과 ✅
+- [x] `tests/e2e/rhwp-bridge-client.spec.ts` — Playwright + chromium. 정적 서버가 parent.html + studio dist 를 동일 origin 에 호스팅, parent 안 inline TestBridge (RhwpBridge 와 동일 wire 프로토콜) 가 iframe 의 rhwp-studio 와 round-trip. ready / loadFile / invokeWasm method+getter / 에러 / 동시 호출. 1/1 통과 ✅
 
 ### Phase C — iframe 임베드 + 호스팅
 
