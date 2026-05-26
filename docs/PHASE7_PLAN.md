@@ -79,10 +79,14 @@ ahwp/
 
 ### Phase D — AI tool 재배선
 
-- [ ] `electron/ai/tools/` 내 55 tools 의 `doc.X(...)` 호출 전부 `bridge.invoke('X', params)` 로 치환 (renderer 측 IPC ↔ main ↔ iframe 경로)
-- [ ] file open/save IPC 가 `editor.loadFile` / `editor.exportHwp` 경유하도록 재구성
-- [ ] Diff Viewer / Plan mode / 그룹 undo — bridge event 위에 재구현
-- [ ] AI 회귀 e2e 통과 확인
+- [x] **D1** — 인프라 (bridge 노출 + 실제 Electron 안에서 verify)
+  - `src/features/rhwp-studio/debug-surface.ts` — `window.__rhwpDebug.mount/unmount/getBridge` 노출. createRoot + RhwpEditor portal mount. mount() 는 ready resolve 까지 await 한 bridge 를 반환.
+  - `src/main.tsx` 의 top-level 에서 `installRhwpDebugSurface()` — Phase D 후반 / E 에서 viewer 자체 교체 전, dev / e2e / 콘솔 디버깅 용도.
+  - e2e `tests/e2e/rhwp-studio-debug-mount.spec.ts` — 실제 ahwp Electron 띄우고 React lifecycle 거쳐 RhwpEditor mount → bridge.ready / invokeWasm / unmount → bridge null. 2/2 통과 ✅
+- [ ] **D2** — 55 AI tools 의 `viewerHandle.irX(...)` 호출 전부 `bridge.invokeWasm(...)` 로 치환. tools.ts (`src/features/chat/tools.ts`) 가 가장 큰 작업. ir 메서드 1:1 매핑 + async 전환.
+- [ ] **D3** — file open/save IPC 가 `bridge.loadFile` / `bridge.invokeWasm('exportHwp')` 경유하도록 재구성. ahwp 측 in-process `@rhwp/core` 인스턴스 단계적 폐기.
+- [ ] **D4** — Diff Viewer / Plan mode / 그룹 undo — bridge event (caret/selection/doc-mutated) 위에 재구현. Phase A2 후속의 event channel 추가 필요.
+- [ ] **D5** — AI 회귀 e2e 통과 확인 (기존 chat / agent / form-fill spec 들이 새 경로로 통과).
 
 ### Phase E — 자체 Studio 제거
 
