@@ -6,6 +6,40 @@
 
 ## [Unreleased]
 
+## [0.6.13] - 2026-05-26
+
+### Reverted — 0.6.11 의 `mac.identity: null` ("손상되었다" 설치 차단 회귀)
+
+0.6.11 에서 `mac.identity: null` 적용 — macOS auto-update 가능성을 위해
+unsigned 빌드 의도. 실제로는 macOS Sonoma (14+) / Sequoia (15+) 가
+unsigned 다운로드를 **"손상되었다"** 로 차단 → **신규 설치 자체 불가**.
+0.6.11 / 0.6.12 dmg 받은 사용자가 설치 못 함.
+
+**Revert**: `mac.identity` 키 제거 → ad-hoc 서명 default 복원. 0.6.7~
+0.6.10 과 동일한 수준 — Gatekeeper "확인되지 않은 개발자" 경고 + 우클릭
+→ 열기 우회 가능. **설치는 됨**.
+
+**macOS auto-update 는 여전히 제약**:
+
+- ad-hoc 서명: 매 빌드 hash 다름 → Squirrel.Mac 의 Designated Requirement
+  검증 fail → 영구 불가.
+- 해결: Apple Developer ID 가입 ($99/년) → 정상 signed/notarized 배포 →
+  auto-update + Gatekeeper 둘 다 OK (e.g. Hop 의 패턴).
+- 우선 macOS 사용자는 새 release 마다 dmg 수동 다운로드 (Windows /
+  Linux 는 auto-update 정상).
+
+### Diagnostic 학습 정리
+
+| 설정                              | 새 설치                   | Auto-update    |
+| --------------------------------- | ------------------------- | -------------- |
+| Ad-hoc (지금 + 이전 0.6.7~0.6.10) | ✅ 우클릭 → 열기          | ❌ DR mismatch |
+| Unsigned (0.6.11~0.6.12)          | ❌ macOS 14+ "손상되었다" | (도달 못 함)   |
+| Apple Developer ID ($99/년)       | ✅                        | ✅             |
+
+Hop 등의 잘 알려진 한컴 호환 macOS 앱은 모두 Apple Developer ID 가입
+("signed/notarized .dmg") 으로 두 문제를 함께 해결. 무료 경로는 항상
+한쪽을 포기.
+
 ## [0.6.12] - 2026-05-26
 
 ### Fixed — Windows / Linux 메뉴 접근 불가 (햄버거 버튼 추가)
