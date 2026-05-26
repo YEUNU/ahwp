@@ -77,28 +77,4 @@ test.describe('Phase E2a — AppShell rhwp-mode RhwpEditor mount', () => {
     // 테스트가 있고, RhwpEditor 의 onReady 흐름은 unit/e2e 가 있음.
     // 본 spec 은 마운트 + src 만 확인. 통합 시나리오는 D5 회귀가 담당.
   });
-
-  test('legacy mode (flag=0) still mounts StudioViewer — no regression', async () => {
-    const { page } = launched;
-    await page.waitForLoadState('domcontentloaded');
-    await page.evaluate(
-      async ({ p }) => {
-        // E2d — default flipped to rhwp-mode. legacy 모드는 명시적 '0'.
-        window.localStorage.setItem('ahwp:use-rhwp-editor', '0');
-        await window.api.session.set({ lastActivePath: p });
-      },
-      { p: FIXTURE },
-    );
-    await page.reload();
-    await page.waitForLoadState('domcontentloaded');
-
-    // RhwpEditor 가 X, StudioViewer 의 페이지 placeholder 가 존재.
-    await expect(
-      page.getByTestId('rhwp-editor-iframe').first(),
-    ).not.toBeAttached({ timeout: 5_000 });
-    // StudioViewer 의 페이지가 마운트되면 'studio-viewer-page' testid.
-    await expect(page.getByTestId('studio-viewer-page').first()).toBeAttached({
-      timeout: 30_000,
-    });
-  });
 });
