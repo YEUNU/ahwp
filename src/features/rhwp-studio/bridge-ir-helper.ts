@@ -220,4 +220,111 @@ export class BridgeIrHelper {
     ]);
     return isOk(raw);
   }
+
+  // ── Phase D2c-1 — 추가 paragraph / format / read ─────────────────
+
+  /**
+   * 멀티 paragraph 범위 삭제. wasm-bridge.deleteRange 가 이미 parsed
+   * `{ok, paraIdx, charOffset}` 반환 — .ok 만 추출.
+   */
+  async deleteRange(
+    sec: number,
+    startPara: number,
+    startOffset: number,
+    endPara: number,
+    endOffset: number,
+  ): Promise<boolean> {
+    const r = await this.bridge.invokeWasm<{ ok?: boolean }>('deleteRange', [
+      sec,
+      startPara,
+      startOffset,
+      endPara,
+      endOffset,
+    ]);
+    return r?.ok === true;
+  }
+
+  /** 인접 paragraph 와 병합. JSON 상태 응답. */
+  async mergeParagraph(sec: number, para: number): Promise<boolean> {
+    const raw = await this.bridge.invokeWasm<string>('mergeParagraph', [
+      sec,
+      para,
+    ]);
+    return isOk(raw);
+  }
+
+  /** Char format 적용. props 는 객체 — JSON.stringify 후 전달. */
+  async applyCharFormat(
+    sec: number,
+    para: number,
+    startOffset: number,
+    endOffset: number,
+    props: Record<string, unknown>,
+  ): Promise<boolean> {
+    const raw = await this.bridge.invokeWasm<string>('applyCharFormat', [
+      sec,
+      para,
+      startOffset,
+      endOffset,
+      JSON.stringify(props),
+    ]);
+    return isOk(raw);
+  }
+
+  /** Paragraph style 적용. wasm-bridge.applyStyle 은 parsed `{ok}` 반환. */
+  async applyStyle(
+    sec: number,
+    para: number,
+    styleId: number,
+  ): Promise<boolean> {
+    const r = await this.bridge.invokeWasm<{ ok?: boolean }>('applyStyle', [
+      sec,
+      para,
+      styleId,
+    ]);
+    return r?.ok === true;
+  }
+
+  /** caret 위치의 char shape 속성. wasm-bridge 가 이미 parsed object 반환. */
+  async getCharPropertiesAt(
+    sec: number,
+    para: number,
+    charOffset: number,
+  ): Promise<Record<string, unknown>> {
+    return await this.bridge.invokeWasm<Record<string, unknown>>(
+      'getCharPropertiesAt',
+      [sec, para, charOffset],
+    );
+  }
+
+  /** Paragraph 의 para shape 속성. */
+  async getParaPropertiesAt(
+    sec: number,
+    para: number,
+  ): Promise<Record<string, unknown>> {
+    return await this.bridge.invokeWasm<Record<string, unknown>>(
+      'getParaPropertiesAt',
+      [sec, para],
+    );
+  }
+
+  /**
+   * paragraph 의 style 정보. useViewerHandle 의 composite 와 동일 —
+   * getStyleAt 으로 styleId 받고 getStyleDetail 로 전체 bag, 합쳐서 반환.
+   */
+  async getStyleAt(
+    sec: number,
+    para: number,
+  ): Promise<Record<string, unknown>> {
+    const at = await this.bridge.invokeWasm<{ styleId?: number; id?: number }>(
+      'getStyleAt',
+      [sec, para],
+    );
+    const styleId = at?.styleId ?? at?.id ?? 0;
+    const detail = await this.bridge.invokeWasm<Record<string, unknown>>(
+      'getStyleDetail',
+      [styleId],
+    );
+    return { ...detail, styleId };
+  }
 }

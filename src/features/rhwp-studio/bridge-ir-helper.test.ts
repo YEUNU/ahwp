@@ -162,4 +162,84 @@ describe('BridgeIrHelper — Phase D2a', () => {
     const p = await h.getCaretPosition();
     expect(p).toEqual({ sectionIndex: 0, paragraphIndex: 5, charOffset: 7 });
   });
+
+  // ── Phase D2c-1 신규 ────────────────────────────────────────────
+
+  it('deleteRange extracts .ok from parsed response', async () => {
+    const { bridge, calls } = makeBridge({
+      deleteRange: { ok: true, paraIdx: 0, charOffset: 0 },
+    });
+    const h = new BridgeIrHelper(bridge);
+    expect(await h.deleteRange(0, 0, 0, 0, 10)).toBe(true);
+    expect(calls[0]).toEqual({ fn: 'deleteRange', args: [0, 0, 0, 0, 10] });
+  });
+
+  it('deleteRange returns false on {ok:false}', async () => {
+    const { bridge } = makeBridge({ deleteRange: { ok: false } });
+    const h = new BridgeIrHelper(bridge);
+    expect(await h.deleteRange(0, 0, 0, 0, 10)).toBe(false);
+  });
+
+  it('mergeParagraph parses JSON ok', async () => {
+    const { bridge, calls } = makeBridge({
+      mergeParagraph: '{"ok":true,"paraIdx":3}',
+    });
+    const h = new BridgeIrHelper(bridge);
+    expect(await h.mergeParagraph(0, 5)).toBe(true);
+    expect(calls[0]).toEqual({ fn: 'mergeParagraph', args: [0, 5] });
+  });
+
+  it('applyCharFormat stringifies props', async () => {
+    const { bridge, calls } = makeBridge({
+      applyCharFormat: '{"ok":true}',
+    });
+    const h = new BridgeIrHelper(bridge);
+    const props = { bold: true, italic: false };
+    expect(await h.applyCharFormat(0, 1, 0, 5, props)).toBe(true);
+    expect(calls[0].fn).toBe('applyCharFormat');
+    expect(calls[0].args[4]).toBe(JSON.stringify(props));
+  });
+
+  it('applyStyle extracts .ok', async () => {
+    const { bridge, calls } = makeBridge({ applyStyle: { ok: true } });
+    const h = new BridgeIrHelper(bridge);
+    expect(await h.applyStyle(0, 1, 7)).toBe(true);
+    expect(calls[0]).toEqual({ fn: 'applyStyle', args: [0, 1, 7] });
+  });
+
+  it('getCharPropertiesAt returns wasm-bridge parsed object', async () => {
+    const { bridge } = makeBridge({
+      getCharPropertiesAt: { bold: true, fontSize: 1200 },
+    });
+    const h = new BridgeIrHelper(bridge);
+    const r = await h.getCharPropertiesAt(0, 0, 5);
+    expect(r).toEqual({ bold: true, fontSize: 1200 });
+  });
+
+  it('getParaPropertiesAt forwards args', async () => {
+    const { bridge, calls } = makeBridge({
+      getParaPropertiesAt: { alignment: 'center' },
+    });
+    const h = new BridgeIrHelper(bridge);
+    expect(await h.getParaPropertiesAt(0, 3)).toEqual({ alignment: 'center' });
+    expect(calls[0]).toEqual({ fn: 'getParaPropertiesAt', args: [0, 3] });
+  });
+
+  it('getStyleAt composite — 2 calls (getStyleAt + getStyleDetail)', async () => {
+    const calls: { fn: string; args: unknown[] }[] = [];
+    const bridge = {
+      invokeWasm: vi.fn(async (fn: string, args: unknown[]) => {
+        calls.push({ fn, args });
+        if (fn === 'getStyleAt') return { id: 5, name: '본문' };
+        if (fn === 'getStyleDetail')
+          return { fontSize: 1000, alignment: 'left' };
+        throw new Error(`unmocked: ${fn}`);
+      }),
+    } as unknown as import('@/lib/rhwp-bridge').RhwpBridge;
+    const h = new BridgeIrHelper(bridge);
+    const out = await h.getStyleAt(0, 2);
+    expect(out).toEqual({ fontSize: 1000, alignment: 'left', styleId: 5 });
+    expect(calls.map((c) => c.fn)).toEqual(['getStyleAt', 'getStyleDetail']);
+    expect(calls[1].args).toEqual([5]);
+  });
 });

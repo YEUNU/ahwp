@@ -267,31 +267,53 @@ async function runOne(
       }
       case 'deleteRange': {
         const a = call.args;
-        const before =
-          viewer.irGetTextRange(
-            a.sectionIdx,
-            a.startParagraphIdx,
-            0,
-            a.endParagraphIdx,
-            10_000,
-          ) ?? '';
-        const ok = viewer.irDeleteRange(
-          a.sectionIdx,
-          a.startParagraphIdx,
-          a.startOffset,
-          a.endParagraphIdx,
-          a.endOffset,
-        );
+        const before = helper
+          ? await helper.getTextRange(
+              a.sectionIdx,
+              a.startParagraphIdx,
+              0,
+              a.endParagraphIdx,
+              10_000,
+            )
+          : (viewer.irGetTextRange(
+              a.sectionIdx,
+              a.startParagraphIdx,
+              0,
+              a.endParagraphIdx,
+              10_000,
+            ) ?? '');
+        const ok = helper
+          ? await helper.deleteRange(
+              a.sectionIdx,
+              a.startParagraphIdx,
+              a.startOffset,
+              a.endParagraphIdx,
+              a.endOffset,
+            )
+          : viewer.irDeleteRange(
+              a.sectionIdx,
+              a.startParagraphIdx,
+              a.startOffset,
+              a.endParagraphIdx,
+              a.endOffset,
+            );
         if (!ok)
           return { ok: false, tool: call.tool, reason: 'deleteRange-failed' };
-        const after =
-          viewer.irGetTextRange(
-            a.sectionIdx,
-            a.startParagraphIdx,
-            0,
-            a.startParagraphIdx,
-            10_000,
-          ) ?? '';
+        const after = helper
+          ? await helper.getTextRange(
+              a.sectionIdx,
+              a.startParagraphIdx,
+              0,
+              a.startParagraphIdx,
+              10_000,
+            )
+          : (viewer.irGetTextRange(
+              a.sectionIdx,
+              a.startParagraphIdx,
+              0,
+              a.startParagraphIdx,
+              10_000,
+            ) ?? '');
         return {
           ok: true,
           tool: call.tool,
@@ -319,20 +341,30 @@ async function runOne(
       }
       case 'mergeParagraph': {
         const a = call.args;
-        const ok = viewer.irMergeParagraph(a.sectionIdx, a.paragraphIdx);
+        const ok = helper
+          ? await helper.mergeParagraph(a.sectionIdx, a.paragraphIdx)
+          : viewer.irMergeParagraph(a.sectionIdx, a.paragraphIdx);
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'mergeParagraph-failed' };
       }
       case 'applyCharFormat': {
         const a = call.args;
-        const ok = viewer.irApplyCharFormat(
-          a.sectionIdx,
-          a.paragraphIdx,
-          a.startOffset,
-          a.endOffset,
-          a.props,
-        );
+        const ok = helper
+          ? await helper.applyCharFormat(
+              a.sectionIdx,
+              a.paragraphIdx,
+              a.startOffset,
+              a.endOffset,
+              a.props,
+            )
+          : viewer.irApplyCharFormat(
+              a.sectionIdx,
+              a.paragraphIdx,
+              a.startOffset,
+              a.endOffset,
+              a.props,
+            );
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'applyCharFormat-failed' };
@@ -343,7 +375,9 @@ async function runOne(
       }
       case 'applyStyle': {
         const a = call.args;
-        const ok = viewer.irApplyStyle(a.sectionIdx, a.paragraphIdx, a.styleId);
+        const ok = helper
+          ? await helper.applyStyle(a.sectionIdx, a.paragraphIdx, a.styleId)
+          : viewer.irApplyStyle(a.sectionIdx, a.paragraphIdx, a.styleId);
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'applyStyle-failed' };
@@ -717,18 +751,26 @@ async function runOne(
       }
       case 'getStyleAt': {
         const a = call.args;
-        const data = viewer.irGetStyleAt(a.sectionIdx, a.paragraphIdx);
+        const data = helper
+          ? await helper.getStyleAt(a.sectionIdx, a.paragraphIdx)
+          : viewer.irGetStyleAt(a.sectionIdx, a.paragraphIdx);
         if (data === null)
           return { ok: false, tool: call.tool, reason: 'getStyleAt-failed' };
         return { ok: true, tool: call.tool, data };
       }
       case 'getCharPropertiesAt': {
         const a = call.args;
-        const data = viewer.irGetCharPropertiesAt(
-          a.sectionIdx,
-          a.paragraphIdx,
-          a.charOffset,
-        );
+        const data = helper
+          ? await helper.getCharPropertiesAt(
+              a.sectionIdx,
+              a.paragraphIdx,
+              a.charOffset,
+            )
+          : viewer.irGetCharPropertiesAt(
+              a.sectionIdx,
+              a.paragraphIdx,
+              a.charOffset,
+            );
         if (data === null)
           return {
             ok: false,
@@ -739,7 +781,9 @@ async function runOne(
       }
       case 'getParaPropertiesAt': {
         const a = call.args;
-        const data = viewer.irGetParaPropertiesAt(a.sectionIdx, a.paragraphIdx);
+        const data = helper
+          ? await helper.getParaPropertiesAt(a.sectionIdx, a.paragraphIdx)
+          : viewer.irGetParaPropertiesAt(a.sectionIdx, a.paragraphIdx);
         if (data === null)
           return {
             ok: false,
