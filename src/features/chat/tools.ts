@@ -10,6 +10,7 @@ import type {
   AhwpToolResult,
 } from '@shared/ai-tools';
 import type { ViewerHandle } from '@/features/studio/types';
+import type { BridgeIrHelper } from '@/features/rhwp-studio/bridge-ir-helper';
 
 /** Run an op against the viewer. Returns a result describing what
  * happened — IR throws are caught and recorded as `ir-throw:<msg>` so
@@ -18,11 +19,32 @@ import type { ViewerHandle } from '@/features/studio/types';
  * chunk 96 — async because the new `searchWorkspaceOutlines` /
  * `readParagraphByPath` tools dispatch through main-process IPC.
  * Existing IR-call tools wrap their sync result in Promise.resolve
- * via the natural async function semantics. */
+ * via the natural async function semantics.
+ *
+ * Phase D2b — `helper` 가 non-null 이면 일부 case 는 BridgeIrHelper 로
+ * 라우팅한다 (rhwp-studio iframe 의 IR 사용). null 이면 기존 viewer.irX
+ * 경로 그대로. 단계적 마이그레이션 — 모든 case 가 helper 를 쓰는 건
+ * D2c 이후. */
+/**
+ * viewer 가 null 일 때 (rhwp-mode + StudioViewer 미마운트) 사용하는 stub.
+ * 어떤 메서드든 호출되면 throw — 호출자가 helper 우선 경로로 흐르도록
+ * 강제. 단, 일부 ahwp-side 도구 (applyHtml / applyAlignment 등 composite
+ * non-ir 케이스) 는 helper 커버리지 없음 → AI 가 호출 시 error 로 fail.
+ */
+const NULL_VIEWER_STUB = new Proxy({} as ViewerHandle, {
+  get(_t, prop) {
+    throw new Error(
+      `viewer.${String(prop)} called in rhwp-mode (no StudioViewer). 도구는 bridge 경유 가능한 ir* 메서드만 지원합니다.`,
+    );
+  },
+});
+
 async function runOne(
-  viewer: ViewerHandle,
+  viewerOrNull: ViewerHandle | null,
   call: AhwpToolCall,
+  helper: BridgeIrHelper | null = null,
 ): Promise<AhwpToolResult> {
+  const viewer: ViewerHandle = viewerOrNull ?? NULL_VIEWER_STUB;
   try {
     switch (call.tool) {
       case 'applyHtml': {
@@ -100,43 +122,73 @@ async function runOne(
         return { ok: true, tool: call.tool };
       }
       // === 0.4.16 — cell-level text insert (양식 표지 cell 채우기) ===
+      // Phase D2b — helper 라우팅. helper 의 getTextInCell / insertTextInCell
+      // 가 wasm-bridge 의 동명 메서드와 1:1 passthrough.
       case 'insertTextInCell': {
         const a = call.args;
-        const before =
-          viewer.irGetTextInCell(
-            a.sectionIdx,
-            a.parentParaIdx,
-            a.controlIdx,
-            a.cellIdx,
-            a.cellParaIdx,
-            0,
-            4096,
-          ) ?? '';
-        const ok = viewer.irInsertTextInCell(
-          a.sectionIdx,
-          a.parentParaIdx,
-          a.controlIdx,
-          a.cellIdx,
-          a.cellParaIdx,
-          a.charOffset,
-          a.text,
-        );
+        const before = helper
+          ? await helper.getTextInCell(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.cellIdx,
+              a.cellParaIdx,
+              0,
+              4096,
+            )
+          : (viewer.irGetTextInCell(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.cellIdx,
+              a.cellParaIdx,
+              0,
+              4096,
+            ) ?? '');
+        const ok = helper
+          ? await helper.insertTextInCell(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.cellIdx,
+              a.cellParaIdx,
+              a.charOffset,
+              a.text,
+            )
+          : viewer.irInsertTextInCell(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.cellIdx,
+              a.cellParaIdx,
+              a.charOffset,
+              a.text,
+            );
         if (!ok)
           return {
             ok: false,
             tool: call.tool,
             reason: 'insertTextInCell-failed',
           };
-        const after =
-          viewer.irGetTextInCell(
-            a.sectionIdx,
-            a.parentParaIdx,
-            a.controlIdx,
-            a.cellIdx,
-            a.cellParaIdx,
-            0,
-            4096,
-          ) ?? '';
+        const after = helper
+          ? await helper.getTextInCell(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.cellIdx,
+              a.cellParaIdx,
+              0,
+              4096,
+            )
+          : (viewer.irGetTextInCell(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.cellIdx,
+              a.cellParaIdx,
+              0,
+              4096,
+            ) ?? '');
         return {
           ok: true,
           tool: call.tool,
@@ -171,30 +223,52 @@ async function runOne(
           };
         }
         // 0.4.23 — synthetic diff. paragraph 텍스트 before/after snapshot.
-        const before =
-          viewer.irGetTextRange(
-            a.sectionIdx,
-            a.paragraphIdx,
-            0,
-            a.paragraphIdx,
-            10_000,
-          ) ?? '';
-        const ok = viewer.irInsertText(
-          a.sectionIdx,
-          a.paragraphIdx,
-          a.charOffset,
-          a.text,
-        );
+        // Phase D2b — helper 가 있으면 bridge 라우팅, 없으면 viewer.irX.
+        const before = helper
+          ? await helper.getTextRange(
+              a.sectionIdx,
+              a.paragraphIdx,
+              0,
+              a.paragraphIdx,
+              10_000,
+            )
+          : (viewer.irGetTextRange(
+              a.sectionIdx,
+              a.paragraphIdx,
+              0,
+              a.paragraphIdx,
+              10_000,
+            ) ?? '');
+        const ok = helper
+          ? await helper.insertText(
+              a.sectionIdx,
+              a.paragraphIdx,
+              a.charOffset,
+              a.text,
+            )
+          : viewer.irInsertText(
+              a.sectionIdx,
+              a.paragraphIdx,
+              a.charOffset,
+              a.text,
+            );
         if (!ok)
           return { ok: false, tool: call.tool, reason: 'insertText-failed' };
-        const after =
-          viewer.irGetTextRange(
-            a.sectionIdx,
-            a.paragraphIdx,
-            0,
-            a.paragraphIdx,
-            10_000,
-          ) ?? '';
+        const after = helper
+          ? await helper.getTextRange(
+              a.sectionIdx,
+              a.paragraphIdx,
+              0,
+              a.paragraphIdx,
+              10_000,
+            )
+          : (viewer.irGetTextRange(
+              a.sectionIdx,
+              a.paragraphIdx,
+              0,
+              a.paragraphIdx,
+              10_000,
+            ) ?? '');
         return {
           ok: true,
           tool: call.tool,
@@ -208,31 +282,53 @@ async function runOne(
       }
       case 'deleteRange': {
         const a = call.args;
-        const before =
-          viewer.irGetTextRange(
-            a.sectionIdx,
-            a.startParagraphIdx,
-            0,
-            a.endParagraphIdx,
-            10_000,
-          ) ?? '';
-        const ok = viewer.irDeleteRange(
-          a.sectionIdx,
-          a.startParagraphIdx,
-          a.startOffset,
-          a.endParagraphIdx,
-          a.endOffset,
-        );
+        const before = helper
+          ? await helper.getTextRange(
+              a.sectionIdx,
+              a.startParagraphIdx,
+              0,
+              a.endParagraphIdx,
+              10_000,
+            )
+          : (viewer.irGetTextRange(
+              a.sectionIdx,
+              a.startParagraphIdx,
+              0,
+              a.endParagraphIdx,
+              10_000,
+            ) ?? '');
+        const ok = helper
+          ? await helper.deleteRange(
+              a.sectionIdx,
+              a.startParagraphIdx,
+              a.startOffset,
+              a.endParagraphIdx,
+              a.endOffset,
+            )
+          : viewer.irDeleteRange(
+              a.sectionIdx,
+              a.startParagraphIdx,
+              a.startOffset,
+              a.endParagraphIdx,
+              a.endOffset,
+            );
         if (!ok)
           return { ok: false, tool: call.tool, reason: 'deleteRange-failed' };
-        const after =
-          viewer.irGetTextRange(
-            a.sectionIdx,
-            a.startParagraphIdx,
-            0,
-            a.startParagraphIdx,
-            10_000,
-          ) ?? '';
+        const after = helper
+          ? await helper.getTextRange(
+              a.sectionIdx,
+              a.startParagraphIdx,
+              0,
+              a.startParagraphIdx,
+              10_000,
+            )
+          : (viewer.irGetTextRange(
+              a.sectionIdx,
+              a.startParagraphIdx,
+              0,
+              a.startParagraphIdx,
+              10_000,
+            ) ?? '');
         return {
           ok: true,
           tool: call.tool,
@@ -246,34 +342,54 @@ async function runOne(
       }
       case 'insertParagraph': {
         const a = call.args;
-        const ok = viewer.irInsertParagraph(a.sectionIdx, a.paragraphIdx);
+        const ok = helper
+          ? await helper.invokeOk('insertParagraph', [
+              a.sectionIdx,
+              a.paragraphIdx,
+            ])
+          : viewer.irInsertParagraph(a.sectionIdx, a.paragraphIdx);
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'insertParagraph-failed' };
       }
       case 'deleteParagraph': {
         const a = call.args;
-        const ok = viewer.irDeleteParagraph(a.sectionIdx, a.paragraphIdx);
+        const ok = helper
+          ? await helper.invokeOk('deleteParagraph', [
+              a.sectionIdx,
+              a.paragraphIdx,
+            ])
+          : viewer.irDeleteParagraph(a.sectionIdx, a.paragraphIdx);
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'deleteParagraph-failed' };
       }
       case 'mergeParagraph': {
         const a = call.args;
-        const ok = viewer.irMergeParagraph(a.sectionIdx, a.paragraphIdx);
+        const ok = helper
+          ? await helper.mergeParagraph(a.sectionIdx, a.paragraphIdx)
+          : viewer.irMergeParagraph(a.sectionIdx, a.paragraphIdx);
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'mergeParagraph-failed' };
       }
       case 'applyCharFormat': {
         const a = call.args;
-        const ok = viewer.irApplyCharFormat(
-          a.sectionIdx,
-          a.paragraphIdx,
-          a.startOffset,
-          a.endOffset,
-          a.props,
-        );
+        const ok = helper
+          ? await helper.applyCharFormat(
+              a.sectionIdx,
+              a.paragraphIdx,
+              a.startOffset,
+              a.endOffset,
+              a.props,
+            )
+          : viewer.irApplyCharFormat(
+              a.sectionIdx,
+              a.paragraphIdx,
+              a.startOffset,
+              a.endOffset,
+              a.props,
+            );
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'applyCharFormat-failed' };
@@ -284,7 +400,9 @@ async function runOne(
       }
       case 'applyStyle': {
         const a = call.args;
-        const ok = viewer.irApplyStyle(a.sectionIdx, a.paragraphIdx, a.styleId);
+        const ok = helper
+          ? await helper.applyStyle(a.sectionIdx, a.paragraphIdx, a.styleId)
+          : viewer.irApplyStyle(a.sectionIdx, a.paragraphIdx, a.styleId);
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'applyStyle-failed' };
@@ -292,108 +410,177 @@ async function runOne(
       // === Phase 3 chunk 46 — table structure ===
       case 'createTable': {
         const a = call.args;
-        const ok = viewer.irCreateTable(
+        const args = [
           a.sectionIdx,
           a.paragraphIdx,
           a.charOffset,
           a.rowCount,
           a.colCount,
-        );
+        ];
+        const ok = helper
+          ? await helper.invokeOk('createTable', args)
+          : viewer.irCreateTable(
+              a.sectionIdx,
+              a.paragraphIdx,
+              a.charOffset,
+              a.rowCount,
+              a.colCount,
+            );
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'createTable-failed' };
       }
       case 'insertTableRow': {
         const a = call.args;
-        const ok = viewer.irInsertTableRow(
-          a.sectionIdx,
-          a.parentParaIdx,
-          a.controlIdx,
-          a.rowIdx,
-          a.below,
-        );
+        const ok = helper
+          ? await helper.invokeOk('insertTableRow', [
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.rowIdx,
+              a.below,
+            ])
+          : viewer.irInsertTableRow(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.rowIdx,
+              a.below,
+            );
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'insertTableRow-failed' };
       }
       case 'insertTableColumn': {
         const a = call.args;
-        const ok = viewer.irInsertTableColumn(
-          a.sectionIdx,
-          a.parentParaIdx,
-          a.controlIdx,
-          a.colIdx,
-          a.right,
-        );
+        const ok = helper
+          ? await helper.invokeOk('insertTableColumn', [
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.colIdx,
+              a.right,
+            ])
+          : viewer.irInsertTableColumn(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.colIdx,
+              a.right,
+            );
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'insertTableColumn-failed' };
       }
       case 'deleteTableRow': {
         const a = call.args;
-        const ok = viewer.irDeleteTableRow(
-          a.sectionIdx,
-          a.parentParaIdx,
-          a.controlIdx,
-          a.rowIdx,
-        );
+        const ok = helper
+          ? await helper.invokeOk('deleteTableRow', [
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.rowIdx,
+            ])
+          : viewer.irDeleteTableRow(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.rowIdx,
+            );
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'deleteTableRow-failed' };
       }
       case 'deleteTableColumn': {
         const a = call.args;
-        const ok = viewer.irDeleteTableColumn(
-          a.sectionIdx,
-          a.parentParaIdx,
-          a.controlIdx,
-          a.colIdx,
-        );
+        const ok = helper
+          ? await helper.invokeOk('deleteTableColumn', [
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.colIdx,
+            ])
+          : viewer.irDeleteTableColumn(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.colIdx,
+            );
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'deleteTableColumn-failed' };
       }
       case 'mergeTableCells': {
         const a = call.args;
-        const ok = viewer.irMergeTableCells(
-          a.sectionIdx,
-          a.parentParaIdx,
-          a.controlIdx,
-          a.startRow,
-          a.startCol,
-          a.endRow,
-          a.endCol,
-        );
+        const ok = helper
+          ? await helper.invokeOk('mergeTableCells', [
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.startRow,
+              a.startCol,
+              a.endRow,
+              a.endCol,
+            ])
+          : viewer.irMergeTableCells(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.startRow,
+              a.startCol,
+              a.endRow,
+              a.endCol,
+            );
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'mergeTableCells-failed' };
       }
       case 'splitTableCellInto': {
         const a = call.args;
-        const ok = viewer.irSplitTableCellInto(
-          a.sectionIdx,
-          a.parentParaIdx,
-          a.controlIdx,
-          a.row,
-          a.col,
-          a.nRows,
-          a.mCols,
-          a.equalRowHeight,
-          a.mergeFirst,
-        );
+        const ok = helper
+          ? await helper.invokeOk('splitTableCellInto', [
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.row,
+              a.col,
+              a.nRows,
+              a.mCols,
+              a.equalRowHeight,
+              a.mergeFirst,
+            ])
+          : viewer.irSplitTableCellInto(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.row,
+              a.col,
+              a.nRows,
+              a.mCols,
+              a.equalRowHeight,
+              a.mergeFirst,
+            );
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'splitTableCellInto-failed' };
       }
       case 'unmergeCell': {
         const a = call.args;
-        const ok = viewer.irUnmergeCell(
-          a.sectionIdx,
-          a.parentParaIdx,
-          a.controlIdx,
-          a.row,
-          a.col,
-        );
+        const ok = helper
+          ? await helper.invokeOk('unmergeCell', [
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.row,
+              a.col,
+            ])
+          : viewer.irUnmergeCell(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.row,
+              a.col,
+            );
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'unmergeCell-failed' };
@@ -436,11 +623,17 @@ async function runOne(
       }
       case 'deleteTableControl': {
         const a = call.args;
-        const ok = viewer.irDeleteTableControl(
-          a.sectionIdx,
-          a.parentParaIdx,
-          a.controlIdx,
-        );
+        const ok = helper
+          ? await helper.invokeOk('deleteTableControl', [
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+            ])
+          : viewer.irDeleteTableControl(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+            );
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'deleteTableControl-failed' };
@@ -479,12 +672,19 @@ async function runOne(
       }
       case 'setShapeProperties': {
         const a = call.args;
-        const ok = viewer.irSetShapeProperties(
-          a.sectionIdx,
-          a.parentParaIdx,
-          a.controlIdx,
-          a.props,
-        );
+        const ok = helper
+          ? await helper.invokeOk('setShapeProperties', [
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              JSON.stringify(a.props),
+            ])
+          : viewer.irSetShapeProperties(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.props,
+            );
         return ok
           ? { ok: true, tool: call.tool }
           : {
@@ -495,11 +695,17 @@ async function runOne(
       }
       case 'deleteShapeControl': {
         const a = call.args;
-        const ok = viewer.irDeleteShapeControl(
-          a.sectionIdx,
-          a.parentParaIdx,
-          a.controlIdx,
-        );
+        const ok = helper
+          ? await helper.invokeOk('deleteShapeControl', [
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+            ])
+          : viewer.irDeleteShapeControl(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+            );
         return ok
           ? { ok: true, tool: call.tool }
           : {
@@ -510,17 +716,27 @@ async function runOne(
       }
       case 'changeShapeZOrder': {
         const a = call.args;
-        const ok = viewer.irChangeShapeZOrder(
-          a.sectionIdx,
-          a.parentParaIdx,
-          a.controlIdx,
-          a.operation,
-        );
+        const ok = helper
+          ? await helper.invokeOk('changeShapeZOrder', [
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.operation,
+            ])
+          : viewer.irChangeShapeZOrder(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.operation,
+            );
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'changeShapeZOrder-failed' };
       }
       case 'insertPicture': {
+        // ahwp 의 irInsertPicture 는 base64 데이터 처리 + 이미지 인젝션을
+        // 합친 composite. wasm-bridge 에는 그대로 매핑되는 메서드가 없어
+        // 본 case 는 D2c-3 (image / picture group) 이전까지 viewer 전용.
         const a = call.args;
         const ok = viewer.irInsertPicture(
           a.sectionIdx,
@@ -541,58 +757,94 @@ async function runOne(
       // === Phase 3 chunk 48 — page/section ===
       case 'insertPageBreak': {
         const a = call.args;
-        const ok = viewer.irInsertPageBreak(
-          a.sectionIdx,
-          a.paragraphIdx,
-          a.charOffset,
-        );
+        const ok = helper
+          ? await helper.invokeOk('insertPageBreak', [
+              a.sectionIdx,
+              a.paragraphIdx,
+              a.charOffset,
+            ])
+          : viewer.irInsertPageBreak(
+              a.sectionIdx,
+              a.paragraphIdx,
+              a.charOffset,
+            );
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'insertPageBreak-failed' };
       }
       case 'insertColumnBreak': {
         const a = call.args;
-        const ok = viewer.irInsertColumnBreak(
-          a.sectionIdx,
-          a.paragraphIdx,
-          a.charOffset,
-        );
+        const ok = helper
+          ? await helper.invokeOk('insertColumnBreak', [
+              a.sectionIdx,
+              a.paragraphIdx,
+              a.charOffset,
+            ])
+          : viewer.irInsertColumnBreak(
+              a.sectionIdx,
+              a.paragraphIdx,
+              a.charOffset,
+            );
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'insertColumnBreak-failed' };
       }
       case 'setColumnDef': {
         const a = call.args;
-        const ok = viewer.irSetColumnDef(
-          a.sectionIdx,
-          a.columnCount,
-          a.columnType,
-          a.sameWidth,
-          a.spacingHu,
-        );
+        const ok = helper
+          ? await helper.invokeOk('setColumnDef', [
+              a.sectionIdx,
+              a.columnCount,
+              a.columnType,
+              a.sameWidth,
+              a.spacingHu,
+            ])
+          : viewer.irSetColumnDef(
+              a.sectionIdx,
+              a.columnCount,
+              a.columnType,
+              a.sameWidth,
+              a.spacingHu,
+            );
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'setColumnDef-failed' };
       }
       case 'setSectionDef': {
         const a = call.args;
-        const ok = viewer.irSetSectionDef(a.sectionIdx, a.props);
+        const ok = helper
+          ? await helper.invokeOk('setSectionDef', [
+              a.sectionIdx,
+              JSON.stringify(a.props),
+            ])
+          : viewer.irSetSectionDef(a.sectionIdx, a.props);
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'setSectionDef-failed' };
       }
       case 'setPageHide': {
         const a = call.args;
-        const ok = viewer.irSetPageHide(
-          a.sectionIdx,
-          a.paragraphIdx,
-          a.hideHeader,
-          a.hideFooter,
-          a.hideMaster,
-          a.hideBorder,
-          a.hideFill,
-          a.hidePageNum,
-        );
+        const ok = helper
+          ? await helper.invokeOk('setPageHide', [
+              a.sectionIdx,
+              a.paragraphIdx,
+              a.hideHeader,
+              a.hideFooter,
+              a.hideMaster,
+              a.hideBorder,
+              a.hideFill,
+              a.hidePageNum,
+            ])
+          : viewer.irSetPageHide(
+              a.sectionIdx,
+              a.paragraphIdx,
+              a.hideHeader,
+              a.hideFooter,
+              a.hideMaster,
+              a.hideBorder,
+              a.hideFill,
+              a.hidePageNum,
+            );
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'setPageHide-failed' };
@@ -600,34 +852,45 @@ async function runOne(
       // === Phase 3 chunk 49 — header/footer + bookmark ===
       case 'applyHfTemplate': {
         const a = call.args;
-        const ok = viewer.irApplyHfTemplate(
-          a.sectionIdx,
-          a.isHeader,
-          a.applyTo,
-          a.templateId,
-        );
+        const ok = helper
+          ? await helper.invokeOk('applyHfTemplate', [
+              a.sectionIdx,
+              a.isHeader,
+              a.applyTo,
+              a.templateId,
+            ])
+          : viewer.irApplyHfTemplate(
+              a.sectionIdx,
+              a.isHeader,
+              a.applyTo,
+              a.templateId,
+            );
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'applyHfTemplate-failed' };
       }
       case 'createHeaderFooter': {
         const a = call.args;
-        const ok = viewer.irCreateHeaderFooter(
-          a.sectionIdx,
-          a.isHeader,
-          a.applyTo,
-        );
+        const ok = helper
+          ? await helper.invokeOk('createHeaderFooter', [
+              a.sectionIdx,
+              a.isHeader,
+              a.applyTo,
+            ])
+          : viewer.irCreateHeaderFooter(a.sectionIdx, a.isHeader, a.applyTo);
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'createHeaderFooter-failed' };
       }
       case 'deleteHeaderFooter': {
         const a = call.args;
-        const ok = viewer.irDeleteHeaderFooter(
-          a.sectionIdx,
-          a.isHeader,
-          a.applyTo,
-        );
+        const ok = helper
+          ? await helper.invokeOk('deleteHeaderFooter', [
+              a.sectionIdx,
+              a.isHeader,
+              a.applyTo,
+            ])
+          : viewer.irDeleteHeaderFooter(a.sectionIdx, a.isHeader, a.applyTo);
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'deleteHeaderFooter-failed' };
@@ -658,18 +921,26 @@ async function runOne(
       }
       case 'getStyleAt': {
         const a = call.args;
-        const data = viewer.irGetStyleAt(a.sectionIdx, a.paragraphIdx);
+        const data = helper
+          ? await helper.getStyleAt(a.sectionIdx, a.paragraphIdx)
+          : viewer.irGetStyleAt(a.sectionIdx, a.paragraphIdx);
         if (data === null)
           return { ok: false, tool: call.tool, reason: 'getStyleAt-failed' };
         return { ok: true, tool: call.tool, data };
       }
       case 'getCharPropertiesAt': {
         const a = call.args;
-        const data = viewer.irGetCharPropertiesAt(
-          a.sectionIdx,
-          a.paragraphIdx,
-          a.charOffset,
-        );
+        const data = helper
+          ? await helper.getCharPropertiesAt(
+              a.sectionIdx,
+              a.paragraphIdx,
+              a.charOffset,
+            )
+          : viewer.irGetCharPropertiesAt(
+              a.sectionIdx,
+              a.paragraphIdx,
+              a.charOffset,
+            );
         if (data === null)
           return {
             ok: false,
@@ -680,7 +951,9 @@ async function runOne(
       }
       case 'getParaPropertiesAt': {
         const a = call.args;
-        const data = viewer.irGetParaPropertiesAt(a.sectionIdx, a.paragraphIdx);
+        const data = helper
+          ? await helper.getParaPropertiesAt(a.sectionIdx, a.paragraphIdx)
+          : viewer.irGetParaPropertiesAt(a.sectionIdx, a.paragraphIdx);
         if (data === null)
           return {
             ok: false,
@@ -691,19 +964,29 @@ async function runOne(
       }
       case 'getTextRange': {
         const a = call.args;
-        const data = viewer.irGetTextRange(
-          a.sectionIdx,
-          a.startParagraphIdx,
-          a.startOffset,
-          a.endParagraphIdx,
-          a.endOffset,
-        );
+        const data = helper
+          ? await helper.getTextRange(
+              a.sectionIdx,
+              a.startParagraphIdx,
+              a.startOffset,
+              a.endParagraphIdx,
+              a.endOffset,
+            )
+          : viewer.irGetTextRange(
+              a.sectionIdx,
+              a.startParagraphIdx,
+              a.startOffset,
+              a.endParagraphIdx,
+              a.endOffset,
+            );
         if (data === null)
           return { ok: false, tool: call.tool, reason: 'getTextRange-failed' };
         return { ok: true, tool: call.tool, data };
       }
       case 'getCaretPosition': {
-        const data = viewer.irGetCaretPosition();
+        const data = helper
+          ? await helper.getCaretPosition()
+          : viewer.irGetCaretPosition();
         if (data === null)
           return {
             ok: false,
@@ -714,17 +997,32 @@ async function runOne(
       }
       case 'findInDocument': {
         const a = call.args;
+        // helper 경로: searchAllText (rhwp 0.7.12 native) 직접 호출 후
+        // maxResults 자르기. viewer.irFindInDocument 는 동일 동작을
+        // useViewerHandle 안에서 수행.
+        if (helper) {
+          const hits = await helper.searchAllText(a.query, false, false);
+          const sliced = hits.slice(0, a.maxResults ?? hits.length);
+          return { ok: true, tool: call.tool, data: sliced };
+        }
         const data = viewer.irFindInDocument(a.query, a.maxResults);
         return { ok: true, tool: call.tool, data };
       }
       case 'getCellInfo': {
         const a = call.args;
-        const data = viewer.irGetCellInfo(
-          a.sectionIdx,
-          a.parentParaIdx,
-          a.controlIdx,
-          a.cellIdx,
-        );
+        const data = helper
+          ? await helper.invokeRead('getCellInfo', [
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.cellIdx,
+            ])
+          : viewer.irGetCellInfo(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.cellIdx,
+            );
         if (data === null)
           return { ok: false, tool: call.tool, reason: 'getCellInfo-failed' };
         return { ok: true, tool: call.tool, data };
@@ -732,36 +1030,53 @@ async function runOne(
       // === 0.4.24 — @rhwp/core 0.7.11 신규 API ===
       case 'insertEquation': {
         const a = call.args;
-        const ok = viewer.irInsertEquation(
-          a.sectionIdx,
-          a.paragraphIdx,
-          a.charOffset,
-          a.script,
-          a.fontSizeHwpunit,
-          a.color,
-        );
+        const ok = helper
+          ? await helper.invokeOk('insertEquation', [
+              a.sectionIdx,
+              a.paragraphIdx,
+              a.charOffset,
+              a.script,
+              a.fontSizeHwpunit,
+              a.color,
+            ])
+          : viewer.irInsertEquation(
+              a.sectionIdx,
+              a.paragraphIdx,
+              a.charOffset,
+              a.script,
+              a.fontSizeHwpunit,
+              a.color,
+            );
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'insertEquation-failed' };
       }
       case 'deleteFootnote': {
         const a = call.args;
-        const ok = viewer.irDeleteFootnote(
-          a.sectionIdx,
-          a.paragraphIdx,
-          a.controlIdx,
-        );
+        const ok = helper
+          ? await helper.invokeOk('deleteFootnote', [
+              a.sectionIdx,
+              a.paragraphIdx,
+              a.controlIdx,
+            ])
+          : viewer.irDeleteFootnote(a.sectionIdx, a.paragraphIdx, a.controlIdx);
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'deleteFootnote-failed' };
       }
       case 'deleteEquationControl': {
         const a = call.args;
-        const ok = viewer.irDeleteEquationControl(
-          a.sectionIdx,
-          a.parentParaIdx,
-          a.controlIdx,
-        );
+        const ok = helper
+          ? await helper.invokeOk('deleteEquationControl', [
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+            ])
+          : viewer.irDeleteEquationControl(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+            );
         return ok
           ? { ok: true, tool: call.tool }
           : {
@@ -772,19 +1087,28 @@ async function runOne(
       }
       case 'getColumnDef': {
         const a = call.args;
-        const data = viewer.irGetColumnDef(a.sectionIdx);
+        const data = helper
+          ? await helper.invokeRead('getColumnDef', [a.sectionIdx])
+          : viewer.irGetColumnDef(a.sectionIdx);
         if (data === null)
           return { ok: false, tool: call.tool, reason: 'getColumnDef-failed' };
         return { ok: true, tool: call.tool, data };
       }
       case 'getFootnoteAtCursor': {
         const a = call.args;
-        const data = viewer.irGetFootnoteAtCursor(
-          a.sectionIdx,
-          a.paragraphIdx,
-          a.charOffset,
-          a.direction,
-        );
+        const data = helper
+          ? await helper.invokeRead('getFootnoteAtCursor', [
+              a.sectionIdx,
+              a.paragraphIdx,
+              a.charOffset,
+              a.direction,
+            ])
+          : viewer.irGetFootnoteAtCursor(
+              a.sectionIdx,
+              a.paragraphIdx,
+              a.charOffset,
+              a.direction,
+            );
         if (data === null)
           return {
             ok: false,
@@ -880,21 +1204,25 @@ async function runOne(
  * (rather than N entries, one per op). The bracket holds even if some
  * ops throw — we always end the group in a finally. */
 export async function runTools(
-  viewer: ViewerHandle,
+  viewer: ViewerHandle | null,
   items: AhwpPreflightItem[],
+  helper: BridgeIrHelper | null = null,
 ): Promise<AhwpToolResult[]> {
   const out: AhwpToolResult[] = [];
-  viewer.beginUndoGroup();
+  // Phase 7 E2c — rhwp-mode 에선 viewer 가 null 일 수 있음 (StudioViewer
+  // 미마운트). helper 가 있어야 의미 있는 동작 — undo group / snapshot 은
+  // rhwp-studio 가 iframe 안에서 자체 관리하므로 skip.
+  viewer?.beginUndoGroup();
   try {
     for (const item of items) {
       if (!item.ok) {
         out.push({ ok: false, tool: item.tool, reason: item.reason });
         continue;
       }
-      out.push(await runOne(viewer, item.call));
+      out.push(await runOne(viewer, item.call, helper));
     }
   } finally {
-    viewer.endUndoGroup();
+    viewer?.endUndoGroup();
   }
   return out;
 }

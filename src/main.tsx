@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import './lib/i18n'; // chunk 89 — i18next side-effect init
 import { ensureRhwpCore } from './lib/rhwp-core';
+import { installRhwpDebugSurface } from './features/rhwp-studio/debug-surface';
 import './index.css';
 
 // chunk 63 — renderer-side global error bridge. Catches errors that
@@ -46,6 +47,11 @@ window.addEventListener('unhandledrejection', (ev) => {
 // ensureRhwpCore. Pre-initing here means the cached promise is
 // already resolved (or close to it) by the time a viewer mounts.
 void ensureRhwpCore();
+
+// Phase 7 D1 — window.__rhwpDebug 에 RhwpEditor 마운트 API 노출. 본 UI
+// 통합 (탭/뷰어 자체를 교체) 은 Phase D 후반 / E. 본 surface 는 dev /
+// e2e / 콘솔 디버깅에서 RhwpBridge round-trip 을 검증할 때 사용.
+installRhwpDebugSurface();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

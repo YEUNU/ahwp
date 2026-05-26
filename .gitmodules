@@ -1,0 +1,3 @@
+[submodule "vendor/rhwp"]
+	path = vendor/rhwp
+	url = https://github.com/edwardkim/rhwp.git

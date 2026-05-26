@@ -37,6 +37,9 @@ import { PageSetupDialog } from '@/features/studio/PageSetupDialog';
 import { ShapeDialog } from '@/features/studio/ShapeDialog';
 import { OutlineSidebar } from '@/features/studio/OutlineSidebar';
 import { StudioViewer } from '@/features/studio/StudioViewer';
+// Phase 7 E2 — RhwpEditor 가용 옵션. localStorage 'ahwp:use-rhwp-editor'
+// 가 '1' 일 때 StudioViewer 대신 마운트.
+import { RhwpEditor } from '@/features/rhwp-studio/RhwpEditor';
 import { VersionHistoryDialog } from '@/features/studio/VersionHistoryDialog';
 import { StyleManagerDialog } from '@/features/studio/StyleManagerDialog';
 import { CharFormatDialog } from '@/features/studio/CharFormatDialog';
@@ -60,7 +63,7 @@ import {
   TableFormulaDialog,
   type FormulaCellContext,
 } from '@/features/studio/TableFormulaDialog';
-import { TabBar } from '@/features/studio/TabBar';
+import { TabBar } from '@/app/TabBar';
 import { TitleBar } from './TitleBar';
 import { WelcomePane } from './WelcomePane';
 
@@ -143,6 +146,44 @@ export default function AppShell() {
   // sub-component (welcome screen, future help button) can also
   // trigger it.
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // Phase 7 E2d — rhwp-mode 가 기본. legacy StudioViewer 모드는
+  // 'ahwp:use-rhwp-editor' 를 '0' 으로 명시한 경우에만. legacy 모드는
+  // 기존 e2e 회귀 호환용으로만 유지 — 정식 deprecated.
+  //
+  // E2e 향후 작업 — `src/features/studio/` (~5000 라인) + 의존 e2e (~30)
+  // 일괄 삭제. tried in this session: deletion 시도하면 AppShell 96 +
+  // hooks 40 = 136 TypeScript 에러 cascade. 안전한 deletion 은 다음
+  // 순서대로 별도 세션에서 진행 권장:
+  //   1) 본 AppShell 의 studio dialog import + JSX rendering 14 개를
+  //      `!useRhwpEditor` 로 감싸기 (legacy 모드 keep, rhwp-mode 에선
+  //      DOM 미렌더).
+  //   2) `useDispatchMenuAction` / `useSaveFlow` / `useTabManagement` 의
+  //      `ViewerHandle` 타입을 optional 화 (`ViewerHandle | null`) 또는
+  //      각자 helper 기반 alt path 추가.
+  //   3) tools.ts 의 `ViewerHandle` import 제거 — runOne signature 를
+  //      `viewer: ViewerHandle | null` 이미 허용. 47 fallback `viewer.irX`
+  //      호출이 NULL_VIEWER_STUB 으로 throw 하므로 의존 제거 가능.
+  //   4) `src/features/studio/` 일괄 git rm. import 에러는 위 단계로
+  //      이미 해소된 상태.
+  //   5) `__studioDebug` 의존 e2e ~30 spec 정리 — 대부분 삭제 (rhwp-studio
+  //      iframe 의 자체 UI 가 동일 기능 제공). `studio-find-native` 같은
+  //      `__rhwpDebug` 기반 spec 은 유지.
+  const [useRhwpEditor] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem('ahwp:use-rhwp-editor') !== '0';
+    } catch {
+      return true;
+    }
+  });
+  // Phase 7 E2b — 탭별 RhwpEditor handle 추적. AI runTools 가 활성
+  // 탭의 bridge 를 직접 잡고 BridgeIrHelper 로 wrap. __rhwpDebug 의존
+  // 제거. handle 은 onReady 가 fire 된 뒤에만 의미가 있음.
+  const rhwpHandlesRef = useRef(
+    new Map<
+      string,
+      import('@/features/rhwp-studio/RhwpEditor').RhwpEditorHandle
+    >(),
+  );
   // chunk 56 — ChatPanel imperative handle for cross-pane AI triggers
   // (right-click → AI command). The viewer's selection menu calls
   // `chatRef.current.prefillAndSend(prompt)` to fire a chat turn.
@@ -362,6 +403,17 @@ export default function AppShell() {
     replaceTabPath,
     setFolderRoot,
     showNotice,
+    // Phase 7 E2c — useRhwpEditor 모드일 때 활성 탭의 RhwpEditor handle
+    // 에서 직접 bytes 추출. viewer.exportBytes() 우회.
+    exportOverride: useRhwpEditor
+      ? async (): Promise<Uint8Array | null> => {
+          const key = activeTab?.key;
+          if (!key) return null;
+          const handle = rhwpHandlesRef.current.get(key);
+          if (!handle) return null;
+          return await handle.exportHwp();
+        }
+      : undefined,
   });
 
   // ⌘W / Ctrl+W: close the active tab. Bound at the document level
@@ -588,271 +640,285 @@ export default function AppShell() {
         onOpenChange={setSettingsOpen}
         initialTab={settingsTab}
       />
-      <PageSetupDialog
-        open={pageSetupOpen}
-        onOpenChange={setPageSetupOpen}
-        getCurrentPageDef={() =>
-          activeViewerRef()?.getPageDef() as
-            | import('@shared/rhwp-types').RhwpPageDef
-            | null
-        }
-        onApply={(props) =>
-          activeViewerRef()?.applyPageDef(props as Record<string, unknown>)
-        }
-      />
-      <HeaderFooterDialog
-        open={hfOpen}
-        onOpenChange={setHfOpen}
-        getCurrent={(sec, isHeader, applyTo) =>
-          activeViewerRef()?.getHeaderFooter(sec, isHeader, applyTo) ?? null
-        }
-        onApply={(sec, isHeader, applyTo, text) =>
-          activeViewerRef()?.setHeaderFooterText(sec, isHeader, applyTo, text)
-        }
-      />
-      <BookmarkDialog
-        open={bookmarkOpen}
-        onOpenChange={setBookmarkOpen}
-        getBookmarks={() => activeViewerRef()?.getBookmarks() ?? null}
-        onAdd={(name) => activeViewerRef()?.addBookmarkAtCaret(name)}
-        onDelete={(sec, para, ctrlIdx) =>
-          activeViewerRef()?.deleteBookmarkAt(sec, para, ctrlIdx)
-        }
-      />
-      <FootnoteDialog
-        open={footnoteOpen}
-        onOpenChange={setFootnoteOpen}
-        onInsert={(text) => activeViewerRef()?.insertFootnoteAtCaret(text)}
-      />
-      <StyleManagerDialog
-        open={styleManagerOpen}
-        onOpenChange={setStyleManagerOpen}
-        getStyleList={() => activeViewerRef()?.getStyleListJson() ?? null}
-        onCreate={(name, englishName) =>
-          activeViewerRef()?.createNamedStyle(name, englishName) ?? null
-        }
-        onRename={(id, name, englishName) =>
-          activeViewerRef()?.renameStyle(id, name, englishName) ?? false
-        }
-        onDelete={(id) => activeViewerRef()?.deleteStyleById(id) ?? false}
-      />
-      <CharFormatDialog
-        key={charFormatInitial.instance}
-        open={charFormatOpen}
-        onOpenChange={setCharFormatOpen}
-        viewerRef={activeViewerRef}
-        initial={{
-          bold: charFormatInitial.bold,
-          italic: charFormatInitial.italic,
-          underline: charFormatInitial.underline,
-        }}
-      />
-      <ParaFormatDialog
-        open={paraFormatOpen}
-        onOpenChange={setParaFormatOpen}
-        viewerRef={activeViewerRef}
-      />
-      <EquationDialog
-        open={equationOpen}
-        onOpenChange={setEquationOpen}
-        renderEquation={(script, fontSize, color) =>
-          activeViewerRef()?.renderEquationSvg(script, fontSize, color) ?? ''
-        }
-        insertEquation={(script, fontSize, color) => {
-          // 0.4.25 — lib 0.7.11 의 insertEquation 으로 본문 삽입.
-          // caret 좌표 read → irInsertEquation 호출.
-          const v = activeViewerRef();
-          if (!v) return false;
-          const caret = v.irGetCaretPosition() as {
-            sectionIndex?: number;
-            paragraphIndex?: number;
-            charOffset?: number;
-          } | null;
-          if (!caret) return false;
-          const sec = caret.sectionIndex ?? 0;
-          const para = caret.paragraphIndex ?? 0;
-          const charOff = caret.charOffset ?? 0;
-          return v.irInsertEquation(
-            sec,
-            para,
-            charOff,
-            script,
-            fontSize,
-            color,
-          );
-        }}
-      />
-      <ShapeDialog
-        open={shapeOpen}
-        onOpenChange={setShapeOpen}
-        onInsert={(width, height, opts) =>
-          activeViewerRef()?.createRectShapeAtCaret(width, height, opts) ?? null
-        }
-      />
-      <TablePropsDialog
-        open={tablePropsOpen}
-        onOpenChange={setTablePropsOpen}
-        getCurrent={() => {
-          const v = activeViewerRef();
-          if (!v) return null;
-          const c = v.getActiveCellContext();
-          if (!c) return null;
-          const props = v.getTableProps(
-            c.sectionIndex,
-            c.parentParaIdx,
-            c.controlIdx,
-          );
-          if (!props) return null;
-          const ctx: TablePropsContext = {
-            sectionIdx: c.sectionIndex,
-            parentParaIdx: c.parentParaIdx,
-            controlIdx: c.controlIdx,
-          };
-          return { ctx, props };
-        }}
-        onApply={(ctx, props) => {
-          activeViewerRef()?.setTableProps(
-            ctx.sectionIdx,
-            ctx.parentParaIdx,
-            ctx.controlIdx,
-            props,
-          );
-        }}
-      />
-      <PicturePropsDialog
-        open={picturePropsOpen}
-        onOpenChange={setPicturePropsOpen}
-        enumeratePictures={() => {
-          const v = activeViewerRef();
-          if (!v) return [];
-          return v.enumeratePictures().map((p) => ({
-            sectionIdx: p.sectionIdx,
-            parentParaIdx: p.parentParaIdx,
-            controlIdx: p.controlIdx,
-            label: p.label,
-          }));
-        }}
-        getProps={(ref: PictureRef) =>
-          activeViewerRef()?.getPictureProps(
-            ref.sectionIdx,
-            ref.parentParaIdx,
-            ref.controlIdx,
-          ) ?? null
-        }
-        onApply={(ref, props) => {
-          activeViewerRef()?.setPictureProps(
-            ref.sectionIdx,
-            ref.parentParaIdx,
-            ref.controlIdx,
-            props,
-          );
-        }}
-        onDelete={(ref) => {
-          activeViewerRef()?.deletePictureControl(
-            ref.sectionIdx,
-            ref.parentParaIdx,
-            ref.controlIdx,
-          );
-        }}
-      />
-      <CellStylePickerDialog
-        open={cellStylePickerOpen}
-        onOpenChange={setCellStylePickerOpen}
-        getCurrentCell={() => {
-          const v = activeViewerRef();
-          if (!v) return null;
-          const c = v.getActiveCellContext();
-          if (!c) return null;
-          const ctx: CellStylePickerCtx = {
-            sectionIdx: c.sectionIndex,
-            parentParaIdx: c.parentParaIdx,
-            controlIdx: c.controlIdx,
-            cellIdx: c.cellIdx,
-          };
-          return ctx;
-        }}
-        getStyles={() => {
-          const v = activeViewerRef();
-          if (!v) return [];
-          const list = v.getStyleListJson() ?? [];
-          return list
-            .map((s): StyleOption | null => {
-              const id = (s as { id?: unknown }).id;
-              const name = (s as { name?: unknown }).name;
-              const englishName = (s as { englishName?: unknown }).englishName;
-              if (typeof id !== 'number' || typeof name !== 'string')
-                return null;
-              return {
-                id,
-                name,
-                englishName:
-                  typeof englishName === 'string' ? englishName : undefined,
+      {/* E2e — studio dialog 들은 rhwp-mode (default) 에선 DOM 미렌더.
+        legacy 모드 (`ahwp:use-rhwp-editor=0`) 에선 기존 동작 유지. */}
+      {!useRhwpEditor && (
+        <>
+          <PageSetupDialog
+            open={pageSetupOpen}
+            onOpenChange={setPageSetupOpen}
+            getCurrentPageDef={() =>
+              activeViewerRef()?.getPageDef() as
+                | import('@shared/rhwp-types').RhwpPageDef
+                | null
+            }
+            onApply={(props) =>
+              activeViewerRef()?.applyPageDef(props as Record<string, unknown>)
+            }
+          />
+          <HeaderFooterDialog
+            open={hfOpen}
+            onOpenChange={setHfOpen}
+            getCurrent={(sec, isHeader, applyTo) =>
+              activeViewerRef()?.getHeaderFooter(sec, isHeader, applyTo) ?? null
+            }
+            onApply={(sec, isHeader, applyTo, text) =>
+              activeViewerRef()?.setHeaderFooterText(
+                sec,
+                isHeader,
+                applyTo,
+                text,
+              )
+            }
+          />
+          <BookmarkDialog
+            open={bookmarkOpen}
+            onOpenChange={setBookmarkOpen}
+            getBookmarks={() => activeViewerRef()?.getBookmarks() ?? null}
+            onAdd={(name) => activeViewerRef()?.addBookmarkAtCaret(name)}
+            onDelete={(sec, para, ctrlIdx) =>
+              activeViewerRef()?.deleteBookmarkAt(sec, para, ctrlIdx)
+            }
+          />
+          <FootnoteDialog
+            open={footnoteOpen}
+            onOpenChange={setFootnoteOpen}
+            onInsert={(text) => activeViewerRef()?.insertFootnoteAtCaret(text)}
+          />
+          <StyleManagerDialog
+            open={styleManagerOpen}
+            onOpenChange={setStyleManagerOpen}
+            getStyleList={() => activeViewerRef()?.getStyleListJson() ?? null}
+            onCreate={(name, englishName) =>
+              activeViewerRef()?.createNamedStyle(name, englishName) ?? null
+            }
+            onRename={(id, name, englishName) =>
+              activeViewerRef()?.renameStyle(id, name, englishName) ?? false
+            }
+            onDelete={(id) => activeViewerRef()?.deleteStyleById(id) ?? false}
+          />
+          <CharFormatDialog
+            key={charFormatInitial.instance}
+            open={charFormatOpen}
+            onOpenChange={setCharFormatOpen}
+            viewerRef={activeViewerRef}
+            initial={{
+              bold: charFormatInitial.bold,
+              italic: charFormatInitial.italic,
+              underline: charFormatInitial.underline,
+            }}
+          />
+          <ParaFormatDialog
+            open={paraFormatOpen}
+            onOpenChange={setParaFormatOpen}
+            viewerRef={activeViewerRef}
+          />
+          <EquationDialog
+            open={equationOpen}
+            onOpenChange={setEquationOpen}
+            renderEquation={(script, fontSize, color) =>
+              activeViewerRef()?.renderEquationSvg(script, fontSize, color) ??
+              ''
+            }
+            insertEquation={(script, fontSize, color) => {
+              // 0.4.25 — lib 0.7.11 의 insertEquation 으로 본문 삽입.
+              // caret 좌표 read → irInsertEquation 호출.
+              const v = activeViewerRef();
+              if (!v) return false;
+              const caret = v.irGetCaretPosition() as {
+                sectionIndex?: number;
+                paragraphIndex?: number;
+                charOffset?: number;
+              } | null;
+              if (!caret) return false;
+              const sec = caret.sectionIndex ?? 0;
+              const para = caret.paragraphIndex ?? 0;
+              const charOff = caret.charOffset ?? 0;
+              return v.irInsertEquation(
+                sec,
+                para,
+                charOff,
+                script,
+                fontSize,
+                color,
+              );
+            }}
+          />
+          <ShapeDialog
+            open={shapeOpen}
+            onOpenChange={setShapeOpen}
+            onInsert={(width, height, opts) =>
+              activeViewerRef()?.createRectShapeAtCaret(width, height, opts) ??
+              null
+            }
+          />
+          <TablePropsDialog
+            open={tablePropsOpen}
+            onOpenChange={setTablePropsOpen}
+            getCurrent={() => {
+              const v = activeViewerRef();
+              if (!v) return null;
+              const c = v.getActiveCellContext();
+              if (!c) return null;
+              const props = v.getTableProps(
+                c.sectionIndex,
+                c.parentParaIdx,
+                c.controlIdx,
+              );
+              if (!props) return null;
+              const ctx: TablePropsContext = {
+                sectionIdx: c.sectionIndex,
+                parentParaIdx: c.parentParaIdx,
+                controlIdx: c.controlIdx,
               };
-            })
-            .filter((x): x is StyleOption => x !== null);
-        }}
-        onApply={(ctx, styleId) => {
-          activeViewerRef()?.applyCellStyle(
-            ctx.sectionIdx,
-            ctx.parentParaIdx,
-            ctx.controlIdx,
-            ctx.cellIdx,
-            0, // cellPara — apply to the first para of the cell
-            styleId,
-          );
-        }}
-      />
-      <TableFormulaDialog
-        open={formulaOpen}
-        onOpenChange={setFormulaOpen}
-        ctx={formulaCtx}
-        onEvaluate={(ctx, formula, writeResult) => {
-          const v = activeViewerRef();
-          if (!v) return null;
-          return v.evaluateTableFormula(
-            ctx.sectionIndex,
-            ctx.parentParaIdx,
-            ctx.controlIdx,
-            ctx.targetRow,
-            ctx.targetCol,
-            formula,
-            writeResult,
-          );
-        }}
-      />
-      <CellPropsDialog
-        open={cellPropsOpen}
-        onOpenChange={setCellPropsOpen}
-        getCurrent={() => {
-          const v = activeViewerRef();
-          if (!v) return null;
-          const c = v.getActiveCellContext();
-          if (!c) return null;
-          const props = v.getCellProps(
-            c.sectionIndex,
-            c.parentParaIdx,
-            c.controlIdx,
-            c.cellIdx,
-          );
-          if (!props) return null;
-          const ctx: CellPropsContext = {
-            sectionIdx: c.sectionIndex,
-            parentParaIdx: c.parentParaIdx,
-            controlIdx: c.controlIdx,
-            cellIdx: c.cellIdx,
-          };
-          return { ctx, props };
-        }}
-        onApply={(ctx, props) => {
-          activeViewerRef()?.setCellProps(
-            ctx.sectionIdx,
-            ctx.parentParaIdx,
-            ctx.controlIdx,
-            ctx.cellIdx,
-            props,
-          );
-        }}
-      />
+              return { ctx, props };
+            }}
+            onApply={(ctx, props) => {
+              activeViewerRef()?.setTableProps(
+                ctx.sectionIdx,
+                ctx.parentParaIdx,
+                ctx.controlIdx,
+                props,
+              );
+            }}
+          />
+          <PicturePropsDialog
+            open={picturePropsOpen}
+            onOpenChange={setPicturePropsOpen}
+            enumeratePictures={() => {
+              const v = activeViewerRef();
+              if (!v) return [];
+              return v.enumeratePictures().map((p) => ({
+                sectionIdx: p.sectionIdx,
+                parentParaIdx: p.parentParaIdx,
+                controlIdx: p.controlIdx,
+                label: p.label,
+              }));
+            }}
+            getProps={(ref: PictureRef) =>
+              activeViewerRef()?.getPictureProps(
+                ref.sectionIdx,
+                ref.parentParaIdx,
+                ref.controlIdx,
+              ) ?? null
+            }
+            onApply={(ref, props) => {
+              activeViewerRef()?.setPictureProps(
+                ref.sectionIdx,
+                ref.parentParaIdx,
+                ref.controlIdx,
+                props,
+              );
+            }}
+            onDelete={(ref) => {
+              activeViewerRef()?.deletePictureControl(
+                ref.sectionIdx,
+                ref.parentParaIdx,
+                ref.controlIdx,
+              );
+            }}
+          />
+          <CellStylePickerDialog
+            open={cellStylePickerOpen}
+            onOpenChange={setCellStylePickerOpen}
+            getCurrentCell={() => {
+              const v = activeViewerRef();
+              if (!v) return null;
+              const c = v.getActiveCellContext();
+              if (!c) return null;
+              const ctx: CellStylePickerCtx = {
+                sectionIdx: c.sectionIndex,
+                parentParaIdx: c.parentParaIdx,
+                controlIdx: c.controlIdx,
+                cellIdx: c.cellIdx,
+              };
+              return ctx;
+            }}
+            getStyles={() => {
+              const v = activeViewerRef();
+              if (!v) return [];
+              const list = v.getStyleListJson() ?? [];
+              return list
+                .map((s): StyleOption | null => {
+                  const id = (s as { id?: unknown }).id;
+                  const name = (s as { name?: unknown }).name;
+                  const englishName = (s as { englishName?: unknown })
+                    .englishName;
+                  if (typeof id !== 'number' || typeof name !== 'string')
+                    return null;
+                  return {
+                    id,
+                    name,
+                    englishName:
+                      typeof englishName === 'string' ? englishName : undefined,
+                  };
+                })
+                .filter((x): x is StyleOption => x !== null);
+            }}
+            onApply={(ctx, styleId) => {
+              activeViewerRef()?.applyCellStyle(
+                ctx.sectionIdx,
+                ctx.parentParaIdx,
+                ctx.controlIdx,
+                ctx.cellIdx,
+                0, // cellPara — apply to the first para of the cell
+                styleId,
+              );
+            }}
+          />
+          <TableFormulaDialog
+            open={formulaOpen}
+            onOpenChange={setFormulaOpen}
+            ctx={formulaCtx}
+            onEvaluate={(ctx, formula, writeResult) => {
+              const v = activeViewerRef();
+              if (!v) return null;
+              return v.evaluateTableFormula(
+                ctx.sectionIndex,
+                ctx.parentParaIdx,
+                ctx.controlIdx,
+                ctx.targetRow,
+                ctx.targetCol,
+                formula,
+                writeResult,
+              );
+            }}
+          />
+          <CellPropsDialog
+            open={cellPropsOpen}
+            onOpenChange={setCellPropsOpen}
+            getCurrent={() => {
+              const v = activeViewerRef();
+              if (!v) return null;
+              const c = v.getActiveCellContext();
+              if (!c) return null;
+              const props = v.getCellProps(
+                c.sectionIndex,
+                c.parentParaIdx,
+                c.controlIdx,
+                c.cellIdx,
+              );
+              if (!props) return null;
+              const ctx: CellPropsContext = {
+                sectionIdx: c.sectionIndex,
+                parentParaIdx: c.parentParaIdx,
+                controlIdx: c.controlIdx,
+                cellIdx: c.cellIdx,
+              };
+              return { ctx, props };
+            }}
+            onApply={(ctx, props) => {
+              activeViewerRef()?.setCellProps(
+                ctx.sectionIdx,
+                ctx.parentParaIdx,
+                ctx.controlIdx,
+                ctx.cellIdx,
+                props,
+              );
+            }}
+          />
+        </>
+      )}
       <div className="flex h-screen flex-col bg-background text-foreground">
         <TitleBar
           activeFileName={
@@ -1019,66 +1085,98 @@ export default function AppShell() {
                           data-tab-key={tab.key}
                           data-tab-active={isActive ? 'true' : 'false'}
                         >
-                          <StudioViewer
-                            path={tab.path}
-                            isActive={isActive}
-                            onDirtyChange={dirtyCallbacks.get(tab.key)}
-                            ref={refCallbackFor(tab.key)}
-                            showRuler={showRuler}
-                            onOpenTableProps={() => setTablePropsOpen(true)}
-                            onOpenCellProps={() => setCellPropsOpen(true)}
-                            onOpenCellStylePicker={() =>
-                              setCellStylePickerOpen(true)
-                            }
-                            onAiCommand={(prompt) => {
-                              // chunk 56 — viewer's selection menu fires a
-                              // composed AI prompt; we forward to the
-                              // ChatPanel imperative handle so the request
-                              // streams immediately. Skip if no handle yet
-                              // (panel not mounted) — that should never
-                              // happen at this point of the flow.
-                              chatRef.current?.prefillAndSend(prompt);
-                            }}
-                            onOpenFormula={() => {
-                              // Resolve the right-clicked cell coords into
-                              // a row/col pair via the table dimensions
-                              // exposed on the active viewer. The cell
-                              // context menu has already moved caret into
-                              // the cell, so getActiveCellContext returns
-                              // the click's coordinates.
-                              const v = activeViewerRef();
-                              if (!v) return;
-                              const cell = v.getActiveCellContext();
-                              if (!cell) return;
-                              const tableProps = v.getTableProps(
-                                cell.sectionIndex,
-                                cell.parentParaIdx,
-                                cell.controlIdx,
-                              );
-                              const colCount =
-                                typeof tableProps?.['colCount'] === 'number'
-                                  ? (tableProps['colCount'] as number)
-                                  : 1;
-                              const targetRow = Math.floor(
-                                cell.cellIdx / colCount,
-                              );
-                              const targetCol = cell.cellIdx % colCount;
-                              setFormulaCtx({
-                                sectionIndex: cell.sectionIndex,
-                                parentParaIdx: cell.parentParaIdx,
-                                controlIdx: cell.controlIdx,
-                                targetRow,
-                                targetCol,
-                              });
-                              setFormulaOpen(true);
-                            }}
-                          />
+                          {useRhwpEditor ? (
+                            // Phase 7 E2a/b — rhwp-studio iframe 마운트
+                            // + handle 추적. AI tool 라우팅은 E2b 의
+                            // runTools 분기 (아래) 가 직접 잡는다.
+                            <RhwpEditor
+                              key={tab.key}
+                              ref={(h) => {
+                                if (h) rhwpHandlesRef.current.set(tab.key, h);
+                                else rhwpHandlesRef.current.delete(tab.key);
+                              }}
+                              onReady={async (bridge) => {
+                                try {
+                                  const buf = await window.api.file.read(
+                                    tab.path,
+                                  );
+                                  await bridge.loadFile(buf, tab.path, true);
+                                } catch (err) {
+                                  console.error(
+                                    '[AppShell] rhwp-editor doc load failed:',
+                                    err,
+                                  );
+                                }
+                              }}
+                              onError={(err) => {
+                                console.warn(
+                                  '[AppShell] RhwpEditor error:',
+                                  err,
+                                );
+                              }}
+                            />
+                          ) : (
+                            <StudioViewer
+                              path={tab.path}
+                              isActive={isActive}
+                              onDirtyChange={dirtyCallbacks.get(tab.key)}
+                              ref={refCallbackFor(tab.key)}
+                              showRuler={showRuler}
+                              onOpenTableProps={() => setTablePropsOpen(true)}
+                              onOpenCellProps={() => setCellPropsOpen(true)}
+                              onOpenCellStylePicker={() =>
+                                setCellStylePickerOpen(true)
+                              }
+                              onAiCommand={(prompt) => {
+                                // chunk 56 — viewer's selection menu fires a
+                                // composed AI prompt; we forward to the
+                                // ChatPanel imperative handle so the request
+                                // streams immediately. Skip if no handle yet
+                                // (panel not mounted) — that should never
+                                // happen at this point of the flow.
+                                chatRef.current?.prefillAndSend(prompt);
+                              }}
+                              onOpenFormula={() => {
+                                // Resolve the right-clicked cell coords into
+                                // a row/col pair via the table dimensions
+                                // exposed on the active viewer. The cell
+                                // context menu has already moved caret into
+                                // the cell, so getActiveCellContext returns
+                                // the click's coordinates.
+                                const v = activeViewerRef();
+                                if (!v) return;
+                                const cell = v.getActiveCellContext();
+                                if (!cell) return;
+                                const tableProps = v.getTableProps(
+                                  cell.sectionIndex,
+                                  cell.parentParaIdx,
+                                  cell.controlIdx,
+                                );
+                                const colCount =
+                                  typeof tableProps?.['colCount'] === 'number'
+                                    ? (tableProps['colCount'] as number)
+                                    : 1;
+                                const targetRow = Math.floor(
+                                  cell.cellIdx / colCount,
+                                );
+                                const targetCol = cell.cellIdx % colCount;
+                                setFormulaCtx({
+                                  sectionIndex: cell.sectionIndex,
+                                  parentParaIdx: cell.parentParaIdx,
+                                  controlIdx: cell.controlIdx,
+                                  targetRow,
+                                  targetCol,
+                                });
+                                setFormulaOpen(true);
+                              }}
+                            />
+                          )}
                         </div>
                       );
                     })
                   )}
                 </div>
-                {outlineOpen && tabsState.length > 0 && (
+                {!useRhwpEditor && outlineOpen && tabsState.length > 0 && (
                   <OutlineSidebar
                     getViewer={activeViewerRef}
                     refreshKey={outlineKey + (activeIndex << 8)}
@@ -1178,7 +1276,32 @@ export default function AppShell() {
                     const v = targetPath
                       ? lookupByPath(targetPath)
                       : activeViewerRef();
-                    if (!v) {
+                    // Phase E1/E2b — bridge 라우팅 우선순위:
+                    //   1) useRhwpEditor 모드: 활성 탭의 RhwpEditor handle 사용
+                    //   2) __rhwpDebug.getBridge() (debug surface 마운트 상태)
+                    //   3) helper=null → 기존 viewer.irX 경로
+                    let bridge: import('@/lib/rhwp-bridge').RhwpBridge | null =
+                      null;
+                    if (useRhwpEditor) {
+                      const activeKey = activeTab?.key;
+                      if (activeKey) {
+                        const handle = rhwpHandlesRef.current.get(activeKey);
+                        bridge = handle?.bridge ?? null;
+                      }
+                    } else {
+                      const dbg = (
+                        window as unknown as {
+                          __rhwpDebug?: {
+                            getBridge():
+                              | import('@/lib/rhwp-bridge').RhwpBridge
+                              | null;
+                          };
+                        }
+                      ).__rhwpDebug;
+                      bridge = dbg?.getBridge() ?? null;
+                    }
+                    if (!v && !bridge) {
+                      // rhwp-mode 가 아니고 viewer 도 없음 → 호출 불가.
                       if (targetPath) {
                         return items.map((it) => ({
                           ok: false,
@@ -1188,9 +1311,14 @@ export default function AppShell() {
                       }
                       return [];
                     }
-                    const before = v.snapshotParagraphs();
-                    const results = await runTools(v, items);
-                    v.markChangedParagraphsSince(before);
+                    const before = v?.snapshotParagraphs();
+                    const helper = bridge
+                      ? new (
+                          await import('@/features/rhwp-studio/bridge-ir-helper')
+                        ).BridgeIrHelper(bridge)
+                      : null;
+                    const results = await runTools(v, items, helper);
+                    if (v && before) v.markChangedParagraphsSince(before);
                     return results;
                   }}
                   captureExcerpt={() =>

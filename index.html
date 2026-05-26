@@ -6,9 +6,13 @@
       script-src 'wasm-unsafe-eval': required by @rhwp/core (WASM in renderer
       via WebAssembly.instantiate). Narrower than 'unsafe-eval'.
     -->
+    <!--
+      frame-src ahwp-studio:: Phase 7 의 rhwp-studio iframe 임베드 — electron
+      main 이 등록한 커스텀 protocol. dev/prod 양쪽에서 같은 URL 사용.
+    -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://localhost:* ws://localhost:*"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://localhost:* ws://localhost:* ahwp-studio:; frame-src 'self' ahwp-studio:"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />

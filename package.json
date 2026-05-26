@@ -1,6 +1,6 @@
 {
   "name": "ahwp",
-  "version": "0.4.29",
+  "version": "0.4.32",
   "private": true,
   "description": "AI-powered HWP/HWPX desktop editor",
   "author": "ahwp contributors",
@@ -8,9 +8,9 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
-    "build": "npm run typecheck && vite build && electron-builder",
-    "build:dir": "npm run typecheck && vite build && electron-builder --dir",
-    "build:all": "npm run typecheck && vite build && electron-builder -mwl",
+    "build": "npm run typecheck && npm run vendor:rhwp:build && vite build && electron-builder",
+    "build:dir": "npm run typecheck && npm run vendor:rhwp:build && vite build && electron-builder --dir",
+    "build:all": "npm run typecheck && npm run vendor:rhwp:build && vite build && electron-builder -mwl",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -22,6 +22,8 @@
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,css,html}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,css,html}\"",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "vendor:rhwp:setup": "node scripts/setup-rhwp-studio.mjs",
+    "vendor:rhwp:build": "npm run vendor:rhwp:setup && cd vendor/rhwp/rhwp-studio && npm install && npx tsc && npx vite build --base=./",
     "prepare": "husky"
   },
   "lint-staged": {
@@ -77,6 +79,15 @@
     "files": [
       "dist",
       "dist-electron"
+    ],
+    "extraResources": [
+      {
+        "from": "vendor/rhwp/rhwp-studio/dist",
+        "to": "rhwp-studio",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
     "asarUnpack": [
       "node_modules/better-sqlite3/**/*"

@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-ahwp — Electron + React desktop app for viewing/editing Korean HWP/HWPX documents with AI assistance. **Phase 1~5 대부분 완료** (current `0.3.37`, chunks 1~99 + chunk 99 follow-up batch). 라이브 provider: OpenAI / NVIDIA NIM / Google Gemini / custom OpenAI-호환 (Ollama/vLLM/LM Studio/on-prem). Anthropic 어댑터만 키 결정 대기.
+ahwp — Electron + React desktop app for viewing/editing Korean HWP/HWPX documents with AI assistance. **Phase 1~5 대부분 완료** (current `0.4.31`, chunks 1~99 + chunk 99 follow-up batch + Phase 7 인프라 + rhwp-mode dual-render). 라이브 provider: OpenAI / NVIDIA NIM / Google Gemini / custom OpenAI-호환 (Ollama/vLLM/LM Studio/on-prem). Anthropic 어댑터만 키 결정 대기.
+
+**Phase 7 진행 중** (`docs/PHASE7_PLAN.md`) — rhwp-studio iframe 임베드로 자체 StudioViewer (~5000 라인) 대체. A1 / A2 / B / C / D1-D5 / E1 / E2a-c 완료. `localStorage['ahwp:use-rhwp-editor']='1'` 로 rhwp-mode 활성 — AppShell 이 활성 탭에 RhwpEditor 마운트, AI runTools + file save 모두 bridge 경유. 남은: E2d (StudioViewer 폐기, ~5000 라인 + ~30 e2e) + E3 (0.5.0 release).
 
 핵심 능력:
 

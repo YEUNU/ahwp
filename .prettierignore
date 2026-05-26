@@ -14,3 +14,5 @@ LICENSE
 /test-results/
 /playwright-report/
 electron/hwp/blank-seed.ts
+# Phase 7 — rhwp-studio fork (submodule). Upstream code, not ours to format.
+/vendor/

@@ -6,6 +6,70 @@
 
 ## [Unreleased]
 
+### Changed — rhwp-mode 가 default (Phase 7 E2d 1단계, 0.4.32)
+
+`localStorage['ahwp:use-rhwp-editor']` 미설정 또는 '1' = rhwp-mode (새
+default). '0' = legacy StudioViewer 모드. user 의도 — "rhwp-studio 를
+Electron 에 렌더링하고 AI 자동 작성만 내 것에 추가" — 의 기본 동작이
+완성. legacy 모드는 기존 e2e 회귀 / 사용자 migration 위해 살아있음.
+
+- `src/app/AppShell.tsx` useState 초기화 변경 — `!== '0'` 비교.
+- `tests/e2e/launch.ts` — 기존 spec 호환 위해 launch 직후 미설정 localStorage 에 '0' 자동 주입. Phase 7 spec 은 각자 '1' 로 덮어씀.
+
+`src/features/studio/` (~5000 라인) + 의존 e2e (~30) 의 점진 삭제 (E2e)
+는 별도 deprecation 일정. 0.5.0 major release 는 E2e 와 묶음.
+
+### Added — Phase 7 E2a/b/c rhwp-mode UI 통합 (0.4.31)
+
+`ahwp:use-rhwp-editor` localStorage flag 기반 dual-mode. flag=1 이면
+AppShell 의 활성 탭에 StudioViewer 대신 RhwpEditor 마운트.
+
+- **AppShell rhwp-mode** — flag=1 일 때 활성 탭 자리에 RhwpEditor. onReady → file:read → bridge.loadFile 자동.
+- **per-tab handle tracking** — `rhwpHandlesRef = Map<tabKey, RhwpEditorHandle>`. runTools 가 활성 탭 bridge → BridgeIrHelper 로 wrap. `__rhwpDebug` 의존 제거.
+- **save flow override** — `useSaveFlow.exportOverride` 옵션. useRhwpEditor 모드면 file:save / saveAs / autosave 가 `handle.exportHwp()` (bridge.invoke('exportHwp')) 사용. viewer 경유 X.
+
+본 모드에선 AppShell 의 viewer-dependent toolbar / dialog / menu action
+(~20 개) 가 동작 안 함 — rhwp-studio iframe 의 자체 UI 가 그 자리를
+담당. StudioViewer 코드 폐기 (E2d) + 0.5.0 major release (E3) 는 별도
+세션.
+
+e2e — appshell-rhwp-mode 2/2 통과.
+
+### Added — Phase 7 rhwp-studio bridge 인프라 (0.4.30)
+
+ahwp 가 자체 StudioViewer (`@rhwp/core` 직접 호출) 위에 약 5000 라인의
+에디터 UI 를 만들어 유지하는 대신, rhwp-studio 를 iframe 으로 임베드하고
+AI 자동 작성만 ahwp 가 담당하는 구조로 전환 시작.
+
+Phase 7 plan: `docs/PHASE7_PLAN.md`. 본 릴리스는 인프라 + Phase D / E1
+완료 — A1 / A2 / B / C / D1 / D2a / D2b / D2c-1 / D2c-2 / D3 / D4 / D5
+/ E1.
+
+핵심 추가:
+
+- **`vendor/rhwp` git submodule** (edwardkim/rhwp 의 `ahwp-bridge` 브랜치) + `npm run vendor:rhwp:build`. rhwp-studio main.ts 의 postMessage 채널 (`rhwp-request` / `rhwp-response` / `rhwp-event`) 확장 — 'wasm' generic dispatcher (~230 메서드 + getter + wasm.doc fallback) / convenience 6 case / 'caret-changed' polling.
+- **`ahwp-studio://` 커스텀 protocol** (`electron/rhwp-studio-protocol.ts`) — dev/packaged 자동 분기 (`vendor/rhwp/rhwp-studio/dist` ↔ `Resources/rhwp-studio`). standard / secure / supportFetchAPI / corsEnabled / stream privilege. path traversal 가드.
+- **`RhwpBridge` 클라이언트** (`src/lib/rhwp-bridge.ts`) — id 추적 + timeout + event listener + destroy lifecycle. invoke / invokeWasm / loadFile / ready / on / off / destroy. 12 unit + 9-step e2e.
+- **`<RhwpEditor>` 컴포넌트** (`src/features/rhwp-studio/RhwpEditor.tsx`) — iframe + bridge 자동 lifecycle. forwardRef + onReady / onError / exportHwp / exportHwpx / loadBytes.
+- **`window.__rhwpDebug`** debug surface (`src/features/rhwp-studio/debug-surface.ts`) — mount() / unmount() / getBridge(). dev / e2e / 콘솔 디버깅용. Phase E2 에서 정식 UI 통합 전까지.
+- **`BridgeIrHelper`** (`src/features/rhwp-studio/bridge-ir-helper.ts`) — 19 메서드 (read/write/composite) + invokeOk/invokeRead 범용 라우터. unit 20/20.
+- **`tools.ts` helper 라우팅** — `runTools(viewer, items, helper?)` 시그너처. ~30 AI tool case 가 helper 가용 시 bridge.invokeWasm() 으로 라우팅. tools.test 15/15.
+- **AppShell wiring** — `__rhwpDebug.getBridge()` 가 있으면 BridgeIrHelper 자동 생성 + runTools 3번째 인자로 전달. dual-mode 가드.
+- **`release.yml` main-push trigger** — `branches: [main]` 추가 + concurrency group. tag-push 와 OR 로 fire.
+- **`@rhwp/core` 0.7.12 native searchAllText** (`useFindReplace`) — paragraph 캐시 + indexOf 루프 제거. 12 케이스 단위 + 4 e2e.
+
+Phase 7 e2e (누적 16, 모두 통과):
+poc 2 + client 1 + electron 3 + debug-mount 3 + ir-helper 2 + events 1
+
+- find-native 4 + e1-bridge-route (간접).
+
+남은: E2 (StudioViewer 폐기 + 관련 e2e ~30 정리), E3 (docs + 0.5.0
+메이저 릴리스).
+
+## [0.4.29] - 2026-05-25
+
+> v0.4.2 이후 `[Unreleased]` 에 누적되어 있던 0.4.3 ~ 0.4.28 의 모든 entries 도 본 릴리스(`25df6e7` main 머지)에 포함. 청크별 디테일은 `git log v0.4.2..v0.4.29` 참조.
+
 ### Changed — @rhwp/core 0.7.12 + 네이티브 searchAllText 채택 (0.4.29)
 
 `@rhwp/core` 0.7.11 → 0.7.12 bump. Find 의 paragraph 텍스트 캐시 + `indexOf` 루프 (`useFindReplace.runFindSearch`) 를 lib 의 네이티브 `doc.searchAllText(query, false, false)` 호출로 치환. `findTextCacheRef` (`StudioViewer` / `useDocumentLifecycle` / `useDebugSurface` / `useFindReplace` 4 곳 wiring + mutation invalidation) 전부 제거. 동작 동일 — `include_cells=false` 로 기존 UI scope (top-level paragraph) 유지. 대소문자 무시·match 위치·count feedback 동일.

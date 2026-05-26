@@ -291,3 +291,11 @@ style_example/
 
 # Claude Code runtime state
 .claude/
+
+# rhwp-studio vendor — Phase 7. submodule pointer 자체는 .gitmodules 로
+# 추적되지만 빌드 산출물 (pkg/, dist/, node_modules/) 은 ahwp 의 git 도
+# 보지 않는다. submodule 내부 .gitignore 도 동일 규칙을 갖지만 super-repo
+# 가 실수로 추적하지 않도록 한 번 더 명시한다.
+vendor/rhwp/pkg/
+vendor/rhwp/**/dist/
+vendor/rhwp/**/node_modules/

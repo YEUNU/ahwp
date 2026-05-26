@@ -1,12 +1,28 @@
 name: Release
 
+# 두 가지 trigger 경로:
+#   1) Tag push (`git push origin v0.4.29`) — 명시적, 1차 경로.
+#   2) Branch push to main — merge / 직접 push 모두 포함. electron-builder
+#      의 draft-release semantics 가 idempotent 라 같은 version 재 publish
+#      는 기존 draft 를 갱신할 뿐 destructive 하지 않음.
+#
+# 둘 다 활성화한 이유 — 작업 흐름이 main 머지 (release commit) → tag 푸시
+# 두 단계라, 둘 중 어느 쪽이 먼저 도착해도 빌드가 돈다. concurrency 그룹
+# 으로 중복 실행은 자연스럽게 직렬화.
 on:
   push:
+    branches: [main]
     tags:
       - 'v*'
 
 permissions:
   contents: write
+
+concurrency:
+  # ref 별로 그룹 — main-push 와 tag-push 가 동시에 트리거돼도
+  # 서로 cancel 시키지 않고 순차 실행 (둘 다 같은 산출물을 publish).
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -18,6 +34,12 @@ jobs:
         os: [macos-latest, windows-latest, ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
+        # NB: submodules 는 default (off). Phase 7 의 vendor/rhwp pointer
+        # 는 local-only `ahwp-bridge` branch (edwardkim/rhwp 상에 없음)
+        # 라 fetch 시도가 실패한다. electron-builder 는 `build.files`
+        # 가 dist + dist-electron 뿐이라 vendor 미초기화여도 무관. user
+        # fork 가 push 되고 Phase C (resources 동봉) 가 합쳐지면 그때
+        # `submodules: recursive` 로 전환.
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
