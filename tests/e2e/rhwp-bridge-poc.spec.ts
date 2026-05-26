@@ -248,6 +248,42 @@ test.describe('rhwp-studio bridge — Phase A2 PoC', () => {
       });
       expect(after.error).toBeUndefined();
       expect((after.result as unknown[]).length).toBeGreaterThanOrEqual(1);
+
+      // 9) Generic `wasm` dispatcher — same method via fn+args form. ahwp
+      // 의 Phase D tools 는 이 채널을 사용 (WasmBridge surface 전체를
+      // method enumeration 없이 노출).
+      const generic = await invokeBridge(page, {
+        method: 'wasm',
+        params: { fn: 'getSectionCount', args: [] },
+      });
+      expect(generic.error).toBeUndefined();
+      expect(generic.result).toBe(sc.result);
+
+      // 10) Generic dispatcher — getter property (pageCount 은 getter
+      // 라 typeof fn !== 'function' fallback path 검증).
+      const pcGet = await invokeBridge(page, {
+        method: 'wasm',
+        params: { fn: 'pageCount', args: [] },
+      });
+      expect(pcGet.error).toBeUndefined();
+      expect(typeof pcGet.result).toBe('number');
+      expect(pcGet.result as number).toBeGreaterThan(0);
+
+      // 11) Generic dispatcher — blocked lifecycle method (dispose).
+      const disposed = await invokeBridge(page, {
+        method: 'wasm',
+        params: { fn: 'dispose', args: [] },
+      });
+      expect(disposed.result).toBeUndefined();
+      expect(disposed.error).toMatch(/not exposed/);
+
+      // 12) Generic dispatcher — non-existent method.
+      const ghost = await invokeBridge(page, {
+        method: 'wasm',
+        params: { fn: 'definitelyNotARealMethod', args: [] },
+      });
+      expect(ghost.result).toBeUndefined();
+      expect(ghost.error).toMatch(/not defined/);
     } finally {
       await ctx.close();
       await browser.close();

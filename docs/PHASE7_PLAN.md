@@ -53,11 +53,12 @@ ahwp/
   - `npm run vendor:rhwp:setup` — `@rhwp/core` artifacts 를 `vendor/rhwp/pkg/` 로 복사
   - `npm run vendor:rhwp:build` — setup + rhwp-studio vite build
   - 빌드 통과 검증 ✅
-- [~] **A2** — bridge method 확장 (in progress — 6/~50 메서드 완료)
-  - 1차 6 method 추가: `getSectionCount` / `getParagraphCount` / `getTextRange` / `searchAllText` / `insertText` / `getCaretPosition`
-  - vite build 에 `--base=./` 추가 (file:// + Electron resources 호환)
-  - 회귀 PoC `tests/e2e/rhwp-bridge-poc.spec.ts` — chromium + 내부 http server 로 dist 띄우고 8 단계 시퀀스 (ready → loadFile → 6 method → unknown error) 검증, 2/2 통과 ✅
-  - 잔여: 나머지 ~45 method 일괄 추가 + caret / selection / doc-change `rhwp-event` emit. Phase A2 후속 iteration 에서 batch 로.
+- [x] **A2** — bridge method 확장 (1차 + 후속)
+  - 1차: 6 convenience case (`getSectionCount` / `getParagraphCount` / `getTextRange` / `searchAllText` / `insertText` / `getCaretPosition`) — 외부 통합 docs 와 PoC 호환을 위한 named case.
+  - 후속: **generic `wasm` dispatcher case** — `{ method:'wasm', params:{ fn, args } }` 로 WasmBridge ~230 method + getter 전체를 enumeration 없이 노출. `dispose`/`free` 는 명시적 차단. method enumeration 비용 0.
+  - vite build 에 `--base=./` (file:// + Electron resources 호환).
+  - 회귀 PoC `tests/e2e/rhwp-bridge-poc.spec.ts` — chromium + 내부 http server. 12 단계 시퀀스: ready → loadFile → 6 method (named) → 4 generic dispatcher case (method / getter / blocked / non-existent) → 명백한 unknown method. 2/2 통과 ✅
+  - 잔여 (Phase B 와 함께 처리 예정): `rhwp-event` channel — `caret-changed` / `selection-changed` / `doc-mutated`. Phase D 의 Diff Viewer / Plan mode 가 의존하지만 핵심 tool 호출은 polling 으로도 충분하므로 Phase B 와 묶어서.
 
 ### Phase B — ahwp 측 bridge client
 
