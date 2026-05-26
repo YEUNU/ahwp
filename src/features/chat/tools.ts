@@ -9,7 +9,11 @@ import type {
   AhwpToolCall,
   AhwpToolResult,
 } from '@shared/ai-tools';
-import type { ViewerHandle } from '@/features/studio/types';
+// Phase 7 E2 — 본 file 이 사용하는 ViewerHandle 은 legacy StudioViewer 의
+// surface 였음. studio dir 폐기에 대비해 type 정의만 별도 file 로
+// 분리해 vendored (`./viewer-handle-types.ts`). rhwp-mode 가 default 라
+// 실 사용 시엔 NULL_VIEWER_STUB 으로 throw — bridge 경유만 의도.
+import type { ViewerHandle } from './viewer-handle-types';
 import type { BridgeIrHelper } from '@/features/rhwp-studio/bridge-ir-helper';
 
 /** Run an op against the viewer. Returns a result describing what

@@ -5,7 +5,7 @@
  * common LLM mistake on form / template documents.
  */
 import { describe, expect, it, vi } from 'vitest';
-import type { ViewerHandle } from '@/features/studio/types';
+import type { ViewerHandle } from './viewer-handle-types';
 import { runTools } from './tools';
 import type { AhwpPreflightItem } from '@shared/ai-tools';
 
