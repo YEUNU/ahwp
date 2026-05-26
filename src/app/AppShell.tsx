@@ -787,17 +787,17 @@ export default function AppShell() {
                   }}
                   getOutline={() => activeViewerRef()?.getOutline() ?? []}
                   openDocByPath={async (path) => {
-                    // chunk 99 follow-up — switchTargetDoc 가 닫힌 path
-                    // 받았을 때 자동 open + tab mount + viewer ref 등록.
-                    // useSaveFlow.openByPath 재사용 (file:open-by-path
-                    // IPC + openTab). 새 viewer 가 mount 되어 다음
-                    // viewerRefsRef lookup 에 잡히면 true.
+                    // chunk 99 follow-up — switchTargetDoc 의 cross-doc
+                    // auto-open. useSaveFlow.openByPath 가 0.6.2 부터
+                    // boolean 반환 (editable 탭 mount 성공 = true,
+                    // readable-only / unknown / 실패 = false). 이 값을
+                    // 그대로 propagate — hook 이 신뢰하고 후속 단계 진행.
+                    //
+                    // 주의: PDF / DOCX 등 readable-only 는 false 반환 →
+                    // AI 가 target-not-open 받음. 의도적 — non-HWP 는
+                    // 편집 대상이 될 수 없음 (rhwp-studio 한계).
                     try {
-                      await openByPath(path);
-                      // tab + viewer mount 가 React 렌더 사이클에 의존
-                      // 하므로 hook 측에서 setTimeout(50) 으로 양보.
-                      // 여기선 단순 ack.
-                      return true;
+                      return await openByPath(path);
                     } catch (err) {
                       console.warn('[appshell] openDocByPath threw:', err);
                       return false;

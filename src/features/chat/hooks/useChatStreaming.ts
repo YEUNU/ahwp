@@ -555,6 +555,18 @@ export function useChatStreaming(
           }
           // switchTargetDoc — viewer dispatch 우회, 즉시 처리 (chat
           // 라우팅 ref 갱신). 닫힌 탭이면 자동 열기 시도.
+          //
+          // 0.6.2 — stale closure bug fix:
+          // - getOpenDocs 는 AppShell 의 ()=>tabsState.map() 클로저.
+          //   하지만 await openDocByPath 가 React setState (openTab) 만
+          //   trigger 하므로, async 핸들러 안에서 50ms 대기 후 다시
+          //   호출해도 같은 destructured 클로저 → tabsState 갱신 미반영.
+          //   해결: openDocByPath 의 boolean 반환을 그대로 신뢰. true 면
+          //   path 만으로 matched 합성 (label = basename). 회귀: 이전엔
+          //   AppShell wrapper 가 무조건 true 반환 → AI 가 "성공" 받지만
+          //   getOpenDocs 가 stale 라서 target-not-open 으로 떨어지는
+          //   가짜 실패였음. 이제 wrapper 가 실제 boolean 전달 →
+          //   true 면 정상 진행, false 면 진짜 실패 메시지.
           if (tu.name === 'switchTargetDoc') {
             const path = (v.value as { args: { path: string } }).args.path;
             const openDocsLocal = getOpenDocs?.() ?? [];
@@ -563,10 +575,15 @@ export function useChatStreaming(
               try {
                 const ok = await opts.openDocByPath(path);
                 if (ok) {
-                  // 새 탭이 mount 되도록 마이크로태스크 잠시 양보 후 재조회.
-                  await new Promise((r) => setTimeout(r, 50));
-                  const fresh = getOpenDocs?.() ?? [];
-                  matched = fresh.find((d) => d.path === path);
+                  // openDocByPath true = 새 탭 mount 성공 (혹은 이미
+                  // mount). React state 가 아직 commit 안 됐을 수 있어
+                  // getOpenDocs lookup 은 stale 일 가능성 — path 만으로
+                  // synthetic match 합성. label 은 파일명만 추출.
+                  matched = {
+                    path,
+                    label: path.split(/[/\\]/).pop() ?? path,
+                    isActive: false,
+                  };
                 }
               } catch (err) {
                 console.warn('[chat] openDocByPath threw:', err);

@@ -90,7 +90,7 @@ function pickFileIcon(name: string): {
 interface FolderTreeProps {
   rootPath: string;
   activePath: string | null;
-  onOpenPath: (path: string) => void | Promise<void>;
+  onOpenPath: (path: string) => void | Promise<unknown>;
 }
 
 interface NodeProps {
@@ -106,7 +106,7 @@ interface NodeProps {
   draggingPath: string | null;
   dropTargetPath: string | null;
   onToggle: (path: string) => void | Promise<void>;
-  onOpenPath: (path: string) => void | Promise<void>;
+  onOpenPath: (path: string) => void | Promise<unknown>;
   onSelect: (path: string) => void;
   onContextMenu: (e: ReactMouseEvent, entry: FolderEntry) => void;
   onCommitRename: (path: string, newName: string) => void | Promise<void>;

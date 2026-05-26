@@ -6,6 +6,35 @@
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-05-26
+
+### Fixed — `switchTargetDoc` 자동 열기 실패 (workspace HWP 가짜 target-not-open)
+
+사용자가 워크스페이스 폴더에 있는 .hwp 파일에 대해 AI 에게 작성 요청하면
+AI 가 `switchTargetDoc({path:...})` 로 자동 열기 시도. 하지만 실제로는
+탭이 열려도 hook 이 `target-not-open:<path>` 가짜 에러를 반환했음 — 그
+파일에 직접 쓸 수 없는 회귀.
+
+근본 원인 3개 (모두 fix):
+
+1. **`useSaveFlow.openByPath`** 가 `void` 반환 — 성공/실패 알 길 없음.
+   → `Promise<boolean>` 으로 변경 (editable 탭 mount=true, readable-only/실패=false).
+2. **`AppShell.openDocByPath` wrapper** 가 무조건 `true` 반환.
+   → useSaveFlow 의 boolean 그대로 propagate.
+3. **`useChatStreaming.switchTargetDoc` stale closure** — `await openDocByPath`
+   가 React setState 만 trigger, 50ms 후 `getOpenDocs?.()` 재호출이 같은
+   destructured 클로저 (이전 render 의 `tabsState`) → 새 탭 lookup 실패.
+   → `ok=true` 면 `getOpenDocs` 재조회 우회. `path` 만으로 `matched` 합성
+   (label = basename). 닫힌 .hwp 도 정상적으로 자동 열림 + AI write target 으로 라우팅.
+
+**부수 효과**: PDF / DOCX / Excel 같은 readable-only 는 `false` 반환 →
+명시적 `target-not-open`. AI 가 즉시 인식 → 의도적인 정상 분기 (이런
+포맷은 편집 대상 X — rhwp-studio 한계).
+
+**검증**: 신규 e2e `switch-target-doc.spec.ts` (3 case): workspace HWP 자동
+열기 / 존재하지 않는 path 거부 / readable-only false. 175/175 unit +
+28/28 회귀 e2e 통과.
+
 ## [0.6.2] - 2026-05-26
 
 ### Added — Auto-updater UI 완성
