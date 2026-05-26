@@ -26,7 +26,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build & Release (${{ matrix.os }})
+    name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -49,6 +49,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # electron-builder 의 GitHub publisher 는 default `releaseType: 'draft'`
+      # 로 동작 → 세 OS 빌드 모두 같은 Draft 에 asset 업로드 (idempotent).
+      # 0.6.4 의 'release' 시도는 immutable-release 정책 충돌로 revert —
+      # publish job 이 마지막에 Draft → Published 로 flip.
       - name: Build rhwp-studio (submodule) + ahwp
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -56,3 +60,34 @@ jobs:
           npm run vendor:rhwp:build
           npx vite build
           npx electron-builder --publish always
+
+  # 모든 OS 빌드가 성공한 뒤에만 실행 — Draft 에 dmg/setup.exe/AppImage/deb
+  # 가 모두 올라온 상태에서 publish 로 flip. `gh release edit` 가
+  # `--draft=false --latest` 로 latest 로 표시하면 `latest.yml` 가 공개되어
+  # auto-updater 가 인식.
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    if: success()
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version from package.json
+        id: version
+        run: |
+          v=$(node -p "require('./package.json').version")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "tag=v$v" >> "$GITHUB_OUTPUT"
+
+      - name: Publish Draft → Released (mark as latest)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ steps.version.outputs.tag }}"
+          echo "Publishing $tag …"
+          # --draft=false: Draft 해제
+          # --latest:      "latest" 표시 + latest.yml 공개 노출
+          gh release edit "$tag" --draft=false --latest --repo "${{ github.repository }}"
