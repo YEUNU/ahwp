@@ -883,17 +883,25 @@ export default function AppShell() {
                     v.undo();
                     return true;
                   }}
-                  applyPatches={(patches) => {
-                    // Q5 Diff Viewer — apply a batch of patches as a single
-                    // grouped-undo turn. Body patches: irDeleteRange + irInsertText.
-                    // Cell patches (0.4.20, location.cell present): irDeleteRangeInCell
-                    // + irInsertTextInCell. additionFormat → applyCharFormat 또는
-                    // applyCharFormatInCell. typed → lib props 매핑은
-                    // patchFormatToLibProps 가 담당 (size_hu / color int 변환 등).
-                    const v = activeViewerRef();
-                    if (!v) return patches.map(() => false);
-                    v.beginUndoGroup();
-                    const results = patches.map((p) => {
+                  applyPatches={async (patches) => {
+                    // Q5 Diff Viewer — apply a batch of patches in rhwp-mode
+                    // via BridgeIrHelper. Body: deleteRange + insertText.
+                    // Cell: invokeOk('deleteRangeInCell') + insertTextInCell
+                    // + invokeOk('applyCharFormatInCell'). additionFormat →
+                    // patchFormatToLibProps (size_hu / color int 변환).
+                    //
+                    // 0.5.x: bridge ops 가 async 라서 handler 도 async; 멀티
+                    // 패치는 순차 실행 (paragraph index 가 앞 패치 결과에
+                    // 영향받지 않도록 — 한 paragraph 단위 단일 op 가정).
+                    const key = activeTab?.key;
+                    const handle = key ? rhwpHandlesRef.current.get(key) : null;
+                    const bridge = handle?.bridge ?? null;
+                    if (!bridge) return patches.map(() => false);
+                    const helper = new (
+                      await import('@/features/rhwp-studio/bridge-ir-helper')
+                    ).BridgeIrHelper(bridge);
+                    const results: boolean[] = [];
+                    for (const p of patches) {
                       try {
                         const sec = p.location.sectionIndex;
                         const para = p.location.paragraphIndex;
@@ -905,30 +913,30 @@ export default function AppShell() {
                         const insEnd = start + p.addition.length;
 
                         if (cell) {
-                          // Cell-level patch. endOffset 없으면 그 cell
-                          // paragraph 의 길이 만큼.
+                          // Cell-level. endOffset 없으면 deletion 길이로
+                          // 대체 — lib 가 internally clamp.
                           let end = p.location.endOffset;
-                          if (end === undefined) {
-                            // lib 에 cell paragraph length 직접 read 가
-                            // 없으니 일단 large sentinel 로 deleteRange 호출.
-                            // lib 가 internally clamp. (deletion 이 ""
-                            // 이고 빈 cell 채우는 경우엔 delete 단계 skip.)
-                            end = p.deletion.length;
-                          }
+                          if (end === undefined) end = p.deletion.length;
                           if (p.deletion.length > 0) {
-                            const okDel = v.irDeleteRangeInCell(
-                              sec,
-                              para,
-                              cell.controlIndex,
-                              cell.cellIndex,
-                              cell.cellParagraphIndex,
-                              start,
-                              cell.cellParagraphIndex,
-                              end,
+                            const okDel = await helper.invokeOk(
+                              'deleteRangeInCell',
+                              [
+                                sec,
+                                para,
+                                cell.controlIndex,
+                                cell.cellIndex,
+                                cell.cellParagraphIndex,
+                                start,
+                                cell.cellParagraphIndex,
+                                end,
+                              ],
                             );
-                            if (!okDel) return false;
+                            if (!okDel) {
+                              results.push(false);
+                              continue;
+                            }
                           }
-                          const okIns = v.irInsertTextInCell(
+                          const okIns = await helper.insertTextInCell(
                             sec,
                             para,
                             cell.controlIndex,
@@ -937,9 +945,12 @@ export default function AppShell() {
                             start,
                             p.addition,
                           );
-                          if (!okIns) return false;
+                          if (!okIns) {
+                            results.push(false);
+                            continue;
+                          }
                           if (fmtProps && p.addition.length > 0) {
-                            v.irApplyCharFormatInCell(
+                            await helper.invokeOk('applyCharFormatInCell', [
                               sec,
                               para,
                               cell.controlIndex,
@@ -947,58 +958,58 @@ export default function AppShell() {
                               cell.cellParagraphIndex,
                               start,
                               insEnd,
-                              fmtProps,
-                            );
+                              JSON.stringify(fmtProps),
+                            ]);
                           }
-                          return true;
+                          results.push(true);
+                          continue;
                         }
 
-                        // Body-level patch (legacy path).
+                        // Body-level patch.
                         let end = p.location.endOffset;
                         if (end === undefined) {
-                          // Whole-paragraph — find current length via the
-                          // text range read tool (caps at 4096 bytes which
-                          // is plenty for a paragraph).
-                          const txt = v.irGetTextRange(
-                            sec,
-                            para,
-                            0,
-                            para,
-                            10_000,
-                          );
-                          end = (txt ?? '').length;
+                          end = await helper.getParagraphLength(sec, para);
                         }
-                        const okDel = v.irDeleteRange(
-                          sec,
-                          para,
-                          start,
-                          para,
-                          end,
-                        );
-                        if (!okDel) return false;
-                        const okIns = v.irInsertText(
-                          sec,
-                          para,
-                          start,
-                          p.addition,
-                        );
-                        if (!okIns) return false;
-                        if (fmtProps && p.addition.length > 0) {
-                          v.irApplyCharFormat(
+                        if (end > start) {
+                          const okDel = await helper.deleteRange(
                             sec,
                             para,
                             start,
-                            insEnd,
-                            fmtProps,
+                            para,
+                            end,
                           );
+                          if (!okDel) {
+                            results.push(false);
+                            continue;
+                          }
                         }
-                        return true;
+                        if (p.addition.length > 0) {
+                          const okIns = await helper.insertText(
+                            sec,
+                            para,
+                            start,
+                            p.addition,
+                          );
+                          if (!okIns) {
+                            results.push(false);
+                            continue;
+                          }
+                          if (fmtProps) {
+                            await helper.applyCharFormat(
+                              sec,
+                              para,
+                              start,
+                              insEnd,
+                              fmtProps,
+                            );
+                          }
+                        }
+                        results.push(true);
                       } catch (err) {
                         console.warn('[diff] applyPatch failed:', err);
-                        return false;
+                        results.push(false);
                       }
-                    });
-                    v.endUndoGroup();
+                    }
                     return results;
                   }}
                   previewPatch={(patch) => {

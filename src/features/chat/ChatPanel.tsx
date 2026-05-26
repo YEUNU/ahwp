@@ -316,7 +316,7 @@ export interface ChatPanelProps {
    * `beginUndoGroup` / `endUndoGroup` so a single ⌘Z rolls back the
    * whole batch.
    */
-  applyPatches?: (patches: AhwpPatch[]) => boolean[];
+  applyPatches?: (patches: AhwpPatch[]) => Promise<boolean[]>;
   /**
    * Diff Viewer "에디터에서 보기" (Q5 확장). Scroll the active viewer
    * to the patch's paragraph + place caret at the start offset.
@@ -1412,7 +1412,7 @@ interface MessageProps {
    */
   onUndoApply?: () => boolean;
   /** Apply a batch of patches as a grouped-undo turn (Q5 diff viewer). */
-  onApplyPatches?: (patches: AhwpPatch[]) => boolean[];
+  onApplyPatches?: (patches: AhwpPatch[]) => Promise<boolean[]>;
   /** Scroll the editor to a patch's location (Q5 확장). */
   onPreviewPatch?: (patch: AhwpPatch) => void;
   /** chunk 97 — pending write tool 의 사용자 결정 콜백. */
@@ -1670,11 +1670,13 @@ function Message({
     if (!patchesParsed?.ok || !onApplyPatches) return;
     const item = patchesParsed.items[idx];
     if (!item.ok) return;
-    const results = onApplyPatches([item.patch]);
-    if (results[0]) {
-      setPatchStatusAt(idx, 'accepted');
-      showPatchToast(1);
-    }
+    void (async () => {
+      const results = await onApplyPatches([item.patch]);
+      if (results[0]) {
+        setPatchStatusAt(idx, 'accepted');
+        showPatchToast(1);
+      }
+    })();
   };
   const handlePatchRejectIdx = (idx: number): void => {
     setPatchStatusAt(idx, 'rejected');
@@ -1688,17 +1690,19 @@ function Message({
       }
     });
     if (pendingItems.length === 0) return;
-    const results = onApplyPatches(pendingItems.map((x) => x.patch));
-    let okCount = 0;
-    setPatchStatusOverrides((prev) => {
-      const next = { ...prev };
-      pendingItems.forEach((it, k) => {
-        if (results[k]) okCount += 1;
-        next[it.idx] = results[k] ? 'accepted' : 'rejected';
+    void (async () => {
+      const results = await onApplyPatches(pendingItems.map((x) => x.patch));
+      let okCount = 0;
+      setPatchStatusOverrides((prev) => {
+        const next = { ...prev };
+        pendingItems.forEach((it, k) => {
+          if (results[k]) okCount += 1;
+          next[it.idx] = results[k] ? 'accepted' : 'rejected';
+        });
+        return next;
       });
-      return next;
-    });
-    showPatchToast(okCount);
+      showPatchToast(okCount);
+    })();
   }, [patchesParsed, onApplyPatches, patchStatuses, showPatchToast]);
   // chunk 99 follow-up — patches 자동 acceptAll. plan mode 가 아닌
   // 일반 응답에서 ahwp-patches 블록이 도착하고 처음 mount 될 때 한 번

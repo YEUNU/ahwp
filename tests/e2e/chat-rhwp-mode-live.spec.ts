@@ -227,4 +227,168 @@ test.describe('Phase 7 — live OpenAI tool dispatch verification', () => {
     ]);
     expect(hits.length).toBeGreaterThanOrEqual(1);
   });
+
+  /**
+   * 컨텍스트 인식 — AI 가 검색 + 읽기 + 계산 + 수정의 multi-step 작업.
+   * 알려진 데이터 3개 (교육비/사업비/운영비) 를 미리 주입한 뒤 사용자가
+   * "사업비 +100만원 해줘" 식으로 자연어 요청. AI 는:
+   *   1) 사업비 항목 찾기 (searchAllText/findInDocument)
+   *   2) 값 읽기 (getTextRange)
+   *   3) +100 계산
+   *   4) deleteRange + insertText 또는 applyHtml 로 교체
+   * 다른 항목 (교육비/운영비) 은 변경 X 검증 — selectivity.
+   */
+  test('context-aware multi-step — "사업비 +100만원 해줘"', async () => {
+    const { page } = launched;
+    // 1) 알려진 데이터 3개를 한 단락 안에 inline 으로 주입 (paragraph 분할
+    // 회피 — AI 의 location 추정이 단순 offset 으로 가능). 구분자는 ", ".
+    const seed = '교육비: 200만원, 사업비: 500만원, 운영비: 300만원 / ';
+    await page.evaluate(
+      async ({ seedText }) => {
+        const iframe = document.querySelector(
+          '[data-testid="rhwp-editor-iframe"]',
+        ) as HTMLIFrameElement;
+        const post = (method: string, params: Record<string, unknown>) =>
+          new Promise<unknown>((resolve, reject) => {
+            const id = `seed-${Math.random().toString(36).slice(2)}`;
+            const timer = window.setTimeout(
+              () => reject(new Error('seed timeout')),
+              15_000,
+            );
+            const handler = (e: MessageEvent) => {
+              const d = e.data as {
+                type?: string;
+                id?: string;
+                result?: unknown;
+                error?: string;
+              };
+              if (!d || d.type !== 'rhwp-response' || d.id !== id) return;
+              if (e.source !== iframe.contentWindow) return;
+              window.clearTimeout(timer);
+              window.removeEventListener('message', handler);
+              if (d.error) reject(new Error(d.error));
+              else resolve(d.result);
+            };
+            window.addEventListener('message', handler);
+            iframe.contentWindow!.postMessage(
+              { type: 'rhwp-request', id, method, params },
+              '*',
+            );
+          });
+        // insertText(0, 0, 0, seed) — 단락 0 시작에 \n 포함 텍스트 삽입.
+        await post('wasm', { fn: 'insertText', args: [0, 0, 0, seedText] });
+      },
+      { seedText: seed },
+    );
+
+    // 2) 셋업 확인 — 3 키워드 모두 검색 가능해야.
+    const beforeEdu = await readWasm<unknown[]>(page, 'searchAllText', [
+      '교육비: 200만원',
+      true,
+      false,
+    ]);
+    const beforeBiz = await readWasm<unknown[]>(page, 'searchAllText', [
+      '사업비: 500만원',
+      true,
+      false,
+    ]);
+    const beforeOp = await readWasm<unknown[]>(page, 'searchAllText', [
+      '운영비: 300만원',
+      true,
+      false,
+    ]);
+    expect(beforeEdu.length).toBeGreaterThanOrEqual(1);
+    expect(beforeBiz.length).toBeGreaterThanOrEqual(1);
+    expect(beforeOp.length).toBeGreaterThanOrEqual(1);
+
+    // 3) AI 한테 컨텍스트 인식 명령 — 도구 / 좌표 / 계산 hint 없음.
+    await sendChatPrompt(
+      page,
+      `문서에서 사업비 항목 찾아서 거기에 +100만원 해줘 (다른 항목은 그대로 두고)`,
+      180_000,
+    );
+
+    // 4) AI 가 patches 형식 (DiffCard) 으로 변경 제안한 경우 Accept 자동.
+    // patches block 이 chat 또는 editor portal 어느 쪽에든 렌더되어 있을 수
+    // 있음. attached 가드.
+    await page.waitForTimeout(1000); // patches block 렌더 안정화.
+    const patchesBlocks = page.getByTestId('chat-patches-block');
+    const blockCount = await patchesBlocks.count();
+    console.log('[debug context] chat-patches-block count:', blockCount);
+    // invalid patches 가 있으면 reason 출력 — 어떤 validation 으로 fail.
+    const invalids = page.locator('[data-testid^="diff-patch-invalid-"]');
+    const ic = await invalids.count();
+    for (let i = 0; i < ic; i++) {
+      const r = await invalids.nth(i).textContent();
+      console.log(`[debug context] invalid patch #${i}: ${r?.slice(0, 200)}`);
+    }
+    // accept 버튼은 여러 패턴: 다중 patches 면 diff-accept-all, 단일이면
+    // diff-accept-1 (SinglePatchCard), 다중 patches 내 개별이면 diff-accept-{idx}.
+    // 0.5.x: ChatPanel auto-accept (autoAcceptedPatchesRef) 가 처음 mount 시
+    // 한 번 fire → 버튼이 disabled 상태로 들어오는 케이스가 정상. 누락된
+    // pending 만 click. status='pending' 만 enable, 'accepted' / 'rejected'
+    // 면 disabled.
+    const acceptAll = page.getByTestId('diff-accept-all');
+    const acceptSingle = page.getByTestId('diff-accept-1');
+    const aaCount = await acceptAll.count();
+    const asCount = await acceptSingle.count();
+    console.log(
+      '[debug context] diff-accept-all:',
+      aaCount,
+      'diff-accept-1:',
+      asCount,
+    );
+    if (aaCount > 0 && (await acceptAll.first().isEnabled())) {
+      await acceptAll.first().click();
+    } else if (asCount > 0 && (await acceptSingle.first().isEnabled())) {
+      await acceptSingle.first().click();
+    } else {
+      console.log(
+        '[debug context] accept buttons disabled — auto-accept fired',
+      );
+    }
+    // auto-accept 의 async helper.deleteRange/insertText 완료 + IR 반영
+    // 대기. patch 1-3개면 1초 충분. 안정성 위해 3초.
+    await page.waitForTimeout(3000);
+
+    // 적용 후 paragraph 0, 1, 2 텍스트 확인 — 셋업 정렬 검증.
+    for (let p = 0; p < 4; p++) {
+      const txt = await readWasm<string>(page, 'getTextRange', [0, p, 0, 100]);
+      console.log(`[debug context] para ${p}:`, txt.slice(0, 80));
+    }
+
+    // 5) 검증 정책 — 자연어 + LLM coordinate 정확도 변동성 고려:
+    //    (a) "사업비" 근처에 "600" 이 새로 등장 (= +100만원 적용)
+    //    (b) 교육비 / 운영비 라인은 원본 보존 (selectivity)
+    //    (c) 사업비 의 원래 값 "500만원" 은 사라짐
+    //    AI 가 Korean offset 계산할 때 ±1 / ±2 char 오차로 인접 separator
+    //    가 같이 먹히는 케이스가 있어서 strict pattern ("사업비: 600만원")
+    //    대신 substring + selectivity 로 본질만 검증.
+    const afterBizOld = await readWasm<unknown[]>(page, 'searchAllText', [
+      '500만원',
+      true,
+      false,
+    ]);
+    const after600 = await readWasm<unknown[]>(page, 'searchAllText', [
+      '600만원',
+      true,
+      false,
+    ]);
+    const afterEdu = await readWasm<unknown[]>(page, 'searchAllText', [
+      '교육비: 200만원',
+      true,
+      false,
+    ]);
+    const afterOp = await readWasm<unknown[]>(page, 'searchAllText', [
+      '운영비: 300만원',
+      true,
+      false,
+    ]);
+    // 사업비 원본 값 ("500만원") 은 사라짐 + 새 값 ("600만원") 이 등장.
+    expect(after600.length).toBeGreaterThanOrEqual(1);
+    expect(afterBizOld.length).toBe(0);
+    // 다른 두 항목은 그대로 (selectivity — AI 가 사업비 만 손댔어야).
+    expect(afterEdu.length).toBeGreaterThanOrEqual(1);
+    expect(afterOp.length).toBeGreaterThanOrEqual(1);
+  });
 });
