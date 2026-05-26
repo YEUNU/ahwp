@@ -1,6 +1,6 @@
 {
   "name": "ahwp",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "private": true,
   "description": "AI-powered HWP/HWPX desktop editor",
   "author": "ahwp contributors",
@@ -96,8 +96,7 @@
       {
         "provider": "github",
         "owner": "YEUNU",
-        "repo": "ahwp",
-        "releaseType": "release"
+        "repo": "ahwp"
       }
     ],
     "mac": {

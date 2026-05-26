@@ -6,6 +6,33 @@
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-05-26
+
+### Fixed — release.yml 의 Draft auto-publish (0.6.4 매트릭스 빌드 422 회피)
+
+0.6.4 가 `releaseType: 'release'` 로 설정했더니 첫 OS 빌드 (mac) 가 끝나는 순간
+GitHub Release 가 published 상태로 생성됨. 이후 매트릭스의 다른 OS (win/linux)
+빌드가 asset 업로드 시도 → GitHub 의 immutable-release 정책이 `422 "Cannot
+upload assets to an immutable release"` 반환 → 빌드 실패. 0.6.4 release 는
+mac dmg 만 일부 올라간 채로 broken 상태.
+
+**Fix**:
+
+1. `package.json` 의 publish 설정에서 `releaseType` 제거 (default `draft` 로
+   복원). 매트릭스 빌드가 모두 같은 Draft 에 idempotent 하게 asset 업로드.
+2. `release.yml` 에 별도 `publish` job 추가. matrix 빌드 (`build`) 가 모두
+   성공한 후 `gh release edit "$tag" --draft=false --latest` 실행 — Draft 를
+   public 으로 flip + `latest` 마킹. latest.yml 이 그 시점에 공개 노출.
+
+이렇게 하면 빌드 + publish 가 분리돼서 auto-updater 가 의도대로 작동하면서
+immutable 정책 충돌도 회피.
+
+### Note — 0.6.4 정리
+
+GitHub Releases 에 부분 업로드된 0.6.4 broken release 는 수동 삭제 필요
+(`gh release delete v0.6.4 --yes --cleanup-tag --repo YEUNU/ahwp`). 본
+릴리스의 publish job 이 통과하면 0.6.5 가 새 latest 가 됨.
+
 ## [0.6.4] - 2026-05-26
 
 ### Fixed — release.yml 이 Draft 만 만들고 자동 publish 안 함
