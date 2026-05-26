@@ -105,10 +105,30 @@ ahwp/
 - **file:// origin 제약**: chrome iframe in file:// 의 `wasm-unsafe-eval` / fetch / origin policy 확인 필요. Phase C 핵심 검증 항목.
 - **AI tools 동기 호출 가정**: 현재 dispatcher 는 `docRef.current.X(...)` 동기. bridge 는 Promise. 그룹 undo / Diff snapshot 같은 batched 동작 재설계 필요.
 
-## 다음 청크
+## 다음 작업 (E2 / E3) — 별도 세션 권장
 
-Phase A2 — `vendor/rhwp/rhwp-studio/src/main.ts` 의 postMessage switch
-확장. 우선순위 method 6 개 (`getSectionCount`, `getParagraphCount`,
-`getTextRange`, `searchAllText`, `insertText`, `getCaretPosition`) 만
-먼저 추가하고 끝-단 PoC (ahwp 의 임시 dev page 가 iframe 으로 rhwp-studio
-띄우고 bridge 호출 → 응답 표시) 까지 통과 시키면 Phase A2 종료.
+본 phase 의 인프라 (A1~D5 + E1) 는 0.4.30 으로 완료. 다음은 본 UI 통합
+및 자체 코드 제거 — 작업량이 크고 회귀 위험도 높아 별도 세션 권장.
+
+### E2 — StudioViewer 폐기 (큰 단일 작업)
+
+1. `__rhwpDebug.mount()` auto-fire (또는 `AppShell` 이 RhwpEditor 를 직접 마운트). bridge 가 항상 존재 → 모든 AI tools 자동으로 bridge 경유.
+2. AppShell 이 탭 별로 StudioViewer 대신 RhwpEditor 렌더. file:save / file:open 흐름 `RhwpEditorHandle.exportHwp/loadBytes` 경유.
+3. `viewer.X` (non-ir composite — applyAlignment / setHeaderFooterText / applyHtmlAtCaret 등 ~20 메서드) 의 ahwp 측 처리:
+   - Phase D2c-2 까지 viewer-only 로 남긴 case 들. rhwp-studio 가 자체 UI 로 같은 동작을 제공하므로 ahwp 측 helper 삭제 → 해당 tool 케이스는 `applyHtml` 같은 도구별 매핑 재설계 필요.
+4. `src/features/studio/` 폐기 — StudioViewer + 8 hook + 모든 dialog / utility (~5000 라인). 의존 import 정리.
+5. 관련 e2e ~30 spec 정리:
+   - `__studioDebug.*` 의존 spec → 대부분 삭제 (rhwp-studio 가 자체 UI 검증). 일부는 `__rhwpDebug` + bridge 호출로 재작성.
+   - studio-find / studio-edit / studio-shape / studio-table / studio-format / studio-footnote / studio-image / studio-wordsel / studio-paraformat / studio-clipboard / studio-pagenav / studio-undo / studio-selection / 기타.
+
+### E3 — 0.5.0 major release
+
+- CLAUDE.md / ARCHITECTURE.md / KNOWN_ISSUES.md 갱신.
+- README 의 "풀 편집기 능력" 섹션 → "rhwp-studio 임베드" 로 재구성.
+- CHANGELOG 의 0.5.0 marker.
+- main 머지 + tag v0.5.0 + push.
+
+### 다른 결정 대기 항목
+
+- **submodule push** — local `ahwp-bridge` 브랜치의 patch (`c475d590`, `9faf04c6`, `ed79708c`, `a8924b9a`) 가 user GitHub fork 에 푸시되어야 다른 환경 / CI 에서 submodule init 가능. user 가 `gh repo fork edwardkim/rhwp` 후 `cd vendor/rhwp && git remote set-url origin <fork> && git push -u origin ahwp-bridge`.
+- **release.yml CI** — main push 시 fire 하도록 갱신 완료 (0.4.29 청크). 다음 main push 시 자동 빌드.
