@@ -6,6 +6,39 @@
 
 ## [Unreleased]
 
+## [0.6.11] - 2026-05-26
+
+### Fixed — macOS auto-update "Code signature did not pass validation"
+
+사용자 보고:
+
+```
+업데이트 확인 실패: Code signature at URL .../update.../ahwp.app/
+did not pass validation: 코드가 지정된 코드 요구 사항을 충족시키는데 실패함
+```
+
+**원인**: Squirrel.Mac (electron-updater 의 macOS 백엔드) 가 update 적용
+전에 새 앱과 현재 앱의 **Designated Requirement** 일치를 검증. 우리는
+Apple Developer ID 없이 **ad-hoc 서명** 으로 빌드 → 매 빌드마다 hash 다름
+→ "DR mismatch" 로 검증 실패.
+
+**Fix**: `mac.identity: null` 명시 — 빌드 시 서명 완전 비활성화. Squirrel
+이 unsigned-to-unsigned update 흐름으로 진입 → DR 검증 skip → auto-update
+정상 작동.
+
+**Trade-off — 첫 설치 시 macOS Gatekeeper 경고**:
+
+- "ahwp 는 신뢰할 수 없는 개발자가 만든 앱입니다" 다이얼로그
+- 사용자가 Finder 에서 우클릭 → "열기" → "열기" 한 번 더 클릭
+- 이후 시스템이 영구 trust → 일반 더블클릭으로 정상 실행
+
+이 trade-off 는 의식적 선택 — Apple Developer ID ($99/년) 없이 auto-
+update + Gatekeeper PASS 둘 다 가지는 방법이 없음. 사용자가 "auto-update
+convenience" 를 우선해서 unsigned 경로 선택.
+
+**Windows / Linux 는 무관**: 코드 서명 모델이 다름. Windows 의 NSIS 는
+checksum 만 검증 (서명 별개). Linux 는 서명 개념 자체 없음.
+
 ## [0.6.10] - 2026-05-26
 
 ### Fixed — CI publish job 403 (workflow 권한 + structural fix 누적)
