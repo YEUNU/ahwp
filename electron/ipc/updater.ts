@@ -19,7 +19,8 @@
  * UpdaterApi 는 shared/api.ts 의 single source of truth.
  */
 import { app, BrowserWindow, ipcMain } from 'electron';
-import type { UpdaterState } from '../../shared/api';
+import type { UpdaterState, UpdaterPrefs } from '../../shared/api';
+import { loadUpdaterPrefs, saveUpdaterPrefs } from '../store/updater-prefs';
 
 let currentState: UpdaterState = {
   status: 'idle',
@@ -80,7 +81,10 @@ async function initRealUpdater(): Promise<void> {
     };
     const au = mod.autoUpdater;
     updaterInstance = au;
-    au.autoDownload = false;
+    // 0.6.8 — autoDownload 는 사용자 설정 (default true). Settings 의
+    // "정보" 탭 토글 → updater:set-prefs IPC 로 live 변경.
+    const prefs = await loadUpdaterPrefs();
+    au.autoDownload = prefs.autoDownload;
     au.autoInstallOnAppQuit = true;
     au.on('checking-for-update', () => {
       setState({ status: 'checking' });
@@ -189,4 +193,22 @@ export function initUpdater(): void {
     if (!updaterInstance) return;
     updaterInstance.quitAndInstall();
   });
+
+  // 0.6.8 — Preferences IPC. UI 의 토글 (Settings 정보 탭) 이 즉시 main 의
+  // autoUpdater 인스턴스에 반영. 다음 launch 까지 기다리지 않음.
+  ipcMain.handle('updater:get-prefs', async (): Promise<UpdaterPrefs> => {
+    return await loadUpdaterPrefs();
+  });
+
+  ipcMain.handle(
+    'updater:set-prefs',
+    async (_event, patch: Partial<UpdaterPrefs>): Promise<UpdaterPrefs> => {
+      const next = await saveUpdaterPrefs(patch);
+      // updaterInstance 가 살아있으면 live update.
+      if (updaterInstance) {
+        updaterInstance.autoDownload = next.autoDownload;
+      }
+      return next;
+    },
+  );
 }

@@ -545,6 +545,8 @@ function AboutPane(): JSX.Element {
   const [updaterState, setUpdaterState] = useState<
     import('@shared/api').UpdaterState | null
   >(null);
+  // 0.6.8 — autoDownload 토글. 초기값은 main 에서 fetch, 변경 시 즉시 반영.
+  const [autoDownload, setAutoDownload] = useState<boolean>(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -554,6 +556,9 @@ function AboutPane(): JSX.Element {
     void window.api.updater.getState().then((s) => {
       if (!cancelled) setUpdaterState(s);
     });
+    void window.api.updater.getPrefs().then((p) => {
+      if (!cancelled) setAutoDownload(p.autoDownload);
+    });
     const off = window.api.updater.onEvent((s) => {
       if (!cancelled) setUpdaterState(s);
     });
@@ -561,6 +566,18 @@ function AboutPane(): JSX.Element {
       cancelled = true;
       off();
     };
+  }, []);
+
+  const onAutoDownloadToggle = useCallback(async (next: boolean) => {
+    // optimistic UI — 실패해도 빠른 피드백 유지, 실패 시 catch 로 되돌림.
+    setAutoDownload(next);
+    try {
+      const updated = await window.api.updater.setPrefs({ autoDownload: next });
+      setAutoDownload(updated.autoDownload);
+    } catch (err) {
+      console.warn('[settings] updater setPrefs failed:', err);
+      setAutoDownload(!next);
+    }
   }, []);
 
   const openExternal = useCallback((url: string): void => {
@@ -665,6 +682,25 @@ function AboutPane(): JSX.Element {
                 {updaterState?.status === 'checking' ? '확인 중…' : '지금 확인'}
               </Button>
             </div>
+            {/* 0.6.8 — autoDownload 토글. checked 면 새 버전 발견 즉시
+                자동 다운로드. unchecked 면 사용자가 banner "지금 받기"
+                클릭 시에만 다운로드. 설치 (재시작) 는 어느 경우든 사용자
+                명시적 동의 필요. */}
+            <label className="mb-2 flex cursor-pointer items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                className="size-3.5 cursor-pointer"
+                checked={autoDownload}
+                disabled={!updaterState?.enabled}
+                onChange={(e) => {
+                  void onAutoDownloadToggle(e.target.checked);
+                }}
+                data-testid="updater-auto-download-toggle"
+              />
+              <span className="select-none">
+                새 버전 발견 시 자동으로 다운로드
+              </span>
+            </label>
             <div
               className="text-xs text-muted-foreground"
               data-testid="updater-status-text"

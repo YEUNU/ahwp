@@ -93,19 +93,48 @@ test.describe('Auto-updater banner — fake event injection', () => {
     });
   });
 
-  test('dev 모드 (FAKE env 미설정) — banner 안 보임', async () => {
+  test('dev 모드 (FAKE env 미설정) — banner 안 보임 + 토글 disabled', async () => {
     launched = await launchApp(); // env 없음 → enabled=false
     const { page } = launched;
     await page.waitForLoadState('domcontentloaded');
     // 500ms 정도 기다려도 banner 안 나타나야.
     await page.waitForTimeout(500);
     await expect(page.getByTestId('updater-banner')).toBeHidden();
-    // Settings 의 "지금 확인" 도 disabled.
+    // Settings 의 "지금 확인" 도 disabled. 0.6.8 autoDownload 토글도 disabled.
     await page.getByTestId('titlebar-settings').click();
     await page.getByTestId('settings-tab-about').click();
     await expect(page.getByTestId('updater-check-now')).toBeDisabled();
     await expect(page.getByTestId('updater-status-text')).toContainText(
       /개발 빌드/,
     );
+    await expect(
+      page.getByTestId('updater-auto-download-toggle'),
+    ).toBeDisabled();
+  });
+
+  test('0.6.8 autoDownload 토글 — Settings 정보 탭에서 켜기/끄기 동작', async () => {
+    launched = await launchApp({ env: { AHWP_UPDATER_FAKE: 'available' } });
+    const { page } = launched;
+    await page.waitForLoadState('domcontentloaded');
+
+    // banner dismiss 해서 settings 만 검증.
+    await expect(page.getByTestId('updater-banner')).toBeVisible({
+      timeout: 5_000,
+    });
+    await page.getByTestId('updater-dismiss').click();
+
+    await page.getByTestId('titlebar-settings').click();
+    await page.getByTestId('settings-tab-about').click();
+    const toggle = page.getByTestId('updater-auto-download-toggle');
+    await expect(toggle).toBeVisible();
+    // default = true (0.6.8 정책).
+    await expect(toggle).toBeChecked();
+    await expect(toggle).toBeEnabled();
+
+    // off → on 동작.
+    await toggle.uncheck();
+    await expect(toggle).not.toBeChecked();
+    await toggle.check();
+    await expect(toggle).toBeChecked();
   });
 });
