@@ -579,6 +579,11 @@ export interface AhwpApi {
    *  model-cache.json 만 삭제. 채팅 히스토리 / 세션 / API 키 / recent.json
    *  은 건드리지 않음 (사용자 데이터). 결과는 삭제 성공 / 실패 파일명. */
   clearCaches: () => Promise<{ removed: string[]; failed: string[] }>;
+  /** 0.6.12 — Windows / Linux 햄버거 메뉴. 네이티브 메뉴바가 숨겨진
+   *  플랫폼에서 TitleBar 의 햄버거 버튼이 본 API 를 호출 →
+   *  main 의 Menu.popup() 으로 메뉴 노출. macOS 는 시스템 메뉴바
+   *  사용하니까 호출 불필요. `pos` 미지정 시 마우스 위치. */
+  popupAppMenu: (pos?: { x?: number; y?: number }) => Promise<void>;
   file: FileApi;
   session: SessionApi;
   clipboard: ClipboardApi;

@@ -18,6 +18,7 @@ const api: AhwpApi = {
   getVersions: () => ipcRenderer.invoke('app:get-versions'),
   logError: (req) => ipcRenderer.invoke('app:log-error', req),
   clearCaches: () => ipcRenderer.invoke('app:clear-caches'),
+  popupAppMenu: (pos) => ipcRenderer.invoke('app-menu:popup', pos),
   onMenuAction: (handler) => {
     const listener = (_event: IpcRendererEvent, action: MenuAction) =>
       handler(action);

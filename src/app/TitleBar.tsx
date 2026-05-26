@@ -9,7 +9,13 @@
  * remain clickable. No platform branching needed at runtime — the
  * left padding is conditional via getDragPaddingLeft.
  */
-import { Moon, Settings as SettingsIcon, Sun } from 'lucide-react';
+import {
+  Menu as MenuIcon,
+  Moon,
+  Settings as SettingsIcon,
+  Sun,
+} from 'lucide-react';
+import { useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from './use-theme';
 
@@ -33,6 +39,20 @@ export function TitleBar({
   const { resolvedTheme, setTheme } = useTheme();
   const { t } = useTranslation();
   const isDark = resolvedTheme === 'dark';
+  // 0.6.12 — Windows / Linux 메뉴 접근성. macOS 는 시스템 메뉴바를
+  // 사용하니까 햄버거 버튼 숨김. titleBarStyle: 'hidden' 이 네이티브
+  // 메뉴바도 같이 숨기는 플랫폼에서만 노출.
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const onMenuClick = (): void => {
+    const btn = menuButtonRef.current;
+    if (!btn) return;
+    const rect = btn.getBoundingClientRect();
+    // 버튼 하단 시작 — context menu 가 자연스럽게 펼쳐지도록.
+    void window.api.popupAppMenu({
+      x: Math.round(rect.left),
+      y: Math.round(rect.bottom),
+    });
+  };
   return (
     <div
       data-testid="app-titlebar"
@@ -46,6 +66,20 @@ export function TitleBar({
         } as React.CSSProperties
       }
     >
+      {!isMac && (
+        <button
+          ref={menuButtonRef}
+          type="button"
+          onClick={onMenuClick}
+          title={t('titlebar.menu') || '메뉴'}
+          className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          data-testid="titlebar-menu"
+          aria-label={t('titlebar.menu') || '메뉴'}
+        >
+          <MenuIcon className="size-3.5" />
+        </button>
+      )}
       <div className="flex items-center gap-2">
         <Logo />
         <span className="font-semibold tracking-tight text-foreground">
