@@ -51,44 +51,136 @@ async function runOne(
   const viewer: ViewerHandle = viewerOrNull ?? NULL_VIEWER_STUB;
   try {
     switch (call.tool) {
+      // Phase 7 E2-finalize — 이전 viewer composite 들을 helper 로 재구현.
+      // helper 가 single serialization point — 객체 그대로 전달, ahwp 측
+      // JSON.stringify 절대 X. helper 가 없으면 (legacy mode) NULL_VIEWER_STUB
+      // throw — 사용자에게 명확한 에러.
       case 'applyHtml': {
-        viewer.applyHtmlAtCaret(call.args.html);
-        return { ok: true, tool: call.tool };
+        const ok = helper
+          ? await helper.applyHtmlAtCaret(call.args.html)
+          : (() => {
+              viewer.applyHtmlAtCaret(call.args.html);
+              return true;
+            })();
+        return ok
+          ? { ok: true, tool: call.tool }
+          : { ok: false, tool: call.tool, reason: 'applyHtml-failed' };
       }
       case 'applyAlignment': {
-        viewer.applyAlignment(call.args.align);
-        return { ok: true, tool: call.tool };
+        const ok = helper
+          ? await helper.applyAlignmentAtCaret(call.args.align)
+          : (() => {
+              viewer.applyAlignment(call.args.align);
+              return true;
+            })();
+        return ok
+          ? { ok: true, tool: call.tool }
+          : { ok: false, tool: call.tool, reason: 'applyAlignment-failed' };
       }
       case 'applyFontSize': {
-        viewer.applyFontSizePt(call.args.pt);
-        return { ok: true, tool: call.tool };
+        const ok = helper
+          ? await helper.applyFontSizePtAtCaret(call.args.pt)
+          : (() => {
+              viewer.applyFontSizePt(call.args.pt);
+              return true;
+            })();
+        return ok
+          ? { ok: true, tool: call.tool }
+          : { ok: false, tool: call.tool, reason: 'applyFontSize-failed' };
       }
       case 'applyTextColor': {
-        viewer.applyTextColor(call.args.hex);
-        return { ok: true, tool: call.tool };
+        const ok = helper
+          ? await helper.applyTextColorAtCaret(call.args.hex)
+          : (() => {
+              viewer.applyTextColor(call.args.hex);
+              return true;
+            })();
+        return ok
+          ? { ok: true, tool: call.tool }
+          : { ok: false, tool: call.tool, reason: 'applyTextColor-failed' };
       }
       case 'toggleCharFormat': {
-        viewer.toggleCharFormat(call.args.key);
-        return { ok: true, tool: call.tool };
+        const ok = helper
+          ? await helper.toggleCharFormatAtCaret(call.args.key)
+          : (() => {
+              viewer.toggleCharFormat(call.args.key);
+              return true;
+            })();
+        return ok
+          ? { ok: true, tool: call.tool }
+          : { ok: false, tool: call.tool, reason: 'toggleCharFormat-failed' };
       }
       case 'insertFootnote': {
-        viewer.insertFootnoteAtCaret(call.args.text);
-        return { ok: true, tool: call.tool };
+        const ok = helper
+          ? await helper.insertFootnoteAtCaret(call.args.text)
+          : (() => {
+              viewer.insertFootnoteAtCaret(call.args.text);
+              return true;
+            })();
+        return ok
+          ? { ok: true, tool: call.tool }
+          : { ok: false, tool: call.tool, reason: 'insertFootnote-failed' };
       }
       case 'addBookmark': {
-        viewer.addBookmarkAtCaret(call.args.name);
-        return { ok: true, tool: call.tool };
+        const ok = helper
+          ? await helper.addBookmarkAtCaret(call.args.name)
+          : (() => {
+              viewer.addBookmarkAtCaret(call.args.name);
+              return true;
+            })();
+        return ok
+          ? { ok: true, tool: call.tool }
+          : { ok: false, tool: call.tool, reason: 'addBookmark-failed' };
       }
       case 'setHeaderFooterText': {
         const a = call.args;
-        viewer.setHeaderFooterText(a.sectionIdx, a.isHeader, a.applyTo, a.text);
-        return { ok: true, tool: call.tool };
+        const ok = helper
+          ? await helper.setHeaderFooterText(
+              a.sectionIdx,
+              a.isHeader,
+              a.applyTo,
+              a.text,
+            )
+          : (() => {
+              viewer.setHeaderFooterText(
+                a.sectionIdx,
+                a.isHeader,
+                a.applyTo,
+                a.text,
+              );
+              return true;
+            })();
+        return ok
+          ? { ok: true, tool: call.tool }
+          : {
+              ok: false,
+              tool: call.tool,
+              reason: 'setHeaderFooterText-failed',
+            };
       }
       case 'applyPageDef': {
-        viewer.applyPageDef(call.args.props, call.args.sectionIdx);
-        return { ok: true, tool: call.tool };
+        // applyPageDef tool args 의 sectionIdx 는 optional (전체 적용 시
+        // undefined). helper.setPageDef 는 number 필요 — undefined 면 0.
+        const sec = call.args.sectionIdx ?? 0;
+        const ok = helper
+          ? await helper.setPageDef(sec, call.args.props)
+          : (() => {
+              viewer.applyPageDef(call.args.props, call.args.sectionIdx);
+              return true;
+            })();
+        return ok
+          ? { ok: true, tool: call.tool }
+          : { ok: false, tool: call.tool, reason: 'applyPageDef-failed' };
       }
       case 'createNamedStyle': {
+        // englishName 은 optional — undefined 면 빈 문자열.
+        const englishName = call.args.englishName ?? '';
+        if (helper) {
+          const id = await helper.createNamedStyle(call.args.name, englishName);
+          if (id <= 0)
+            return { ok: false, tool: call.tool, reason: 'createStyle-failed' };
+          return { ok: true, tool: call.tool };
+        }
         const id = viewer.createNamedStyle(
           call.args.name,
           call.args.englishName,
@@ -98,6 +190,16 @@ async function runOne(
         return { ok: true, tool: call.tool };
       }
       case 'createRectShape': {
+        if (helper) {
+          const r = await helper.createRectShapeAtCaret(
+            call.args.widthHwpunit,
+            call.args.heightHwpunit,
+            call.args.opts,
+          );
+          if (!r.ok)
+            return { ok: false, tool: call.tool, reason: 'createShape-failed' };
+          return { ok: true, tool: call.tool };
+        }
         const r = viewer.createRectShapeAtCaret(
           call.args.widthHwpunit,
           call.args.heightHwpunit,
@@ -109,14 +211,23 @@ async function runOne(
       }
       case 'applyCellStyle': {
         const a = call.args;
-        const ok = viewer.applyCellStyle(
-          a.sectionIdx,
-          a.parentParaIdx,
-          a.controlIdx,
-          a.cellIdx,
-          a.cellParaIdx,
-          a.styleId,
-        );
+        const ok = helper
+          ? await helper.applyCellStyle(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.cellIdx,
+              a.cellParaIdx,
+              a.styleId,
+            )
+          : viewer.applyCellStyle(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.cellIdx,
+              a.cellParaIdx,
+              a.styleId,
+            );
         if (!ok)
           return {
             ok: false,
@@ -399,6 +510,23 @@ async function runOne(
           : { ok: false, tool: call.tool, reason: 'applyCharFormat-failed' };
       }
       case 'applyParaProps': {
+        if (helper) {
+          const caret = await helper.getCaretPosition();
+          if (!caret)
+            return {
+              ok: false,
+              tool: call.tool,
+              reason: 'applyParaProps-no-caret',
+            };
+          const ok = await helper.applyParaProps(
+            caret.sectionIndex,
+            caret.paragraphIndex,
+            call.args.props,
+          );
+          return ok
+            ? { ok: true, tool: call.tool }
+            : { ok: false, tool: call.tool, reason: 'applyParaProps-failed' };
+        }
         viewer.applyParaProps(call.args.props);
         return { ok: true, tool: call.tool };
       }
@@ -591,36 +719,71 @@ async function runOne(
       }
       case 'setTableProperties': {
         const a = call.args;
-        viewer.setTableProps(
-          a.sectionIdx,
-          a.parentParaIdx,
-          a.controlIdx,
-          a.props,
-        );
-        return { ok: true, tool: call.tool };
+        const ok = helper
+          ? await helper.setTableProperties(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.props,
+            )
+          : (() => {
+              viewer.setTableProps(
+                a.sectionIdx,
+                a.parentParaIdx,
+                a.controlIdx,
+                a.props,
+              );
+              return true;
+            })();
+        return ok
+          ? { ok: true, tool: call.tool }
+          : { ok: false, tool: call.tool, reason: 'setTableProperties-failed' };
       }
       case 'setCellProperties': {
         const a = call.args;
-        viewer.setCellProps(
-          a.sectionIdx,
-          a.parentParaIdx,
-          a.controlIdx,
-          a.cellIdx,
-          a.props,
-        );
-        return { ok: true, tool: call.tool };
+        const ok = helper
+          ? await helper.setCellProperties(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.cellIdx,
+              a.props,
+            )
+          : (() => {
+              viewer.setCellProps(
+                a.sectionIdx,
+                a.parentParaIdx,
+                a.controlIdx,
+                a.cellIdx,
+                a.props,
+              );
+              return true;
+            })();
+        return ok
+          ? { ok: true, tool: call.tool }
+          : { ok: false, tool: call.tool, reason: 'setCellProperties-failed' };
       }
       case 'evaluateTableFormula': {
         const a = call.args;
-        const r = viewer.evaluateTableFormula(
-          a.sectionIdx,
-          a.parentParaIdx,
-          a.controlIdx,
-          a.targetRow,
-          a.targetCol,
-          a.formula,
-          a.writeResult,
-        );
+        const r = helper
+          ? await helper.evaluateTableFormula(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.targetRow,
+              a.targetCol,
+              a.formula,
+              a.writeResult,
+            )
+          : viewer.evaluateTableFormula(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.targetRow,
+              a.targetCol,
+              a.formula,
+              a.writeResult,
+            );
         if (r === null)
           return { ok: false, tool: call.tool, reason: 'formula-failed' };
         return { ok: true, tool: call.tool };
@@ -645,12 +808,19 @@ async function runOne(
       // === Phase 3 chunk 47 — image/shape ===
       case 'setPictureProperties': {
         const a = call.args;
-        const ok = viewer.setPictureProps(
-          a.sectionIdx,
-          a.parentParaIdx,
-          a.controlIdx,
-          a.props,
-        );
+        const ok = helper
+          ? await helper.setPictureProperties(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.props,
+            )
+          : (viewer.setPictureProps(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+              a.props,
+            ) as boolean);
         return ok
           ? { ok: true, tool: call.tool }
           : {
@@ -661,11 +831,17 @@ async function runOne(
       }
       case 'deletePictureControl': {
         const a = call.args;
-        const ok = viewer.deletePictureControl(
-          a.sectionIdx,
-          a.parentParaIdx,
-          a.controlIdx,
-        );
+        const ok = helper
+          ? await helper.deletePictureControl(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+            )
+          : (viewer.deletePictureControl(
+              a.sectionIdx,
+              a.parentParaIdx,
+              a.controlIdx,
+            ) as boolean);
         return ok
           ? { ok: true, tool: call.tool }
           : {
@@ -675,13 +851,15 @@ async function runOne(
             };
       }
       case 'setShapeProperties': {
+        // 이중변환 fix — wasm-bridge.setShapeProperties 가 내부적으로
+        // JSON.stringify(props) 수행. ahwp 측은 객체 그대로 전달.
         const a = call.args;
         const ok = helper
           ? await helper.invokeOk('setShapeProperties', [
               a.sectionIdx,
               a.parentParaIdx,
               a.controlIdx,
-              JSON.stringify(a.props),
+              a.props,
             ])
           : viewer.irSetShapeProperties(
               a.sectionIdx,
@@ -738,22 +916,32 @@ async function runOne(
           : { ok: false, tool: call.tool, reason: 'changeShapeZOrder-failed' };
       }
       case 'insertPicture': {
-        // ahwp 의 irInsertPicture 는 base64 데이터 처리 + 이미지 인젝션을
-        // 합친 composite. wasm-bridge 에는 그대로 매핑되는 메서드가 없어
-        // 본 case 는 D2c-3 (image / picture group) 이전까지 viewer 전용.
         const a = call.args;
-        const ok = viewer.irInsertPicture(
-          a.sectionIdx,
-          a.paragraphIdx,
-          a.charOffset,
-          a.base64Data,
-          a.widthHwpunit,
-          a.heightHwpunit,
-          a.naturalWidthPx,
-          a.naturalHeightPx,
-          a.extension,
-          a.description,
-        );
+        const ok = helper
+          ? await helper.insertPictureAtCaret(
+              a.sectionIdx,
+              a.paragraphIdx,
+              a.charOffset,
+              a.base64Data,
+              a.widthHwpunit,
+              a.heightHwpunit,
+              a.naturalWidthPx,
+              a.naturalHeightPx,
+              a.extension,
+              a.description,
+            )
+          : viewer.irInsertPicture(
+              a.sectionIdx,
+              a.paragraphIdx,
+              a.charOffset,
+              a.base64Data,
+              a.widthHwpunit,
+              a.heightHwpunit,
+              a.naturalWidthPx,
+              a.naturalHeightPx,
+              a.extension,
+              a.description,
+            );
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'insertPicture-failed' };
@@ -815,12 +1003,10 @@ async function runOne(
           : { ok: false, tool: call.tool, reason: 'setColumnDef-failed' };
       }
       case 'setSectionDef': {
+        // 이중변환 fix — wasm-bridge.setSectionDef 가 내부 JSON.stringify.
         const a = call.args;
         const ok = helper
-          ? await helper.invokeOk('setSectionDef', [
-              a.sectionIdx,
-              JSON.stringify(a.props),
-            ])
+          ? await helper.invokeOk('setSectionDef', [a.sectionIdx, a.props])
           : viewer.irSetSectionDef(a.sectionIdx, a.props);
         return ok
           ? { ok: true, tool: call.tool }
@@ -901,16 +1087,35 @@ async function runOne(
       }
       case 'deleteBookmark': {
         const a = call.args;
-        viewer.deleteBookmarkAt(a.sectionIdx, a.paragraphIdx, a.controlIdx);
-        return { ok: true, tool: call.tool };
+        const ok = helper
+          ? await helper.deleteBookmarkAt(
+              a.sectionIdx,
+              a.paragraphIdx,
+              a.controlIdx,
+            )
+          : (() => {
+              viewer.deleteBookmarkAt(
+                a.sectionIdx,
+                a.paragraphIdx,
+                a.controlIdx,
+              );
+              return true;
+            })();
+        return ok
+          ? { ok: true, tool: call.tool }
+          : { ok: false, tool: call.tool, reason: 'deleteBookmark-failed' };
       }
       // === Phase 3 chunk 51 — read-only Agent tools ===
       case 'getDocumentOutline': {
-        const data = viewer.getOutline();
+        const data = helper
+          ? await helper.getDocumentOutline()
+          : (viewer.getOutline() as unknown);
         return { ok: true, tool: call.tool, data };
       }
       case 'getDocumentSummary': {
-        const data = viewer.getDocumentSummary();
+        const data = helper
+          ? await helper.getDocumentSummary()
+          : (viewer.getDocumentSummary() as unknown);
         if (data === null)
           return {
             ok: false,
@@ -920,7 +1125,9 @@ async function runOne(
         return { ok: true, tool: call.tool, data };
       }
       case 'getStyleListJson': {
-        const data = viewer.getStyleListJson();
+        const data = helper
+          ? await helper.getStyleList()
+          : (viewer.getStyleListJson() as unknown);
         return { ok: true, tool: call.tool, data };
       }
       case 'getStyleAt': {
@@ -1123,10 +1330,12 @@ async function runOne(
       }
       case 'getEmptyFormFields': {
         const a = call.args;
-        const data = viewer.getEmptyFormFields({
-          sectionIdx: a.sectionIdx,
-          maxResults: a.maxResults,
-        });
+        const data = helper
+          ? await helper.getEmptyFormFields()
+          : (viewer.getEmptyFormFields({
+              sectionIdx: a.sectionIdx,
+              maxResults: a.maxResults,
+            }) as unknown);
         if (data === null)
           return {
             ok: false,

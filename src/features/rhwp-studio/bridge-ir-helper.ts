@@ -368,4 +368,541 @@ export class BridgeIrHelper {
       return null;
     }
   }
+
+  // ── Phase 7 E2-finalize — composite restorations ────────────────
+  //
+  // 아래 메서드들은 ahwp 가 자체 StudioViewer 시절 composite 로 제공한
+  // 동작을 BridgeIrHelper 위에 재구현. 일관성 원칙:
+  //
+  // 1) ahwp tools.ts 는 helper 메서드만 호출, **JSON.stringify 절대 X**.
+  // 2) helper 가 single serialization point — WASM 메서드가 string 받으면
+  //    helper 가 한 번만 stringify, object 받는 메서드면 그대로 passthrough.
+  // 3) wasm-bridge 의 일부 setter (setShapeProperties / setTableProperties /
+  //    setCellProperties / setPictureProperties / setPageDef / setSectionDef)
+  //    는 내부적으로 JSON.stringify 수행 — ahwp 가 추가로 안 한다.
+  //    반면 applyCharFormat / applyParaFormat 은 string 받으므로 helper 가
+  //    한 번 stringify.
+
+  /**
+   * Para shape 적용 — alignment / 들여쓰기 / 줄간격 / 단락 spacing 등.
+   * 기존 viewer.applyParaProps / applyAlignment 의 composite 동작 대체.
+   *
+   * 동작: caret 또는 selection 의 paragraph 에 applyParaFormat 호출. props
+   * 는 partial — wasm 측이 기존 값을 보존하며 덮어쓴다.
+   */
+  async applyParaProps(
+    sec: number,
+    para: number,
+    props: Record<string, unknown>,
+  ): Promise<boolean> {
+    const raw = await this.bridge.invokeWasm<string>('applyParaFormat', [
+      sec,
+      para,
+      JSON.stringify(props), // wasm-bridge.applyParaFormat 은 string 받음.
+    ]);
+    return isOk(raw);
+  }
+
+  /**
+   * Caret 위치의 paragraph 에 align 적용. tools.ts 의 applyAlignment 가
+   * 사용. helper.applyParaProps 의 1-arg shortcut.
+   */
+  async applyAlignmentAtCaret(
+    align: 'left' | 'center' | 'right' | 'justify',
+  ): Promise<boolean> {
+    const caret = await this.getCaretPosition();
+    if (!caret) return false;
+    return await this.applyParaProps(caret.sectionIndex, caret.paragraphIndex, {
+      alignment: align,
+    });
+  }
+
+  /**
+   * Caret 위치의 char shape 변경 — fontSize / textColor / bold·italic·
+   * underline. selection 이 있으면 selection 범위, 없으면 caret 의 paragraph
+   * 전체. 일관된 진입점.
+   */
+  async applyCharFormatAtCaret(
+    props: Record<string, unknown>,
+  ): Promise<boolean> {
+    const caret = await this.getCaretPosition();
+    if (!caret) return false;
+    const sec = caret.sectionIndex;
+    const para = caret.paragraphIndex;
+    const paraLen = await this.getParagraphLength(sec, para);
+    return await this.applyCharFormat(sec, para, 0, paraLen, props);
+  }
+
+  /** Font size (pt) 변경 — applyCharFormatAtCaret 의 shortcut. */
+  async applyFontSizePtAtCaret(pt: number): Promise<boolean> {
+    // HWPUNIT: 1 pt = 100 hwpunit (rhwp/core convention).
+    return await this.applyCharFormatAtCaret({ fontSize: pt * 100 });
+  }
+
+  /** Text color (hex) 변경. */
+  async applyTextColorAtCaret(hex: string): Promise<boolean> {
+    return await this.applyCharFormatAtCaret({ textColor: hex });
+  }
+
+  /**
+   * Bold / italic / underline 토글. caret 의 paragraph 의 현재 상태를
+   * 읽고 반대로 설정. composite — getCharPropertiesAt + applyCharFormat.
+   */
+  async toggleCharFormatAtCaret(
+    key: 'bold' | 'italic' | 'underline',
+  ): Promise<boolean> {
+    const caret = await this.getCaretPosition();
+    if (!caret) return false;
+    const current = await this.getCharPropertiesAt(
+      caret.sectionIndex,
+      caret.paragraphIndex,
+      caret.charOffset,
+    );
+    const next = !current?.[key];
+    return await this.applyCharFormatAtCaret({ [key]: next });
+  }
+
+  /**
+   * Page def 적용. wasm-bridge.setPageDef 는 object 받음 — JSON.stringify
+   * 안 함. 일관성 원칙 적용.
+   */
+  async setPageDef(
+    sec: number,
+    pageDef: Record<string, unknown>,
+  ): Promise<boolean> {
+    const r = await this.bridge.invokeWasm<{ ok?: boolean }>('setPageDef', [
+      sec,
+      pageDef, // object 그대로
+    ]);
+    return r?.ok === true;
+  }
+
+  /**
+   * Table props 적용. object 그대로 passthrough.
+   */
+  async setTableProperties(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    props: Record<string, unknown>,
+  ): Promise<boolean> {
+    const r = await this.bridge.invokeWasm<{ ok?: boolean }>(
+      'setTableProperties',
+      [sec, parentPara, controlIdx, props],
+    );
+    return r?.ok === true;
+  }
+
+  /** Cell props 적용. object passthrough. */
+  async setCellProperties(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    cellIdx: number,
+    props: Record<string, unknown>,
+  ): Promise<boolean> {
+    const r = await this.bridge.invokeWasm<{ ok?: boolean }>(
+      'setCellProperties',
+      [sec, parentPara, controlIdx, cellIdx, props],
+    );
+    return r?.ok === true;
+  }
+
+  /** Picture props 적용. object passthrough. */
+  async setPictureProperties(
+    sec: number,
+    para: number,
+    controlIdx: number,
+    props: Record<string, unknown>,
+  ): Promise<boolean> {
+    const r = await this.bridge.invokeWasm<{ ok?: boolean }>(
+      'setPictureProperties',
+      [sec, para, controlIdx, props],
+    );
+    return r?.ok === true;
+  }
+
+  /** Picture control 삭제. */
+  async deletePictureControl(
+    sec: number,
+    para: number,
+    controlIdx: number,
+  ): Promise<boolean> {
+    return await this.invokeOk('deletePictureControl', [sec, para, controlIdx]);
+  }
+
+  /**
+   * Bookmark 추가 (caret 위치). 기존 viewer.addBookmarkAtCaret 의 1:1.
+   */
+  async addBookmarkAtCaret(name: string): Promise<boolean> {
+    const caret = await this.getCaretPosition();
+    if (!caret) return false;
+    return await this.invokeOk('addBookmark', [
+      caret.sectionIndex,
+      caret.paragraphIndex,
+      caret.charOffset,
+      name,
+    ]);
+  }
+
+  /** Bookmark 삭제. */
+  async deleteBookmarkAt(
+    sec: number,
+    para: number,
+    controlIdx: number,
+  ): Promise<boolean> {
+    return await this.invokeOk('deleteBookmark', [sec, para, controlIdx]);
+  }
+
+  /**
+   * 머리/꼬리말 텍스트 설정. composite: createHeaderFooter (없으면 생성)
+   * + setHeaderFooterText. rhwp-studio 의 HwpDocument 가 setHeaderFooterText
+   * 메서드를 직접 제공하므로 passthrough.
+   */
+  async setHeaderFooterText(
+    sec: number,
+    isHeader: boolean,
+    applyTo: number,
+    text: string,
+  ): Promise<boolean> {
+    return await this.invokeOk('setHeaderFooterText', [
+      sec,
+      isHeader,
+      applyTo,
+      text,
+    ]);
+  }
+
+  /**
+   * Footnote 삽입 (caret 위치, 본문 텍스트 포함).
+   */
+  async insertFootnoteAtCaret(text: string): Promise<boolean> {
+    const caret = await this.getCaretPosition();
+    if (!caret) return false;
+    // wasm.doc.insertFootnote(sec, para, charOffset, text) — string 응답.
+    return await this.invokeOk('insertFootnote', [
+      caret.sectionIndex,
+      caret.paragraphIndex,
+      caret.charOffset,
+      text,
+    ]);
+  }
+
+  /**
+   * 명명 style 생성. rhwp-studio 의 createStyle 은 JSON string 받는다.
+   */
+  async createNamedStyle(name: string, englishName: string): Promise<number> {
+    const id = await this.bridge.invokeWasm<number>('createStyle', [
+      JSON.stringify({ name, englishName, type: 0 }),
+    ]);
+    return id ?? 0;
+  }
+
+  /**
+   * 직사각형 도형 생성 (caret). composite: createShapeControl.
+   */
+  async createRectShapeAtCaret(
+    widthHwpunit: number,
+    heightHwpunit: number,
+    opts: Record<string, unknown> = {},
+  ): Promise<{
+    ok: boolean;
+    paraIdx?: number;
+    controlIdx?: number;
+  }> {
+    const caret = await this.getCaretPosition();
+    if (!caret) return { ok: false };
+    const params = {
+      type: 'rect',
+      sec: caret.sectionIndex,
+      para: caret.paragraphIndex,
+      charOffset: caret.charOffset,
+      widthHwpunit,
+      heightHwpunit,
+      ...opts,
+    };
+    const r = await this.bridge.invokeWasm<{
+      ok?: boolean;
+      paraIdx?: number;
+      controlIdx?: number;
+    }>('createShapeControl', [params]);
+    return {
+      ok: r?.ok === true,
+      paraIdx: r?.paraIdx,
+      controlIdx: r?.controlIdx,
+    };
+  }
+
+  /** 셀에 style 적용. */
+  async applyCellStyle(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    cellIdx: number,
+    cellParaIdx: number,
+    styleId: number,
+  ): Promise<boolean> {
+    const r = await this.bridge.invokeWasm<{ ok?: boolean }>('applyCellStyle', [
+      sec,
+      parentPara,
+      controlIdx,
+      cellIdx,
+      cellParaIdx,
+      styleId,
+    ]);
+    return r?.ok === true;
+  }
+
+  /** 표 공식 평가. */
+  async evaluateTableFormula(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    targetRow: number,
+    targetCol: number,
+    formula: string,
+    writeResult: boolean,
+  ): Promise<unknown> {
+    return await this.invokeRead('evaluateTableFormula', [
+      sec,
+      parentPara,
+      controlIdx,
+      targetRow,
+      targetCol,
+      formula,
+      writeResult,
+    ]);
+  }
+
+  /** Style list 조회 — `getStyleListJson` 은 wasm-bridge wrapper 가 parsed. */
+  async getStyleList(): Promise<unknown[]> {
+    const r = await this.invokeRead<unknown[]>('getStyleListJson', []);
+    return r ?? [];
+  }
+
+  /**
+   * 문서 전체 outline (heading 단락) 추출 — composite.
+   * 각 section / paragraph 의 paraProps 에서 styleId 가 "제목 N" 류면
+   * 포함. ahwp 가 자체적으로 합치는 composite 라 helper 가 책임.
+   */
+  async getDocumentOutline(): Promise<
+    {
+      sectionIndex: number;
+      paragraphIndex: number;
+      level: number;
+      text: string;
+    }[]
+  > {
+    const out: {
+      sectionIndex: number;
+      paragraphIndex: number;
+      level: number;
+      text: string;
+    }[] = [];
+    const sectionCount = await this.getSectionCount();
+    const styleList = await this.getStyleList();
+    // styleId → heading level (1..9) 매핑. style 이름이 "제목 N" / "Heading N"
+    // 패턴이면 level=N.
+    const headingLevel = new Map<number, number>();
+    for (const s of styleList) {
+      if (!s || typeof s !== 'object') continue;
+      const obj = s as { id?: number; name?: string; englishName?: string };
+      const id = obj.id;
+      const nm = String(obj.name ?? obj.englishName ?? '');
+      const m = nm.match(/(?:제목|개요|Heading)\s*(\d)/i);
+      if (typeof id === 'number' && m) {
+        headingLevel.set(id, Number(m[1]));
+      }
+    }
+    for (let s = 0; s < sectionCount; s++) {
+      const paraCount = await this.getParagraphCount(s);
+      for (let p = 0; p < paraCount; p++) {
+        const props = await this.getParaPropertiesAt(s, p);
+        const styleId =
+          typeof props?.styleId === 'number' ? (props.styleId as number) : -1;
+        const lvl = headingLevel.get(styleId);
+        if (!lvl) continue;
+        const lenN = await this.getParagraphLength(s, p);
+        const text = await this.bridge.invokeWasm<string>('getTextRange', [
+          s,
+          p,
+          0,
+          lenN,
+        ]);
+        out.push({
+          sectionIndex: s,
+          paragraphIndex: p,
+          level: lvl,
+          text: text.trim(),
+        });
+      }
+    }
+    return out;
+  }
+
+  /**
+   * 짧은 요약 — 첫 paragraph 들의 텍스트를 모은 string. ahwp 의
+   * getDocumentSummary 와 동일 개념의 composite.
+   */
+  async getDocumentSummary(maxParas = 20, maxBytes = 2048): Promise<string> {
+    const sectionCount = await this.getSectionCount();
+    const parts: string[] = [];
+    let count = 0;
+    outer: for (let s = 0; s < sectionCount; s++) {
+      const paraCount = await this.getParagraphCount(s);
+      for (let p = 0; p < paraCount; p++) {
+        if (count >= maxParas) break outer;
+        const lenN = await this.getParagraphLength(s, p);
+        if (lenN === 0) continue;
+        const text = await this.bridge.invokeWasm<string>('getTextRange', [
+          s,
+          p,
+          0,
+          lenN,
+        ]);
+        const t = text.trim();
+        if (t.length === 0) continue;
+        parts.push(t);
+        count++;
+      }
+    }
+    const out = parts.join('\n');
+    const enc = new TextEncoder().encode(out);
+    if (enc.length > maxBytes) {
+      return new TextDecoder().decode(enc.slice(0, maxBytes)) + '…[trimmed]';
+    }
+    return out;
+  }
+
+  /**
+   * HTML 블록을 caret 위치에 삽입 (composite). ahwp 의 chunk 99
+   * follow-up 의 applyHtmlAtCaret 와 동일 개념. rhwp-studio 에 직접
+   * 매핑되는 wasm 메서드 없음 → 단순화: `applyHtml` 를 raw doc method
+   * 로 호출 (있다면). 없으면 throw → 호출자가 catch.
+   *
+   * Note: rhwp-studio 가 HTML import 를 자체 UI 로 더 정교히 처리.
+   * 본 메서드는 AI tool 호환용 minimum 구현.
+   */
+  async applyHtmlAtCaret(html: string): Promise<boolean> {
+    // Try rhwp-core 의 pasteHtml. selection 없으면 caret 위치.
+    const caret = await this.getCaretPosition();
+    if (!caret) return false;
+    try {
+      const r = await this.bridge.invokeWasm<unknown>('pasteHtml', [
+        caret.sectionIndex,
+        caret.paragraphIndex,
+        caret.charOffset,
+        html,
+      ]);
+      if (r === null || r === undefined) return false;
+      if (typeof r === 'object' && 'ok' in (r as object))
+        return (r as { ok?: boolean }).ok !== false;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 양식의 빈 필드 (placeholder 가 들어있는 cell) 스캔. rhwp-studio
+   * 가 자체 form-field detection 을 제공하지 않으므로 ahwp composite
+   * 로 셀 텍스트를 훑어 빈 셀 / placeholder 셀을 찾는다.
+   */
+  async getEmptyFormFields(): Promise<{
+    cellFields: {
+      sectionIndex: number;
+      parentParaIdx: number;
+      controlIdx: number;
+      cellIdx: number;
+      cellParaIdx: number;
+      currentText: string;
+    }[];
+    truncated: boolean;
+  }> {
+    // 본 sweep 은 데이터 비용이 큼 (셀 N x 평균 길이) — 단순 구현으로
+    // 첫 section 의 모든 paragraph 의 control 0 cell 들만 훑는다.
+    // 추후 더 정교한 구현 필요 시 rhwp-studio 측 helper 로 옮길 것.
+    const cellFields: {
+      sectionIndex: number;
+      parentParaIdx: number;
+      controlIdx: number;
+      cellIdx: number;
+      cellParaIdx: number;
+      currentText: string;
+    }[] = [];
+    const sectionCount = await this.getSectionCount();
+    let truncated = false;
+    outer: for (let s = 0; s < sectionCount && !truncated; s++) {
+      const paraCount = await this.getParagraphCount(s);
+      for (let p = 0; p < paraCount; p++) {
+        if (cellFields.length >= 100) {
+          truncated = true;
+          break outer;
+        }
+        // getCellInfo (controlIdx=0) — table 이 없으면 throw, 무시.
+        try {
+          const info = await this.invokeRead<{
+            rowCount?: number;
+            colCount?: number;
+          }>('getCellInfo', [s, p, 0, 0]);
+          if (!info) continue;
+          const cellTotal = (info.rowCount ?? 0) * (info.colCount ?? 0);
+          for (let c = 0; c < cellTotal; c++) {
+            const txt = await this.getTextInCell(s, p, 0, c, 0, 0, 1024);
+            const isEmpty =
+              txt === '' ||
+              /^[\s_]*$/.test(txt) ||
+              /placeholder|<.*>/i.test(txt);
+            if (isEmpty) {
+              cellFields.push({
+                sectionIndex: s,
+                parentParaIdx: p,
+                controlIdx: 0,
+                cellIdx: c,
+                cellParaIdx: 0,
+                currentText: txt,
+              });
+            }
+            if (cellFields.length >= 100) {
+              truncated = true;
+              break outer;
+            }
+          }
+        } catch {
+          /* not a table para — skip */
+        }
+      }
+    }
+    return { cellFields, truncated };
+  }
+
+  /**
+   * 이미지 (base64) 삽입. rhwp-studio 의 `insertPicture` raw doc 메서드
+   * 가 base64 직접 받을 수 있으면 1-shot. 아니면 caller 가 추가 처리.
+   */
+  async insertPictureAtCaret(
+    sec: number,
+    para: number,
+    charOffset: number,
+    base64Data: string,
+    widthHwpunit: number,
+    heightHwpunit: number,
+    naturalWidthPx: number,
+    naturalHeightPx: number,
+    extension: string,
+    description: string,
+  ): Promise<boolean> {
+    return await this.invokeOk('insertPicture', [
+      sec,
+      para,
+      charOffset,
+      base64Data,
+      widthHwpunit,
+      heightHwpunit,
+      naturalWidthPx,
+      naturalHeightPx,
+      extension,
+      description,
+    ]);
+  }
 }
