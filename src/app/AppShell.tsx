@@ -1189,7 +1189,26 @@ export default function AppShell() {
                       return [];
                     }
                     const before = v.snapshotParagraphs();
-                    const results = await runTools(v, items);
+                    // Phase E1 — `window.__rhwpDebug.getBridge()` 가
+                    // non-null 이면 AI tools 의 ir* 호출이 bridge 경유로
+                    // 동작 (debug-surface 가 RhwpEditor 를 마운트한 상태).
+                    // 본 UI 통합 (탭/뷰어 자체 교체) 은 후속 청크.
+                    const dbg = (
+                      window as unknown as {
+                        __rhwpDebug?: {
+                          getBridge():
+                            | import('@/lib/rhwp-bridge').RhwpBridge
+                            | null;
+                        };
+                      }
+                    ).__rhwpDebug;
+                    const bridge = dbg?.getBridge() ?? null;
+                    const helper = bridge
+                      ? new (
+                          await import('@/features/rhwp-studio/bridge-ir-helper')
+                        ).BridgeIrHelper(bridge)
+                      : null;
+                    const results = await runTools(v, items, helper);
                     v.markChangedParagraphsSince(before);
                     return results;
                   }}
