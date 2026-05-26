@@ -11,6 +11,7 @@ import { registerFileIpc, teardownTabsWatcher } from './ipc/file';
 import { registerFolderIpc, shutdownFolderIpc } from './ipc/folder';
 import { registerSecretsIpc } from './ipc/secrets';
 import { registerSessionIpc } from './ipc/session';
+import { initUpdater } from './ipc/updater';
 import { buildAppMenu } from './menu';
 import {
   registerRhwpStudioProtocol,
@@ -209,51 +210,11 @@ void app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 
-  // chunk 53 — electron-updater + GitHub Releases. Packaged 빌드 만 활성
-  // (dev 모드에선 latest.yml 도 없고 publish 채널도 미설정). 5초 후
-  // checkForUpdatesAndNotify — sandbox renderer 와 무관하게 main 에서
-  // background fetch + 사용자에게 OS native notification 으로 알림.
-  // 다운로드는 사용자가 직접 트리거 (UpdateAvailable 이벤트는 dialog 로
-  // 보여주고 OK 시 downloadUpdate). install 은 next launch 시 자동.
-  if (app.isPackaged && process.env.AHWP_DISABLE_UPDATER !== '1') {
-    void initAutoUpdater();
-  }
+  // 0.6.2 — auto-updater 의 main-side state machine + IPC 등록. dev /
+  // AHWP_DISABLE_UPDATER=1 시 enabled=false 로 noop, packaged 빌드만 실제
+  // GitHub Releases 와 통신. 자세한 동작: electron/ipc/updater.ts.
+  initUpdater();
 });
-
-async function initAutoUpdater(): Promise<void> {
-  try {
-    const { autoUpdater } = await import('electron-updater');
-    autoUpdater.autoDownload = false; // 사용자 확인 후 download
-    autoUpdater.autoInstallOnAppQuit = true;
-    autoUpdater.on('error', (err: Error) => {
-      console.warn('[updater] error:', err.message);
-    });
-    autoUpdater.on('update-available', (info: { version: string }) => {
-      console.log('[updater] update available:', info.version);
-    });
-    autoUpdater.on('update-not-available', () => {
-      console.log('[updater] no update available');
-    });
-    autoUpdater.on(
-      'download-progress',
-      (p: { percent: number; bytesPerSecond: number }) => {
-        console.log(
-          `[updater] download ${p.percent.toFixed(1)}% (${(p.bytesPerSecond / 1024).toFixed(0)} KB/s)`,
-        );
-      },
-    );
-    autoUpdater.on('update-downloaded', () => {
-      console.log('[updater] downloaded — will install on next quit');
-    });
-    setTimeout(() => {
-      void autoUpdater.checkForUpdates().catch((err) => {
-        console.warn('[updater] checkForUpdates failed:', err);
-      });
-    }, 5000);
-  } catch (err) {
-    console.warn('[updater] init failed:', err);
-  }
-}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

@@ -6,6 +6,43 @@
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-05-26
+
+### Added — Auto-updater UI 완성
+
+`electron-updater` + GitHub Releases publish 인프라는 0.3.x 부터 wire 되어
+있었지만 사용자에게 보이는 UI 는 비어있었음 (모든 이벤트가 console.log 만).
+0.6.2 에서 UX 완성.
+
+**동작 흐름** (packaged 빌드 한정):
+
+1. 앱 시작 5초 후 `autoUpdater.checkForUpdates()` 자동 호출.
+2. 새 버전 있으면 TitleBar 아래 inline banner: "v0.7.0 업데이트 있음
+   [지금 받기]" 노출.
+3. "지금 받기" 클릭 시 다운로드 진행률 banner (progress bar + animate-pulse).
+4. 다운로드 끝나면 "재시작해서 설치" 버튼 노출.
+5. 사용자 클릭 시 `autoUpdater.quitAndInstall()` → 앱 재시작 + 자동 설치.
+6. "나중에" 는 단순 hide — 다음 launch 때 다시 알림 (영구 dismiss 없음 —
+   보안 패치 누락 위험).
+
+**컴포넌트 / IPC**:
+
+- `electron/ipc/updater.ts` — main-side state machine. raw `electron-updater`
+  이벤트를 `UpdaterState` 로 normalize, 모든 BrowserWindow 에 broadcast.
+- `shared/api.ts` — `UpdaterApi` (`getState` / `checkNow` / `downloadUpdate`
+  / `quitAndInstall` / `onEvent`).
+- `src/features/updater/UpdateBanner.tsx` — TitleBar 아래 inline banner.
+  4 visible state (available / downloading / downloaded / error).
+- `src/features/settings/SettingsDialog.tsx` — "정보" 탭에 "지금 확인" 버튼
+  - 현 상태 텍스트.
+
+**Dev 모드 보호**: `!app.isPackaged` 또는 `AHWP_DISABLE_UPDATER=1` 면
+`enabled=false` 로 모든 액션이 noop. dev 에선 latest.yml 도 없고 publish
+채널도 안 잡혀 있어 호출 시 false-positive 에러가 나는 걸 방지.
+
+**Fake event mode (e2e)**: `AHWP_UPDATER_FAKE=available|full` env 로 가짜
+이벤트 sequence inject — 5 e2e 케이스가 UI state machine 회귀 가드.
+
 ## [0.6.1] - 2026-05-26
 
 ### Hardened — 0.6.0 mixed-format workspace 검증 + UX 폴리시

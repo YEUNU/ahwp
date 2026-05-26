@@ -540,14 +540,26 @@ function ShortcutsPane(): JSX.Element {
 
 function AboutPane(): JSX.Element {
   const [versions, setVersions] = useState<AppVersions | null>(null);
+  // 0.6.2 — updater state 미러. Settings 가 열려있는 동안 라이브로 업데이트.
+  // useUpdater 같은 별도 hook 으로 떼낼 만큼 복잡하진 않아 inline.
+  const [updaterState, setUpdaterState] = useState<
+    import('@shared/api').UpdaterState | null
+  >(null);
 
   useEffect(() => {
     let cancelled = false;
     void window.api.getVersions().then((v) => {
       if (!cancelled) setVersions(v);
     });
+    void window.api.updater.getState().then((s) => {
+      if (!cancelled) setUpdaterState(s);
+    });
+    const off = window.api.updater.onEvent((s) => {
+      if (!cancelled) setUpdaterState(s);
+    });
     return () => {
       cancelled = true;
+      off();
     };
   }, []);
 
@@ -626,6 +638,72 @@ function AboutPane(): JSX.Element {
             >
               Issues
             </Button>
+          </div>
+
+          {/* 0.6.2 — 수동 업데이트 확인. 비활성 (dev / packaged 외) 일 땐
+              버튼 disable + 안내 문구. packaged 빌드에서만 실 동작. */}
+          <div
+            className="border-t border-border pt-3"
+            data-testid="settings-updater"
+          >
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-sm font-medium">업데이트</span>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={
+                  !updaterState?.enabled ||
+                  updaterState.status === 'checking' ||
+                  updaterState.status === 'downloading'
+                }
+                onClick={() => {
+                  void window.api.updater.checkNow();
+                }}
+                data-testid="updater-check-now"
+              >
+                {updaterState?.status === 'checking' ? '확인 중…' : '지금 확인'}
+              </Button>
+            </div>
+            <div
+              className="text-xs text-muted-foreground"
+              data-testid="updater-status-text"
+            >
+              {!updaterState?.enabled &&
+                '개발 빌드에서는 자동 업데이트가 비활성화되어 있습니다.'}
+              {updaterState?.enabled && updaterState.status === 'idle' && (
+                <>앱 시작 시 자동으로 업데이트를 확인합니다.</>
+              )}
+              {updaterState?.enabled &&
+                updaterState.status === 'up-to-date' && (
+                  <>최신 버전을 사용 중입니다.</>
+                )}
+              {updaterState?.enabled && updaterState.status === 'available' && (
+                <>
+                  새 버전 <strong>{updaterState.version ?? ''}</strong> 이
+                  있습니다. 상단 배너에서 다운로드하세요.
+                </>
+              )}
+              {updaterState?.enabled &&
+                updaterState.status === 'downloading' && (
+                  <>
+                    다운로드 중 …{' '}
+                    {Math.round(updaterState.progressPercent ?? 0)}%
+                  </>
+                )}
+              {updaterState?.enabled &&
+                updaterState.status === 'downloaded' && (
+                  <>
+                    <strong>{updaterState.version ?? ''}</strong> 설치 준비
+                    완료. 재시작 시 적용됩니다.
+                  </>
+                )}
+              {updaterState?.enabled && updaterState.status === 'error' && (
+                <span className="text-red-600 dark:text-red-400">
+                  업데이트 확인 실패: {updaterState.errorMessage}
+                </span>
+              )}
+            </div>
           </div>
         </section>
       </PaneBody>

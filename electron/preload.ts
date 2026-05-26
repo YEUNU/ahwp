@@ -169,6 +169,22 @@ const api: AhwpApi = {
       ipcRenderer.invoke('chat-history:rename', { id, title }),
     delete: (id) => ipcRenderer.invoke('chat-history:delete', { id }),
   },
+  updater: {
+    getState: () => ipcRenderer.invoke('updater:get-state'),
+    checkNow: () => ipcRenderer.invoke('updater:check-now'),
+    downloadUpdate: () => ipcRenderer.invoke('updater:download'),
+    quitAndInstall: () => ipcRenderer.invoke('updater:quit-and-install'),
+    onEvent: (handler) => {
+      const listener = (
+        _event: IpcRendererEvent,
+        state: import('../shared/api').UpdaterState,
+      ) => handler(state);
+      ipcRenderer.on('updater:event', listener);
+      return () => {
+        ipcRenderer.off('updater:event', listener);
+      };
+    },
+  },
 };
 
 contextBridge.exposeInMainWorld('api', api);
