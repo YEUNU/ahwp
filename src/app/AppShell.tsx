@@ -37,6 +37,9 @@ import { PageSetupDialog } from '@/features/studio/PageSetupDialog';
 import { ShapeDialog } from '@/features/studio/ShapeDialog';
 import { OutlineSidebar } from '@/features/studio/OutlineSidebar';
 import { StudioViewer } from '@/features/studio/StudioViewer';
+// Phase 7 E2 — RhwpEditor 가용 옵션. localStorage 'ahwp:use-rhwp-editor'
+// 가 '1' 일 때 StudioViewer 대신 마운트.
+import { RhwpEditor } from '@/features/rhwp-studio/RhwpEditor';
 import { VersionHistoryDialog } from '@/features/studio/VersionHistoryDialog';
 import { StyleManagerDialog } from '@/features/studio/StyleManagerDialog';
 import { CharFormatDialog } from '@/features/studio/CharFormatDialog';
@@ -143,6 +146,19 @@ export default function AppShell() {
   // sub-component (welcome screen, future help button) can also
   // trigger it.
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // Phase 7 E2a — localStorage flag 'ahwp:use-rhwp-editor' 가 '1' 이면
+  // StudioViewer 대신 RhwpEditor 마운트. 본 모드에선 AppShell 의
+  // viewer-dependent toolbar / dialog / menu action 들이 동작 안 함
+  // (rhwp-studio iframe 이 자체 UI 제공). dev / e2e 검증 용도. 정식
+  // UI 통합은 E2 의 나머지 단계 (~5000 라인 폐기 + 통합) 에서.
+  // useState 초기값은 즉시 결정 — flag 변경 시 페이지 reload 필요.
+  const [useRhwpEditor] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem('ahwp:use-rhwp-editor') === '1';
+    } catch {
+      return false;
+    }
+  });
   // chunk 56 — ChatPanel imperative handle for cross-pane AI triggers
   // (right-click → AI command). The viewer's selection menu calls
   // `chatRef.current.prefillAndSend(prompt)` to fire a chat turn.
@@ -1019,60 +1035,92 @@ export default function AppShell() {
                           data-tab-key={tab.key}
                           data-tab-active={isActive ? 'true' : 'false'}
                         >
-                          <StudioViewer
-                            path={tab.path}
-                            isActive={isActive}
-                            onDirtyChange={dirtyCallbacks.get(tab.key)}
-                            ref={refCallbackFor(tab.key)}
-                            showRuler={showRuler}
-                            onOpenTableProps={() => setTablePropsOpen(true)}
-                            onOpenCellProps={() => setCellPropsOpen(true)}
-                            onOpenCellStylePicker={() =>
-                              setCellStylePickerOpen(true)
-                            }
-                            onAiCommand={(prompt) => {
-                              // chunk 56 — viewer's selection menu fires a
-                              // composed AI prompt; we forward to the
-                              // ChatPanel imperative handle so the request
-                              // streams immediately. Skip if no handle yet
-                              // (panel not mounted) — that should never
-                              // happen at this point of the flow.
-                              chatRef.current?.prefillAndSend(prompt);
-                            }}
-                            onOpenFormula={() => {
-                              // Resolve the right-clicked cell coords into
-                              // a row/col pair via the table dimensions
-                              // exposed on the active viewer. The cell
-                              // context menu has already moved caret into
-                              // the cell, so getActiveCellContext returns
-                              // the click's coordinates.
-                              const v = activeViewerRef();
-                              if (!v) return;
-                              const cell = v.getActiveCellContext();
-                              if (!cell) return;
-                              const tableProps = v.getTableProps(
-                                cell.sectionIndex,
-                                cell.parentParaIdx,
-                                cell.controlIdx,
-                              );
-                              const colCount =
-                                typeof tableProps?.['colCount'] === 'number'
-                                  ? (tableProps['colCount'] as number)
-                                  : 1;
-                              const targetRow = Math.floor(
-                                cell.cellIdx / colCount,
-                              );
-                              const targetCol = cell.cellIdx % colCount;
-                              setFormulaCtx({
-                                sectionIndex: cell.sectionIndex,
-                                parentParaIdx: cell.parentParaIdx,
-                                controlIdx: cell.controlIdx,
-                                targetRow,
-                                targetCol,
-                              });
-                              setFormulaOpen(true);
-                            }}
-                          />
+                          {useRhwpEditor ? (
+                            // Phase 7 E2a — rhwp-studio iframe 마운트. AI
+                            // tool 라우팅은 E1 wiring 으로 자동 (bridge 가
+                            // mount 되면 __rhwpDebug.getBridge() non-null).
+                            // 단, AppShell 의 viewer-dependent toolbar /
+                            // 다이얼로그 / menu action 은 rhwp-mode 에선
+                            // 동작 안 함 — rhwp-studio 가 자체 UI 제공.
+                            // 본 청크는 마운트 + 자동 doc load 만 검증.
+                            <RhwpEditor
+                              key={tab.key}
+                              onReady={async (bridge) => {
+                                try {
+                                  const buf = await window.api.file.read(
+                                    tab.path,
+                                  );
+                                  await bridge.loadFile(buf, tab.path, true);
+                                } catch (err) {
+                                  console.error(
+                                    '[AppShell] rhwp-editor doc load failed:',
+                                    err,
+                                  );
+                                }
+                              }}
+                              onError={(err) => {
+                                console.warn(
+                                  '[AppShell] RhwpEditor error:',
+                                  err,
+                                );
+                              }}
+                            />
+                          ) : (
+                            <StudioViewer
+                              path={tab.path}
+                              isActive={isActive}
+                              onDirtyChange={dirtyCallbacks.get(tab.key)}
+                              ref={refCallbackFor(tab.key)}
+                              showRuler={showRuler}
+                              onOpenTableProps={() => setTablePropsOpen(true)}
+                              onOpenCellProps={() => setCellPropsOpen(true)}
+                              onOpenCellStylePicker={() =>
+                                setCellStylePickerOpen(true)
+                              }
+                              onAiCommand={(prompt) => {
+                                // chunk 56 — viewer's selection menu fires a
+                                // composed AI prompt; we forward to the
+                                // ChatPanel imperative handle so the request
+                                // streams immediately. Skip if no handle yet
+                                // (panel not mounted) — that should never
+                                // happen at this point of the flow.
+                                chatRef.current?.prefillAndSend(prompt);
+                              }}
+                              onOpenFormula={() => {
+                                // Resolve the right-clicked cell coords into
+                                // a row/col pair via the table dimensions
+                                // exposed on the active viewer. The cell
+                                // context menu has already moved caret into
+                                // the cell, so getActiveCellContext returns
+                                // the click's coordinates.
+                                const v = activeViewerRef();
+                                if (!v) return;
+                                const cell = v.getActiveCellContext();
+                                if (!cell) return;
+                                const tableProps = v.getTableProps(
+                                  cell.sectionIndex,
+                                  cell.parentParaIdx,
+                                  cell.controlIdx,
+                                );
+                                const colCount =
+                                  typeof tableProps?.['colCount'] === 'number'
+                                    ? (tableProps['colCount'] as number)
+                                    : 1;
+                                const targetRow = Math.floor(
+                                  cell.cellIdx / colCount,
+                                );
+                                const targetCol = cell.cellIdx % colCount;
+                                setFormulaCtx({
+                                  sectionIndex: cell.sectionIndex,
+                                  parentParaIdx: cell.parentParaIdx,
+                                  controlIdx: cell.controlIdx,
+                                  targetRow,
+                                  targetCol,
+                                });
+                                setFormulaOpen(true);
+                              }}
+                            />
+                          )}
                         </div>
                       );
                     })
