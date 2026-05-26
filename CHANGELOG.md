@@ -6,6 +6,27 @@
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-05-26
+
+### Fixed — Diff Viewer patches 가 rhwp-mode 에서 실제 IR 까지 도달
+
+`onApplyPatches` 핸들러가 0.5.0 의 StudioViewer 폐기 후에도 `activeViewerRef()`
+경로를 호출 → rhwp-mode 에선 null 이라 silently no-op. ahwp-patches 블록
+auto-accept 가 status='accepted' 로 토글되었지만 실제 문서 텍스트는
+바뀌지 않는 회귀가 있었음. AppShell.applyPatches 를 `BridgeIrHelper` 기반
+async 핸들러로 재배선 — body / cell 양쪽 패치, additionFormat (typed +
+lib passthrough) 모두 helper.deleteRange + insertText + applyCharFormat
+(cell 은 invokeOk('\*InCell')) 시퀀스로 처리.
+
+사용자 입장에선 "사업비 +100만원 해줘" 같은 자연어 + LLM 의 multi-step
+(search → read → compute → patch) 워크플로가 실제로 동작. 새 live OpenAI
+e2e (`chat-rhwp-mode-live.spec.ts` — `context-aware multi-step`) 가 회귀
+방지.
+
+ChatPanel 의 onApplyPatches 시그니처도 `Promise<boolean[]>` 으로 변경
+(bridge ops 가 async). handlePatchAcceptIdx / AcceptAll / auto-accept
+모두 await.
+
 ## [0.5.1] - 2026-05-26
 
 ### Fixed — 24 broken AI tools 복원 + 이중변환 bug fix
