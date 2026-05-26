@@ -8,6 +8,7 @@
  */
 import { useCallback, type Dispatch, type SetStateAction } from 'react';
 import { correctExtension } from '@shared/format';
+import { isEditable, isReadable } from '@shared/file-formats';
 import type { ViewerHandle } from '@/features/chat/viewer-handle-types';
 import type { TabState } from './useTabManagement';
 
@@ -55,10 +56,24 @@ export function useSaveFlow(opts: UseSaveFlowOptions): SaveFlowHandle {
 
   const openByPath = useCallback(
     async (path: string) => {
-      const result = await window.api.file.openByPath(path);
-      if (result) openTab(result.path);
+      // 0.6.0 — editable (.hwp/.hwpx) 만 탭으로 mount. PDF / DOCX / Excel /
+      // 등 readable-but-non-editable 은 OS 기본 앱으로 위임 (사용자가 트리
+      // 에서 클릭했을 때 자연스러운 동작 — read-only viewer 미제공).
+      if (isEditable(path)) {
+        const result = await window.api.file.openByPath(path);
+        if (result) openTab(result.path);
+        return;
+      }
+      if (isReadable(path)) {
+        // shell.openPath — 성공 시 빈 문자열, fail 시 에러 메시지. 사용자
+        // 에게 보일 만한 문구가 있으면 notice 로 노출.
+        const err = await window.api.file.openExternal(path);
+        if (err) showNotice(`외부 앱에서 열기 실패: ${err}`, 'warn');
+        return;
+      }
+      // Unknown / non-readable — silently no-op (binary / unknown 확장자).
     },
-    [openTab],
+    [openTab, showNotice],
   );
 
   const newDocument = useCallback(async () => {

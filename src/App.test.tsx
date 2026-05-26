@@ -45,6 +45,7 @@ describe('App', () => {
         createVersion: vi.fn().mockResolvedValue(undefined),
         listVersions: vi.fn().mockResolvedValue([]),
         readVersion: vi.fn().mockResolvedValue(null),
+        openExternal: vi.fn().mockResolvedValue(''),
       },
       session: {
         get: vi.fn().mockResolvedValue({ lastActivePath: null }),
