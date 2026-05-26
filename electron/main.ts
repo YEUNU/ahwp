@@ -187,6 +187,28 @@ function registerIpcHandlers(): void {
   registerSecretsIpc();
   registerAiIpc();
   registerChatHistoryIpc();
+
+  // 0.6.12 — Windows / Linux 메뉴 접근성. titleBarStyle: 'hidden' 이
+  // 네이티브 메뉴바도 같이 숨김 → 사용자가 File / Edit / View / 설정
+  // 등에 접근 불가. TitleBar 의 햄버거 버튼이 본 IPC 를 호출하면
+  // Menu.getApplicationMenu().popup({ window }) 로 정의된 메뉴를
+  // context-menu 식으로 표시. 메뉴 정의 자체는 electron/menu.ts 단일
+  // source.
+  ipcMain.handle(
+    'app-menu:popup',
+    async (_event, pos?: { x?: number; y?: number }): Promise<void> => {
+      const menu = Menu.getApplicationMenu();
+      if (!menu) return;
+      const window =
+        BrowserWindow.getFocusedWindow() ??
+        BrowserWindow.getAllWindows().at(-1) ??
+        null;
+      if (!window) return;
+      const x = typeof pos?.x === 'number' ? Math.round(pos.x) : undefined;
+      const y = typeof pos?.y === 'number' ? Math.round(pos.y) : undefined;
+      menu.popup({ window, x, y });
+    },
+  );
 }
 
 void app.whenReady().then(() => {

@@ -6,6 +6,27 @@
 
 ## [Unreleased]
 
+## [0.6.12] - 2026-05-26
+
+### Fixed — Windows / Linux 메뉴 접근 불가 (햄버거 버튼 추가)
+
+사용자 보고: "Windows 에서는 설정이나 이런것을 선택할 수가 없어".
+원인: `titleBarStyle: 'hidden'` (Win/Linux) 가 네이티브 메뉴바도 같이
+숨김 → 커스텀 TitleBar 의 Theme + Settings 버튼 2개만 노출. 파일 /
+편집 / 서식 / 보기 / 도움말 메뉴 (총 50+ 항목) 에 접근 길 없음.
+macOS 는 시스템 메뉴바 사용해서 영향 없음.
+
+**Fix**: TitleBar 좌측에 햄버거 버튼 (`≡`) 추가, **non-Mac 한정 노출**.
+클릭 시 `Menu.popup()` 으로 정의된 메뉴를 context-menu 식으로 펼침.
+메뉴 정의 자체는 `electron/menu.ts` 단일 source — 중복 X.
+
+**신규 IPC**: `app-menu:popup` (`window.api.popupAppMenu`).
+**testid**: `titlebar-menu` (e2e 회귀 가드).
+
+이제 Windows 사용자도 파일 → 새 문서 / 열기 / 저장, 편집 → 실행취소 /
+찾기 / 바꾸기, 서식 → 진하게 / 기울임, 보기 → 페이지설정 / 머리말꼬리말 /
+설정 / 정보 등 모든 메뉴 항목에 정상 접근 가능.
+
 ## [0.6.11] - 2026-05-26
 
 ### Fixed — macOS auto-update "Code signature did not pass validation"
