@@ -6,6 +6,27 @@
 
 ## [Unreleased]
 
+## [0.6.8] - 2026-05-26
+
+### Added — 자동 다운로드 기본 활성화 + Settings 토글
+
+이전 (0.6.7 까지) 은 새 버전 발견 시 banner 의 "지금 받기" 클릭 필요
+했지만, 이제 **자동으로 백그라운드 다운로드**. 사용자가 작업 중이어도
+네트워크 사용량만 소비되고 작업은 중단되지 않음. 다운로드 완료 시
+banner 의 "재시작해서 설치" 버튼이 나오면 그때 사용자가 결정.
+
+**옵션**: Settings → 정보 탭 → "새 버전 발견 시 자동으로 다운로드"
+체크박스. 모바일 테더링 / 좌석 대역폭 제한 환경에선 off 가능 — off 면
+이전 동작 (banner 의 "지금 받기" 클릭 필요) 으로 회귀.
+
+**저장**: `userData/updater-prefs.json`. 영구 + 즉시 main 의 autoUpdater
+인스턴스에 live 반영 (다음 launch 안 기다림).
+
+**Install (재시작) 은 자동화 X** — 작업 손실 위험을 명시적 동의 하에 둠.
+`autoInstallOnAppQuit=true` 는 유지 (사용자가 앱 종료 시 조용히 설치).
+
+**Tests**: 5 → 6 e2e (Settings 토글 동작). 178 unit. typecheck OK.
+
 ## [0.6.7] - 2026-05-26
 
 ### Fixed — `applyHtml` 이 양식 doc 의 표지 표를 망가뜨리는 회귀

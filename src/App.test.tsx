@@ -113,6 +113,8 @@ describe('App', () => {
         downloadUpdate: vi.fn().mockResolvedValue(undefined),
         quitAndInstall: vi.fn().mockResolvedValue(undefined),
         onEvent: vi.fn().mockReturnValue(() => {}),
+        getPrefs: vi.fn().mockResolvedValue({ autoDownload: true }),
+        setPrefs: vi.fn().mockResolvedValue({ autoDownload: true }),
       },
     };
     Object.defineProperty(window, 'api', {

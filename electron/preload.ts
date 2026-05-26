@@ -184,6 +184,8 @@ const api: AhwpApi = {
         ipcRenderer.off('updater:event', listener);
       };
     },
+    getPrefs: () => ipcRenderer.invoke('updater:get-prefs'),
+    setPrefs: (patch) => ipcRenderer.invoke('updater:set-prefs', patch),
   },
 };
 

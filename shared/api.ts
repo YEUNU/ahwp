@@ -620,12 +620,23 @@ export interface UpdaterState {
   enabled: boolean;
 }
 
+/**
+ * 0.6.8 — auto-updater 사용자 설정. `userData/updater-prefs.json` 영구.
+ * main 의 `electron-updater` 인스턴스 동작에 직접 매핑.
+ */
+export interface UpdaterPrefs {
+  /** 새 버전 발견 시 자동 다운로드 진행. default true. false 면 사용자가
+   *  banner 의 "지금 받기" 클릭 시에만 다운로드. */
+  autoDownload: boolean;
+}
+
 export interface UpdaterApi {
   /** 현 상태 snapshot. 첫 mount 시 useEffect 에서 가져와 초기 화면. */
   getState: () => Promise<UpdaterState>;
   /** Manual "지금 확인". 결과는 onEvent 로 흘러옴. */
   checkNow: () => Promise<void>;
-  /** `available` 상태에서 사용자가 "지금 받기" 누름. */
+  /** `available` 상태에서 사용자가 "지금 받기" 누름. autoDownload=true 면
+   *  보통 자동 진행 — 본 호출은 fallback / manual retry. */
   downloadUpdate: () => Promise<void>;
   /** `downloaded` 상태에서 "재시작해서 설치" 누름. 앱 종료 + 설치. */
   quitAndInstall: () => Promise<void>;
@@ -634,6 +645,10 @@ export interface UpdaterApi {
    * 시 호출. unsubscriber 반환.
    */
   onEvent: (handler: (state: UpdaterState) => void) => () => void;
+  /** 0.6.8 — 현 사용자 설정 조회. */
+  getPrefs: () => Promise<UpdaterPrefs>;
+  /** 0.6.8 — 설정 갱신. 즉시 main 의 autoUpdater 인스턴스에 live 반영. */
+  setPrefs: (patch: Partial<UpdaterPrefs>) => Promise<UpdaterPrefs>;
 }
 
 declare global {
