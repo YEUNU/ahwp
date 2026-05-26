@@ -33,6 +33,22 @@ export interface RhwpEditorHandle {
   bridge: RhwpBridge | null;
   /** iframe DOM 직접 접근 (테스트 / 디버깅). */
   iframe: HTMLIFrameElement | null;
+  /**
+   * Phase D3 — 현재 문서를 HWP 바이트로 내보내기. AppShell 의 file:save
+   * 흐름이 본 메서드 결과를 main 의 file:save IPC 로 보낼 수 있다.
+   * bridge 미마운트 시 null.
+   */
+  exportHwp(): Promise<Uint8Array | null>;
+  /** Phase D3 — HWPX 바이트로 내보내기. */
+  exportHwpx(): Promise<Uint8Array | null>;
+  /**
+   * Phase D3 — bytes 를 로드. AppShell 의 file:open 결과 (Uint8Array) 를
+   * 직접 보내거나, 다른 출처에서 받은 바이트를 띄울 때 사용.
+   */
+  loadBytes(
+    data: ArrayBuffer | Uint8Array | number[],
+    fileName?: string,
+  ): Promise<{ pageCount: number } | null>;
 }
 
 export interface RhwpEditorProps {
@@ -75,6 +91,33 @@ export const RhwpEditor = forwardRef<RhwpEditorHandle, RhwpEditorProps>(
       () => ({
         bridge,
         iframe: iframeRef.current,
+        async exportHwp(): Promise<Uint8Array | null> {
+          if (!bridge) return null;
+          // rhwp-studio main.ts 의 named 'exportHwp' case 가 Array.from(...)
+          // 으로 number[] 반환. Uint8Array 로 다시 wrap.
+          const arr = await bridge.invoke<number[]>(
+            'exportHwp',
+            undefined,
+            60_000,
+          );
+          return Uint8Array.from(arr);
+        },
+        async exportHwpx(): Promise<Uint8Array | null> {
+          if (!bridge) return null;
+          const arr = await bridge.invoke<number[]>(
+            'exportHwpx',
+            undefined,
+            60_000,
+          );
+          return Uint8Array.from(arr);
+        },
+        async loadBytes(
+          data: ArrayBuffer | Uint8Array | number[],
+          fileName?: string,
+        ): Promise<{ pageCount: number } | null> {
+          if (!bridge) return null;
+          return await bridge.loadFile(data, fileName, true);
+        },
       }),
       [bridge],
     );

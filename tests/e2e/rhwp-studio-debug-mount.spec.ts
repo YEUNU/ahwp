@@ -1,5 +1,5 @@
 /// <reference lib="dom" />
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { launchApp, type LaunchedApp } from './launch';
@@ -101,6 +101,90 @@ test.describe('Phase D1 — __rhwpDebug.mount + RhwpBridge round-trip', () => {
     expect(result.pcIsNumber).toBe(true);
     // 도큐먼트 미로드 상태라 0 이지만 음수는 아님.
     expect(result.sc as number).toBeGreaterThanOrEqual(0);
+  });
+
+  test('exportHwp round-trip — bytes from bridge can be re-loaded (Phase D3)', async () => {
+    const { page } = launched;
+    await page.waitForFunction(
+      () => Boolean((window as DbgWindow).__rhwpDebug),
+      { timeout: 30_000 },
+    );
+
+    const FIXTURE = path.resolve(
+      __dirname,
+      '..',
+      '..',
+      'examples',
+      '2026년도 제조AI특화 스마트공장 구축지원사업 공고.hwp',
+    );
+    if (!existsSync(FIXTURE)) {
+      test.skip();
+      return;
+    }
+    const bytes = readFileSync(FIXTURE);
+
+    // load fixture → insert sentinel → export → unmount → re-mount → reload
+    // → search sentinel. AppShell 의 file:save → file:open round-trip 의
+    // bridge 측 동작 흐름과 동일.
+    const result = await page.evaluate(
+      async ({ data }) => {
+        const dbg = (
+          window as Window & {
+            __rhwpDebug?: {
+              mount(): Promise<{
+                invoke(
+                  m: string,
+                  p?: Record<string, unknown>,
+                  t?: number,
+                ): Promise<unknown>;
+                invokeWasm(
+                  fn: string,
+                  args?: unknown[],
+                  t?: number,
+                ): Promise<unknown>;
+                loadFile(
+                  data: number[] | Uint8Array | ArrayBuffer,
+                  name?: string,
+                  skip?: boolean,
+                ): Promise<{ pageCount: number }>;
+              }>;
+              unmount(): void;
+            };
+          }
+        ).__rhwpDebug!;
+
+        const bridge = await dbg.mount();
+        await bridge.loadFile(data, 'src.hwp', true);
+
+        const sentinel = 'D3-' + Date.now().toString(36);
+        await bridge.invokeWasm('insertText', [0, 0, 0, sentinel]);
+
+        // exportHwp 의 named case 는 Array.from(...) 으로 number[] 반환.
+        const exported = (await bridge.invoke(
+          'exportHwp',
+          undefined,
+          60_000,
+        )) as number[];
+        const len1 = exported.length;
+
+        // 다시 마운트 + 새 bridge 에서 export bytes reload → sentinel 검색.
+        dbg.unmount();
+        const b2 = await dbg.mount();
+        await b2.loadFile(exported, 'roundtrip.hwp', true);
+        const hits = (await b2.invokeWasm('searchAllText', [
+          sentinel,
+          false,
+          false,
+        ])) as unknown[];
+
+        dbg.unmount();
+        return { len1, hitCount: hits.length };
+      },
+      { data: Array.from(bytes) },
+    );
+
+    expect(result.len1).toBeGreaterThan(0);
+    expect(result.hitCount).toBeGreaterThanOrEqual(1);
   });
 
   test('unmount destroys bridge — getBridge returns null afterward', async () => {
