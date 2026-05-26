@@ -612,8 +612,20 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           has: await window.api.secrets.has(p.id),
         })),
       );
+      // 0.6.6 — sequential await. 이전엔 `void fetchModels(id)` 로 모든
+      // provider 의 listModels 가 parallel 발사 → main 의 동시 getSecret →
+      // 동시 safeStorage.decryptString → macOS Keychain prompt 가 provider
+      // 갯수만큼 큐잉되는 회귀가 있었음. await 로 직렬화하면 한 번에 한
+      // decrypt 만 발생, 첫 prompt 의 "Always Allow" 가 자리 잡은 뒤
+      // 후속은 silent.
       for (const { id, has } of checks) {
-        if (has) void fetchModels(id);
+        if (has) {
+          try {
+            await fetchModels(id);
+          } catch {
+            // fetchModels 가 throw 해도 다음 provider prefetch 는 계속.
+          }
+        }
       }
     }, [fetchModels]);
 
