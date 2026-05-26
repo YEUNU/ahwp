@@ -327,4 +327,45 @@ export class BridgeIrHelper {
     );
     return { ...detail, styleId };
   }
+
+  // ── Phase D2c-2 — 범용 라우터 ─────────────────────────────────────
+  //
+  // 남은 ~30 ir write/read cases 는 대부분 wasm-bridge 메서드를 그대로
+  // 호출하고 `{ok}` 또는 JSON `{"ok":...}` 응답을 확인. 각각에 1-line
+  // wrapper 를 두는 대신 두 개의 generic 으로 일괄 처리.
+
+  /**
+   * `bridge.invokeWasm(fn, args)` 호출 후 응답을 boolean 으로 정규화.
+   * - object 면 `.ok` 확인
+   * - JSON string 이면 parse 후 `.ok` 확인 (isOk)
+   * - 그 외 truthy 면 true
+   * - 호출이 throw 하면 false.
+   *
+   * 모든 단순 write op (insertTableRow / deleteTableControl / ...) 에 사용.
+   */
+  async invokeOk(fn: string, args: unknown[]): Promise<boolean> {
+    try {
+      const r = await this.bridge.invokeWasm<unknown>(fn, args);
+      if (r === null || r === undefined) return false;
+      if (typeof r === 'string') return isOk(r);
+      if (typeof r === 'object' && 'ok' in (r as object))
+        return (r as { ok?: boolean }).ok !== false;
+      return Boolean(r);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * `bridge.invokeWasm(fn, args)` 결과를 그대로 반환. 단순 read op
+   * (getColumnDef / getCellInfo / getFootnoteAtCursor / ...). 호출이
+   * throw 하면 null.
+   */
+  async invokeRead<T>(fn: string, args: unknown[]): Promise<T | null> {
+    try {
+      return await this.bridge.invokeWasm<T>(fn, args);
+    } catch {
+      return null;
+    }
+  }
 }
