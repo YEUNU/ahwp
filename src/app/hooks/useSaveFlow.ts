@@ -30,7 +30,11 @@ export interface UseSaveFlowOptions {
 
 export interface SaveFlowHandle {
   openFromDialog: () => Promise<void>;
-  openByPath: (path: string) => Promise<void>;
+  /** 0.6.2 — returns `true` 면 새 editable 탭이 mount 됨 (또는 이미 mount).
+   *  PDF/DOCX 같은 readable-only 는 OS 위임 후 `false` (탭 아님).
+   *  Unknown 확장자도 `false`. AI 의 switchTargetDoc auto-open 흐름이 이
+   *  값을 신뢰. */
+  openByPath: (path: string) => Promise<boolean>;
   newDocument: () => Promise<void>;
   openFolder: () => Promise<void>;
   exportBytes: () => Promise<Uint8Array | null>;
@@ -55,23 +59,29 @@ export function useSaveFlow(opts: UseSaveFlowOptions): SaveFlowHandle {
   }, [openTab]);
 
   const openByPath = useCallback(
-    async (path: string) => {
+    async (path: string): Promise<boolean> => {
       // 0.6.0 — editable (.hwp/.hwpx) 만 탭으로 mount. PDF / DOCX / Excel /
       // 등 readable-but-non-editable 은 OS 기본 앱으로 위임 (사용자가 트리
       // 에서 클릭했을 때 자연스러운 동작 — read-only viewer 미제공).
+      //
+      // 0.6.2 — boolean 반환. true = editable 탭이 열림 (또는 이미 열려있음
+      // — file:open-by-path 가 중복 호출에도 동일 path 를 돌려주므로 동등).
+      // false = readable-only OS 위임 / unknown / open 실패.
       if (isEditable(path)) {
         const result = await window.api.file.openByPath(path);
-        if (result) openTab(result.path);
-        return;
+        if (!result) return false;
+        openTab(result.path);
+        return true;
       }
       if (isReadable(path)) {
         // shell.openPath — 성공 시 빈 문자열, fail 시 에러 메시지. 사용자
         // 에게 보일 만한 문구가 있으면 notice 로 노출.
         const err = await window.api.file.openExternal(path);
         if (err) showNotice(`외부 앱에서 열기 실패: ${err}`, 'warn');
-        return;
+        return false; // 탭이 mount 된 게 아니므로 false
       }
       // Unknown / non-readable — silently no-op (binary / unknown 확장자).
+      return false;
     },
     [openTab, showNotice],
   );
