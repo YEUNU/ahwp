@@ -440,3 +440,369 @@ describe('runTools — Phase D2b helper routing', () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+// Phase 7 E2-finalize — 24 restored AI tool cases. runTools dispatcher
+// 가 각 case 에서 helper 의 올바른 메서드를 호출하는지 mock 으로 검증.
+// helper 가 호출되는 동안 viewer.X 가 호출 안 되어야 (NULL_VIEWER_STUB
+// throw 안 일어남). 또 args 가 정확히 전달되는지 (= 이중변환 X) 확인.
+describe('runTools — Phase E2-finalize 24 restored composites', () => {
+  type CallLog = { fn: string; args: unknown[] };
+
+  function makeFullHelperStub(
+    overrides: Partial<
+      Record<string, (...args: unknown[]) => Promise<unknown>>
+    > = {},
+  ): {
+    helper: import('@/features/rhwp-studio/bridge-ir-helper').BridgeIrHelper;
+    log: CallLog[];
+  } {
+    const log: CallLog[] = [];
+    const track =
+      <T>(fn: string, ret: T) =>
+      async (...args: unknown[]): Promise<T> => {
+        log.push({ fn, args });
+        return ret;
+      };
+    const stub = {
+      // composite reads
+      getCaretPosition: track('getCaretPosition', {
+        sectionIndex: 0,
+        paragraphIndex: 2,
+        charOffset: 5,
+      }),
+      getParagraphLength: track('getParagraphLength', 10),
+      getCharPropertiesAt: track('getCharPropertiesAt', {
+        bold: false,
+        italic: false,
+      }),
+      getParaPropertiesAt: track('getParaPropertiesAt', { alignment: 'left' }),
+      getDocumentOutline: track('getDocumentOutline', []),
+      getDocumentSummary: track('getDocumentSummary', 'summary text'),
+      getStyleList: track('getStyleList', []),
+      getEmptyFormFields: track('getEmptyFormFields', {
+        cellFields: [],
+        truncated: false,
+      }),
+      evaluateTableFormula: track('evaluateTableFormula', { value: 42 }),
+      // write op composites
+      applyParaProps: track('applyParaProps', true),
+      applyAlignmentAtCaret: track('applyAlignmentAtCaret', true),
+      applyFontSizePtAtCaret: track('applyFontSizePtAtCaret', true),
+      applyTextColorAtCaret: track('applyTextColorAtCaret', true),
+      toggleCharFormatAtCaret: track('toggleCharFormatAtCaret', true),
+      insertFootnoteAtCaret: track('insertFootnoteAtCaret', true),
+      addBookmarkAtCaret: track('addBookmarkAtCaret', true),
+      deleteBookmarkAt: track('deleteBookmarkAt', true),
+      setHeaderFooterText: track('setHeaderFooterText', true),
+      setPageDef: track('setPageDef', true),
+      setTableProperties: track('setTableProperties', true),
+      setCellProperties: track('setCellProperties', true),
+      setPictureProperties: track('setPictureProperties', true),
+      deletePictureControl: track('deletePictureControl', true),
+      applyCellStyle: track('applyCellStyle', true),
+      createNamedStyle: track('createNamedStyle', 7), // returned id > 0
+      createRectShapeAtCaret: track('createRectShapeAtCaret', {
+        ok: true,
+        paraIdx: 1,
+        controlIdx: 0,
+      }),
+      insertPictureAtCaret: track('insertPictureAtCaret', true),
+      applyHtmlAtCaret: track('applyHtmlAtCaret', true),
+      ...overrides,
+    };
+    return {
+      helper:
+        stub as unknown as import('@/features/rhwp-studio/bridge-ir-helper').BridgeIrHelper,
+      log,
+    };
+  }
+
+  // 일관성 검증: ahwp 측 args 에 객체로 들어간 props 가 helper 의 args
+  // 에 그대로 객체로 보존되는지 확인 (이중변환 fix 회귀).
+  it('setTableProperties — props 객체 그대로 helper 로 전달 (no JSON.stringify)', async () => {
+    const viewer = mockViewer();
+    const { helper, log } = makeFullHelperStub();
+    const props = { tableWidth: 5000, vertAlign: 'center' };
+    const items: AhwpPreflightItem[] = [
+      {
+        ok: true,
+        call: {
+          tool: 'setTableProperties',
+          args: {
+            sectionIdx: 0,
+            parentParaIdx: 3,
+            controlIdx: 0,
+            props,
+          },
+        },
+      },
+    ];
+    const results = await runTools(viewer, items, helper);
+    expect(results[0].ok).toBe(true);
+    expect(log).toHaveLength(1);
+    expect(log[0].fn).toBe('setTableProperties');
+    // 4번째 args 가 객체 그대로 — JSON string 이 아님.
+    expect(log[0].args[3]).toEqual(props);
+    expect(typeof log[0].args[3]).toBe('object');
+  });
+
+  it('setCellProperties / setPictureProperties — props 객체 보존', async () => {
+    const viewer = mockViewer();
+    const { helper, log } = makeFullHelperStub();
+    const items: AhwpPreflightItem[] = [
+      {
+        ok: true,
+        call: {
+          tool: 'setCellProperties',
+          args: {
+            sectionIdx: 0,
+            parentParaIdx: 1,
+            controlIdx: 0,
+            cellIdx: 3,
+            props: { bgColor: '#ff0000' },
+          },
+        },
+      },
+      {
+        ok: true,
+        call: {
+          tool: 'setPictureProperties',
+          args: {
+            sectionIdx: 0,
+            parentParaIdx: 5,
+            controlIdx: 0,
+            props: { widthHwpunit: 10000 },
+          },
+        },
+      },
+    ];
+    await runTools(viewer, items, helper);
+    expect(log.map((c) => c.fn)).toEqual([
+      'setCellProperties',
+      'setPictureProperties',
+    ]);
+    expect(log[0].args[4]).toEqual({ bgColor: '#ff0000' });
+    expect(log[1].args[3]).toEqual({ widthHwpunit: 10000 });
+  });
+
+  it('applyAlignment / applyFontSize / applyTextColor — caret-bound composite', async () => {
+    const viewer = mockViewer();
+    const { helper, log } = makeFullHelperStub();
+    const items: AhwpPreflightItem[] = [
+      { ok: true, call: { tool: 'applyAlignment', args: { align: 'center' } } },
+      { ok: true, call: { tool: 'applyFontSize', args: { pt: 14 } } },
+      { ok: true, call: { tool: 'applyTextColor', args: { hex: '#0000ff' } } },
+    ];
+    const results = await runTools(viewer, items, helper);
+    expect(results.every((r) => r.ok)).toBe(true);
+    expect(log.map((c) => c.fn)).toEqual([
+      'applyAlignmentAtCaret',
+      'applyFontSizePtAtCaret',
+      'applyTextColorAtCaret',
+    ]);
+    expect(log[0].args[0]).toBe('center');
+    expect(log[1].args[0]).toBe(14);
+    expect(log[2].args[0]).toBe('#0000ff');
+  });
+
+  it('toggleCharFormat / insertFootnote / addBookmark / deleteBookmark', async () => {
+    const viewer = mockViewer();
+    const { helper, log } = makeFullHelperStub();
+    const items: AhwpPreflightItem[] = [
+      { ok: true, call: { tool: 'toggleCharFormat', args: { key: 'bold' } } },
+      {
+        ok: true,
+        call: { tool: 'insertFootnote', args: { text: 'note text' } },
+      },
+      { ok: true, call: { tool: 'addBookmark', args: { name: 'BM1' } } },
+      {
+        ok: true,
+        call: {
+          tool: 'deleteBookmark',
+          args: { sectionIdx: 0, paragraphIdx: 3, controlIdx: 1 },
+        },
+      },
+    ];
+    const results = await runTools(viewer, items, helper);
+    expect(results.every((r) => r.ok)).toBe(true);
+    expect(log.map((c) => c.fn)).toEqual([
+      'toggleCharFormatAtCaret',
+      'insertFootnoteAtCaret',
+      'addBookmarkAtCaret',
+      'deleteBookmarkAt',
+    ]);
+  });
+
+  it('applyPageDef / setHeaderFooterText / applyHtml', async () => {
+    const viewer = mockViewer();
+    const { helper, log } = makeFullHelperStub();
+    const items: AhwpPreflightItem[] = [
+      {
+        ok: true,
+        call: {
+          tool: 'applyPageDef',
+          args: { sectionIdx: 0, props: { marginLeft: 1000 } },
+        },
+      },
+      {
+        ok: true,
+        call: {
+          tool: 'setHeaderFooterText',
+          args: { sectionIdx: 0, isHeader: true, applyTo: 0, text: '머리말' },
+        },
+      },
+      {
+        ok: true,
+        call: { tool: 'applyHtml', args: { html: '<h1>Hi</h1>' } },
+      },
+    ];
+    const results = await runTools(viewer, items, helper);
+    expect(results.every((r) => r.ok)).toBe(true);
+    expect(log.map((c) => c.fn)).toEqual([
+      'setPageDef',
+      'setHeaderFooterText',
+      'applyHtmlAtCaret',
+    ]);
+    expect(log[0].args[0]).toBe(0);
+    expect(log[0].args[1]).toEqual({ marginLeft: 1000 }); // 객체 그대로
+    expect(log[1].args).toEqual([0, true, 0, '머리말']);
+    expect(log[2].args[0]).toBe('<h1>Hi</h1>');
+  });
+
+  it('createNamedStyle / createRectShape / applyCellStyle / evaluateTableFormula / insertPicture', async () => {
+    const viewer = mockViewer();
+    const { helper, log } = makeFullHelperStub();
+    const items: AhwpPreflightItem[] = [
+      {
+        ok: true,
+        call: {
+          tool: 'createNamedStyle',
+          args: { name: '본문', englishName: 'Body' },
+        },
+      },
+      {
+        ok: true,
+        call: {
+          tool: 'createRectShape',
+          args: { widthHwpunit: 3000, heightHwpunit: 2000, opts: {} },
+        },
+      },
+      {
+        ok: true,
+        call: {
+          tool: 'applyCellStyle',
+          args: {
+            sectionIdx: 0,
+            parentParaIdx: 1,
+            controlIdx: 0,
+            cellIdx: 4,
+            cellParaIdx: 0,
+            styleId: 3,
+          },
+        },
+      },
+      {
+        ok: true,
+        call: {
+          tool: 'evaluateTableFormula',
+          args: {
+            sectionIdx: 0,
+            parentParaIdx: 2,
+            controlIdx: 0,
+            targetRow: 3,
+            targetCol: 1,
+            formula: 'SUM(A1:A3)',
+            writeResult: true,
+          },
+        },
+      },
+      {
+        ok: true,
+        call: {
+          tool: 'insertPicture',
+          args: {
+            sectionIdx: 0,
+            paragraphIdx: 5,
+            charOffset: 0,
+            base64Data: 'AAAA',
+            widthHwpunit: 5000,
+            heightHwpunit: 5000,
+            naturalWidthPx: 100,
+            naturalHeightPx: 100,
+            extension: 'png',
+            description: 'img',
+          },
+        },
+      },
+    ];
+    const results = await runTools(viewer, items, helper);
+    expect(results.every((r) => r.ok)).toBe(true);
+    expect(log.map((c) => c.fn)).toEqual([
+      'createNamedStyle',
+      'createRectShapeAtCaret',
+      'applyCellStyle',
+      'evaluateTableFormula',
+      'insertPictureAtCaret',
+    ]);
+  });
+
+  it('applyParaProps — composite (getCaretPosition + applyParaProps)', async () => {
+    const viewer = mockViewer();
+    const { helper, log } = makeFullHelperStub();
+    const items: AhwpPreflightItem[] = [
+      {
+        ok: true,
+        call: {
+          tool: 'applyParaProps',
+          args: { props: { indentLeft: 500 } },
+        },
+      },
+    ];
+    const results = await runTools(viewer, items, helper);
+    expect(results[0].ok).toBe(true);
+    // composite: 먼저 getCaretPosition, 그 다음 applyParaProps.
+    expect(log.map((c) => c.fn)).toEqual([
+      'getCaretPosition',
+      'applyParaProps',
+    ]);
+    expect(log[1].args[2]).toEqual({ indentLeft: 500 }); // 객체 보존
+  });
+
+  it('getDocumentOutline / getDocumentSummary / getStyleListJson / getEmptyFormFields', async () => {
+    const viewer = mockViewer();
+    const { helper, log } = makeFullHelperStub();
+    const items: AhwpPreflightItem[] = [
+      { ok: true, call: { tool: 'getDocumentOutline', args: {} } },
+      { ok: true, call: { tool: 'getDocumentSummary', args: {} } },
+      { ok: true, call: { tool: 'getStyleListJson', args: {} } },
+      { ok: true, call: { tool: 'getEmptyFormFields', args: {} } },
+    ];
+    const results = await runTools(viewer, items, helper);
+    expect(results.every((r) => r.ok)).toBe(true);
+    expect(log.map((c) => c.fn)).toEqual([
+      'getDocumentOutline',
+      'getDocumentSummary',
+      'getStyleList',
+      'getEmptyFormFields',
+    ]);
+    // 응답 데이터가 그대로 result.data 에 들어감.
+    if (results[1].ok && 'data' in results[1]) {
+      expect(results[1].data).toBe('summary text');
+    }
+  });
+
+  it('helper.foo 가 false 반환 → tool result.ok=false + 명확한 reason', async () => {
+    const viewer = mockViewer();
+    const { helper } = makeFullHelperStub({
+      applyAlignmentAtCaret: async () => false,
+    });
+    const items: AhwpPreflightItem[] = [
+      { ok: true, call: { tool: 'applyAlignment', args: { align: 'center' } } },
+    ];
+    const results = await runTools(viewer, items, helper);
+    expect(results[0].ok).toBe(false);
+    if (!results[0].ok) {
+      expect(results[0].reason).toBe('applyAlignment-failed');
+    }
+  });
+});
