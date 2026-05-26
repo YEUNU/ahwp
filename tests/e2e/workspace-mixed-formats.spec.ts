@@ -149,4 +149,30 @@ test.describe('0.6.0 — mixed-format workspace (AI surface)', () => {
       expect(result.reason).toBe('out-of-range');
     }
   });
+
+  test('folder:search-text finds matches across non-HWP files', async () => {
+    const { page } = launched;
+    // "사업비" 는 notes.md (## 사업비), budget.csv (data row), page.html
+    // (<h2>) 에 등장 — 평문 grep 으로 3개 파일 모두 hit.
+    const result = await page.evaluate(async (root) => {
+      return await window.api.folder.searchText({
+        rootPath: root,
+        query: '사업비',
+      });
+    }, fixture.root);
+    expect(result.status === 'ok' || result.status === 'limit-reached').toBe(
+      true,
+    );
+    const hitFilenames = result.hits.map((h) => h.filename).sort();
+    // 적어도 3개 파일에서 hit 나와야 (md / csv / html).
+    expect(hitFilenames).toEqual(
+      expect.arrayContaining(['notes.md', 'budget.csv', 'page.html']),
+    );
+    // 각 hit 의 snippets 가 sectionIndex=0 (non-HWP convention)
+    for (const hit of result.hits) {
+      for (const snippet of hit.snippets) {
+        expect(snippet.sectionIndex).toBe(0);
+      }
+    }
+  });
 });

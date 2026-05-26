@@ -291,7 +291,10 @@ export function registerFolderIpc(): void {
 
       const MAX_DEPTH = 5;
       const MAX_FILES = 200;
-      const MAX_FILE_BYTES = 5 * 1024 * 1024;
+      // 0.6.0 — 30MB 상한 (PDF 보고서급도 통과). 비-HWP 는 extractText
+      // 내부에서 per-family cap (PDF 30/DOCX 15/Excel 15/평문 5MB) 재검증.
+      // HWP 는 historically 5MB 였지만 cap 의미는 metadata + raw fs.stat 단계만.
+      const MAX_FILE_BYTES = 30 * 1024 * 1024;
       const MAX_HITS = 50;
       const PER_FILE_SNIPPETS = 5;
 
@@ -314,11 +317,7 @@ export function registerFolderIpc(): void {
             if (cur.depth + 1 < MAX_DEPTH) {
               queue.push({ dir: full, depth: cur.depth + 1 });
             }
-          } else if (
-            e.isFile() &&
-            (e.name.toLowerCase().endsWith('.hwp') ||
-              e.name.toLowerCase().endsWith('.hwpx'))
-          ) {
+          } else if (e.isFile() && isReadable(e.name)) {
             candidates.push(full);
             if (candidates.length >= MAX_FILES) break;
           }
@@ -341,6 +340,54 @@ export function registerFolderIpc(): void {
         }
         if (stat.size > MAX_FILE_BYTES) {
           skipped += 1;
+          continue;
+        }
+        // 0.6.0 — non-HWP 포맷은 extractText.chunks 에서 substring grep.
+        // sectionIndex=0 (HWP 외엔 section 없음), paragraphIndex = chunk
+        // index. snippets shape 은 HWP 와 identical.
+        const lower = filePath.toLowerCase();
+        const isHwp = lower.endsWith('.hwp') || lower.endsWith('.hwpx');
+        if (!isHwp) {
+          try {
+            const extracted = await extractReadableText(filePath);
+            const snippets: FolderSearchHit['snippets'] = [];
+            let total = 0;
+            for (let i = 0; i < extracted.chunks.length; i++) {
+              const text = extracted.chunks[i];
+              const idx = text.toLowerCase().indexOf(q);
+              if (idx >= 0) {
+                total += 1;
+                if (snippets.length < PER_FILE_SNIPPETS) {
+                  const start = Math.max(0, idx - 30);
+                  const end = Math.min(text.length, idx + query.length + 30);
+                  snippets.push({
+                    sectionIndex: 0,
+                    paragraphIndex: i,
+                    preview: text.slice(start, end),
+                    matchOffset: idx - start,
+                    matchLength: query.length,
+                  });
+                }
+                if (
+                  snippets.length >= PER_FILE_SNIPPETS &&
+                  total > snippets.length * 4
+                ) {
+                  break;
+                }
+              }
+            }
+            scanned += 1;
+            if (snippets.length > 0) {
+              hits.push({
+                path: filePath,
+                filename: path.basename(filePath),
+                matchCount: total,
+                snippets,
+              });
+            }
+          } catch {
+            skipped += 1;
+          }
           continue;
         }
         let bytes: Buffer;
@@ -442,7 +489,10 @@ export function registerFolderIpc(): void {
         return { status: 'no-root', entries: [], scanned: 0, skipped: 0 };
 
       const MAX_DEPTH = 5;
-      const MAX_FILE_BYTES = 5 * 1024 * 1024;
+      // 0.6.0 — 30MB 상한 (PDF 보고서급도 통과). 비-HWP 는 extractText
+      // 내부에서 per-family cap (PDF 30/DOCX 15/Excel 15/평문 5MB) 재검증.
+      // HWP 는 historically 5MB 였지만 cap 의미는 metadata + raw fs.stat 단계만.
+      const MAX_FILE_BYTES = 30 * 1024 * 1024;
 
       const queue: { dir: string; depth: number }[] = [
         { dir: rootPath, depth: 0 },

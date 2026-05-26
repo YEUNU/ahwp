@@ -3,6 +3,9 @@ import {
   ChevronDown,
   ChevronRight,
   File,
+  FileSpreadsheet,
+  FileText,
+  FileType,
   FilePlus,
   Folder,
   FolderOpen,
@@ -22,6 +25,54 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react';
 import type { FolderEntry } from '@shared/api';
+
+/**
+ * 파일 family 별 lucide 아이콘 선택 — 0.6.0.
+ * HWP/HWPX = FileType (한컴 호환 색조), PDF = FileText (붉은톤),
+ * Word(docx) = FileText (파란톤), Spreadsheet (xlsx/csv) = FileSpreadsheet,
+ * 평문/markdown/JSON 등 = FileText (회색), unknown = File.
+ */
+function pickFileIcon(name: string): {
+  Icon: typeof File;
+  className: string;
+} {
+  const lower = name.toLowerCase();
+  if (lower.endsWith('.hwp') || lower.endsWith('.hwpx')) {
+    return { Icon: FileType, className: 'size-4 shrink-0 text-blue-500' };
+  }
+  if (lower.endsWith('.pdf')) {
+    return { Icon: FileText, className: 'size-4 shrink-0 text-red-500' };
+  }
+  if (lower.endsWith('.docx')) {
+    return { Icon: FileText, className: 'size-4 shrink-0 text-blue-700' };
+  }
+  if (
+    lower.endsWith('.xlsx') ||
+    lower.endsWith('.xls') ||
+    lower.endsWith('.csv') ||
+    lower.endsWith('.tsv')
+  ) {
+    return {
+      Icon: FileSpreadsheet,
+      className: 'size-4 shrink-0 text-green-600',
+    };
+  }
+  if (
+    lower.endsWith('.md') ||
+    lower.endsWith('.markdown') ||
+    lower.endsWith('.txt') ||
+    lower.endsWith('.json') ||
+    lower.endsWith('.xml') ||
+    lower.endsWith('.html') ||
+    lower.endsWith('.htm')
+  ) {
+    return {
+      Icon: FileText,
+      className: 'size-4 shrink-0 text-muted-foreground',
+    };
+  }
+  return { Icon: File, className: 'size-4 shrink-0 text-muted-foreground' };
+}
 
 /**
  * VS Code-style folder tree.
@@ -190,7 +241,10 @@ const TreeNode = memo(function TreeNode({
           ) : (
             <>
               <span className="size-3 shrink-0" aria-hidden="true" />
-              <File className="size-4 shrink-0 text-muted-foreground" />
+              {(() => {
+                const { Icon, className: iconCls } = pickFileIcon(entry.name);
+                return <Icon className={iconCls} />;
+              })()}
             </>
           )}
           <span className="truncate">{entry.name}</span>

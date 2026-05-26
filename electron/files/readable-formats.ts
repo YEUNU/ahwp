@@ -104,20 +104,39 @@ export interface ExtractedText {
 }
 
 /**
+ * Per-family size cap. PDF / Excel 보고서는 보통 평문보다 크므로 차등.
+ * 모두 main process 메모리 보호용 — 너무 큰 파일은 일찍 reject.
+ */
+const SIZE_CAPS: Record<FormatFamily, number> = {
+  hwp: 5 * 1024 * 1024, // 5 MB — 기존 정책 유지
+  pdf: 30 * 1024 * 1024, // 30 MB — 보고서급 PDF 도 커버
+  word: 15 * 1024 * 1024, // 15 MB — 임베디드 이미지 포함 .docx 도 OK
+  spreadsheet: 15 * 1024 * 1024, // 15 MB — 큰 .xlsx 도 OK
+  text: 5 * 1024 * 1024, // 5 MB — 평문은 충분
+  data: 5 * 1024 * 1024,
+  unknown: 1 * 1024 * 1024,
+};
+
+function formatMb(bytes: number): string {
+  return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+}
+
+/**
  * 파일 경로에서 텍스트 추출. 확장자 기반 dispatch. 실패하면 throw
  * (호출자가 `try/catch` 로 사용자에게 보여줄 메시지 결정).
  *
- * 5MB 상한 — folder.ts 의 기존 한도와 동일. PDF/Excel 같이 binary 가
- * 큰 포맷은 일찍 reject 해서 메인 프로세스 메모리 보호.
+ * Per-family size cap — PDF 30MB / DOCX 15MB / Excel 15MB / 평문 5MB.
+ * 보고서급 PDF 도 받아주면서 메모리 보호.
  */
 export async function extractText(filePath: string): Promise<ExtractedText> {
   const stat = await fs.stat(filePath);
-  if (stat.size > 5 * 1024 * 1024) {
+  const family = detectFamily(filePath);
+  const cap = SIZE_CAPS[family];
+  if (stat.size > cap) {
     throw new Error(
-      `file too large: ${stat.size} bytes (max 5MB) — ${path.basename(filePath)}`,
+      `file too large: ${formatMb(stat.size)} (max ${formatMb(cap)} for ${family}) — ${path.basename(filePath)}`,
     );
   }
-  const family = detectFamily(filePath);
   const meta = { family, bytes: stat.size } as ExtractedText['meta'];
 
   switch (family) {
