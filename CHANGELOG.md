@@ -6,6 +6,35 @@
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-05-26
+
+### Fixed — Keychain prompt 2번 뜨는 회귀 (provider 다중 키 등록 시)
+
+사용자 보고: 앱 시작 시 macOS Keychain prompt 가 2번 연속 뜸. 원인:
+`ChatPanel.prefetchAllProviders` 가 등록된 모든 provider 의 model list 를
+**parallel** 로 fetch (`for ... void fetchModels(id)`). 키가 N개 있으면
+N 개의 동시 `getSecret` → N개의 동시 `safeStorage.decryptString` → macOS
+Keychain 의 ACL 단일-prompt 흐름이 깨져서 prompt 가 큐잉됨.
+
+**근본 fix 2 곳**:
+
+1. `electron/store/secrets.ts` — `getSecret` 에 in-flight Promise dedupe +
+   전역 직렬화. 같은 providerId 의 동시 요청은 한 Promise 만 만들고 share
+   (cache stampede 회피). 서로 다른 providerId 라도 `globalDecryptChain`
+   으로 직렬화 — 첫 prompt 가 응답될 때까지 다음 `decryptString` 대기.
+2. `src/features/chat/ChatPanel.tsx` — `prefetchAllProviders` 의 fetch 루프
+   를 `for ... await fetchModels(id)` 로 직렬화. 호출 자체가 한 번에 하나씩.
+
+결과: provider 2개 이상이어도 Keychain prompt 가 정확히 1번만 뜸 (사용자
+가 "Always Allow" 클릭하면 이후 영구 silent). plaintextCache 의 의도가
+온전히 실현됨.
+
+### Dev 보너스 — React StrictMode 영향
+
+dev (`npm run dev`) 의 `<React.StrictMode>` 가 effect 를 2회 mount 해서
+prefetch 가 두 번 실행되는 패턴이 있었지만, 위 fix 의 plaintextCache +
+in-flight dedupe 가 2회차 호출을 cache hit 로 흡수 → prompt 추가 발생 X.
+
 ## [0.6.5] - 2026-05-26
 
 ### Fixed — release.yml 의 Draft auto-publish (0.6.4 매트릭스 빌드 422 회피)
