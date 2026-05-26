@@ -56,6 +56,40 @@ async function runOne(
       // JSON.stringify 절대 X. helper 가 없으면 (legacy mode) NULL_VIEWER_STUB
       // throw — 사용자에게 명확한 에러.
       case 'applyHtml': {
+        // 0.6.7 hard-guard — applyHtml 도 insertText (0,0,0) 와 동일한
+        // 위험: caret 의존성 + default 위치 (0,0,0) 가 표 cell 안인 양식
+        // 문서를 망가뜨림. tools.ts:327 의 insertText 가드와 parallel.
+        //
+        // 정책: caret 이 (0,0,0) AND 문서가 fresh-blank 가 아니면 (= 더
+        // 많은 단락 또는 첫 단락에 텍스트 존재) reject. AI 가 anchor 를
+        // findInDocument / searchAllText 로 찾고 moveCaret 으로 가서
+        // 다시 시도하도록.
+        if (helper) {
+          try {
+            const caret = await helper.getCaretPosition();
+            if (
+              caret &&
+              caret.sectionIndex === 0 &&
+              caret.paragraphIndex === 0 &&
+              caret.charOffset === 0
+            ) {
+              const paraCount = await helper.getParagraphCount(0);
+              const firstParaLen = await helper.getParagraphLength(0, 0);
+              const isBlankFresh = paraCount === 1 && firstParaLen === 0;
+              if (!isBlankFresh) {
+                return {
+                  ok: false,
+                  tool: call.tool,
+                  reason:
+                    'applyHtml-at-doc-start-rejected: caret 이 (0,0,0) + 문서가 비어있지 않음. 양식 / 보고서 doc 의 표지 표 cell 안 또는 placeholder 섹션 위에 dump 되어 layout 파괴 위험. anchor 를 searchAllText / findInDocument 로 식별 → moveCaret 으로 이동 → applyHtml 재시도. 또는 sectionIndex/paragraphIndex 명시한 insertText/insertParagraph 사용.',
+                };
+              }
+            }
+          } catch (err) {
+            // caret/structure 조회 실패는 가드 패스 (정상 흐름 진행).
+            console.warn('[tools] applyHtml caret pre-check failed:', err);
+          }
+        }
         const ok = helper
           ? await helper.applyHtmlAtCaret(call.args.html)
           : (() => {

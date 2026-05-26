@@ -6,6 +6,45 @@
 
 ## [Unreleased]
 
+## [0.6.7] - 2026-05-26
+
+### Fixed — `applyHtml` 이 양식 doc 의 표지 표를 망가뜨리는 회귀
+
+사용자 보고: AI 에게 양식 HWP (제조AI특화 스마트공장 사업계획서 같은
+template) 에 작성 요청 → "형식이 아예 망가져. 적어야 할 위치를 검색
+안하고 그냥 넣는 느낌". 진단:
+
+1. AI 가 `getDocumentOutline` 호출 — 양식 doc 의 "1.1 / □" 는 heading
+   style 이 아니라 일반 텍스트 → outline 빈 배열 → AI 가 구조 파악 실패
+2. AI 가 `getDocumentSummary` 만 보고 caret 위치는 확인 안 함
+3. `applyHtml` 호출 — default caret = (0,0,0) 이 표지 표 cell 안 → HTML
+   이 cell 안에 dump 되어 layout 파괴
+
+기존 `insertText(0,0,0) + multi-paragraph` 의 hard-guard (tools.ts:327)
+는 있었지만 `applyHtml` 에는 parallel guard 가 없어서 LLM 이 우회 경로
+로 사용 중이었음.
+
+**Fix 2 layer**:
+
+1. **Runtime hard-guard** (`tools.ts`) — `applyHtml` 도 pre-check:
+   - `getCaretPosition()` 호출
+   - caret == (0,0,0) AND 문서가 fresh-blank 아니면 (= paragraph 1 개 +
+     length 0 이 아니면) reject
+   - reason: `applyHtml-at-doc-start-rejected: ... anchor 를 searchAllText
+/ findInDocument 로 식별 → moveCaret 으로 이동 → applyHtml 재시도`
+2. **Prompt 강화** (`prompts.ts`) — "Structured documents" 섹션:
+   - `applyHtml` 의 caret 의존성 명시 (insertText 와 동일 위험)
+   - `getDocumentOutline` 이 빈 배열이어도 doc 가 unstructured 의미 아님
+     — `searchAllText` 로 cross-check 하라는 원칙 추가
+   - workflow 단계 3 에 "applyHtml 전 moveCaret 으로 anchor 명시" 추가
+
+**검증**: 175 → 178 unit 통과 (+3 신규 applyHtml guard 케이스). 기존
+applyHtml dispatch 회귀 케이스도 caret pre-check 한 줄 추가로 업데이트.
+typecheck 양쪽 OK.
+
+사용자 영향: 0.6.7 부터 AI 가 양식 doc 에 dump 하려 하면 명시적 에러
+받고 anchor 를 찾아 재시도. 이전엔 silent 하게 layout 파괴.
+
 ## [0.6.6] - 2026-05-26
 
 ### Fixed — Keychain prompt 2번 뜨는 회귀 (provider 다중 키 등록 시)
