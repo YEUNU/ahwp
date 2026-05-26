@@ -86,17 +86,17 @@ ahwp/
 - [~] **D2** — 55 AI tools 의 `viewerHandle.irX(...)` → `bridge` 경유 (사실상 D2a/D2b/... 여러 sub-chunk).
   - [x] **D2a** — `BridgeIrHelper` 클래스 (12 메서드: getSectionCount / getParagraphCount / getParagraphLength / getCaretPosition / getTextRange (composite) / getTextInCell / searchAllText / insertText / deleteText / insertTextInCell). useViewerHandle 의 composite 로직 (cross-para getTextRange) 그대로 옮김. JSON `{"ok":...}` 응답 파싱 isOk(). unit 12/12 (mock bridge) + e2e 2/2 (실제 iframe, insertText/deleteText round-trip). tools.ts 는 아직 viewerHandle 직접 사용 — D2b 에서 wiring.
   - [x] **D2b** — `runTools(viewer, items, helper?)` / `runOne(viewer, call, helper?)` 시그너처에 `helper: BridgeIrHelper | null` 추가. helper 가 non-null 이면 `insertText` / `insertTextInCell` case 가 helper.getTextRange / helper.insertText / helper.getTextInCell / helper.insertTextInCell 로 라우팅 (before / write / after diff 모두). null 이면 기존 viewer.irX 그대로. AppShell 의 기존 호출 (`runTools(v, items)`) 은 helper 누락 — 그대로 fallback. tools.test.ts 에 4 신규 case (helper 라우팅 / viewer fallback / cell 라우팅 / guard 우선) 추가. unit 15/15.
-  - [ ] **D2c** — 남은 ir* (apply*, create*, insert/delete* table·shape·footnote·picture 등) 를 BridgeIrHelper 에 추가. tools.ts 의 모든 case 가 helper 경유.
-- [ ] **D3** — file open/save IPC 가 `bridge.loadFile` / `bridge.invokeWasm('exportHwp')` 경유하도록 재구성. ahwp 측 in-process `@rhwp/core` 인스턴스 단계적 폐기.
-- [ ] **D4** — Diff Viewer / Plan mode / 그룹 undo — bridge event (caret/selection/doc-mutated) 위에 재구현. Phase A2 후속의 event channel 추가 필요.
-- [ ] **D5** — AI 회귀 e2e 통과 확인 (기존 chat / agent / form-fill spec 들이 새 경로로 통과).
+  - [x] **D2c-1** — helper +7 (deleteRange / mergeParagraph / applyCharFormat / applyStyle / getCharPropertiesAt / getParaPropertiesAt / getStyleAt composite). tools.ts 7 case helper-route. unit 20/20.
+  - [x] **D2c-2** — helper.invokeOk/invokeRead 범용 라우터 + ~20 case 일괄 helper-route (paragraph / table / shape / page / header-footer / equation / footnote / read 그룹). submodule main.ts 의 generic dispatcher 가 wasm.doc fallback — insertParagraph/deleteParagraph 같은 raw HwpDocument 메서드도 호출 가능.
+- [x] **D3** — `RhwpEditorHandle.exportHwp / exportHwpx / loadBytes` — AppShell 의 file:save / file:open 흐름이 bridge 경유로 동작 가능. e2e — fixture 로드 → insertText → exportHwp → reload → sentinel 검색 round-trip 1/1 통과.
+- [x] **D4** — `rhwp-event` 채널 + caret-changed emission (rhwp-studio main.ts 의 250ms polling). RhwpBridge.on 이미 wire 완료. e2e — load + insertText 후 listener 호출 횟수 ≥1 + payload shape (sectionIndex/paragraphIndex/charOffset) 확인 1/1 통과.
+- [x] **D5** — AI 회귀 sanity. helper-param 추가 후 offline chat fake-AI specs (`chat-actions` / `chat-history` / `chat-prefetch`) 16/16 통과.
 
 ### Phase E — 자체 Studio 제거
 
-- [ ] `src/features/studio/` 폐기 — StudioViewer + 8 hook + 모든 dialog / utility (~5000 라인)
-- [ ] 관련 e2e 정리 (find / edit / shape / table / format / footnote / image / wordsel / paraformat / clipboard / pagenav / undo / etc. — 다수)
-- [ ] CLAUDE.md / ARCHITECTURE.md / KNOWN_ISSUES.md 갱신
-- [ ] CHANGELOG + 메이저 version bump (0.4.x → 0.5.0)
+- [x] **E1** — AppShell.runTools 호출이 `__rhwpDebug.getBridge()` 가 non-null 이면 자동으로 BridgeIrHelper 를 만들어 3번째 인자로 전달. dual-mode — bridge 없으면 기존 viewer 경로. dynamic import 로 bridge-ir-helper 가 항상 번들될 필요 X.
+- [ ] **E2** — `src/features/studio/` 폐기 — StudioViewer + 8 hook + 모든 dialog / utility (~5000 라인). 본 청크는 미루어진 상태 — UI 검증 충분히 누적된 다음 진행. 관련 e2e (~30) 도 동시 정리 필요.
+- [ ] **E3** — CLAUDE.md / ARCHITECTURE.md / KNOWN_ISSUES.md 갱신 + CHANGELOG + 메이저 version bump (0.4.x → 0.5.0).
 
 ## 리스크
 
