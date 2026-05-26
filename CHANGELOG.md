@@ -6,6 +6,24 @@
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-05-26
+
+### Fixed — release.yml 이 Draft 만 만들고 자동 publish 안 함
+
+`electron-builder` 의 GitHub publisher 가 기본값으로 `releaseType: 'draft'`
+사용 — main push CI 가 통과해도 GitHub Release 가 Draft 상태로 멈춰서
+사용자는 수동으로 "Publish release" 클릭해야 했음. 결과: auto-updater 가
+`latest.yml` 을 fetch 못 함 (Draft 는 비공개) → 자동 알림 무용.
+
+**Fix**: `package.json` 의 `build.publish[0]` 에 `"releaseType": "release"`
+명시. 다음 CI 빌드부터 통과 즉시 publish 상태로 노출 + `latest.yml` 공개
+→ 0.6.3+ 사용자의 auto-updater 가 정상 인식.
+
+### Note — 기존 0.6.2 Draft 처리
+
+이 커밋 이전에 생성된 Draft 들 (0.6.2 등) 은 수동으로 publish 하거나 삭제
+필요. 0.6.4 가 publish 되면 자동 업데이트 흐름이 정상 작동.
+
 ## [0.6.3] - 2026-05-26
 
 ### Fixed — `switchTargetDoc` 자동 열기 실패 (workspace HWP 가짜 target-not-open)
