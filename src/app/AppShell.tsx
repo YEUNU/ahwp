@@ -159,6 +159,15 @@ export default function AppShell() {
       return false;
     }
   });
+  // Phase 7 E2b — 탭별 RhwpEditor handle 추적. AI runTools 가 활성
+  // 탭의 bridge 를 직접 잡고 BridgeIrHelper 로 wrap. __rhwpDebug 의존
+  // 제거. handle 은 onReady 가 fire 된 뒤에만 의미가 있음.
+  const rhwpHandlesRef = useRef(
+    new Map<
+      string,
+      import('@/features/rhwp-studio/RhwpEditor').RhwpEditorHandle
+    >(),
+  );
   // chunk 56 — ChatPanel imperative handle for cross-pane AI triggers
   // (right-click → AI command). The viewer's selection menu calls
   // `chatRef.current.prefillAndSend(prompt)` to fire a chat turn.
@@ -1036,15 +1045,15 @@ export default function AppShell() {
                           data-tab-active={isActive ? 'true' : 'false'}
                         >
                           {useRhwpEditor ? (
-                            // Phase 7 E2a — rhwp-studio iframe 마운트. AI
-                            // tool 라우팅은 E1 wiring 으로 자동 (bridge 가
-                            // mount 되면 __rhwpDebug.getBridge() non-null).
-                            // 단, AppShell 의 viewer-dependent toolbar /
-                            // 다이얼로그 / menu action 은 rhwp-mode 에선
-                            // 동작 안 함 — rhwp-studio 가 자체 UI 제공.
-                            // 본 청크는 마운트 + 자동 doc load 만 검증.
+                            // Phase 7 E2a/b — rhwp-studio iframe 마운트
+                            // + handle 추적. AI tool 라우팅은 E2b 의
+                            // runTools 분기 (아래) 가 직접 잡는다.
                             <RhwpEditor
                               key={tab.key}
+                              ref={(h) => {
+                                if (h) rhwpHandlesRef.current.set(tab.key, h);
+                                else rhwpHandlesRef.current.delete(tab.key);
+                              }}
                               onReady={async (bridge) => {
                                 try {
                                   const buf = await window.api.file.read(
@@ -1237,20 +1246,30 @@ export default function AppShell() {
                       return [];
                     }
                     const before = v.snapshotParagraphs();
-                    // Phase E1 — `window.__rhwpDebug.getBridge()` 가
-                    // non-null 이면 AI tools 의 ir* 호출이 bridge 경유로
-                    // 동작 (debug-surface 가 RhwpEditor 를 마운트한 상태).
-                    // 본 UI 통합 (탭/뷰어 자체 교체) 은 후속 청크.
-                    const dbg = (
-                      window as unknown as {
-                        __rhwpDebug?: {
-                          getBridge():
-                            | import('@/lib/rhwp-bridge').RhwpBridge
-                            | null;
-                        };
+                    // Phase E1/E2b — bridge 라우팅 우선순위:
+                    //   1) useRhwpEditor 모드: 활성 탭의 RhwpEditor handle 사용
+                    //   2) __rhwpDebug.getBridge() (debug surface 마운트 상태)
+                    //   3) helper=null → 기존 viewer.irX 경로
+                    let bridge: import('@/lib/rhwp-bridge').RhwpBridge | null =
+                      null;
+                    if (useRhwpEditor) {
+                      const activeKey = activeTab?.key;
+                      if (activeKey) {
+                        const handle = rhwpHandlesRef.current.get(activeKey);
+                        bridge = handle?.bridge ?? null;
                       }
-                    ).__rhwpDebug;
-                    const bridge = dbg?.getBridge() ?? null;
+                    } else {
+                      const dbg = (
+                        window as unknown as {
+                          __rhwpDebug?: {
+                            getBridge():
+                              | import('@/lib/rhwp-bridge').RhwpBridge
+                              | null;
+                          };
+                        }
+                      ).__rhwpDebug;
+                      bridge = dbg?.getBridge() ?? null;
+                    }
                     const helper = bridge
                       ? new (
                           await import('@/features/rhwp-studio/bridge-ir-helper')
