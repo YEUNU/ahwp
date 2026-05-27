@@ -808,4 +808,46 @@ test.describe('Phase D2a — BridgeIrHelper × real iframe', () => {
       expect(result.filledWithShape).toBe(result.filledCount);
     }
   });
+
+  // 0.6.17 — Phase B 시각 검증 MVP. renderPageSvg 가 실제 bridge 에서
+  // 호출 가능하고, SVG 문자열을 반환하는지 round-trip 확인.
+  test('renderPageSvg via generic wasm dispatcher returns a non-empty SVG string', async () => {
+    const { page } = launched;
+    await page.waitForFunction(
+      () => Boolean((window as Window & { __rhwpDebug?: DbgApi }).__rhwpDebug),
+      { timeout: 30_000 },
+    );
+
+    const bytes = readFileSync(FIXTURE);
+
+    const result = await page.evaluate(
+      async ({ data, name }) => {
+        const dbg = (window as Window & { __rhwpDebug?: DbgApi }).__rhwpDebug!;
+        const bridge = await dbg.mount();
+        await bridge.invoke('loadFile', {
+          data,
+          fileName: name,
+          skipUnsavedGuard: true,
+        });
+
+        // 첫 페이지의 SVG 캡처.
+        let svg = '';
+        let err = '';
+        try {
+          svg = (await bridge.invokeWasm('renderPageSvg', [0])) as string;
+        } catch (e) {
+          err = (e as Error).message;
+        }
+
+        dbg.unmount();
+        return { svg, err, len: svg.length };
+      },
+      { data: Array.from(bytes), name: '2026.hwp' },
+    );
+
+    expect(result.err).toBe('');
+    expect(result.svg).toContain('<svg');
+    // 빈 페이지가 아닌 fixture 라 최소 1KB 이상의 SVG 가 와야 함.
+    expect(result.len).toBeGreaterThan(1024);
+  });
 });

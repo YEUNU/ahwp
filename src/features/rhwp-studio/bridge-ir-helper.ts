@@ -301,6 +301,30 @@ export class BridgeIrHelper {
     return r?.ok === true;
   }
 
+  /**
+   * 한 페이지를 SVG 문자열로 렌더 (0.6.17 — Phase B 시각 검증 MVP).
+   *
+   * rhwp WasmBridge 의 `renderPageSvg(pageNum)` 직접 호출. Layout
+   * 이 이미 계산된 페이지에 대해 SVG 문자열을 반환 — text / 표 / 도형
+   * 모두 포함. 결과 크기는 페이지에 따라 수십~수백 KB.
+   *
+   * 용도:
+   * - form-fill 완료 후 사용자가 시각적으로 위치 / 매칭 확인 (chat
+   *   UI 가 향후 inline render 지원 시).
+   * - 향후 (Phase B-full) vision provider 가 SVG → PNG 변환 후 직접
+   *   "본다" — 현재는 인프라만 깔아두고 chat UI / vision integration
+   *   은 별도 chunk.
+   *
+   * 첫 호출 시 페이지 layout 이 아직 계산 안 된 페이지는 렌더 안 될
+   * 수 있음 (rhwp 의 lazy layout). 그 경우 빈 문자열 / 부분 SVG 반환.
+   */
+  async getPageSvg(pageNum: number): Promise<string> {
+    const raw = await this.bridge.invokeWasm<string>('renderPageSvg', [
+      pageNum,
+    ]);
+    return typeof raw === 'string' ? raw : '';
+  }
+
   /** 인접 paragraph 와 병합. JSON 상태 응답. */
   async mergeParagraph(sec: number, para: number): Promise<boolean> {
     const raw = await this.bridge.invokeWasm<string>('mergeParagraph', [

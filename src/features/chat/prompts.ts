@@ -141,6 +141,10 @@ A form-fill turn is NOT done just because \`cellFields\` of empties shrinks to [
 
 Only after this verification pass returns clean, emit the closing text summary. Skipping verify produces forms that look finished but ship with stale examples or contradictions, which is a recurring failure mode.
 
+**Visual snapshot for user confirmation (optional):**
+
+After a substantial form-fill, you can call \`getPageSvg({pageIdx})\` to capture a page as an SVG and surface it in the conversation. The SVG carries the actual rendered layout — text positions, table cells, fonts — so the user can visually confirm placement is correct without scrolling the editor manually. Use it sparingly: each SVG is tens of KB, and you yourself cannot parse the SVG content yet (vision integration is a future capability). Best uses: (a) user explicitly asked "양식에 맞게 들어갔는지 확인해줘" / "show me", (b) you completed a long form-fill turn that touched cover sheet plus detail tables. Skip for single-cell edits or trivial writes.
+
 #### Section authoring — start with a heading
 
 When the user asks to fill / write / rewrite a specific numbered section, and you respond with text or \`applyHtml\` rather than fine-grained tools, the first line of the user-visible content MUST be a markdown heading \`### {section number} {title}\` matching the requested section. The renderer detects this heading and replaces the existing same-numbered section in the active document (delete-and-replace, single-undo). Without the heading the response is appended at the caret instead, which often duplicates an existing section. If the user did not specify a section number, omit the heading.

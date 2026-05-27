@@ -637,6 +637,27 @@ describe('BridgeIrHelper — Phase D2a', () => {
     expect(fns).not.toContain('insertTextInCell');
   });
 
+  // 0.6.17 — getPageSvg: passthrough to wasm.renderPageSvg(pageNum).
+  // Phase B 시각 검증 MVP. helper 가 string 응답을 그대로 반환,
+  // non-string 응답은 빈 문자열로 normalize.
+  it('getPageSvg forwards pageIdx and returns the SVG string', async () => {
+    const { bridge, calls } = makeBridge({
+      renderPageSvg:
+        '<svg xmlns="http://www.w3.org/2000/svg"><text>hello</text></svg>',
+    });
+    const h = new BridgeIrHelper(bridge);
+    const svg = await h.getPageSvg(3);
+    expect(svg).toContain('<svg');
+    expect(svg).toContain('<text>hello</text>');
+    expect(calls[0]).toEqual({ fn: 'renderPageSvg', args: [3] });
+  });
+
+  it('getPageSvg returns empty string when bridge returns non-string', async () => {
+    const { bridge } = makeBridge({ renderPageSvg: null });
+    const h = new BridgeIrHelper(bridge);
+    expect(await h.getPageSvg(0)).toBe('');
+  });
+
   it('getEmptyFormFields probes multiple controlIdx per paragraph', async () => {
     // paragraph 5 has two tables: ctrl=0 (1x1, filled), ctrl=1 (1x1, empty).
     const bridge = {

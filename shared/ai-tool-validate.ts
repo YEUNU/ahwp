@@ -744,6 +744,7 @@ function validateArgs<T extends AhwpToolName>(
         sectionIdx?: number;
         parentParaIdx?: number;
         maxResults?: number;
+        includeFilled?: boolean;
       } = {};
       const sec = args.sectionIdx;
       if (sec !== undefined) {
@@ -764,7 +765,20 @@ function validateArgs<T extends AhwpToolName>(
           return { ok: false, reason: 'maxResults-out-of-range' };
         out.maxResults = n;
       }
+      // 0.6.17 fix — 이전엔 includeFilled 가 strip 되어 dispatcher 까지
+      // 전달이 안 됐다 (0.6.15 schema 추가 시 validator 누락).
+      const inc = args.includeFilled;
+      if (inc !== undefined) {
+        if (typeof inc !== 'boolean')
+          return { ok: false, reason: 'includeFilled-not-boolean' };
+        out.includeFilled = inc;
+      }
       return { ok: true, value: out as AhwpToolArgs[T] };
+    }
+    case 'getPageSvg': {
+      const n = coerceNonNegInt(args.pageIdx);
+      if (n === null) return { ok: false, reason: 'pageIdx-invalid' };
+      return { ok: true, value: { pageIdx: n } as AhwpToolArgs[T] };
     }
     // === Phase 5 chunk 96 — workspace outline router ===
     case 'searchWorkspaceOutlines': {

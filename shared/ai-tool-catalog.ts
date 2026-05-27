@@ -1038,6 +1038,18 @@ const TOOL_DESCRIPTORS: AhwpToolDescriptor[] = [
       },
     },
   },
+  {
+    name: 'getPageSvg',
+    description:
+      "Capture a single page of the active document as an SVG string. Use AFTER a form-fill / write turn to surface a visual snapshot of the result for the user (the SVG carries the actual rendered layout — text positions, table cells, fonts). The AI itself cannot 'see' the SVG yet (vision integration is a future chunk), but emitting this tool stores the snapshot in the conversation so the user can confirm placement is correct without manually scrolling the editor. Use only when the user explicitly asks to verify visually, or after a substantial form-fill that warrants confirmation — do NOT call after every small write (each SVG is tens of KB). pageIdx is 0-based.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pageIdx: { type: 'integer', minimum: 0 },
+      },
+      required: ['pageIdx'],
+    },
+  },
   // === Phase 5 chunk 96 — outline-as-router workspace search ===
   {
     name: 'searchWorkspaceOutlines',

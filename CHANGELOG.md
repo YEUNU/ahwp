@@ -6,6 +6,29 @@
 
 ## [Unreleased]
 
+## [0.6.17] - 2026-05-27
+
+### Added — `getPageSvg` AI 도구 (Phase B 시각 검증 MVP)
+
+신규 read-only AI 도구 `getPageSvg({pageIdx})` — 페이지 한 장을 SVG 문
+자열로 캡처. rhwp 의 `renderPageSvg(pageNum)` 활용 (vendor 수정 없음).
+용도: form-fill 완료 후 사용자가 시각적으로 위치 / 양식 매칭 확인. SVG
+자체는 chat tool-result 에 들어가며, ~64KB 초과 시 잘라내고 `truncated:
+true` + 원본 크기 함께 반환. AI 자체는 SVG 를 아직 parse 못 함 — chat
+UI inline render + provider vision integration 은 다음 chunk.
+
+prompt 의 "Visual snapshot for user confirmation" 섹션에 사용 시기 명시
+(사용자가 "양식에 맞게 들어갔는지 확인해줘" 요청 / 긴 form-fill 완료
+시점). 작은 write 마다 호출 금지 (각 SVG 가 수십 KB).
+
+### Fixed — `getEmptyFormFields` validator 가 `includeFilled` 를 strip 하던 버그
+
+0.6.15 에서 schema 에 `includeFilled?: boolean` 을 추가했지만 validator
+(shared/ai-tool-validate.ts) 가 이 키를 out 객체에 복사 안 함 → dispatcher
+까지 전달이 안 됨 → AI 가 `includeFilled:true` 보내도 무시되어 항상
+false 동작. 0.6.17 의 e2e 에서 발견. 수정 후 includeFilled 가 실제로
+helper 까지 전파됨.
+
 ## [0.6.16] - 2026-05-27
 
 ### Fixed — `getEmptyFormFields` scope 잘못 잡으면 양식 무시하고 본문에 dump 되던 회귀

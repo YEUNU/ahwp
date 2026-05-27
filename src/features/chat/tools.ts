@@ -1453,6 +1453,46 @@ async function runOne(
           };
         return { ok: true, tool: call.tool, data };
       }
+      // === 0.6.17 — Phase B 시각 검증 MVP. 한 페이지 SVG 캡처 ===
+      case 'getPageSvg': {
+        const a = call.args;
+        if (!helper) {
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: 'getPageSvg-no-helper',
+          };
+        }
+        try {
+          const svg = await helper.getPageSvg(a.pageIdx);
+          // SVG 자체가 클 수 있어 chat tool-result cap 고려. 매우 큰
+          // 경우 (~64KB+) 는 잘라낸 사실을 반환해 AI 가 인지 가능.
+          const MAX_SVG_BYTES = 64 * 1024;
+          if (svg.length > MAX_SVG_BYTES) {
+            return {
+              ok: true,
+              tool: call.tool,
+              data: {
+                pageIdx: a.pageIdx,
+                svg: svg.slice(0, MAX_SVG_BYTES),
+                truncated: true,
+                originalBytes: svg.length,
+              },
+            };
+          }
+          return {
+            ok: true,
+            tool: call.tool,
+            data: { pageIdx: a.pageIdx, svg, truncated: false },
+          };
+        } catch (err) {
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: `getPageSvg-failed: ${(err as Error).message}`,
+          };
+        }
+      }
       // === Phase 5 chunk 96 — outline-as-router workspace search ===
       case 'searchWorkspaceOutlines': {
         // Resolve workspace root through session.lastFolderPath. The
@@ -1738,6 +1778,8 @@ export function previewArgs(call: AhwpToolCall): string {
       return call.args.sectionIdx !== undefined
         ? `sec=${call.args.sectionIdx}`
         : '(all)';
+    case 'getPageSvg':
+      return `page=${call.args.pageIdx}`;
     case 'searchWorkspaceOutlines':
       return call.args.maxDocs ? `max=${call.args.maxDocs}` : '';
     case 'readParagraphByPath': {
