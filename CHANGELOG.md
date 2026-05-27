@@ -6,6 +6,37 @@
 
 ## [Unreleased]
 
+## [0.6.18] - 2026-05-27
+
+### Removed — NVIDIA NIM provider 전용 어댑터 (vision 부재로 form-fill 시각 검증과 비호환)
+
+0.6.17 의 `getPageSvg` 와 뒤이을 multimodal vision integration workflow
+는 provider 가 image content 를 받을 수 있어야 하는데 NIM 호스티드 모델
+대다수는 vision 미지원. NIM 슬롯을 별도 어댑터로 유지하면 사용자가
+"왜 시각 검증이 안 되지?" 혼란 + 코드 path 둘 (vision 지원 / 미지원)
+유지 비용. 셀프호스트 NIM 은 OpenAI `/v1` 호환이라 **`custom` 슬롯
+(Base URL + 키) 으로 동일하게 사용 가능** — 사용자 사용은 영향 X.
+
+삭제 범위 (14 files):
+
+- `electron/ai/providers/nvidia.ts` 어댑터, `electron/ai/registry.ts`
+  의 'nvidia' 등록 + e2e fake-swap 조건.
+- `shared/ai.ts` `ProviderId` 'nvidia' 제거 + `PROVIDERS` 엔트리.
+- `src/features/settings/SettingsDialog.tsx` `SHOWN_IDS` / ChatPanel
+  `PROVIDER_OPTIONS` / `DEFAULT_MODELS`.
+- 기존 'nvidia' localStorage 값은 자동으로 'openai' 로 마이그레이션
+  (loadProvider 분기).
+- e2e: `tests/e2e/chat-rhwp-mode-nim-live.spec.ts` 통째 삭제.
+  `chat.spec.ts` / `chat-prefetch.spec.ts` / `settings.spec.ts` 의
+  'nvidia' second-provider 시나리오는 'google' 로 교체. e2e fake
+  provider 가 모든 provider 에 swap 되도록 확장 (이전엔 openai+nvidia
+  만 swap 됐었음).
+- README / CLAUDE.md 의 provider 목록 / API 키 표 / 웹검색 매트릭스
+  에서 NIM 행 제거.
+
+검증: typecheck 통과, vitest 235/235, 영향 받은 e2e (chat / chat-prefetch
+/ settings) 25/25 통과.
+
 ## [0.6.17] - 2026-05-27
 
 ### Added — `getPageSvg` AI 도구 (Phase B 시각 검증 MVP)

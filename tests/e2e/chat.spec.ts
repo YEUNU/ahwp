@@ -1,7 +1,7 @@
 /**
  * ChatPanel + secrets + ai:chat IPC end-to-end coverage.
  *
- * The OpenAI/NVIDIA adapters are swapped for a deterministic fake when the
+ * All provider adapters are swapped for a deterministic fake when the
  * Electron main process is launched with `AHWP_E2E_FAKE_AI=1` (see
  * electron/ai/registry.ts → providers/fake.ts). The fake reads scripted
  * behavior from the *last user message content*:
@@ -26,8 +26,8 @@ test.afterEach(async () => {
   await launched.close();
 });
 
-async function setKey(page: Page, providerId: 'openai' | 'nvidia') {
-  await page.evaluate(async (id: 'openai' | 'nvidia') => {
+async function setKey(page: Page, providerId: 'openai' | 'google') {
+  await page.evaluate(async (id: 'openai' | 'google') => {
     await window.api.secrets.set(id, 'test-key');
   }, providerId);
   await page.reload();
@@ -64,21 +64,21 @@ test.describe('chat panel — secrets gate + provider/model selectors', () => {
       'ok',
     );
 
-    // Switch to nvidia → indicator goes back to ○ (no key for nvidia).
-    await page.getByTestId('chat-provider-select').selectOption('nvidia');
+    // Switch to google → indicator goes back to ○ (no key for google).
+    await page.getByTestId('chat-provider-select').selectOption('google');
     await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
       'data-state',
       'missing',
     );
     await expect(page.getByTestId('chat-input')).toBeDisabled();
 
-    // Set nvidia key → indicator flips to ● again.
+    // Set google key → indicator flips to ● again.
     await page.evaluate(async () => {
-      await window.api.secrets.set('nvidia', 'test-nvidia-key');
+      await window.api.secrets.set('google', 'test-google-key');
     });
     // The has-check listens on provider change — switch back and forth to refresh.
     await page.getByTestId('chat-provider-select').selectOption('openai');
-    await page.getByTestId('chat-provider-select').selectOption('nvidia');
+    await page.getByTestId('chat-provider-select').selectOption('google');
     await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
       'data-state',
       'ok',
@@ -88,12 +88,12 @@ test.describe('chat panel — secrets gate + provider/model selectors', () => {
   test('provider + model picks survive reload via localStorage', async () => {
     const { page } = launched;
     await setKey(page, 'openai');
-    await setKey(page, 'nvidia');
+    await setKey(page, 'google');
     // chunk 65 — model is now a <select>. The fake provider's catalog
     // includes 'fake/echo-2' on every provider, so we pick that and
     // verify it persists across reload. Auto-fetch is gated on
-    // hasKey === true, so we set the nvidia key too.
-    await page.getByTestId('chat-provider-select').selectOption('nvidia');
+    // hasKey === true, so we set the google key too.
+    await page.getByTestId('chat-provider-select').selectOption('google');
     // Wait for the auto-fetched catalog to populate the select.
     await expect
       .poll(async () =>
@@ -111,7 +111,7 @@ test.describe('chat panel — secrets gate + provider/model selectors', () => {
     await page.reload();
     await page.waitForLoadState('domcontentloaded');
     await expect(page.getByTestId('chat-provider-select')).toHaveValue(
-      'nvidia',
+      'google',
     );
     await expect(page.getByTestId('chat-model-input')).toHaveValue(
       'fake/echo-2',

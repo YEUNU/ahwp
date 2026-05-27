@@ -10,12 +10,7 @@
  * `ChatStreamEvent` back to the renderer.
  */
 
-export type ProviderId =
-  | 'openai'
-  | 'anthropic'
-  | 'google'
-  | 'nvidia'
-  | 'custom';
+export type ProviderId = 'openai' | 'anthropic' | 'google' | 'custom';
 
 export interface ProviderMeta {
   id: ProviderId;
@@ -44,12 +39,6 @@ export const PROVIDERS: readonly ProviderMeta[] = [
   {
     id: 'google',
     label: 'Google (Gemini)',
-    requiresApiKey: true,
-    requiresBaseUrl: false,
-  },
-  {
-    id: 'nvidia',
-    label: 'NVIDIA NIM',
     requiresApiKey: true,
     requiresBaseUrl: false,
   },

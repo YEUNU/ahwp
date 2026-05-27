@@ -42,7 +42,7 @@ import { loadHtmlPreview, saveHtmlPreview } from '@/features/chat/ChatPanel';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/app/use-theme';
 
-const SHOWN_IDS = new Set<ProviderId>(['openai', 'nvidia', 'google', 'custom']);
+const SHOWN_IDS = new Set<ProviderId>(['openai', 'google', 'custom']);
 const SHOWN_PROVIDERS = PROVIDERS.filter((p) => SHOWN_IDS.has(p.id));
 
 const REPO_URL = 'https://github.com/YEUNU/ahwp';

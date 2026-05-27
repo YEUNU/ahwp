@@ -2,7 +2,7 @@
 
 > AI로 한글(HWP/HWPX) 문서를 보고 편집하는 데스크탑 앱
 
-[edwardkim/rhwp](https://github.com/edwardkim/rhwp)의 한글 파일 파서·렌더러 위에 Electron + React로 만든 크로스플랫폼(Mac/Windows/Linux) 앱. OpenAI·Anthropic·Google·NVIDIA NIM·자체 호스팅 OpenAI 호환 엔드포인트(Ollama·vLLM·LM Studio 등 `custom`으로 통합)와 연결해 챗봇과 대화하거나 AI에게 문서 수정을 직접 맡길 수 있습니다.
+[edwardkim/rhwp](https://github.com/edwardkim/rhwp)의 한글 파일 파서·렌더러 위에 Electron + React로 만든 크로스플랫폼(Mac/Windows/Linux) 앱. OpenAI·Anthropic·Google·자체 호스팅 OpenAI 호환 엔드포인트(Ollama·vLLM·LM Studio 등 `custom`으로 통합)와 연결해 챗봇과 대화하거나 AI에게 문서 수정을 직접 맡길 수 있습니다.
 
 ## 핵심 기능
 
@@ -15,7 +15,7 @@
   - 가운데: 다중 탭 에디터 — 파일별 탭(dirty 점, X 닫기, ⌘W), 모든 탭이 mount 유지(전환 시 편집/실행 취소 히스토리 보존), 세션 복원
   - 오른쪽: AI 챗봇 (Phase 2)
 - **풀 편집 기능** — 텍스트 입력(IME 포함) · 마우스 드래그/Shift+Arrow/더블·트리플 클릭 선택 · Bold/Italic/Underline + 문단 스타일 + ⌘B/⌘I/⌘U · 정렬 4종 + 폰트 크기 + 색상 picker · Undo/Redo (⌘Z/⌘⇧Z, 100 entry) · Copy/Cut/Paste (⌘C/⌘X/⌘V, 시스템 클립보드) · Find (⌘F) · 페이지 네비 (PageUp/Down, ⌘Home/End)
-- **멀티 AI 백엔드** — OpenAI · Anthropic · Google · NVIDIA NIM · `custom` (OpenAI 호환 엔드포인트 — 자체 호스팅 Ollama / vLLM / LM Studio / on-prem 게이트웨이 모두 같은 슬롯)
+- **멀티 AI 백엔드** — OpenAI · Anthropic · Google · `custom` (OpenAI 호환 엔드포인트 — 자체 호스팅 Ollama / vLLM / LM Studio / on-prem 게이트웨이 모두 같은 슬롯)
 - **세 가지 편집 경로**
   - **직접 편집**: 위의 풀 편집 기능을 자체 Studio viewer로 실행
   - **챗봇 Manual**: AI가 변경을 diff로 제안 → 사용자가 Accept/Reject
@@ -54,13 +54,12 @@ npm run build:all
 
 앱 실행 후 **Settings → AI Providers**에서 사용할 백엔드의 API 키를 입력합니다. 키는 `safeStorage`로 암호화되어 OS 자격증명 저장소에 보관됩니다.
 
-| Provider             | 필요 정보                                                                                                                   |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| OpenAI               | `OPENAI_API_KEY`                                                                                                            |
-| Anthropic            | `ANTHROPIC_API_KEY`                                                                                                         |
-| Google               | `GOOGLE_API_KEY`                                                                                                            |
-| NVIDIA NIM           | `NVIDIA_API_KEY` (호스티드: `https://integrate.api.nvidia.com/v1`) 또는 셀프호스트 NIM Base URL                             |
-| 커스텀 (OpenAI 호환) | Base URL + 키. 자체 호스팅 Ollama (`http://localhost:11434/v1`) · vLLM · LM Studio · on-prem 게이트웨이 모두 한 슬롯에 통합 |
+| Provider             | 필요 정보                                                                                                                                         |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OpenAI               | `OPENAI_API_KEY`                                                                                                                                  |
+| Anthropic            | `ANTHROPIC_API_KEY`                                                                                                                               |
+| Google               | `GOOGLE_API_KEY`                                                                                                                                  |
+| 커스텀 (OpenAI 호환) | Base URL + 키. 자체 호스팅 Ollama (`http://localhost:11434/v1`) · vLLM · LM Studio · on-prem 게이트웨이 (NIM 셀프호스트 포함) 모두 한 슬롯에 통합 |
 
 ### 웹검색 지원
 
@@ -71,7 +70,6 @@ npm run build:all
 | OpenAI               | ✅              | Responses API의 `web_search` 내장 tool                                                                   |
 | Anthropic            | ✅              | Messages API의 `web_search` server tool                                                                  |
 | Google               | ✅              | `googleSearch` grounding tool (Gemini 2.x)                                                               |
-| NVIDIA NIM           | ❌              | 추론 전용. 검색은 NeMo Retriever 등 별도 서비스 필요                                                     |
 | 커스텀 (OpenAI 호환) | ❌ (기본)       | Ollama / vLLM 같은 로컬 추론은 미지원. 엔드포인트가 검색 도구를 별도로 제공하면 사용자 설정에서 override |
 
 ## 기술 스택 요약

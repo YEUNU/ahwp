@@ -2,7 +2,6 @@ import { getProviderMeta } from '../../shared/ai';
 import type { Provider, ProviderId } from '../../shared/ai';
 import { fakeProvider } from './providers/fake';
 import { googleProvider } from './providers/google';
-import { nvidiaProvider } from './providers/nvidia';
 import { openaiProvider } from './providers/openai';
 
 /**
@@ -23,27 +22,23 @@ const customProvider: Provider = {
 
 const providers = new Map<ProviderId, Provider>([
   ['openai', openaiProvider],
-  ['nvidia', nvidiaProvider],
   ['google', googleProvider],
   ['custom', customProvider],
 ]);
 
 /**
  * Lookup a provider by id. Returns null when the provider is recognized in the
- * shared union but not yet implemented in this build (Anthropic / Google /
- * custom — Phase 2 follow-up chunks; `custom` covers any OpenAI-compatible
- * endpoint including self-hosted Ollama via /v1 shim).
+ * shared union but not yet implemented in this build.
  *
- * When `AHWP_E2E_FAKE_AI=1` is set in the main process env, the openai and
- * nvidia slots are swapped with a deterministic fake (see providers/fake.ts).
- * No network is involved in that mode.
+ * When `AHWP_E2E_FAKE_AI=1` is set in the main process env, ALL providers
+ * (openai / google / custom) are swapped with a deterministic fake (see
+ * providers/fake.ts). 0.6.18 — 이전엔 openai + nvidia 만 swap 됐지만 NIM
+ * 제거 후 e2e 의 second-provider 시나리오를 google 로 옮기면서 swap 범위
+ * 확장. No network in this mode.
  */
 export function getProvider(id: ProviderId): Provider | null {
-  if (
-    process.env.AHWP_E2E_FAKE_AI === '1' &&
-    (id === 'openai' || id === 'nvidia')
-  ) {
-    return fakeProvider;
+  if (process.env.AHWP_E2E_FAKE_AI === '1') {
+    if (providers.has(id)) return fakeProvider;
   }
   return providers.get(id) ?? null;
 }

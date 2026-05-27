@@ -33,6 +33,7 @@ import {
 import { createPortal } from 'react-dom';
 import { parsePatchBlock, type AhwpPatch } from '@shared/ai-patches';
 import { MultiPatchStack, type PatchStatus } from './DiffCard';
+import { GithubDiffPane } from './GithubDiffPane';
 import { markdownToHtml } from './markdownToHtml';
 import { findSectionToReplace } from './sectionMatcher';
 import {
@@ -54,21 +55,16 @@ import {
 import { useExcerptAttachments } from './hooks/useExcerptAttachments';
 import { previewArgs } from './tools';
 
-type ChatProviderId = Extract<
-  ProviderId,
-  'openai' | 'nvidia' | 'google' | 'custom'
->;
+type ChatProviderId = Extract<ProviderId, 'openai' | 'google' | 'custom'>;
 
 const PROVIDER_OPTIONS: { id: ChatProviderId; label: string }[] = [
   { id: 'openai', label: 'OpenAI' },
-  { id: 'nvidia', label: 'NVIDIA NIM' },
   { id: 'google', label: 'Google (Gemini)' },
   { id: 'custom', label: 'Custom (OpenAI-호환)' },
 ];
 
 const DEFAULT_MODELS: Record<ChatProviderId, string> = {
-  openai: 'gpt-4o-mini',
-  nvidia: 'meta/llama-3.1-70b-instruct',
+  openai: 'gpt-5.4-mini',
   google: 'gemini-2.0-flash',
   custom: '',
 };
@@ -144,33 +140,36 @@ interface UiToolEntry {
 function loadProvider(): ChatProviderId {
   try {
     const raw = localStorage.getItem(STORAGE_PROVIDER);
-    if (
-      raw === 'openai' ||
-      raw === 'nvidia' ||
-      raw === 'google' ||
-      raw === 'custom'
-    )
-      return raw;
+    if (raw === 'openai' || raw === 'google' || raw === 'custom') return raw;
+    // 0.6.18 — NIM 지원 제거. 이전에 'nvidia' 가 저장돼 있으면 openai 로
+    // 마이그레이션 (저장 자체는 다음 setItem 에서 덮어쓰임).
+    if (raw === 'nvidia') return 'openai';
   } catch {
     /* no-op */
   }
   return 'openai';
 }
 
+// 0.6.14 — 이전 openai default 였던 모델들. loadModels 가 storage 에서
+// 이 값을 발견하면 새 default 로 자동 마이그레이션 (사용자가 default 를
+// 그대로 쓰던 경우 새 default 가 즉시 적용되도록). 사용자가 의식적으로
+// 다른 모델을 선택했다면 그 선택은 유지.
+const LEGACY_OPENAI_DEFAULTS = new Set(['gpt-4o-mini']);
+
 function loadModels(): Record<ChatProviderId, string> {
   try {
     const raw = localStorage.getItem(STORAGE_MODELS);
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<Record<ChatProviderId, string>>;
+      const openaiStored =
+        typeof parsed.openai === 'string' && parsed.openai.length > 0
+          ? parsed.openai
+          : DEFAULT_MODELS.openai;
+      const openai = LEGACY_OPENAI_DEFAULTS.has(openaiStored)
+        ? DEFAULT_MODELS.openai
+        : openaiStored;
       return {
-        openai:
-          typeof parsed.openai === 'string' && parsed.openai.length > 0
-            ? parsed.openai
-            : DEFAULT_MODELS.openai,
-        nvidia:
-          typeof parsed.nvidia === 'string' && parsed.nvidia.length > 0
-            ? parsed.nvidia
-            : DEFAULT_MODELS.nvidia,
+        openai,
         google:
           typeof parsed.google === 'string' && parsed.google.length > 0
             ? parsed.google
@@ -416,7 +415,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       Record<ChatProviderId, ModelListState>
     >({
       openai: { kind: 'idle' },
-      nvidia: { kind: 'idle' },
       google: { kind: 'idle' },
       custom: { kind: 'idle' },
     });
@@ -824,7 +822,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             status icons + actions (always visible regardless of model
             id length). Row 2: full-width model selector + refresh.
             Earlier single-row layout collapsed history/+ buttons when
-            NVIDIA / NIM model ids stretched the model select. */}
+            long provider-prefixed model ids stretched the model select. */}
         <div
           className="flex shrink-0 flex-col gap-1.5 border-b border-border bg-card px-3 py-2"
           data-testid="chat-provider-bar"
@@ -838,7 +836,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               className="flex-1 rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-hidden focus:ring-2 focus:ring-ring"
               data-testid="chat-provider-select"
               aria-label="Provider"
-              title="AI 공급자 선택 (OpenAI / NVIDIA NIM / Google Gemini / Custom)"
+              title="AI 공급자 선택 (OpenAI / Google Gemini / Custom)"
               disabled={streaming}
             >
               {PROVIDER_OPTIONS.map((p) => (
@@ -1649,8 +1647,17 @@ function Message({
     setPatchStatusOverrides((prev) => ({ ...prev, [idx]: status }));
   };
 
+  // 0.6.14 — user-dismissable diff pane. After auto-accept patches stay
+  // applied; this just hides the visual diff so user can keep working
+  // without the side panel cluttering the editor area.
+  const [patchPaneDismissed, setPatchPaneDismissed] = useState(false);
+
   // Q5 확장 — Accept 후 ~12s 토스트 ("N개 적용됨 · 되돌리기").
-  const [patchToast, setPatchToast] = useState<{
+  // 0.6.14 — toast UI 자체는 GithubDiffPane 의 헤더로 흡수돼서 더 이상
+  // 채팅 안에서 떠다니지 않음. state 는 유지 (handlePatchAcceptAll /
+  // handlePatchUndo 가 setPatchToast 호출). 향후 chat-side toast 가 필요
+  // 해지면 그때 read; 지금은 write-only.
+  const [, setPatchToast] = useState<{
     appliedCount: number;
   } | null>(null);
   const patchToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2063,50 +2070,25 @@ function Message({
             ) : null}
           </div>
         ) : null}
-        {/* Q5 Diff Viewer — render patches block as Accept/Reject cards.
-          chunk 99 follow-up — react-dom createPortal 로 가운데 (Studio)
-          패널의 #ahwp-editor-diff-overlay 컨테이너에 떠 있도록 라우팅.
-          chat 안엔 작은 hint 만 남기고 실제 카드는 에디터 위에 sticky.
-          포털 target 이 mount 안 됐으면 (e2e 초기 / 미분기 환경) 기존
-          chat-side 인라인 fallback 으로 렌더. */}
-        {patchesParsed && patchesParsed.ok && patchCount > 0
+        {/* Diff pane — 0.6.14 replacement for the card-heavy MultiPatchStack.
+          GithubDiffPane portals to #ahwp-editor-diff-overlay (now a real
+          side panel right of rhwp-editor, not a sticky overlay). In-chat
+          shows only a compact hint chip with applied count + undo. */}
+        {patchesParsed &&
+        patchesParsed.ok &&
+        patchCount > 0 &&
+        !patchPaneDismissed
           ? (() => {
-              const cards = (
-                <div
-                  className="pointer-events-auto rounded-md border border-border bg-card px-3 py-2 shadow-lg"
-                  data-testid="chat-patches-block"
-                  data-message-id={message.id}
-                >
-                  <MultiPatchStack
-                    items={patchesParsed.items}
-                    statuses={patchStatuses}
-                    onAccept={handlePatchAcceptIdx}
-                    onReject={handlePatchRejectIdx}
-                    onAcceptAll={handlePatchAcceptAll}
-                    onPreview={onPreviewPatch}
-                  />
-                  {patchToast ? (
-                    <div
-                      className="mt-2 flex items-center gap-3 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs"
-                      data-testid="diff-applied-toast"
-                    >
-                      <Check className="size-3.5 text-emerald-600" />
-                      <span className="flex-1 font-medium text-foreground">
-                        {patchToast.appliedCount}개 적용됨
-                      </span>
-                      {onUndoApply ? (
-                        <button
-                          type="button"
-                          onClick={handlePatchUndo}
-                          className="text-[11px] font-medium text-emerald-700 hover:underline dark:text-emerald-300"
-                          data-testid="diff-applied-undo"
-                        >
-                          되돌리기
-                        </button>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
+              const pane = (
+                <GithubDiffPane
+                  items={patchesParsed.items}
+                  statuses={patchStatuses}
+                  onAccept={handlePatchAcceptIdx}
+                  onReject={handlePatchRejectIdx}
+                  onUndoAll={onUndoApply ? handlePatchUndo : undefined}
+                  onPreview={onPreviewPatch}
+                  onDismiss={() => setPatchPaneDismissed(true)}
+                />
               );
               const target =
                 typeof document !== 'undefined'
@@ -2115,19 +2097,41 @@ function Message({
               if (target) {
                 return (
                   <>
-                    {createPortal(cards, target)}
+                    {createPortal(pane, target)}
                     <div
-                      className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-[11px] text-amber-700 dark:text-amber-300"
+                      className="mt-2 flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-1.5 text-[11px] text-emerald-700 dark:text-emerald-300"
                       data-testid="chat-patches-hint"
                     >
-                      📋 {patchCount}개 변경 제안 — 에디터 우측 카드에서 검토
+                      <Check className="size-3" />
+                      <span className="font-medium">
+                        {patchCount}개 변경 적용됨
+                      </span>
+                      {onUndoApply ? (
+                        <button
+                          type="button"
+                          onClick={handlePatchUndo}
+                          className="ml-auto text-[10.5px] hover:underline"
+                          data-testid="chat-patches-undo"
+                        >
+                          되돌리기
+                        </button>
+                      ) : null}
                     </div>
                   </>
                 );
               }
-              // Fallback: target 미마운트 시 inline.
+              // Fallback (e2e initial / pre-mount): inline old MultiPatchStack.
               return (
-                <div className="mt-2 border-t border-border pt-2">{cards}</div>
+                <div className="mt-2 border-t border-border pt-2">
+                  <MultiPatchStack
+                    items={patchesParsed.items}
+                    statuses={patchStatuses}
+                    onAccept={handlePatchAcceptIdx}
+                    onReject={handlePatchRejectIdx}
+                    onAcceptAll={handlePatchAcceptAll}
+                    onPreview={onPreviewPatch}
+                  />
+                </div>
               );
             })()
           : null}
