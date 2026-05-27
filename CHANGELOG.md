@@ -6,6 +6,48 @@
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-05-27
+
+### Fixed — iframe 포커스 상태에서 글로벌 단축키 동작 안 함
+
+가운데 메인 패널이 rhwp-studio iframe 으로 전환된 이후, iframe 안에서
+발생한 keydown 이 cross-frame 경계 때문에 parent window 까지 bubble 안
+되어 ahwp 의 글로벌 단축키들이 작동 안 함:
+
+- ⌘K — 명령 팔레트
+- ⌘W — 탭 닫기
+- ⌘/ — Settings 단축키 탭
+- ⌘⇧F — cross-folder 검색
+- ⌘⇧O — outline (TOC) sidebar 토글
+- F6 — 스타일 관리 다이얼로그 (한컴 reflex)
+- Alt+L / Alt+T / Alt+P — 글자 / 문단 / PDF 내보내기 (한컴 reflex)
+
+(주의: Electron 메뉴 accelerator 로 등록된 ⌘N / ⌘O / ⌘S / ⌘Z / ⌘B /
+⌘I / ⌘U / ⌘F / ⌘H 는 window-level 에서 캡쳐되어 iframe 포커스 상태에서도
+정상 발화 — 본 회귀의 영향 받지 않음.)
+
+**해결**:
+
+- **`vendor/rhwp/rhwp-studio/src/main.ts`** — iframe document 의 capture
+  phase keydown listener 가 modifier (meta/ctrl/alt) 또는 F1~F12 만 골라
+  `window.parent.postMessage({type:'rhwp-event', name:'keydown', data})`
+  로 forward. 일반 타이핑은 send 안 함 (noise 회피).
+- **`src/features/rhwp-studio/keydown-forward.ts`** (신규) —
+  `dispatchForwardedKeydown(payload, target?)` pure helper. modifier /
+  key / code 모두 보존한 KeyboardEvent 를 bubbles + cancelable 로 합성,
+  target (기본 `window`) 에 dispatch. AppShell 의 window-level onKey 가
+  자연스럽게 받음.
+- **`src/features/rhwp-studio/RhwpEditor.tsx`** — bridge ready 후
+  `bridge.on('keydown', dispatchForwardedKeydown)` 구독. unmount 시
+  unsubscribe.
+
+### 검증
+
+- vitest 288/288 (281 → +7, keydown-forward 7 케이스: ⌘K / ⌘⇧F / F6 /
+  Alt+L / bubbles+cancelable / 기본 target=window / preventDefault).
+- typecheck + eslint 통과.
+- vendor 재빌드 (`npm run vendor:rhwp:build`) 완료.
+
 ## [0.7.4] - 2026-05-27
 
 ### Changed — defineTool refactor (single source of truth)
