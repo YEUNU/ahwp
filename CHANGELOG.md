@@ -6,6 +6,48 @@
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-05-27
+
+### Fixed — patches dispatcher hardening + diff side panel + UI polish
+
+0.6.14 ~ 0.6.20 사이에 진행되었지만 commit 되지 않은 채 working tree
+에 남아 있던 ready 변경을 정리. `GithubDiffPane.tsx` 누락이 가장 큰
+회귀: ChatPanel.tsx 가 0.6.18 부터 이 파일을 import 하지만 파일 자체는
+git 추적 안 됨 → 이론상 dev branch 의 새 clone 이 TypeScript 빌드
+실패. 본 chunk 가 그 갭을 닫는다.
+
+- **`shared/ai-patches.ts`** — `repairLlmJson` (smart quotes / 후행 쉼표
+  / U+2028 line separator / line·block comment 제거) 와
+  `dedupeCellTargets` (한 batch 안의 동일 cell coordinate 중복 거부)
+  helper 추가. `parsePatchBlock` 가 strict JSON.parse 실패 시 repair 후
+  retry. 모델이 dense `additionFormat.lib` 를 보내며 흔히 발생하는
+  parsing 실패가 silent 회복.
+- **`src/features/chat/GithubDiffPane.tsx` + test** (신규) — 본문 patches
+  를 inline diff card 가 아니라 editor 우측 side panel (380px) 로
+  portal. AppShell 의 portal target div 가 empty:hidden 으로 빈 상태
+  에선 editor 전폭, patches 있을 땐 380px 너비로 분할. IDE 의 diff
+  viewer UX 와 정렬.
+- **`src/app/AppShell.tsx`** — diff overlay 절대 배치 → 진짜 side panel
+  layout 으로 전환 + applyPatches dispatch 가 `dedupeCellTargets` 결과를
+  사용해 중복 셀 patch 거부.
+- **`src/app/TitleBar.tsx`** — Windows / Linux native 창 컨트롤 (min /
+  max / close) 가 우상단 ~138px 점유. 이전 `paddingRight: 10` 에선 우리
+  settings / theme 버튼이 같은 좌표에 겹쳐 "X" 클릭이 settings 로 라우팅
+  되던 회귀 fix.
+- **`src/features/chat/toolRouter.ts`** — `insertTextInCell` 을
+  `ALWAYS_INCLUDE` 에 추가. router LLM 이 form-fill 작업에서 이 도구를
+  깜빡 빼면 agent 가 patches block (text) 으로 우회 → 한 turn 만에 종료
+  되는 회귀 가드.
+- **`src/features/chat/tools.test.ts`** — helper 경로의 `findInDocument`
+  가 raw `RhwpSearchHit ({sec, para})` 를 viewer-handle contract
+  `{sectionIdx, paragraphIdx}` 로 remap 하는지 검증하는 회귀 테스트.
+
+### 검증
+
+- vitest 273/273 (working tree 에 이미 있던 신규 케이스 — ai-patches
+  repair / dedup / findInDocument shape — 모두 통과).
+- typecheck + eslint 통과.
+
 ## [0.7.2] - 2026-05-27
 
 ### Added — slotKind classification + Form-Fill completion guard

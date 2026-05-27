@@ -220,6 +220,62 @@ export type AhwpPatchPreflightItem =
  * whole thing; per-patch failures keep the item as `ok: false` so the
  * preview can still surface what the model proposed.
  */
+/**
+ * Repair common LLM JSON malformations before strict parsing. Targets
+ * the failure modes we actually see from gpt-5.x / gemini-2.x emitting
+ * dense object literals (large `additionFormat.lib` copies):
+ *
+ *  1. Smart / curly quotes around keys or values — `"key"` → `"key"`
+ *  2. Trailing comma before `}` or `]` — `[1,2,]` → `[1,2]`
+ *  3. Line separator chars U+2028 / U+2029 — JSON.parse rejects them
+ *     even though many models emit them when streaming through Unicode
+ *  4. Comments — line `//` and block comment forms removed
+ *
+ * Returns the repaired string or the original if no changes applied.
+ * Idempotent and conservative — never changes semantics for valid JSON.
+ */
+export function repairLlmJson(input: string): string {
+  let s = input;
+  // Smart quotes → straight. U+201C/U+201D (curly double), U+2018/U+2019 (curly single).
+  // We only touch ASCII " conversion when curly quotes are clearly used as JSON delimiters.
+  s = s.replace(/[“”]/g, '"');
+  // U+2028 / U+2029 — line separator + paragraph separator (invalid in strict JSON).
+  s = s.replace(/[\u2028\u2029]/g, ' ');
+  // Trailing commas before } or ] — `, }` / `,]` / `, ]\n`.
+  s = s.replace(/,(\s*[}\]])/g, '$1');
+  // Strip // line comments and /* block comments */ — only outside strings.
+  // Naive but adequate for the model-output domain (models don't put // inside strings here).
+  s = s
+    .split('\n')
+    .map((line) => line.replace(/(^|[^:])\/\/[^\n]*$/g, '$1'))
+    .join('\n');
+  s = s.replace(/\/\*[\s\S]*?\*\//g, '');
+  return s;
+}
+
+/**
+ * 0.6.14 — Per-batch cell-target dedup. Returns `false` for any patch
+ * whose cell coordinate (sec/para/ctrl/cellIdx/cellParaIdx) already
+ * appeared earlier in `patches`. Body-level patches (no `cell`) and
+ * patches without cell coords pass through.
+ *
+ * Used by the applyPatches dispatcher to prevent the model's
+ * occasional "two patches targeting same cell" mistake (e.g. mapping
+ * '1.1 목표' and '1.3 추진' to the same cellIdx) from silently
+ * overwriting the first write.
+ */
+export function dedupeCellTargets(patches: readonly AhwpPatch[]): boolean[] {
+  const seen = new Set<string>();
+  return patches.map((p) => {
+    const c = p.location.cell;
+    if (!c) return true;
+    const key = `${p.location.sectionIndex}/${p.location.paragraphIndex}/${c.controlIndex}/${c.cellIndex}/${c.cellParagraphIndex}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export function parsePatchBlock(
   raw: string,
 ):
@@ -229,7 +285,38 @@ export function parsePatchBlock(
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    return { ok: false, reason: `parse:${(err as Error).message}` };
+    // Retry with repair pass. The LLM frequently emits trailing commas,
+    // smart quotes, or Unicode line separators when streaming large
+    // patches blocks with embedded `additionFormat.lib` objects.
+    const repaired = repairLlmJson(raw);
+    if (repaired !== raw) {
+      try {
+        parsed = JSON.parse(repaired);
+      } catch (err2) {
+        console.warn(
+          '[ai-patches] JSON parse failed even after repair:',
+          (err as Error).message,
+          '→',
+          (err2 as Error).message,
+          '\nraw (first 600 chars):',
+          raw.slice(0, 600),
+          '\nrepaired (first 600 chars):',
+          repaired.slice(0, 600),
+        );
+        return {
+          ok: false,
+          reason: `parse:${(err as Error).message}`,
+        };
+      }
+    } else {
+      console.warn(
+        '[ai-patches] JSON parse failed (no repair candidates):',
+        (err as Error).message,
+        '\nraw (first 600 chars):',
+        raw.slice(0, 600),
+      );
+      return { ok: false, reason: `parse:${(err as Error).message}` };
+    }
   }
   if (!isObj(parsed)) return { ok: false, reason: 'root-not-object' };
   const ops = parsed.ops;

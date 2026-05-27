@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 // lib upstream issue 추적 후 재시도.
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import type { PingResponse } from '@shared/api';
-import { patchFormatToLibProps } from '@shared/ai-patches';
+import { dedupeCellTargets, patchFormatToLibProps } from '@shared/ai-patches';
 import { ChatPanel, type ChatPanelHandle } from '@/features/chat/ChatPanel';
 import { runTools } from '@/features/chat/tools';
 import { primaryModifier } from '@/lib/platform';
@@ -657,18 +657,11 @@ export default function AppShell() {
                   onTogglePin={togglePinTab}
                 />
               )}
-              {/* chunk 99 follow-up — Diff overlay portal target. ChatPanel
-                의 Message 컴포넌트가 ahwp-patches 블록을 react-dom 의
-                createPortal 로 이 요소에 렌더. 가운데 (Studio) 패널의
-                bottom-right 에 sticky 오버레이로 노출 — IDE 의 diff
-                viewer 와 유사. ChatPanel 안에는 패치 카드를 더 이상
-                inline 렌더 안 함 (포털 활성 시). */}
-              <div
-                id="ahwp-editor-diff-overlay"
-                data-testid="editor-diff-overlay"
-                className="pointer-events-none absolute right-4 top-12 z-30 flex max-h-[calc(100%-3.5rem-1rem)] w-[min(420px,80%)] flex-col gap-2 overflow-y-auto"
-                style={{ paddingBottom: 16 }}
-              />
+              {/* 0.6.14 — Diff portal target moved from absolute overlay
+                to a true side panel. ChatPanel portals GithubDiffPane
+                here. Empty (display:none on inner pane) when no patches —
+                editor takes full width. When patches exist the pane
+                takes ~360px and editor shrinks accordingly. No overlap. */}
               <div className="relative flex flex-1 overflow-hidden">
                 <div className="relative flex-1 overflow-hidden">
                   {tabsState.length === 0 ? (
@@ -726,6 +719,15 @@ export default function AppShell() {
                     })
                   )}
                 </div>
+                {/* Diff side panel (portal target). Hidden when no
+                  patches active — inner [data-empty="true"] sets
+                  display:none via CSS. ChatPanel decides what to mount. */}
+                <div
+                  id="ahwp-editor-diff-overlay"
+                  data-testid="editor-diff-overlay"
+                  className="shrink-0 empty:hidden"
+                  style={{ width: 380 }}
+                />
               </div>
             </main>
           </Panel>
@@ -903,7 +905,22 @@ export default function AppShell() {
                       await import('@/features/rhwp-studio/bridge-ir-helper')
                     ).BridgeIrHelper(bridge);
                     const results: boolean[] = [];
-                    for (const p of patches) {
+                    // 0.6.14 — extract dedup decision to a pure helper
+                    // (shared/ai-patches.dedupeCellTargets) so it's
+                    // unit-testable. `allow[i] === false` means the i-th
+                    // patch was a duplicate of an earlier cell target and
+                    // must be rejected before any IR mutation.
+                    const allow = dedupeCellTargets(patches);
+                    for (let i = 0; i < patches.length; i++) {
+                      const p = patches[i];
+                      if (!allow[i]) {
+                        const c = p.location.cell;
+                        console.warn(
+                          `[diff] rejected duplicate cell-target patch (sec=${p.location.sectionIndex}, para=${p.location.paragraphIndex}, cell=${c?.cellIndex}). Each cell can be targeted only once per batch.`,
+                        );
+                        results.push(false);
+                        continue;
+                      }
                       try {
                         const sec = p.location.sectionIndex;
                         const para = p.location.paragraphIndex;
@@ -968,6 +985,46 @@ export default function AppShell() {
                         }
 
                         // Body-level patch.
+                        //
+                        // 0.6.14 — guard: target paragraph anchors a table?
+                        // model 이 cell coordinate 를 빠뜨려 body insert 로
+                        // routing 되면 양식이 깨지므로 (heading 중복 / 폰트
+                        // 오염 / 표 unfilled) 명시적으로 reject. model 은
+                        // false 결과를 받고 다음 turn 에 cell-level 재발급.
+                        try {
+                          const dimRaw = await helper.invokeRead<unknown>(
+                            'getTableDimensions',
+                            [sec, para, 0],
+                          );
+                          let hasTable = false;
+                          if (dimRaw != null) {
+                            let dim: { ok?: boolean; cellCount?: number };
+                            if (typeof dimRaw === 'string') {
+                              try {
+                                dim = JSON.parse(dimRaw);
+                              } catch {
+                                dim = {};
+                              }
+                            } else {
+                              dim = dimRaw as {
+                                ok?: boolean;
+                                cellCount?: number;
+                              };
+                            }
+                            hasTable =
+                              dim.ok !== false && (dim.cellCount ?? 0) > 0;
+                          }
+                          if (hasTable) {
+                            console.warn(
+                              `[diff] rejected body patch at (sec=${sec}, para=${para}) — paragraph anchors a table. Patch must use location.cell.`,
+                            );
+                            results.push(false);
+                            continue;
+                          }
+                        } catch {
+                          /* getTableDimensions throw = no table here; proceed. */
+                        }
+
                         let end = p.location.endOffset;
                         if (end === undefined) {
                           end = await helper.getParagraphLength(sec, para);
@@ -1010,6 +1067,24 @@ export default function AppShell() {
                       } catch (err) {
                         console.warn('[diff] applyPatch failed:', err);
                         results.push(false);
+                      }
+                    }
+                    // 0.6.14 — bridge writes bypass the native input-handler's
+                    // `afterEdit()` which is what emits `document-changed` to
+                    // trigger CanvasView.refreshPages(). Without this notify
+                    // the IR is mutated correctly but the canvas keeps showing
+                    // pre-edit content. Fire once per batch (not per patch) —
+                    // canvas refresh is idempotent and we don't want N repaints.
+                    if (results.some((r) => r)) {
+                      try {
+                        await bridge.invoke('notifyDocumentChanged', {
+                          reason: 'ahwp-patches',
+                        });
+                      } catch (err) {
+                        console.warn(
+                          '[diff] notifyDocumentChanged failed (older vendor?):',
+                          err,
+                        );
                       }
                     }
                     return results;
