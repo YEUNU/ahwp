@@ -531,6 +531,10 @@ describe('BridgeIrHelper — Phase D2a', () => {
         textColor: '#000000',
       },
     });
+    // 0.7.2 — slotKind 분류 검증: 검정 일반 = content, italic+blue = instruction.
+    expect(byCellIdx.get(0)?.slotKind).toBe('content');
+    expect(byCellIdx.get(1)?.slotKind).toBe('instruction');
+
     // cellIdx=1 — placeholder, italic blue. AI 가 이를 보고 교체 판단.
     expect(byCellIdx.get(1)).toMatchObject({
       currentText: '예) 회사명을 입력하세요',
@@ -540,6 +544,147 @@ describe('BridgeIrHelper — Phase D2a', () => {
         textColor: '#0000ff',
       },
     });
+  });
+
+  // 0.7.2 — slotKind 분류기 4 종 full coverage:
+  //   - 빈 셀 → 'value-slot'
+  //   - 채워진 셀 + italic + 비검정 색 → 'instruction'
+  //   - 채워진 셀 + bold + 짧은 텍스트 → 'sub-header'
+  //   - 그 외 채워진 셀 → 'content'
+  it('getEmptyFormFields classifies slotKind into value-slot / instruction / sub-header / content', async () => {
+    // 4x1 표:
+    //   cell 0 — 빈 셀
+    //   cell 1 — italic + textColor=#0000ff (placeholder)
+    //   cell 2 — bold + 짧은 텍스트 "구분" (in-cell sub-header)
+    //   cell 3 — 평범한 본문 (검정, 일반)
+    const bridge = {
+      invokeWasm: vi.fn(async (fn: string, args: unknown[]) => {
+        if (fn === 'getSectionCount') return 1;
+        if (fn === 'getParagraphCount') return 1;
+        if (fn === 'getTableDimensions') {
+          const [, p, ctrl] = args as [number, number, number];
+          if (p === 0 && ctrl === 0)
+            return JSON.stringify({
+              ok: true,
+              rowCount: 4,
+              colCount: 1,
+              cellCount: 4,
+            });
+          return JSON.stringify({ ok: false });
+        }
+        if (fn === 'getCellInfo') {
+          const [, , , cellIdx] = args as [number, number, number, number];
+          return JSON.stringify({
+            ok: true,
+            row: cellIdx,
+            col: 0,
+            rowSpan: 1,
+            colSpan: 1,
+          });
+        }
+        if (fn === 'getTextInCell') {
+          const [, , , cellIdx] = args as [number, number, number, number];
+          if (cellIdx === 0) return '';
+          if (cellIdx === 1) return '예) 입력하세요';
+          if (cellIdx === 2) return '구분';
+          if (cellIdx === 3) return '정상 데이터가 들어있는 셀';
+          return '';
+        }
+        if (fn === 'getCellCharPropertiesAt') {
+          const [, , , cellIdx] = args as [number, number, number, number];
+          if (cellIdx === 1)
+            return JSON.stringify({
+              italic: true,
+              bold: false,
+              textColor: '#0000ff',
+              charShapeId: 22,
+            });
+          if (cellIdx === 2)
+            return JSON.stringify({
+              italic: false,
+              bold: true,
+              textColor: '#000000',
+              charShapeId: 23,
+            });
+          if (cellIdx === 3)
+            return JSON.stringify({
+              italic: false,
+              bold: false,
+              textColor: '#000000',
+              charShapeId: 24,
+            });
+          return JSON.stringify({ ok: false });
+        }
+        throw new Error(`unmocked: ${fn}`);
+      }),
+    } as unknown as import('@/lib/rhwp-bridge').RhwpBridge;
+
+    const h = new BridgeIrHelper(bridge);
+    const full = await h.getEmptyFormFields({ includeFilled: true });
+    const byIdx = new Map(
+      full.cellFields.map((f) => [f.location.cellIndex, f]),
+    );
+
+    expect(byIdx.get(0)?.slotKind).toBe('value-slot');
+    expect(byIdx.get(1)?.slotKind).toBe('instruction');
+    expect(byIdx.get(2)?.slotKind).toBe('sub-header');
+    expect(byIdx.get(3)?.slotKind).toBe('content');
+  });
+
+  // 0.7.2 — black color 정규화. #000 / #000000 / 대문자 / 공백 둘러싼
+  // hex 도 모두 검정으로 처리. italic 이라도 검정이면 instruction 아님.
+  it('slotKind: italic + black is NOT instruction (color normalization)', async () => {
+    const bridge = {
+      invokeWasm: vi.fn(async (fn: string, args: unknown[]) => {
+        if (fn === 'getSectionCount') return 1;
+        if (fn === 'getParagraphCount') return 1;
+        if (fn === 'getTableDimensions')
+          return JSON.stringify({
+            ok: true,
+            rowCount: 3,
+            colCount: 1,
+            cellCount: 3,
+          });
+        if (fn === 'getCellInfo') {
+          const [, , , cellIdx] = args as [number, number, number, number];
+          return JSON.stringify({
+            ok: true,
+            row: cellIdx,
+            col: 0,
+            rowSpan: 1,
+            colSpan: 1,
+          });
+        }
+        if (fn === 'getTextInCell') return '이탤릭 검정';
+        if (fn === 'getCellCharPropertiesAt') {
+          const [, , , cellIdx] = args as [number, number, number, number];
+          if (cellIdx === 0)
+            return JSON.stringify({
+              italic: true,
+              textColor: '#000000',
+            });
+          if (cellIdx === 1)
+            return JSON.stringify({
+              italic: true,
+              textColor: '#000',
+            });
+          if (cellIdx === 2)
+            return JSON.stringify({
+              italic: true,
+              textColor: '  #000000  ',
+            });
+          return JSON.stringify({ ok: false });
+        }
+        throw new Error(`unmocked: ${fn}`);
+      }),
+    } as unknown as import('@/lib/rhwp-bridge').RhwpBridge;
+
+    const h = new BridgeIrHelper(bridge);
+    const full = await h.getEmptyFormFields({ includeFilled: true });
+    // 셋 다 italic 검정 → content (instruction 아님).
+    for (const f of full.cellFields) {
+      expect(f.slotKind).toBe('content');
+    }
   });
 
   // 0.6.15 — replaceTextInCell: 기존 텍스트 길이만큼 deleteTextInCell 후

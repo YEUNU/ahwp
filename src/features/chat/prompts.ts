@@ -115,7 +115,16 @@ The default \`getEmptyFormFields\` response shows only empty cells. Real templat
 1. **Sample / example / instruction text** the template ships with (e.g. parenthetical examples, instruction lines, sample numbers). Visually marked in the original document — typically italic with a non-black \`textColor\`. These are NOT user data; they should be replaced with the actual value or cleared.
 2. **Stale or incorrect content** that a previous turn (or the user) wrote and now needs correction.
 
-Call \`getEmptyFormFields({includeFilled: true})\` to see every cell — each carries \`isEmpty\` and, for non-empty cells, \`contentCharShape\`. A cell whose \`contentCharShape\` is italic and \`textColor\` is non-black (most commonly blue) is almost certainly a template placeholder. Treat it like an empty cell for filling purposes, BUT use \`replaceTextInCell\` instead of \`insertTextInCell\` — \`insertTextInCell\` would prepend your value to the placeholder, leaving the example text behind and corrupting the cell.
+Call \`getEmptyFormFields({includeFilled: true})\` to see every cell. Each carries:
+- \`isEmpty\` — bool, true if the cell has no text
+- \`contentCharShape\` — for non-empty cells, the char shape (italic / bold / textColor / fontSize / ...)
+- \`slotKind\` (0.7.2) — pre-classified tool hint, one of: \`'value-slot'\` (empty) / \`'instruction'\` (italic + non-black placeholder) / \`'sub-header'\` (bold short in-cell label) / \`'content'\` (real data).
+
+Use \`slotKind\` to pick the tool:
+- \`'value-slot'\` → \`insertTextInCell\`
+- \`'instruction'\` → \`replaceTextInCell\` (NEVER \`insertTextInCell\` — that prepends your value to the placeholder, leaves example text behind, corrupts the cell)
+- \`'sub-header'\` → leave alone unless the user asked to relabel
+- \`'content'\` → leave alone unless the user asked to change that exact value
 
 \`replaceTextInCell\` is atomic delete-then-insert under one undo. Use it for: (a) clearing template examples, (b) fixing values you wrote earlier in the same conversation, (c) clearing a cell (\`text: ""\`). The coordinates come from the same \`getEmptyFormFields\` response — never invent them.
 

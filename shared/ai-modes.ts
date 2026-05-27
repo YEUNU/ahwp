@@ -129,12 +129,22 @@ const FORM_FILL: ModeDefinition = {
 - You CAN ONLY mutate the document through cell-level tools: \`insertTextInCell\` (empty cells), \`replaceTextInCell\` (filled cells / placeholders).
 - Coordinates MUST come from \`getEmptyFormFields\` — never invent paragraphIdx / cellIdx.
 
+**slotKind decides which tool to use (0.7.2):**
+
+Every cell returned by \`getEmptyFormFields\` carries a \`slotKind\`:
+- \`'value-slot'\` — empty cell. Call \`insertTextInCell\` with your value.
+- \`'instruction'\` — a template placeholder still living in the cell (italic + non-black color, e.g. "예) 회사명을 입력하세요" / "1.3 주요 공정별 ... 내용을 요약하여 기술"). Call \`replaceTextInCell\` to swap it for the real value. **Never** \`insertTextInCell\` here — that would prepend your value, leaving the placeholder text behind and breaking the cell's layout. This was the root cause of the 0.7.1 regression where cell #4 kept its italic blue example text.
+- \`'sub-header'\` — a short bold in-cell label (e.g. "구분", "1)", section marker inside a cell). DO NOT touch unless the user explicitly asks to relabel.
+- \`'content'\` — a real filled cell. Leave alone unless the user explicitly asks to change that exact value.
+
+When a turn fills cells, pair the right tool to the right \`slotKind\`. If you used \`insertTextInCell\` on an \`'instruction'\` slot, fix it with \`replaceTextInCell\` in the next turn.
+
 **Workflow:**
-1. First turn: call \`getEmptyFormFields()\` (unscoped) to get the full tableInventory + initial cellFields.
-2. For tables with many empty cells, scope-call \`getEmptyFormFields({parentParaIdx: <paragraphIndex from inventory>, includeFilled: true})\` to see both empty and filled cells (latter often contains italic+blue placeholder example text that should be REPLACED via \`replaceTextInCell\`, not preserved).
-3. Emit cell writes in parallel (up to 5 per turn), using EXACT coordinates from the response.
-4. Iterate until no relevant empty cells remain.
-5. Before announcing completion: call \`getPageSvg({pageIdx})\` on key pages to visually verify (provider with vision will see the image and confirm placement / placeholder removal / consistency).
+1. First turn: call \`getEmptyFormFields()\` (unscoped) to get the full tableInventory + initial cellFields. The inventory is your map of every table; \`emptyCells\` tells you the workload per table.
+2. For tables you'll fill, scope-call \`getEmptyFormFields({parentParaIdx: <paragraphIndex from inventory>, includeFilled: true})\`. \`includeFilled: true\` is REQUIRED to see \`'instruction'\` and \`'sub-header'\` slots — without it you only see \`'value-slot'\` and miss every placeholder.
+3. Emit cell writes in parallel (up to 5 per turn). Pick the tool by slotKind.
+4. Iterate until no \`'value-slot'\` / \`'instruction'\` cells remain in scope.
+5. Before announcing completion: call \`getPageSvg({pageIdx})\` on key pages. A vision-capable provider will see the image and confirm placement / no placeholder remnants / consistency. The runtime ENFORCES this — if you try to send a final text-only summary without a getPageSvg call, you'll be auto-nudged back into the loop.
 6. If verification flags issues, fix with \`replaceTextInCell\` and re-verify.
 
 If the user's intent clearly does not fit any slot, say so briefly and stop — do NOT invent body paragraphs.`,

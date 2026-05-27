@@ -43,6 +43,13 @@ describe('Task-Mode integration (form-fill chain)', () => {
     expect(prompt).toContain('insertTextInCell');
     expect(prompt).toContain('Body write tools');
     expect(prompt).not.toBe('BASE PROMPT'); // append 됐어야 함.
+    // 0.7.2 — slotKind 가이드가 prompt 에 들어갔는지.
+    expect(prompt).toContain('slotKind');
+    expect(prompt).toContain("'value-slot'");
+    expect(prompt).toContain("'instruction'");
+    expect(prompt).toContain('replaceTextInCell');
+    // 0.7.2 — getPageSvg enforcement 안내.
+    expect(prompt).toContain('getPageSvg');
   });
 
   it('non-form 문서 → free-authoring 유지 → 전체 catalog', () => {

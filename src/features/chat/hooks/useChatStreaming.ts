@@ -41,6 +41,7 @@ import {
 import { detectMode } from '../mode-detector';
 import { selectToolsViaLlm, resetRouterCache } from '../toolRouter';
 import { svgToPngBase64 } from '../svg-to-png';
+import { decideFormGuardNudge } from '../form-guard';
 
 interface UiToolEntry {
   id: string;
@@ -322,6 +323,27 @@ export function useChatStreaming(
   // 매 send / sendDirect / regenerate / acceptDirect 시작 시 false 로
   // reset.
   const agentStoppedRef = useRef(false);
+  // 0.7.2 — Form-Fill mode completion guard. AI 가 본문 dump 회귀 차단
+  // 이후 또 다른 회귀 패턴: cover-sheet 만 채우고 ~15 cells 후 조기 종료
+  // (200+ 셀 form 의 ~8% 만 채움) + getPageSvg 한 번도 안 부름. 이 guard
+  // 가 finishReason='stop' 시점에 (a) tableInventory 의 emptyCells 합
+  // (b) getPageSvg 호출 여부 체크해서 미달이면 synthetic user message 로
+  // 자동 nudge. cap (2회) 도달 시 멈춰서 무한 loop 방지.
+  //
+  // 상태 keying:
+  // - formStateRef: 가장 최근 getEmptyFormFields 응답에서 추출. 매 tool
+  //   dispatch 마다 갱신.
+  // - getPageSvgCalledRef: 이번 user-task 안에서 getPageSvg 호출이 한 번
+  //   이라도 ok=true 였는지.
+  // - formGuardNudgeCountRef: 이번 user-task 동안 guard 가 fire 한 횟수.
+  //   send / sendDirect / regenerate 시 reset.
+  const FORM_GUARD_MAX_NUDGES = 2;
+  const formGuardNudgeCountRef = useRef(0);
+  const formStateRef = useRef<{
+    emptyCellsRemaining: number;
+    tableSummary: string;
+  } | null>(null);
+  const getPageSvgCalledRef = useRef(false);
   // chunk 99 follow-up — plan mode 1회 우회 ref. ChatPanel 의 "이 계획
   // 대로 실행" / "건너뛰기" 액션이 set, fireChat 가 1회 소비 후 false.
   const planSkipNextRef = useRef(false);
@@ -733,6 +755,42 @@ export function useChatStreaming(
             ok: r.ok,
             summary,
           });
+          // 0.7.2 — Form-Fill guard state tracking. 매 성공 dispatch 마다
+          // formStateRef / getPageSvgCalledRef 갱신. inventory 의
+          // emptyCells 합 + 빈 셀 있는 표의 paragraphIndex / sampleLabel
+          // 을 요약해 다음 guard nudge 의 메시지로 활용.
+          if (r.ok && r.name === 'getEmptyFormFields' && r.data) {
+            try {
+              const d = r.data as {
+                tableInventory?: {
+                  emptyCells?: number;
+                  paragraphIndex?: number;
+                  sampleLabel?: string;
+                }[];
+              };
+              const inv = Array.isArray(d.tableInventory)
+                ? d.tableInventory
+                : [];
+              const total = inv.reduce((s, t) => s + (t.emptyCells ?? 0), 0);
+              const detail = inv
+                .filter((t) => (t.emptyCells ?? 0) > 0)
+                .slice(0, 5)
+                .map(
+                  (t) =>
+                    `p=${t.paragraphIndex} (${t.emptyCells} empty${t.sampleLabel ? `, "${t.sampleLabel}"` : ''})`,
+                )
+                .join(', ');
+              formStateRef.current = {
+                emptyCellsRemaining: total,
+                tableSummary: detail,
+              };
+            } catch {
+              /* ignore — best-effort */
+            }
+          }
+          if (r.ok && r.name === 'getPageSvg') {
+            getPageSvgCalledRef.current = true;
+          }
         }
 
         // UI 갱신 — 즉시 처리된 entries 는 ok/failed 로, write pending 은
@@ -802,6 +860,54 @@ export function useChatStreaming(
         return;
       }
 
+      // 0.7.2 — Form-Fill completion guard. evt.type === 'done' (text-only
+      // 완료 선언) 시 decideFormGuardNudge 가 mode / 잔여 작업 / nudge cap
+      // 보고 재진입 여부 결정. shouldNudge=true 면 synthetic user message
+      // 로 fireChat 재진입. 회귀 (cover-sheet 만 채우고 조기 종료) 차단.
+      if (evt.type === 'done') {
+        const decision = decideFormGuardNudge({
+          modePrimary: currentModeRef.current?.primary ?? 'free-authoring',
+          formState: formStateRef.current,
+          getPageSvgCalled: getPageSvgCalledRef.current,
+          nudgeCount: formGuardNudgeCountRef.current,
+          maxNudges: FORM_GUARD_MAX_NUDGES,
+          agentStopped: agentStoppedRef.current,
+        });
+        if (decision.shouldNudge && decision.nudgeText) {
+          formGuardNudgeCountRef.current += 1;
+          const userMsg: UiMessage = {
+            id: newId(),
+            role: 'user',
+            content: decision.nudgeText,
+          };
+          const convId = conversationIdRef.current;
+          if (convId !== null) {
+            void window.api.chatHistory
+              .append(convId, 'user', decision.nudgeText)
+              .catch((err: unknown) =>
+                console.warn(
+                  '[chat] history.append (form-guard nudge) failed',
+                  err,
+                ),
+              );
+          }
+          assistantBufferRef.current = '';
+          handleRef.current = null;
+          assistantIdRef.current = null;
+          // 누적된 turn depth / tool history / router cache 는 보존 — 같은
+          // user-task 의 연속이라 reasoning context 가 끊기면 안 됨.
+          setMessages((prev: UiMessage[]) => {
+            const next = [...prev, userMsg];
+            queueMicrotask(() => {
+              if (agentStoppedRef.current) return;
+              fireChatRef.current?.(next, agentVerifiedExcerptsRef.current);
+            });
+            return next;
+          });
+          return;
+        }
+      }
+
       // 정상 종료 (manual 모드 또는 agent의 finishReason='stop').
       agentTurnDepthRef.current = 0;
       setAgentTurn?.(0);
@@ -813,6 +919,11 @@ export function useChatStreaming(
       setStreaming(false);
       handleRef.current = null;
       assistantIdRef.current = null;
+      // 0.7.2 — 정상 종료 시 form guard 상태 reset (다음 사용자 task 가
+      // 같은 conversation 안에 와도 깨끗한 상태로 시작).
+      formGuardNudgeCountRef.current = 0;
+      formStateRef.current = null;
+      getPageSvgCalledRef.current = false;
       // chunk 99 follow-up — Plan mode auto-disengage. plan 응답 1턴은
       // 의도상 "다음 turn dry-run"; 응답 완료 후 자동으로 토글 off.
       // 사용자가 다음 메시지를 보내면 한 번은 정상 모드로 (검토 결과
@@ -1009,6 +1120,10 @@ export function useChatStreaming(
     // 0.4.19 — 새 user turn 시작 시 router 이력 + cache reset.
     agentToolHistoryRef.current = [];
     resetRouterCache();
+    // 0.7.2 — 새 user-task 시작 시 form guard 상태 reset.
+    formGuardNudgeCountRef.current = 0;
+    formStateRef.current = null;
+    getPageSvgCalledRef.current = false;
 
     // Per-chip stale verification — chunk 20. Each chip's anchor is
     // re-read from the IR. Fresh = pass through. Relocated = update
@@ -1104,6 +1219,10 @@ export function useChatStreaming(
       const trimmed = text.trim();
       if (trimmed.length === 0 || streaming) return;
       agentStoppedRef.current = false;
+      // 0.7.2 — 새 user-task 시작 시 form guard 상태 reset.
+      formGuardNudgeCountRef.current = 0;
+      formStateRef.current = null;
+      getPageSvgCalledRef.current = false;
       const userMsg: UiMessage = {
         id: newId(),
         role: 'user',
@@ -1145,6 +1264,10 @@ export function useChatStreaming(
     (assistantId: string) => {
       if (streaming) return;
       agentStoppedRef.current = false;
+      // 0.7.2 — 재생성 시에도 form guard reset.
+      formGuardNudgeCountRef.current = 0;
+      formStateRef.current = null;
+      getPageSvgCalledRef.current = false;
       const idx = messages.findIndex((m: any) => m.id === assistantId);
       if (idx === -1) return;
       const history = messages.slice(0, idx);
@@ -1210,6 +1333,11 @@ export function useChatStreaming(
     assistantBufferRef.current = '';
     setStreaming(false);
     assistantIdRef.current = null;
+    // 0.7.2 — stop 시에도 form guard reset (사용자가 명시 중단 했으니
+    // 자동 재진입 방지).
+    formGuardNudgeCountRef.current = 0;
+    formStateRef.current = null;
+    getPageSvgCalledRef.current = false;
   }, []);
 
   // chunk 97 — turn finalization helper. 모든 tool 결과가 모이면 호출되어

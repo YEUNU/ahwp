@@ -6,6 +6,52 @@
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-05-27
+
+### Added — slotKind classification + Form-Fill completion guard
+
+0.7.1 이 본문 dump 회귀 (channel 1) 를 차단한 뒤 다음 회귀 두 개가
+드러남:
+
+1. **Placeholder 미교체** — italic + 비검정 색의 템플릿 예시문 (e.g.
+   "예) 회사명을 입력하세요", "1.3 주요 공정별 ... 내용을 요약하여 기술")
+   이 있는 셀에 AI 가 `insertTextInCell` 을 호출해 값이 placeholder 뒤에
+   prepend → 셀 안에 예시문 + 새 값 공존, layout 깨짐.
+2. **조기 종료 + 시각 검증 skip** — 200+ 셀 form 의 ~15 셀만 채우고
+   AI 가 텍스트 메시지로 완료 선언, `getPageSvg` 한 번도 안 부름.
+
+두 가지 모두 prompt 가이드 (0.7.1) 만으로는 100% 강제 불가 — AI 가
+guideline 을 일부 무시하는 패턴이 잔존. 0.7.2 는 runtime contract 로 격상:
+
+- **`getEmptyFormFields` 의 `slotKind`** — 셀마다 4 종 분류 부착.
+  `'value-slot'` (빈 셀) / `'instruction'` (italic + 비검정 placeholder) /
+  `'sub-header'` (bold + 짧은 인-셀 라벨) / `'content'` (정상 데이터).
+  Prompt 가이드 + viewer-handle-types 컨트랙트에 명시 — AI 가 셀별로
+  도구 선택 (insertTextInCell vs replaceTextInCell) 을 정확히.
+- **Form-Fill completion guard** (`form-guard.ts`, `useChatStreaming`).
+  form-fill 모드에서 AI 가 tool 호출 없이 텍스트만 emit 하면 (= 완료
+  선언) runtime 이 (a) tableInventory 의 empty cells 합 (b) getPageSvg
+  호출 여부 검사. 미충족 시 synthetic user message 자동 inject + fireChat
+  재진입. cap (2회) 으로 무한 loop 방지. user-task 시작 / stop / regenerate
+  시 reset.
+
+### 검증
+
+- vitest 273/273 (258 → +15). 신규: slotKind 4 종 full coverage + black
+  color 정규화 (`#000` / `#000000` / 공백) + integration prompt 에
+  slotKind / getPageSvg / replaceTextInCell 가이드 / form-guard 9 케이스
+  (mode gate, 양쪽 trigger, cap 도달, agentStopped, formState null,
+  tableSummary 빈 케이스).
+- typecheck + eslint 통과.
+
+### 다음 chunk
+
+- 0.7.3 — `defineTool` refactor (단일 source of truth: 스키마 + 검증 +
+  dispatcher).
+- 0.7.4 — Provider × Mode capability matrix.
+- 0.7.5 — 나머지 mode (BodyEdit / TableManipulation / Formatting /
+  CrossDocResearch) 활성화.
+
 ## [0.7.1] - 2026-05-27
 
 ### Added — FormFill mode 활성화

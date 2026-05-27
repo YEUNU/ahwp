@@ -1163,6 +1163,28 @@ export class BridgeIrHelper {
    * (이탤릭/색상 등 placeholder 판정용) 를 반환. AI 가 "이탤릭+비검정"
    * 같은 시각 단서로 템플릿 예시문 (e.g. "예) 성형공정 ...") 을 식별하고
    * 교체할 수 있다.
+   *
+   * 0.7.2 — `slotKind` 분류. AI 가 도구 선택 (insertTextInCell vs
+   * replaceTextInCell) 을 cell-by-cell 로 정확히 하도록 4 가지로 분류:
+   *
+   * - `'value-slot'` — `isEmpty === true`. 빈 셀, `insertTextInCell` 로
+   *   값을 채움. 0.7.1 의 default.
+   * - `'instruction'` — `isEmpty === false` 이고 `contentCharShape.italic`
+   *   가 true 이며 `textColor` 가 비-검정. 템플릿 예시문 / placeholder
+   *   (e.g. "예) 회사명을 입력하세요", "1.3 주요 공정별 ..."). AI 는
+   *   `replaceTextInCell` 로 본 값으로 교체해야 함. 이전 회귀 (cell #4
+   *   placeholder 남고 cell #5 에만 새 값 들어가서 layout 깨짐) 의 직접
+   *   원인.
+   * - `'sub-header'` — `isEmpty === false` 이고 `contentCharShape.bold`
+   *   가 true 이고 텍스트 길이가 짧음. 셀 안의 보조 헤더 (e.g. "1)" /
+   *   "구분" 같은 인-셀 라벨). 손대지 말 것. 0.7.2 에서는 conservative
+   *   하게 정의 — bold + length<=30 + (라벨-스러운 종결 패턴 없음).
+   * - `'content'` — 그 외 (이미 채워진 정상 데이터). 사용자가 명시 요청
+   *   안 하면 손대지 말 것.
+   *
+   * 색상 비교 — `#000000` / `#000` / 대문자 / 공백 모두 정규화. 비-검정
+   * 이라도 italic 가 false 면 instruction 아님 (검정 + bold 등 다른 스타일
+   * 조합과 충돌 방지).
    */
   async getEmptyFormFields(opts?: {
     sectionIdx?: number;
@@ -1183,6 +1205,7 @@ export class BridgeIrHelper {
       currentText: string;
       isEmpty: boolean;
       contentCharShape?: Record<string, unknown>;
+      slotKind: 'value-slot' | 'instruction' | 'sub-header' | 'content';
     }[];
     truncated: boolean;
     tableInventory: {
@@ -1209,6 +1232,7 @@ export class BridgeIrHelper {
     const filterParentPara = opts?.parentParaIdx;
     const includeFilled = opts?.includeFilled === true;
 
+    type SlotKind = 'value-slot' | 'instruction' | 'sub-header' | 'content';
     type Field = {
       location: {
         sectionIndex: number;
@@ -1222,6 +1246,47 @@ export class BridgeIrHelper {
       currentText: string;
       isEmpty: boolean;
       contentCharShape?: Record<string, unknown>;
+      slotKind: SlotKind;
+    };
+    // 0.7.2 — slot 분류 휴리스틱.
+    //
+    // 'instruction' = 채워진 셀 + italic + 비-검정 색. HWP 양식의 표준
+    // placeholder 패턴 (e.g. "예) 회사명을 입력" italic blue, "1.3 주요
+    // 공정별 ... 내용을 요약하여 기술" italic dark-blue). 사용자가 본
+    // 값을 채우면 이 텍스트는 사라져야 함 → replaceTextInCell.
+    //
+    // 'sub-header' = 채워진 셀 + bold + 짧은 텍스트 (length<=30) + 이탤릭
+    // 아닌. 셀 안에 임베드된 보조 라벨. 손대지 말 것.
+    //
+    // 'content' = 위 둘 다 아니고 채워져 있음. 사용자가 명시 수정 안 하면
+    // 보존.
+    //
+    // 'value-slot' = 빈 셀. 기존 0.7.1 의 기본 — insertTextInCell.
+    const BLACK_RE = /^#?(?:0{3}|0{6})$/i; // #000 또는 #000000
+    const classifySlot = (
+      isEmpty: boolean,
+      currentText: string,
+      contentCharShape: Record<string, unknown> | undefined,
+    ): SlotKind => {
+      if (isEmpty) return 'value-slot';
+      if (!contentCharShape) return 'content';
+      const italic = contentCharShape.italic === true;
+      const bold = contentCharShape.bold === true;
+      const rawColor = contentCharShape.textColor;
+      const colorStr =
+        typeof rawColor === 'string'
+          ? rawColor.replace(/\s/g, '').toLowerCase()
+          : '';
+      const isBlack =
+        colorStr === '' ||
+        BLACK_RE.test(colorStr) ||
+        /^rgba?\(\s*0\s*,\s*0\s*,\s*0\s*[,)]/i.test(colorStr);
+      if (italic && !isBlack) return 'instruction';
+      // sub-header: bold + 짧고 + italic 아님. 너무 공격적이면 정상 데이터
+      // 도 sub-header 로 오분류 위험 → 30자 cap.
+      if (bold && !italic && currentText.length > 0 && currentText.length <= 30)
+        return 'sub-header';
+      return 'content';
     };
     type TableEntry = {
       sectionIndex: number;
@@ -1483,6 +1548,7 @@ export class BridgeIrHelper {
               ? await fetchCellCharShape(c)
               : undefined;
 
+            const slotKind = classifySlot(empty, txt, contentCharShape);
             cellFields.push({
               location: {
                 sectionIndex: s,
@@ -1496,6 +1562,7 @@ export class BridgeIrHelper {
               currentText: txt,
               isEmpty: empty,
               contentCharShape,
+              slotKind,
             });
           }
         }

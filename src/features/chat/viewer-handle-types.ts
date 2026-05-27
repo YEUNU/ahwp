@@ -697,6 +697,16 @@ export interface ViewerHandle {
       currentText: string;
       isEmpty: boolean;
       contentCharShape?: Record<string, unknown>;
+      /**
+       * 0.7.2 — 도구 선택 hint:
+       * - 'value-slot' (빈 셀): `insertTextInCell` 로 값 채움
+       * - 'instruction' (italic + 비검정 placeholder): `replaceTextInCell`
+       *   로 본 값으로 교체. `insertTextInCell` 쓰면 placeholder 가 남아
+       *   layout 깨짐 — 0.7.1 의 직접 회귀 원인.
+       * - 'sub-header' (bold + 짧은 인-셀 라벨): 손대지 말 것
+       * - 'content' (정상 데이터): 사용자가 명시 수정 안 하면 보존
+       */
+      slotKind: 'value-slot' | 'instruction' | 'sub-header' | 'content';
     }[];
     truncated: boolean;
     tableInventory?: {
