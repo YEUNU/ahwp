@@ -25,14 +25,20 @@ interface IrOpResult {
 }
 
 function isOk(raw: unknown): boolean {
-  if (typeof raw !== 'string') return Boolean(raw);
-  try {
-    const parsed = JSON.parse(raw) as IrOpResult;
-    return parsed.ok !== false;
-  } catch {
-    // 비-JSON 응답 (예: 빈 문자열) 은 성공으로 간주.
-    return true;
+  if (raw === null || raw === undefined) return false;
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw) as IrOpResult;
+      return parsed.ok !== false;
+    } catch {
+      // 비-JSON 응답 (예: 빈 문자열) 은 성공으로 간주.
+      return true;
+    }
   }
+  if (typeof raw === 'object' && 'ok' in (raw as object)) {
+    return (raw as IrOpResult).ok !== false;
+  }
+  return Boolean(raw);
 }
 
 export class BridgeIrHelper {
@@ -219,6 +225,57 @@ export class BridgeIrHelper {
       text,
     ]);
     return isOk(raw);
+  }
+
+  /**
+   * 셀 paragraph 의 기존 텍스트를 모두 지우고 새 텍스트로 교체.
+   * 빈 셀이면 delete 단계 skip 후 insert 만. 비어있지 않으면 현재
+   * 길이만큼 delete 후 insert — 두 호출 모두 같은 turn 안에서 일어나
+   * 그룹 undo (한 번의 ⌘Z 로 복구) 가 정상 작동.
+   *
+   * placeholder/예시문 제거 + 새 값 채우기 / 기존 값 수정 양쪽 모두
+   * 한 도구 호출로 처리. text === '' 이면 effectively clear 와 동치.
+   */
+  async replaceTextInCell(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    cellIdx: number,
+    cellParaIdx: number,
+    text: string,
+  ): Promise<boolean> {
+    const current = await this.getTextInCell(
+      sec,
+      parentPara,
+      controlIdx,
+      cellIdx,
+      cellParaIdx,
+      0,
+      65536,
+    );
+    if (current.length > 0) {
+      const delRaw = await this.bridge.invokeWasm<string>('deleteTextInCell', [
+        sec,
+        parentPara,
+        controlIdx,
+        cellIdx,
+        cellParaIdx,
+        0,
+        current.length,
+      ]);
+      if (!isOk(delRaw)) return false;
+    }
+    if (text.length === 0) return true;
+    const insRaw = await this.bridge.invokeWasm<string>('insertTextInCell', [
+      sec,
+      parentPara,
+      controlIdx,
+      cellIdx,
+      cellParaIdx,
+      0,
+      text,
+    ]);
+    return isOk(insRaw);
   }
 
   // ── Phase D2c-1 — 추가 paragraph / format / read ─────────────────
@@ -555,9 +612,12 @@ export class BridgeIrHelper {
   }
 
   /**
-   * 머리/꼬리말 텍스트 설정. composite: createHeaderFooter (없으면 생성)
-   * + setHeaderFooterText. rhwp-studio 의 HwpDocument 가 setHeaderFooterText
-   * 메서드를 직접 제공하므로 passthrough.
+   * 머리/꼬리말 텍스트 설정. WASM 은 단일 set 메서드를 제공하지 않으므로
+   * composite: getHeaderFooter (없으면 createHeaderFooter) → 기존 paragraph
+   * 별 텍스트 clear → insertTextInHeaderFooter 로 신규 text 삽입.
+   *
+   * 단일 paragraph 머리/꼬리말 가정 (대부분 양식). 다중 paragraph 는 첫
+   * paragraph 만 사용.
    */
   async setHeaderFooterText(
     sec: number,
@@ -565,25 +625,135 @@ export class BridgeIrHelper {
     applyTo: number,
     text: string,
   ): Promise<boolean> {
-    return await this.invokeOk('setHeaderFooterText', [
-      sec,
-      isHeader,
-      applyTo,
-      text,
-    ]);
+    const parseJson = <T>(raw: unknown): T | null => {
+      if (raw == null) return null;
+      if (typeof raw === 'string') {
+        try {
+          return JSON.parse(raw) as T;
+        } catch {
+          return null;
+        }
+      }
+      return raw as T;
+    };
+    type HfInfo = {
+      ok?: boolean;
+      exists?: boolean;
+      paraCount?: number;
+    };
+    type HfParaInfo = { ok?: boolean; charCount?: number };
+
+    let info = parseJson<HfInfo>(
+      await this.invokeRead<unknown>('getHeaderFooter', [
+        sec,
+        isHeader,
+        applyTo,
+      ]),
+    );
+    if (!info || info.ok === false) return false;
+    if (!info.exists) {
+      const created = parseJson<{ ok?: boolean }>(
+        await this.invokeRead<unknown>('createHeaderFooter', [
+          sec,
+          isHeader,
+          applyTo,
+        ]),
+      );
+      if (!created || created.ok === false) return false;
+      info = parseJson<HfInfo>(
+        await this.invokeRead<unknown>('getHeaderFooter', [
+          sec,
+          isHeader,
+          applyTo,
+        ]),
+      );
+      if (!info || info.ok === false) return false;
+    }
+    const paraCount = info.paraCount ?? 1;
+    // Clear each existing paragraph's text from the start.
+    for (let hfPara = 0; hfPara < paraCount; hfPara++) {
+      const pInfo = parseJson<HfParaInfo>(
+        await this.invokeRead<unknown>('getHeaderFooterParaInfo', [
+          sec,
+          isHeader,
+          applyTo,
+          hfPara,
+        ]),
+      );
+      const charCount = pInfo?.charCount ?? 0;
+      if (charCount > 0) {
+        const cleared = parseJson<{ ok?: boolean }>(
+          await this.invokeRead<unknown>('deleteTextInHeaderFooter', [
+            sec,
+            isHeader,
+            applyTo,
+            hfPara,
+            0,
+            charCount,
+          ]),
+        );
+        if (cleared && cleared.ok === false) return false;
+      }
+    }
+    if (text.length === 0) return true;
+    const inserted = parseJson<{ ok?: boolean }>(
+      await this.invokeRead<unknown>('insertTextInHeaderFooter', [
+        sec,
+        isHeader,
+        applyTo,
+        0,
+        0,
+        text,
+      ]),
+    );
+    return Boolean(inserted && inserted.ok !== false);
   }
 
   /**
-   * Footnote 삽입 (caret 위치, 본문 텍스트 포함).
+   * Footnote 삽입 (caret 위치, 본문 텍스트 포함). composite:
+   * insertFootnote (3-args, 빈 각주 만들고 anchor 정보 반환) +
+   * insertTextInFootnote (반환된 paraIdx/controlIdx 로 본문 채움).
    */
   async insertFootnoteAtCaret(text: string): Promise<boolean> {
     const caret = await this.getCaretPosition();
     if (!caret) return false;
-    // wasm.doc.insertFootnote(sec, para, charOffset, text) — string 응답.
-    return await this.invokeOk('insertFootnote', [
+    let raw: unknown;
+    try {
+      raw = await this.bridge.invokeWasm<unknown>('insertFootnote', [
+        caret.sectionIndex,
+        caret.paragraphIndex,
+        caret.charOffset,
+      ]);
+    } catch {
+      return false;
+    }
+    type InsertFootnoteResult = {
+      ok?: boolean;
+      paraIdx?: number;
+      controlIdx?: number;
+    };
+    let result: InsertFootnoteResult | null = null;
+    if (typeof raw === 'string') {
+      try {
+        result = JSON.parse(raw) as InsertFootnoteResult;
+      } catch {
+        return false;
+      }
+    } else if (raw && typeof raw === 'object') {
+      result = raw as InsertFootnoteResult;
+    }
+    if (!result || result.ok === false) return false;
+    if (text.length === 0) return true;
+    const { paraIdx, controlIdx } = result;
+    if (typeof paraIdx !== 'number' || typeof controlIdx !== 'number') {
+      return false;
+    }
+    return await this.invokeOk('insertTextInFootnote', [
       caret.sectionIndex,
-      caret.paragraphIndex,
-      caret.charOffset,
+      paraIdx,
+      controlIdx,
+      0,
+      0,
       text,
     ]);
   }
@@ -674,16 +844,55 @@ export class BridgeIrHelper {
     ]);
   }
 
-  /** Style list 조회 — `getStyleListJson` 은 wasm-bridge wrapper 가 parsed. */
-  async getStyleList(): Promise<unknown[]> {
-    const r = await this.invokeRead<unknown[]>('getStyleListJson', []);
-    return r ?? [];
+  /**
+   * Style list 조회. WASM `getStyleList()` 가 JSON string 반환
+   * (parsing 은 helper 가 책임 — wasm-bridge 가 자동 parse 안 함).
+   * 이전 구현은 존재하지 않는 `getStyleListJson` 이름을 호출해 모든
+   * 문서에서 빈 배열을 반환하는 사일런트 버그가 있었음.
+   */
+  async getStyleList(): Promise<
+    {
+      id?: number;
+      name?: string;
+      englishName?: string;
+      type?: number;
+      paraShapeId?: number;
+      charShapeId?: number;
+    }[]
+  > {
+    type StyleEntry = {
+      id?: number;
+      name?: string;
+      englishName?: string;
+      type?: number;
+      paraShapeId?: number;
+      charShapeId?: number;
+    };
+    const raw = await this.invokeRead<unknown>('getStyleList', []);
+    if (raw == null) return [];
+    let arr: unknown;
+    if (typeof raw === 'string') {
+      try {
+        arr = JSON.parse(raw);
+      } catch {
+        return [];
+      }
+    } else {
+      arr = raw;
+    }
+    if (!Array.isArray(arr)) return [];
+    return arr as StyleEntry[];
   }
 
   /**
    * 문서 전체 outline (heading 단락) 추출 — composite.
-   * 각 section / paragraph 의 paraProps 에서 styleId 가 "제목 N" 류면
-   * 포함. ahwp 가 자체적으로 합치는 composite 라 helper 가 책임.
+   *
+   * 단락별로 `getStyleAt(s, p)` 로 활성 styleId 조회 → 스타일 이름이
+   * "제목 N" / "개요 N" / "Heading N" 패턴이면 outline 에 포함.
+   *
+   * 이전 구현은 `ParaProperties.styleId` 를 읽었지만 그 필드가 없음
+   * (실제는 `paraShapeId`). 결과적으로 모든 문서에서 빈 outline 을
+   * 반환하는 사일런트 버그가 있었음.
    */
   async getDocumentOutline(): Promise<
     {
@@ -701,12 +910,8 @@ export class BridgeIrHelper {
     }[] = [];
     const sectionCount = await this.getSectionCount();
     const styleList = await this.getStyleList();
-    // styleId → heading level (1..9) 매핑. style 이름이 "제목 N" / "Heading N"
-    // 패턴이면 level=N.
     const headingLevel = new Map<number, number>();
-    for (const s of styleList) {
-      if (!s || typeof s !== 'object') continue;
-      const obj = s as { id?: number; name?: string; englishName?: string };
+    for (const obj of styleList) {
       const id = obj.id;
       const nm = String(obj.name ?? obj.englishName ?? '');
       const m = nm.match(/(?:제목|개요|Heading)\s*(\d)/i);
@@ -714,15 +919,36 @@ export class BridgeIrHelper {
         headingLevel.set(id, Number(m[1]));
       }
     }
+    if (headingLevel.size === 0) return out;
+
+    type StyleAtRecord = { id?: number; ok?: boolean };
+    const parseStyleAt = (raw: unknown): number | null => {
+      if (raw == null) return null;
+      let obj: StyleAtRecord | null = null;
+      if (typeof raw === 'string') {
+        try {
+          obj = JSON.parse(raw) as StyleAtRecord;
+        } catch {
+          return null;
+        }
+      } else if (typeof raw === 'object') {
+        obj = raw as StyleAtRecord;
+      }
+      if (!obj || obj.ok === false) return null;
+      return typeof obj.id === 'number' ? obj.id : null;
+    };
+
     for (let s = 0; s < sectionCount; s++) {
       const paraCount = await this.getParagraphCount(s);
       for (let p = 0; p < paraCount; p++) {
-        const props = await this.getParaPropertiesAt(s, p);
-        const styleId =
-          typeof props?.styleId === 'number' ? (props.styleId as number) : -1;
+        const styleId = parseStyleAt(
+          await this.invokeRead<unknown>('getStyleAt', [s, p]),
+        );
+        if (styleId == null) continue;
         const lvl = headingLevel.get(styleId);
         if (!lvl) continue;
         const lenN = await this.getParagraphLength(s, p);
+        if (lenN === 0) continue;
         const text = await this.bridge.invokeWasm<string>('getTextRange', [
           s,
           p,
@@ -743,9 +969,77 @@ export class BridgeIrHelper {
   /**
    * 짧은 요약 — 첫 paragraph 들의 텍스트를 모은 string. ahwp 의
    * getDocumentSummary 와 동일 개념의 composite.
+   *
+   * 0.6.14 — form-structure prefix: 문서가 표를 포함하면 (양식/보고서
+   * 의 강력한 신호) 첫 줄에 `[form: N tables, M empty cells]` 를 주입.
+   * 모델이 첫 read 응답만 보고도 "이건 양식이니까 getEmptyFormFields
+   * 워크플로우" 로 라우팅할 수 있게. 본문 단락만 보고 산문으로 오인하던
+   * 사일런트 회귀 (form cells 무시 + body level patch dump) 방지.
+   * 스캔 비용 cap: 처음 60 paragraph 까지만 multi-control probe.
    */
   async getDocumentSummary(maxParas = 20, maxBytes = 2048): Promise<string> {
     const sectionCount = await this.getSectionCount();
+
+    // ── form-structure scan (cheap, capped) ──
+    let tableCount = 0;
+    let emptyCellCount = 0;
+    const TABLE_SCAN_PARAS = 60;
+    const MAX_CTRLS_PER_PARA = 3;
+    const parseDims = (
+      raw: unknown,
+    ): { rowCount: number; colCount: number; cellCount: number } | null => {
+      if (raw == null) return null;
+      let obj: {
+        ok?: boolean;
+        cellCount?: number;
+        rowCount?: number;
+        colCount?: number;
+      };
+      if (typeof raw === 'string') {
+        try {
+          obj = JSON.parse(raw) as typeof obj;
+        } catch {
+          return null;
+        }
+      } else {
+        obj = raw as typeof obj;
+      }
+      if (!obj || obj.ok === false) return null;
+      const cellCount = obj.cellCount ?? 0;
+      if (cellCount === 0) return null;
+      return {
+        rowCount: obj.rowCount ?? 0,
+        colCount: obj.colCount ?? 0,
+        cellCount,
+      };
+    };
+    structScan: for (let s = 0; s < sectionCount; s++) {
+      const paraCount = await this.getParagraphCount(s);
+      const limit = Math.min(paraCount, TABLE_SCAN_PARAS);
+      for (let p = 0; p < limit; p++) {
+        for (let ctrl = 0; ctrl < MAX_CTRLS_PER_PARA; ctrl++) {
+          const dims = parseDims(
+            await this.invokeRead<unknown>('getTableDimensions', [s, p, ctrl]),
+          );
+          if (!dims) continue;
+          tableCount++;
+          for (let c = 0; c < dims.cellCount; c++) {
+            let txt: string;
+            try {
+              txt = await this.getTextInCell(s, p, ctrl, c, 0, 0, 256);
+            } catch {
+              continue;
+            }
+            if (txt === '' || /^[\s_]*$/.test(txt)) emptyCellCount++;
+            // bail early on very large forms — we only need the signal,
+            // not exact counts.
+            if (emptyCellCount > 5000) break structScan;
+          }
+        }
+      }
+    }
+
+    // ── text content (existing logic) ──
     const parts: string[] = [];
     let count = 0;
     outer: for (let s = 0; s < sectionCount; s++) {
@@ -766,12 +1060,19 @@ export class BridgeIrHelper {
         count++;
       }
     }
-    const out = parts.join('\n');
-    const enc = new TextEncoder().encode(out);
+    let body = parts.join('\n');
+    const enc = new TextEncoder().encode(body);
     if (enc.length > maxBytes) {
-      return new TextDecoder().decode(enc.slice(0, maxBytes)) + '…[trimmed]';
+      body = new TextDecoder().decode(enc.slice(0, maxBytes)) + '…[trimmed]';
     }
-    return out;
+    // Prefix with form signal so models route to getEmptyFormFields even
+    // when the user's verb (e.g. "수정해줘") doesn't literally say "fill".
+    if (tableCount > 0 && emptyCellCount > 0) {
+      const tableLabel =
+        emptyCellCount > 5000 ? '5000+' : String(emptyCellCount);
+      return `[form: ${tableCount} tables, ${tableLabel} empty cells — call getEmptyFormFields before any write]\n${body}`;
+    }
+    return body;
   }
 
   /**
@@ -784,7 +1085,10 @@ export class BridgeIrHelper {
    * 본 메서드는 AI tool 호환용 minimum 구현.
    */
   async applyHtmlAtCaret(html: string): Promise<boolean> {
-    // Try rhwp-core 의 pasteHtml. selection 없으면 caret 위치.
+    // pasteHtml returns a JSON string per rhwp.d.ts. 이전 구현은
+    // `typeof r === 'object'` 체크만 해서 string 응답을 무조건 성공으로
+    // 판정하던 사일런트 버그가 있었음. isOk() 가 string/object 양쪽
+    // 모두 `{"ok":false,...}` 를 정확히 false 로 평가.
     const caret = await this.getCaretPosition();
     if (!caret) return false;
     try {
@@ -795,85 +1099,371 @@ export class BridgeIrHelper {
         html,
       ]);
       if (r === null || r === undefined) return false;
-      if (typeof r === 'object' && 'ok' in (r as object))
-        return (r as { ok?: boolean }).ok !== false;
-      return true;
+      return isOk(r);
     } catch {
       return false;
     }
   }
 
   /**
-   * 양식의 빈 필드 (placeholder 가 들어있는 cell) 스캔. rhwp-studio
-   * 가 자체 form-field detection 을 제공하지 않으므로 ahwp composite
-   * 로 셀 텍스트를 훑어 빈 셀 / placeholder 셀을 찾는다.
+   * 양식의 빈 필드 (빈 cell + placeholder cell) 스캔. 결과 모양은
+   * `viewer-handle-types.ts` 의 `getEmptyFormFields` 컨트랙트 + system
+   * prompt 의 form-fill workflow 기대치 (location / labelHint /
+   * labelCharShape) 와 일치.
+   *
+   * 차원 조회는 `getTableDimensions` (정확한 rowCount/colCount/cellCount
+   * 반환). 이전 구현이 사용하던 `getCellInfo` 는 셀-상대 위치
+   * `{row,col,rowSpan,colSpan}` 만 돌려주므로 rowCount=0 으로 평가되어
+   * 모든 양식에서 0 필드를 반환하던 버그가 있었음.
+   *
+   * Multi-control: paragraph 가 여러 컨트롤 (예: 표 + 표) 을 앵커할
+   * 수 있으므로 controlIdx 0..MAX_CTRLS_PER_PARA 까지 probe.
+   *
+   * labelHint: 빈 셀의 왼쪽 (같은 행) 또는 위 (같은 열) 인접 셀의
+   * 텍스트. 우선순위는 좌측, 비어있으면 상단. system prompt 가 이 hint
+   * 를 보고 각 필드가 무엇을 받는지 추론한다.
+   *
+   * 병합 셀 처리: flat cellIdx 산술 (c-1, c-colCount) 은 병합된 표
+   * (예: 13×7=91, totalCells=61) 에서 잘못된 셀을 가리킨다. 각 셀의
+   * `getCellInfo` `{row, col, rowSpan, colSpan}` 로 (row,col) 그리드
+   * 맵을 1회 빌드한 뒤 진짜 좌상 이웃을 찾는다. 셀이 너무 많은 표
+   * (`MAX_CELLS_FOR_GRID_MAP` 초과) 는 비용 회피를 위해 grid 맵을
+   * 건너뛰고 labelHint 를 비워둔다 — AI 는 labelHint 없으면 currentText
+   * 와 주변 paragraph 텍스트로 판단하면 된다.
+   *
+   * labelCharShape: hint 의 char shape — `additionFormat.lib` 로 그대로
+   * 넘기면 채워넣은 값의 타이포그래피가 라벨과 일치.
+   *
+   * `includeFilled`: 기본 false (empty 셀만 반환). true 면 채워진 셀까지
+   * 포함 — 각 셀에 `isEmpty` boolean + 채워진 셀의 `contentCharShape`
+   * (이탤릭/색상 등 placeholder 판정용) 를 반환. AI 가 "이탤릭+비검정"
+   * 같은 시각 단서로 템플릿 예시문 (e.g. "예) 성형공정 ...") 을 식별하고
+   * 교체할 수 있다.
    */
-  async getEmptyFormFields(): Promise<{
+  async getEmptyFormFields(opts?: {
+    sectionIdx?: number;
+    parentParaIdx?: number;
+    maxResults?: number;
+    includeFilled?: boolean;
+  }): Promise<{
     cellFields: {
-      sectionIndex: number;
-      parentParaIdx: number;
-      controlIdx: number;
-      cellIdx: number;
-      cellParaIdx: number;
+      location: {
+        sectionIndex: number;
+        paragraphIndex: number;
+        controlIndex: number;
+        cellIndex: number;
+        cellParagraphIndex: number;
+      };
+      labelHint: string;
+      labelCharShape?: Record<string, unknown>;
       currentText: string;
+      isEmpty: boolean;
+      contentCharShape?: Record<string, unknown>;
     }[];
     truncated: boolean;
-  }> {
-    // 본 sweep 은 데이터 비용이 큼 (셀 N x 평균 길이) — 단순 구현으로
-    // 첫 section 의 모든 paragraph 의 control 0 cell 들만 훑는다.
-    // 추후 더 정교한 구현 필요 시 rhwp-studio 측 helper 로 옮길 것.
-    const cellFields: {
+    tableInventory: {
       sectionIndex: number;
-      parentParaIdx: number;
-      controlIdx: number;
-      cellIdx: number;
-      cellParaIdx: number;
+      paragraphIndex: number;
+      controlIndex: number;
+      rowCount: number;
+      colCount: number;
+      totalCells: number;
+      emptyCells: number;
+      sampleLabel: string;
+    }[];
+  }> {
+    const DEFAULT_MAX = 200;
+    const MAX_CTRLS_PER_PARA = 4;
+    const LABEL_MAX = 100;
+    const TABLE_INVENTORY_MAX = 60;
+    const MAX_CELLS_FOR_GRID_MAP = 300;
+    const maxResults = Math.max(
+      1,
+      Math.min(opts?.maxResults ?? DEFAULT_MAX, 500),
+    );
+    const filterSection = opts?.sectionIdx;
+    const filterParentPara = opts?.parentParaIdx;
+    const includeFilled = opts?.includeFilled === true;
+
+    type Field = {
+      location: {
+        sectionIndex: number;
+        paragraphIndex: number;
+        controlIndex: number;
+        cellIndex: number;
+        cellParagraphIndex: number;
+      };
+      labelHint: string;
+      labelCharShape?: Record<string, unknown>;
       currentText: string;
-    }[] = [];
-    const sectionCount = await this.getSectionCount();
+      isEmpty: boolean;
+      contentCharShape?: Record<string, unknown>;
+    };
+    type TableEntry = {
+      sectionIndex: number;
+      paragraphIndex: number;
+      controlIndex: number;
+      rowCount: number;
+      colCount: number;
+      totalCells: number;
+      emptyCells: number;
+      sampleLabel: string;
+    };
+    const cellFields: Field[] = [];
+    const tableInventory: TableEntry[] = [];
     let truncated = false;
-    outer: for (let s = 0; s < sectionCount && !truncated; s++) {
-      const paraCount = await this.getParagraphCount(s);
-      for (let p = 0; p < paraCount; p++) {
-        if (cellFields.length >= 100) {
-          truncated = true;
-          break outer;
-        }
-        // getCellInfo (controlIdx=0) — table 이 없으면 throw, 무시.
+
+    const parseTableDims = (
+      raw: string | object | null,
+    ): { rowCount: number; colCount: number; cellCount: number } | null => {
+      if (!raw) return null;
+      let obj: {
+        ok?: boolean;
+        rowCount?: number;
+        colCount?: number;
+        cellCount?: number;
+      };
+      if (typeof raw === 'string') {
         try {
-          const info = await this.invokeRead<{
-            rowCount?: number;
-            colCount?: number;
-          }>('getCellInfo', [s, p, 0, 0]);
-          if (!info) continue;
-          const cellTotal = (info.rowCount ?? 0) * (info.colCount ?? 0);
-          for (let c = 0; c < cellTotal; c++) {
-            const txt = await this.getTextInCell(s, p, 0, c, 0, 0, 1024);
-            const isEmpty =
-              txt === '' ||
-              /^[\s_]*$/.test(txt) ||
-              /placeholder|<.*>/i.test(txt);
-            if (isEmpty) {
-              cellFields.push({
-                sectionIndex: s,
-                parentParaIdx: p,
-                controlIdx: 0,
-                cellIdx: c,
-                cellParaIdx: 0,
-                currentText: txt,
-              });
-            }
-            if (cellFields.length >= 100) {
-              truncated = true;
-              break outer;
+          obj = JSON.parse(raw) as typeof obj;
+        } catch {
+          return null;
+        }
+      } else {
+        obj = raw as typeof obj;
+      }
+      if (!obj || obj.ok === false) return null;
+      const cellCount = obj.cellCount ?? 0;
+      if (cellCount === 0) return null;
+      return {
+        rowCount: obj.rowCount ?? 0,
+        colCount: obj.colCount ?? 0,
+        cellCount,
+      };
+    };
+
+    const fetchLabel = async (
+      s: number,
+      p: number,
+      ctrl: number,
+      cellIdx: number,
+    ): Promise<{ text: string; cellIdx: number } | null> => {
+      try {
+        const t = await this.getTextInCell(s, p, ctrl, cellIdx, 0, 0, 200);
+        const trimmed = t.replace(/\s+/g, ' ').trim();
+        if (!trimmed) return null;
+        return { text: trimmed.slice(0, LABEL_MAX), cellIdx };
+      } catch {
+        return null;
+      }
+    };
+
+    const isCellEmpty = (txt: string): boolean =>
+      txt === '' || /^[\s_]*$/.test(txt) || /placeholder|<.*>/i.test(txt);
+
+    const sectionCount = await this.getSectionCount();
+    const sectionStart = filterSection ?? 0;
+    const sectionEnd =
+      filterSection !== undefined ? filterSection + 1 : sectionCount;
+
+    for (let s = sectionStart; s < sectionEnd && s < sectionCount; s++) {
+      const paraCount = await this.getParagraphCount(s);
+      const paraStart = filterParentPara ?? 0;
+      const paraEnd =
+        filterParentPara !== undefined ? filterParentPara + 1 : paraCount;
+      for (let p = paraStart; p < paraEnd && p < paraCount; p++) {
+        for (let ctrl = 0; ctrl < MAX_CTRLS_PER_PARA; ctrl++) {
+          const raw = await this.invokeRead<string | object>(
+            'getTableDimensions',
+            [s, p, ctrl],
+          );
+          const dims = parseTableDims(raw);
+          if (!dims) continue;
+          const { rowCount, colCount, cellCount } = dims;
+
+          // Always start an inventory entry — AI navigates large forms by
+          // picking a table from this list and re-calling with parentParaIdx.
+          let tableEntry: TableEntry | null = null;
+          if (tableInventory.length < TABLE_INVENTORY_MAX) {
+            tableEntry = {
+              sectionIndex: s,
+              paragraphIndex: p,
+              controlIndex: ctrl,
+              rowCount,
+              colCount,
+              totalCells: cellCount,
+              emptyCells: 0,
+              sampleLabel: '',
+            };
+            tableInventory.push(tableEntry);
+          }
+
+          // (row,col) → cellIdx grid map. 병합된 표에서 진짜 인접 셀을
+          // 찾기 위함. cellCount 가 크면 (>MAX_CELLS_FOR_GRID_MAP) 비용
+          // 회피를 위해 빌드를 건너뛴다 — 결과적으로 labelHint 가 비고,
+          // AI 는 currentText / 주변 paragraph 텍스트로 판단.
+          let cellInfoByIdx: Map<
+            number,
+            { row: number; col: number; rowSpan: number; colSpan: number }
+          > | null = null;
+          let gridMap: Map<string, number> | null = null;
+          if (cellCount > 0 && cellCount <= MAX_CELLS_FOR_GRID_MAP) {
+            cellInfoByIdx = new Map();
+            gridMap = new Map();
+            for (let c = 0; c < cellCount; c++) {
+              try {
+                const infoRaw = await this.bridge.invokeWasm<string | object>(
+                  'getCellInfo',
+                  [s, p, ctrl, c],
+                );
+                let info: {
+                  ok?: boolean;
+                  row?: number;
+                  col?: number;
+                  rowSpan?: number;
+                  colSpan?: number;
+                };
+                if (typeof infoRaw === 'string') {
+                  try {
+                    info = JSON.parse(infoRaw);
+                  } catch {
+                    continue;
+                  }
+                } else {
+                  info = infoRaw as typeof info;
+                }
+                if (!info || info.ok === false) continue;
+                const row = info.row ?? 0;
+                const col = info.col ?? 0;
+                const rowSpan = Math.max(1, info.rowSpan ?? 1);
+                const colSpan = Math.max(1, info.colSpan ?? 1);
+                cellInfoByIdx.set(c, { row, col, rowSpan, colSpan });
+                for (let r = row; r < row + rowSpan; r++) {
+                  for (let cc = col; cc < col + colSpan; cc++) {
+                    gridMap.set(`${r},${cc}`, c);
+                  }
+                }
+              } catch {
+                /* per-cell failure is best-effort */
+              }
             }
           }
-        } catch {
-          /* not a table para — skip */
+
+          // 셀의 char-shape (라벨용 / content 용 공통) 을 가져와 compact.
+          // 빈 응답 / 파싱 실패 / 0.6.14 의 ok=false 응답 모두 undefined 반환.
+          const COMPACT_KEYS = [
+            'fontFamily',
+            'fontSize',
+            'bold',
+            'italic',
+            'underline',
+            'strikethrough',
+            'textColor',
+            'charShapeId',
+          ] as const;
+          const fetchCellCharShape = async (
+            cellIdx: number,
+          ): Promise<Record<string, unknown> | undefined> => {
+            try {
+              const raw = await this.bridge.invokeWasm<unknown>(
+                'getCellCharPropertiesAt',
+                [s, p, ctrl, cellIdx, 0, 0],
+              );
+              let shape: Record<string, unknown> | undefined;
+              if (typeof raw === 'string') {
+                try {
+                  shape = JSON.parse(raw) as Record<string, unknown>;
+                } catch {
+                  return undefined;
+                }
+              } else if (raw && typeof raw === 'object') {
+                shape = raw as Record<string, unknown>;
+              }
+              if (!shape || (shape as { ok?: boolean }).ok === false)
+                return undefined;
+              const compact: Record<string, unknown> = {};
+              for (const k of COMPACT_KEYS) {
+                if (k in shape)
+                  compact[k] = (shape as Record<string, unknown>)[k];
+              }
+              return Object.keys(compact).length > 0 ? compact : undefined;
+            } catch {
+              return undefined;
+            }
+          };
+
+          for (let c = 0; c < cellCount; c++) {
+            let txt: string;
+            try {
+              txt = await this.getTextInCell(s, p, ctrl, c, 0, 0, 1024);
+            } catch {
+              continue;
+            }
+            const empty = isCellEmpty(txt);
+
+            // emptyCells 카운트는 inventory 정확도 위해 항상 누적.
+            if (empty && tableEntry) tableEntry.emptyCells++;
+
+            // includeFilled 가 false 면 채워진 셀은 결과 / 라벨 처리 모두 skip.
+            if (!empty && !includeFilled) continue;
+
+            // label-hint: left sibling first, then top sibling.
+            // grid 맵이 있으면 진짜 (row,col) 이웃을 찾고, 없으면
+            // 큰 표라 라벨은 비워둔다.
+            let label: { text: string; cellIdx: number } | null = null;
+            const info = cellInfoByIdx?.get(c);
+            if (info && gridMap) {
+              if (info.col > 0) {
+                const leftIdx = gridMap.get(`${info.row},${info.col - 1}`);
+                if (leftIdx !== undefined && leftIdx !== c) {
+                  label = await fetchLabel(s, p, ctrl, leftIdx);
+                }
+              }
+              if (!label && info.row > 0) {
+                const topIdx = gridMap.get(`${info.row - 1},${info.col}`);
+                if (topIdx !== undefined && topIdx !== c) {
+                  label = await fetchLabel(s, p, ctrl, topIdx);
+                }
+              }
+            }
+
+            if (empty && tableEntry && !tableEntry.sampleLabel && label) {
+              tableEntry.sampleLabel = label.text;
+            }
+
+            if (cellFields.length >= maxResults) {
+              if (empty) truncated = true;
+              continue; // keep counting emptyCells for inventory
+            }
+
+            const labelCharShape = label
+              ? await fetchCellCharShape(label.cellIdx)
+              : undefined;
+            // contentCharShape: 채워진 셀의 본문 char shape — placeholder
+            // (이탤릭+비검정) 식별용. 빈 셀은 본문이 없으니 생략.
+            const contentCharShape = !empty
+              ? await fetchCellCharShape(c)
+              : undefined;
+
+            cellFields.push({
+              location: {
+                sectionIndex: s,
+                paragraphIndex: p,
+                controlIndex: ctrl,
+                cellIndex: c,
+                cellParagraphIndex: 0,
+              },
+              labelHint: label?.text ?? '',
+              labelCharShape,
+              currentText: txt,
+              isEmpty: empty,
+              contentCharShape,
+            });
+          }
         }
       }
     }
-    return { cellFields, truncated };
+    return { cellFields, truncated, tableInventory };
   }
 
   /**

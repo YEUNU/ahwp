@@ -678,7 +678,12 @@ export interface ViewerHandle {
    * step for form-fill workflows so the LLM never has to guess
    * coordinates by trial-and-error.
    */
-  getEmptyFormFields: (opts?: { sectionIdx?: number; maxResults?: number }) => {
+  getEmptyFormFields: (opts?: {
+    sectionIdx?: number;
+    parentParaIdx?: number;
+    maxResults?: number;
+    includeFilled?: boolean;
+  }) => {
     cellFields: {
       location: {
         sectionIndex: number;
@@ -689,8 +694,21 @@ export interface ViewerHandle {
       };
       labelHint: string;
       labelCharShape?: Record<string, unknown>;
+      currentText: string;
+      isEmpty: boolean;
+      contentCharShape?: Record<string, unknown>;
     }[];
     truncated: boolean;
+    tableInventory?: {
+      sectionIndex: number;
+      paragraphIndex: number;
+      controlIndex: number;
+      rowCount: number;
+      colCount: number;
+      totalCells: number;
+      emptyCells: number;
+      sampleLabel: string;
+    }[];
   } | null;
   /**
    * Capture the current viewer selection as a portable excerpt — chunk

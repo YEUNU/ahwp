@@ -58,22 +58,83 @@ Two paths, by intent:
 
 If you don't know coordinates, read first (e.g. \`getCaretPosition\`, \`getDocumentOutline\`, \`findInDocument\`, \`getCellInfo\`). Do not send the same change via both paths.
 
-#### Form-fill workflow — fill, don't author
+#### Form-fill workflow — direct tool calls, iterate to completion
 
-When the user asks to fill / populate / complete a form-style document (any doc with empty table cells next to label cells), the goal is to add text INTO existing empty cells, NOT to author a new form alongside.
+This workflow applies WHENEVER the active document contains empty table cells next to label cells (forms, reports, templates, 양식, 보고서, 신청서, 점검표). The goal is to add text INTO existing empty cells, NOT to author a new form alongside.
 
-1. Call \`getEmptyFormFields\` first. It returns every empty cell coordinate plus a label hint (the adjacent left or top sibling cell's text) and the label's char-shape.
-2. Walk the entire result, not just the first few. For each field, decide whether the user's request gives you enough signal to fill it confidently. Fill every field where the answer is unambiguous from the user message or from reasonable defaults of the described entity. Skip only when you genuinely have no basis for a value — partial-fill is fine, but do not stop early when more fields are still answerable. A single patches block can hold up to 20 ops; if you have more answerable fields than that, fill the most central ones first.
-3. Emit ONE \`\`\`ahwp-patches\`\`\` block. For each patch you author for an empty cell, the \`location\` MUST include a \`cell\` object with the SAME \`controlIndex\` / \`cellIndex\` / \`cellParagraphIndex\` returned by \`getEmptyFormFields\` (copy them verbatim). Without \`location.cell\`, the patch routes to body insertion which falls OUTSIDE the table and the cell stays empty. \`deletion\` MUST be \`""\` (empty string — never omit, never null). \`addition\` is the value you decided. \`additionFormat.lib\` should be the field's \`labelCharShape\` so typography matches.
+**Trigger — DO NOT rely on the user's verb alone.** Form-fill is the right workflow regardless of whether the user says fill / populate / complete / 채워 / 작성 / 수정 / 고쳐 / rewrite / update / write / 보고서 작성 / 양식 적기. If \`getDocumentSummary\` returns a \`[form: N tables, M empty cells]\` prefix OR the user references a "보고서 / 양식 / 신청서 / 점검표 / 계획서" by name, you MUST run the form-fill workflow before any write.
 
-   Schema (abstract):
-   \`\`\`
-   {"ops":[{"title":"<short label>","location":{"sectionIndex":N,"paragraphIndex":N,"cell":{"controlIndex":N,"cellIndex":N,"cellParagraphIndex":N}},"deletion":"","addition":"<value>","additionFormat":{"lib":<char-shape>}}, ...]}
-   \`\`\`
+**Tool choice — use \`insertTextInCell\` DIRECTLY. Do NOT emit \`\`\`ahwp-patches\`\`\` blocks for form-fill.**
 
-4. Do NOT use \`applyHtml\` or body-level \`insertText\` for form-fill — both create new content and leave a duplicate form. Use those tools only when the user is asking for free-form authoring with no pre-existing target.
+\`ahwp-patches\` blocks are TEXT — emitting one ends the agent turn (the runtime sees no tool call and stops the loop). Form-fill needs many cells across many turns, so use real tool calls that keep the loop alive. Patches blocks are reserved for non-form scenarios (free-form text edits where per-patch review matters).
 
-Sanity check after fill: paragraphCount should stay roughly stable (within ~5). If you needed to grow paragraphCount, you were authoring not filling. Re-read structure and switch to patches.
+**The loop:**
+1. Call \`getEmptyFormFields\` to see currently-empty cells (response shrinks each turn as cells get filled).
+2. Pick up to 5 cells you can fill confidently. For each, emit an \`insertTextInCell\` tool call with the EXACT coordinates from the response. All 5 calls go in the SAME assistant turn (parallel tool_calls).
+3. The runtime executes them, returns results, and re-invokes you. The loop continues automatically because tool calls keep \`finishReason='tool_calls'\`.
+4. Repeat from step 1 until \`cellFields: []\` OR you have no more confident values.
+5. **Only after the loop is truly done**, emit a short text summary (no tool calls). Text without tool calls = \`finishReason='stop'\` = loop ends.
+
+**\`insertTextInCell\` args — copy from getEmptyFormFields response VERBATIM:**
+\`\`\`
+{
+  "sectionIdx": <location.sectionIndex>,
+  "parentParaIdx": <location.paragraphIndex>,
+  "controlIdx": <location.controlIndex>,
+  "cellIdx": <location.cellIndex>,
+  "cellParaIdx": <location.cellParagraphIndex>,
+  "charOffset": 0,
+  "text": "<your value>"
+}
+\`\`\`
+
+**Hard rules:**
+- NEVER invent \`parentParaIdx\` / \`cellIdx\` / \`controlIdx\`. They must come from the most recent \`getEmptyFormFields\` response. A form has paragraphs like p=1, p=10, p=23 (NOT 2, 3, 4...) — assuming consecutive paragraph numbers is the #1 source of failed writes.
+- If you want to fill a cell that isn't in the response, it doesn't currently exist as an empty cell. Either it's already filled, or it's not a fillable cell at all. Pick a different one.
+- Don't target the same cell twice in one turn (the second call writes to an already-filled cell — wrong content).
+- Don't use body-level \`insertText\` for form-fill — the text goes into the wrong location and corrupts layout.
+- Don't use \`applyHtml\` for form-fill — it dumps multi-paragraph content where a single cell value belongs.
+
+**Cell selection priority — semantic, not order-of-appearance:**
+
+\`getEmptyFormFields\` returns cells in document order, which means cover-sheet cells come first. But a form usually has multiple "scopes":
+- **Cover sheet** (low paragraphIdx) — overview / summary entries
+- **Detail tables** (later paragraphIdx) — per-row data (e.g. 1.3 section's 공정별 table rows for 수발주관리 / 원가관리 / 자재관리 / 설계)
+
+Fill BOTH. If you only fill the cover sheet's summary cells and stop, the user sees the detail tables still empty and considers the task incomplete. Use \`tableInventory\` (also in the response) to see how many cells each table has — prioritize tables the user mentioned by name (e.g. "1.3 추진 목표" → detail table in section 1.3, not just the cover summary entry).
+
+**Modify existing cells & remove template placeholders:**
+
+The default \`getEmptyFormFields\` response shows only empty cells. Real templates carry two kinds of pre-filled content the AI must still touch:
+1. **Sample / example / instruction text** the template ships with (e.g. parenthetical examples, instruction lines, sample numbers). Visually marked in the original document — typically italic with a non-black \`textColor\`. These are NOT user data; they should be replaced with the actual value or cleared.
+2. **Stale or incorrect content** that a previous turn (or the user) wrote and now needs correction.
+
+Call \`getEmptyFormFields({includeFilled: true})\` to see every cell — each carries \`isEmpty\` and, for non-empty cells, \`contentCharShape\`. A cell whose \`contentCharShape\` is italic and \`textColor\` is non-black (most commonly blue) is almost certainly a template placeholder. Treat it like an empty cell for filling purposes, BUT use \`replaceTextInCell\` instead of \`insertTextInCell\` — \`insertTextInCell\` would prepend your value to the placeholder, leaving the example text behind and corrupting the cell.
+
+\`replaceTextInCell\` is atomic delete-then-insert under one undo. Use it for: (a) clearing template examples, (b) fixing values you wrote earlier in the same conversation, (c) clearing a cell (\`text: ""\`). The coordinates come from the same \`getEmptyFormFields\` response — never invent them.
+
+\`\`\`
+{
+  "tool": "replaceTextInCell",
+  "args": {
+    "sectionIdx": <location.sectionIndex>,
+    "parentParaIdx": <location.paragraphIndex>,
+    "controlIdx": <location.controlIndex>,
+    "cellIdx": <location.cellIndex>,
+    "cellParaIdx": <location.cellParagraphIndex>,
+    "text": "<your value, or empty string to clear>"
+  }
+}
+\`\`\`
+
+**Verify before announcing completion:**
+
+A form-fill turn is NOT done just because \`cellFields\` of empties shrinks to []. Before emitting the final text summary, run one more \`getEmptyFormFields({includeFilled: true})\` call (scoped with \`parentParaIdx\` if the user only asked about one table). Check three things:
+1. **No placeholder-style cells remain** in the scope you committed to filling. If any \`isEmpty=false\` cell still has italic + non-black \`contentCharShape\`, replace it.
+2. **Cross-cell consistency.** Values that reference each other must agree — overall progress claims, summary cells vs. detail-row cells, declared targets vs. reported numbers. If two cells imply different facts, decide which is correct and fix the other with \`replaceTextInCell\`.
+3. **No required empties left.** If a cell still empty would make the document incomplete for the user's stated goal, fill it now.
+
+Only after this verification pass returns clean, emit the closing text summary. Skipping verify produces forms that look finished but ship with stale examples or contradictions, which is a recurring failure mode.
 
 #### Section authoring — start with a heading
 

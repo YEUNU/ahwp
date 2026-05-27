@@ -174,7 +174,7 @@ const TOOL_DESCRIPTORS: AhwpToolDescriptor[] = [
   {
     name: 'insertTextInCell',
     description:
-      'Insert text into a specific cell + cellParagraph + charOffset of a table control. Cell-scoped, safe even where body-level insertText would break table layout. Prereq: call getCellInfo first to confirm cellParaCount and that cellParaIdx is within range. For the first insertion into an empty cell use cellParaIdx=0, charOffset=0. cellParaIdx out of range returns out-of-range. Use \\n for multi-paragraph content within one cell.',
+      'Insert text into a specific cell + cellParagraph + charOffset of a table control. Cell-scoped, safe even where body-level insertText would break table layout. Prereq: call getCellInfo first to confirm cellParaCount and that cellParaIdx is within range. For the first insertion into an empty cell use cellParaIdx=0, charOffset=0. cellParaIdx out of range returns out-of-range. Use \\n for multi-paragraph content within one cell. Does NOT clear existing content — only inserts at charOffset. For replacing existing cell content (modifying filled cells / removing template placeholders), use replaceTextInCell.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -193,6 +193,30 @@ const TOOL_DESCRIPTORS: AhwpToolDescriptor[] = [
         'cellIdx',
         'cellParaIdx',
         'charOffset',
+        'text',
+      ],
+    },
+  },
+  {
+    name: 'replaceTextInCell',
+    description:
+      "Atomically replace a cell paragraph's entire text with a new value. Internally deletes existing content then inserts the new text in one logical step (single group-undo). Use for: (a) modifying a previously-filled cell to a corrected value, (b) clearing template placeholder / example text (often italic with non-black color — see contentCharShape from getEmptyFormFields({includeFilled:true})) before writing the real value. Pass text='' to clear without re-inserting. Same coordinate system as insertTextInCell (sectionIdx / parentParaIdx / controlIdx / cellIdx / cellParaIdx must come from getEmptyFormFields response).",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sectionIdx: { type: 'integer', minimum: 0 },
+        parentParaIdx: { type: 'integer', minimum: 0 },
+        controlIdx: { type: 'integer', minimum: 0 },
+        cellIdx: { type: 'integer', minimum: 0 },
+        cellParaIdx: { type: 'integer', minimum: 0 },
+        text: { type: 'string', maxLength: 4096 },
+      },
+      required: [
+        'sectionIdx',
+        'parentParaIdx',
+        'controlIdx',
+        'cellIdx',
+        'cellParaIdx',
         'text',
       ],
     },
@@ -1003,12 +1027,14 @@ const TOOL_DESCRIPTORS: AhwpToolDescriptor[] = [
   {
     name: 'getEmptyFormFields',
     description:
-      "Enumerate empty fillable spots in the document — every table cell whose only paragraph has length 0. For each, returns the cell coordinate plus a label hint (text of the adjacent cell — left sibling first, then top sibling) and the label's char-shape (font / size / bold etc.). Use BEFORE filling a form so each patch can target an existing empty spot rather than authoring new content. Read-only and deterministic — does not mutate the IR. Cap maxResults to keep response small (default 100).",
+      "Enumerate fillable cells in the document. For each cell returns the coordinate, a label hint (text of the adjacent cell — left sibling first, then top sibling), the label's char-shape, the cell's currentText, and isEmpty. By default returns only empty cells. Pass includeFilled=true to also see cells that already have content — each filled cell carries its contentCharShape (font / size / bold / italic / textColor / charShapeId). Cells whose contentCharShape is italic with non-black textColor are likely template example / placeholder text ('예) ...', instruction lines) that should be replaced rather than preserved. parentParaIdx scopes to one table (composable with sectionIdx). Read-only — does not mutate IR. Cap maxResults to keep response small (default 200).",
     inputSchema: {
       type: 'object',
       properties: {
         sectionIdx: { type: 'integer', minimum: 0 },
+        parentParaIdx: { type: 'integer', minimum: 0 },
         maxResults: { type: 'integer', minimum: 1, maximum: 5000 },
+        includeFilled: { type: 'boolean' },
       },
     },
   },

@@ -6,6 +6,25 @@
 
 ## [Unreleased]
 
+## [0.6.15] - 2026-05-27
+
+### Fixed — 병합 표에서 `getEmptyFormFields` labelHint 가 잘못된 셀을 가리키던 버그
+
+13×7=91 그리드인데 totalCells=61 처럼 병합 셀이 있는 표에서, `c-1` /
+`c-colCount` 의 flat-index 산술이 진짜 좌측/상단 이웃이 아닌 엉뚱한
+cellIdx 의 텍스트를 라벨로 가져왔음 → AI 가 잘못된 셀에 값을 채워넣음.
+`getCellInfo` 로 `(row,col)` 그리드 맵을 표 단위 1회 빌드하고 그 위에서
+이웃을 찾도록 수정.
+
+### Added — Modify / Verify form-fill workflow (`includeFilled` + `replaceTextInCell`)
+
+`getEmptyFormFields({includeFilled:true})` 옵션 — 채워진 셀까지 반환하면
+서 각 셀에 `isEmpty` + `contentCharShape` (이탤릭/색상 등). 템플릿
+예시문 (이탤릭+비검정) 을 AI 가 시각 단서로 식별 가능. 신규 `replaceTextInCell`
+도구 — 셀 내용 atomic delete+insert (그룹 undo 1회) 로 placeholder 제거 /
+기존 값 교체 / clear (text='') 1콜 처리. system prompt 에 Modify + Verify
+섹션 (완료 선언 전 재스캔으로 placeholder 잔존 / 일관성 확인) 추가.
+
 ## [0.6.13] - 2026-05-26
 
 ### Reverted — 0.6.11 의 `mac.identity: null` ("손상되었다" 설치 차단 회귀)

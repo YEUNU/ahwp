@@ -4,10 +4,11 @@
  * lookup, no `eval`, no provider tool-use bridging here. The whitelist
  * is the union in `shared/ai-tools.ts`.
  */
-import type {
-  AhwpPreflightItem,
-  AhwpToolCall,
-  AhwpToolResult,
+import {
+  isReadOnlyTool,
+  type AhwpPreflightItem,
+  type AhwpToolCall,
+  type AhwpToolResult,
 } from '@shared/ai-tools';
 // Phase 7 E2 — 본 file 이 사용하는 ViewerHandle 은 legacy StudioViewer 의
 // surface 였음. studio dir 폐기에 대비해 type 정의만 별도 file 로
@@ -346,6 +347,59 @@ async function runOne(
             before,
             after,
             label: `cell #${a.cellIdx}`,
+          },
+        };
+      }
+      // === 0.6.15 — atomic cell replace (modify / placeholder 제거) ===
+      case 'replaceTextInCell': {
+        const a = call.args;
+        if (!helper) {
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: 'replaceTextInCell-no-helper',
+          };
+        }
+        const before = await helper.getTextInCell(
+          a.sectionIdx,
+          a.parentParaIdx,
+          a.controlIdx,
+          a.cellIdx,
+          a.cellParaIdx,
+          0,
+          4096,
+        );
+        const ok = await helper.replaceTextInCell(
+          a.sectionIdx,
+          a.parentParaIdx,
+          a.controlIdx,
+          a.cellIdx,
+          a.cellParaIdx,
+          a.text,
+        );
+        if (!ok)
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: 'replaceTextInCell-failed',
+          };
+        const after = await helper.getTextInCell(
+          a.sectionIdx,
+          a.parentParaIdx,
+          a.controlIdx,
+          a.cellIdx,
+          a.cellParaIdx,
+          0,
+          4096,
+        );
+        return {
+          ok: true,
+          tool: call.tool,
+          diff: {
+            paragraphIdx: a.parentParaIdx,
+            before,
+            after,
+            label: `cell #${a.cellIdx} (replace)`,
           },
         };
       }
@@ -1245,10 +1299,24 @@ async function runOne(
         // helper 경로: searchAllText (rhwp 0.7.12 native) 직접 호출 후
         // maxResults 자르기. viewer.irFindInDocument 는 동일 동작을
         // useViewerHandle 안에서 수행.
+        //
+        // 중요: helper.searchAllText 는 raw RhwpSearchHit
+        // ({sec, para, charOffset, length, cellContext}) 를 반환하지만,
+        // viewer-handle contract 와 AI 가 기대하는 shape 는
+        // {sectionIdx, paragraphIdx, charOffset, length?, cellContext?}.
+        // helper 경로일 때 필드명을 매핑하지 않으면 후속 insertText
+        // 호출의 sectionIdx/paragraphIdx 가 undefined 가 됨.
         if (helper) {
           const hits = await helper.searchAllText(a.query, false, false);
           const sliced = hits.slice(0, a.maxResults ?? hits.length);
-          return { ok: true, tool: call.tool, data: sliced };
+          const data = sliced.map((h) => ({
+            sectionIdx: h.sec,
+            paragraphIdx: h.para,
+            charOffset: h.charOffset,
+            length: h.length,
+            cellContext: h.cellContext,
+          }));
+          return { ok: true, tool: call.tool, data };
         }
         const data = viewer.irFindInDocument(a.query, a.maxResults);
         return { ok: true, tool: call.tool, data };
@@ -1365,10 +1433,17 @@ async function runOne(
       case 'getEmptyFormFields': {
         const a = call.args;
         const data = helper
-          ? await helper.getEmptyFormFields()
+          ? await helper.getEmptyFormFields({
+              sectionIdx: a.sectionIdx,
+              parentParaIdx: a.parentParaIdx,
+              maxResults: a.maxResults,
+              includeFilled: a.includeFilled,
+            })
           : (viewer.getEmptyFormFields({
               sectionIdx: a.sectionIdx,
+              parentParaIdx: a.parentParaIdx,
               maxResults: a.maxResults,
+              includeFilled: a.includeFilled,
             }) as unknown);
         if (data === null)
           return {
@@ -1471,6 +1546,34 @@ export async function runTools(
   } finally {
     viewer?.endUndoGroup();
   }
+  // 0.6.14 — canvas repaint notify. Bridge-routed write tools
+  // (insertTextInCell / insertText / applyCharFormat / ...) bypass the
+  // native input-handler's afterEdit() which is what fires
+  // `document-changed` to trigger CanvasView.refreshPages(). Without
+  // this manual notify the IR mutates correctly but the editor canvas
+  // shows stale (pre-edit) content. Fire once per batch (idempotent).
+  // Read-only batches skip the notify.
+  if (helper) {
+    const anyWrite = items.some((it) => it.ok && !isReadOnlyTool(it.call.tool));
+    const anyOk = out.some((r) => r.ok);
+    if (anyWrite && anyOk) {
+      try {
+        // Access bridge through helper (private field via cast). Cheap
+        // call — just emits an event in the iframe.
+        const bridge = (
+          helper as unknown as {
+            bridge: { invoke: (m: string, p?: unknown) => Promise<unknown> };
+          }
+        ).bridge;
+        await bridge.invoke('notifyDocumentChanged', { reason: 'ahwp-tools' });
+      } catch (err) {
+        console.warn(
+          '[tools] notifyDocumentChanged failed (older vendor build?):',
+          err,
+        );
+      }
+    }
+  }
   return out;
 }
 
@@ -1526,6 +1629,12 @@ export function previewArgs(call: AhwpToolCall): string {
     case 'insertTextInCell': {
       const t = call.args.text.replace(/\s+/g, ' ').trim();
       return `cell=${call.args.cellIdx} "${t.length > 30 ? t.slice(0, 30) + '…' : t}"`;
+    }
+    case 'replaceTextInCell': {
+      const t = call.args.text.replace(/\s+/g, ' ').trim();
+      const preview =
+        t.length === 0 ? '(clear)' : t.length > 30 ? t.slice(0, 30) + '…' : t;
+      return `cell=${call.args.cellIdx} ⇒ "${preview}"`;
     }
     case 'deleteRange':
       return `(${call.args.startParagraphIdx},${call.args.startOffset})~(${call.args.endParagraphIdx},${call.args.endOffset})`;

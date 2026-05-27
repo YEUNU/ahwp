@@ -69,6 +69,8 @@ export const AHWP_TOOL_NAMES = [
   'deleteBookmark',
   // 0.4.16 — cell-level write (양식 표지 cell 채우기)
   'insertTextInCell',
+  // 0.6.15 — atomic replace (placeholder/예시문 제거 + 새 값) + modify workflow
+  'replaceTextInCell',
   // Phase 3 chunk 51 — read-only Agent tools (양식 매칭 / 위치 결정)
   'getDocumentOutline',
   'getDocumentSummary',
@@ -422,6 +424,17 @@ export interface AhwpToolArgs {
     charOffset: number;
     text: string;
   };
+  // 0.6.15 — atomic replace. 기존 셀 내용을 모두 지우고 text 로 교체.
+  // text='' 는 effectively clear. charOffset 인자가 없는 이유:
+  // replace 의미상 "셀 전체" 가 대상이라 offset 이 무의미.
+  replaceTextInCell: {
+    sectionIdx: number;
+    parentParaIdx: number;
+    controlIdx: number;
+    cellIdx: number;
+    cellParaIdx: number;
+    text: string;
+  };
   // Phase 3 chunk 51 — read-only Agent tools
   getDocumentOutline: Record<string, never>;
   getDocumentSummary: Record<string, never>;
@@ -474,10 +487,16 @@ export interface AhwpToolArgs {
     charOffset: number;
     direction: 'forward' | 'backward';
   };
-  // 0.4.21 — empty form-field enumeration
+  // 0.4.21 — empty form-field enumeration.
+  // parentParaIdx scopes to a single table (composable with sectionIdx).
+  // Use the tableInventory entries returned from the first call to pick.
+  // 0.6.15 — includeFilled 옵션: true 면 채워진 셀도 반환 (각 셀에
+  // isEmpty + contentCharShape 포함). 수정 / placeholder 제거 workflow 용.
   getEmptyFormFields: {
     sectionIdx?: number;
+    parentParaIdx?: number;
     maxResults?: number;
+    includeFilled?: boolean;
   };
   // Phase 5 chunk 96 — outline-as-router workspace search
   searchWorkspaceOutlines: { maxDocs?: number };
