@@ -594,6 +594,8 @@ export interface AhwpApi {
   updater: UpdaterApi;
   /** 0.7.7 — external world access (web fetch / search). */
   web: WebApi;
+  /** 0.7.9 — Bash 명령 실행 (allowlist + default off). */
+  bash: BashApi;
 }
 
 /**
@@ -706,6 +708,67 @@ export interface WebApi {
   deleteSearchKey: (backend: WebSearchBackend) => Promise<void>;
   /** 현재 활성 backend ('ddg' = key 없음 / fallback). UI 가 표시. */
   getActiveSearchBackend: () => Promise<ActiveSearchBackend>;
+}
+
+/**
+ * 0.7.9 — Bash 명령 실행 surface.
+ *
+ * **Default OFF + allowlist 기반.** AI catalog 에 노출되려면:
+ *   1. `bash.setEnabled(true)` (사용자가 Settings UI 에서 토글)
+ *   2. allowlist 가 비어있지 않음
+ *
+ * 두 조건 모두 만족하면 `runCommand` 도구가 cross-doc-research 외의
+ * mode catalog 에 포함됨. allowlist 가 비어있으면 enable 해도 모든
+ * 호출 거부 (deny-by-default).
+ *
+ * **보안 모델:**
+ * - Allowlist: 명령의 prefix 가 등록 패턴 중 하나와 매치해야 함
+ * - Hardcoded blocklist: `rm -rf /` / `sudo` / `:(){:|:&};:` / `>` etc.
+ *   (사용자가 allowlist 에 넣었더라도 거부)
+ * - cwd: workspace root 기준 상대 경로만, 절대 경로 거부
+ * - Timeout: 60s 기본, 사용자 설정 가능 (최대 5분)
+ * - Output cap: stdout / stderr 각 32KB
+ *
+ * **renderer 노출:**
+ * - enable/disable + allowlist 조회/설정 (Settings UI 가 사용)
+ * - 실행 자체는 AI tool dispatcher 만 — UI 에서 직접 호출 안 함.
+ */
+export interface BashRunRequest {
+  command: string;
+  /** workspace root 기준 상대 경로. 없으면 root 사용. */
+  cwd?: string;
+  /** ms, 기본 60_000, 최대 300_000. */
+  timeoutMs?: number;
+}
+export interface BashRunResult {
+  ok: boolean;
+  /** 거부 사유 (allowlist / blocklist / cwd / timeout / exec error). */
+  reason?: string;
+  /** child process exit code. 정상 종료 시 0. */
+  exitCode?: number;
+  /** stdout (32KB cap). */
+  stdout?: string;
+  /** stderr (32KB cap). */
+  stderr?: string;
+  /** stdout 가 cap 초과로 잘림. */
+  truncatedStdout?: boolean;
+  /** stderr 가 cap 초과로 잘림. */
+  truncatedStderr?: boolean;
+}
+export interface BashApi {
+  /** 토글: 도구 활성화 여부. 기본 false. */
+  isEnabled: () => Promise<boolean>;
+  setEnabled: (on: boolean) => Promise<void>;
+  /** Allowlist 조회 (사용자가 등록한 명령 prefix 들). */
+  getAllowlist: () => Promise<string[]>;
+  setAllowlist: (patterns: string[]) => Promise<void>;
+  /**
+   * 명령 실행. **AI tool dispatcher (`src/features/chat/tools.ts`) 만
+   * 호출.** UI 가 직접 호출하면 사용자가 의도하지 않은 입력 발사 위험 —
+   * Settings UI 에선 read/write 만 사용. 안전 게이트는 main process IPC
+   * 핸들러가 처리 (allowlist / blocklist / cwd / timeout / output cap).
+   */
+  run: (req: BashRunRequest) => Promise<BashRunResult>;
 }
 
 export interface UpdaterApi {

@@ -104,6 +104,11 @@ export const AHWP_TOOL_NAMES = [
   // 없음. 사용자 confirm 게이트 없이 즉시 실행.
   'webFetch',
   'webSearch',
+  // 0.7.9 — Bash 명령 실행. Default OFF (사용자 명시 enable 필요).
+  // Allowlist 기반 (사용자 등록 prefix 만 허용) + workspace cwd 강제 +
+  // 60s timeout + 32KB output cap + hardcoded blocklist (rm -rf, sudo 등).
+  // catalog 노출은 enable 토글 ON + allowlist 비어있지 않을 때만.
+  'runCommand',
 ] as const;
 
 export type AhwpToolName = (typeof AHWP_TOOL_NAMES)[number];
@@ -536,6 +541,15 @@ export interface AhwpToolArgs {
     query: string;
     /** 결과 최대 개수. 1-20, 기본 10. */
     maxResults?: number;
+  };
+  // 0.7.9 — Bash 명령 실행 (allowlist 기반).
+  runCommand: {
+    /** 실행할 명령 문자열. allowlist 의 prefix 와 매치해야 함. */
+    command: string;
+    /** 작업 디렉토리 (workspace root 기준 상대 경로). 절대 경로 거부. */
+    cwd?: string;
+    /** Timeout (ms). 기본 60000, 최대 300000. */
+    timeoutMs?: number;
   };
 }
 

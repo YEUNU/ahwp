@@ -126,6 +126,14 @@ describe('App', () => {
         deleteSearchKey: vi.fn().mockResolvedValue(undefined),
         getActiveSearchBackend: vi.fn().mockResolvedValue('ddg'),
       },
+      // 0.7.9 — Bash 명령 실행 (default OFF + allowlist).
+      bash: {
+        isEnabled: vi.fn().mockResolvedValue(false),
+        setEnabled: vi.fn().mockResolvedValue(undefined),
+        getAllowlist: vi.fn().mockResolvedValue([]),
+        setAllowlist: vi.fn().mockResolvedValue(undefined),
+        run: vi.fn().mockResolvedValue({ ok: false, reason: 'bash-disabled' }),
+      },
     };
     Object.defineProperty(window, 'api', {
       value: mockApi,

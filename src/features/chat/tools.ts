@@ -1573,6 +1573,28 @@ async function runOne(
           };
         }
       }
+      // 0.7.9 — Bash 명령 실행. main process 가 allowlist / blocklist /
+      // cwd / timeout / output cap 모든 게이트 처리. dispatcher 는 단순
+      // IPC 위임 + 결과 forward.
+      case 'runCommand': {
+        const a = call.args;
+        try {
+          const r = await window.api.bash.run({
+            command: a.command,
+            cwd: a.cwd,
+            timeoutMs: a.timeoutMs,
+          });
+          // ok=false 인 경우도 data 로 통과 — reason 이 모델에게 의미
+          // 있는 피드백 ("not-in-allowlist" → 사용자에게 등록 요청 등).
+          return { ok: true, tool: call.tool, data: r };
+        } catch (e) {
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: `runCommand-failed:${(e as Error).message ?? String(e)}`,
+          };
+        }
+      }
       default: {
         // The pre-flight validator narrows AhwpToolCall to the union, so
         // this is unreachable without a registry/type drift.
@@ -1839,6 +1861,11 @@ export function previewArgs(call: AhwpToolCall): string {
     case 'webSearch': {
       const q = call.args.query.replace(/\s+/g, ' ').trim();
       return `"${q.length > 30 ? q.slice(0, 30) + '…' : q}"`;
+    }
+    // 0.7.9 — Bash.
+    case 'runCommand': {
+      const c = call.args.command;
+      return c.length > 40 ? c.slice(0, 40) + '…' : c;
     }
   }
 }

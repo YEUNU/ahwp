@@ -6,6 +6,80 @@
 
 ## [Unreleased]
 
+## [0.7.9] - 2026-05-27
+
+### Added — Bash 명령 실행 도구 (allowlist + 7 단계 보안 게이트)
+
+Claude Code 의 Bash 도구처럼 AI 가 shell 명령을 실행할 수 있는 도구
+추가. **위험 도구** 라 default OFF + allowlist + 다중 게이트로 안전 확보.
+
+**보안 모델 (7 단계 게이트):**
+
+1. **Enabled 토글** — 기본 OFF. 사용자가 Settings 에서 명시 ON 해야
+   catalog 에 노출.
+2. **Allowlist 매치** — 사용자 등록 prefix 와 매치해야 함. 비어 있으면
+   ON 이라도 거부 (deny-by-default).
+3. **Hardcoded blocklist** — allowlist 와 무관하게 항상 거부:
+   `sudo` / `su `, `rm -rf` 변종, fork bomb (`:(){:|:&};:`),
+   `curl|sh` / `wget|sh`, `dd if=`, `mkfs`, `shutdown` / `reboot`,
+   위험 `/dev/` redirect (단 `/dev/null`/`stderr`/`stdout` 허용).
+4. **Workspace 격리** — cwd 는 workspace root 기준 상대 경로만. 절대
+   경로 거부, `..` 으로 탈출 거부. workspace 미설정 시 거부.
+5. **Timeout** — 기본 60s, 사용자 args 로 최대 5분. 초과 시 SIGTERM.
+6. **Output cap** — stdout / stderr 각 32KB.
+7. **Env 화이트리스트** — 호스트 env 의 secrets (API keys 등) 노출 차단.
+   `PATH` / `HOME` / `USER` / `LANG` 등 안전한 변수만 전달.
+
+**구현:**
+
+- `electron/store/bash-allowlist.ts` (신규) — enabled 토글 + allowlist
+  패턴 저장. `matchesAllowlist` pure helper (prefix + word boundary).
+- `electron/ipc/bash.ts` (신규) — `validateBashRun` pure 게이트 검사 +
+  `bashRunImpl` 가 `child_process.exec` 호출. 5 IPC 등록.
+- `shared/ai-tools-defined/bash.ts` (신규) — `runCommand` defineTool entry.
+  free-authoring / body-edit mode 노출 (cross-doc-research 는 read-only
+  라 제외).
+- `shared/api.ts` — `BashApi` + `BashRunRequest` / `BashRunResult` 타입.
+- `electron/preload.ts` — `window.api.bash` 노출.
+- `src/features/chat/tools.ts` — `runCommand` dispatcher case + summary.
+- `src/features/settings/SettingsDialog.tsx` — "Bash 명령 실행" 섹션:
+  ⚠️ 위험 경고, 활성화 토글, allowlist textarea + 저장 버튼.
+
+### 검증
+
+- vitest 349/349 (325 → +24). 신규 케이스:
+  - `bash-allowlist.test.ts` (8) — prefix 매치 / word boundary / 빈
+    allowlist / case-sensitivity / 앞뒤 trim.
+  - `bash.test.ts` (16) — enabled OFF / empty / blocklist (sudo / rm
+    -rf / fork bomb / curl|sh / dd if= / dev sda) / `/dev/null` redirect
+    허용 (false-positive 가드) / allowlist empty·miss / workspace 미설정
+    / cwd 절대·탈출 / 정상 통과 + 정규화 / timeoutMs clamp.
+  - `ai-tool-def.test.ts` — registry 자동 검증 (runCommand 포함).
+- typecheck + eslint 통과. 0.7.8 → 0.7.9.
+
+### 사용 방법
+
+1. Settings → AI 공급자 → "Bash 명령 실행" 섹션
+2. 활성화 토글 ON
+3. allowlist 입력 (한 줄에 하나):
+   ```
+   git status
+   git diff
+   npm test
+   npm run build
+   ls
+   cat
+   grep
+   ```
+4. 저장 → AI catalog 에 `runCommand` 도구 노출
+5. 사용 예: "git status 결과 보여줘", "npm test 돌려서 결과 분석해줘"
+
+allowlist 없는 명령은 즉시 거부. blocklist 패턴은 allowlist 에 넣어도 차단.
+
+### 다음 chunk
+
+- 0.7.10 — Agent (sub-agent dispatch).
+
 ## [0.7.8] - 2026-05-27
 
 ### Added — Brave Search API 지원 + Settings UI (DDG fallback 유지)

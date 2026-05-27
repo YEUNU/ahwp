@@ -201,6 +201,17 @@ const api: AhwpApi = {
       ipcRenderer.invoke('web:delete-search-key', backend),
     getActiveSearchBackend: () => ipcRenderer.invoke('web:get-active-backend'),
   },
+  // 0.7.9 — Bash 명령 실행. UI 가 read/write, AI dispatcher 가 별도
+  // 'bash:run' IPC 로 실행. BashApi 에 run 노출 안 함 (UI 에서 직접
+  // 명령 실행하면 사용자 의도와 무관한 입력 발사 가능 — 의도적 분리).
+  bash: {
+    isEnabled: () => ipcRenderer.invoke('bash:is-enabled'),
+    setEnabled: (on) => ipcRenderer.invoke('bash:set-enabled', on),
+    getAllowlist: () => ipcRenderer.invoke('bash:get-allowlist'),
+    setAllowlist: (patterns) =>
+      ipcRenderer.invoke('bash:set-allowlist', patterns),
+    run: (req) => ipcRenderer.invoke('bash:run', req),
+  },
 };
 
 contextBridge.exposeInMainWorld('api', api);

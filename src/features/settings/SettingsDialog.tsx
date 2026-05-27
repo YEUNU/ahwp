@@ -378,9 +378,182 @@ function AiProvidersPane(): JSX.Element {
           </h3>
           <WebSearchBackendSection />
         </div>
+        <div className="mt-5 space-y-3 border-t border-border pt-4">
+          <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Bash 명령 실행 (0.7.9) — 위험
+          </h3>
+          <BashSection />
+        </div>
       </PaneBody>
       <PaneFooter hint="변경사항은 저장 버튼으로 반영됩니다. 키를 변경하려면 새 값을 입력하세요." />
     </>
+  );
+}
+
+/**
+ * Bash 명령 실행 설정 섹션 — 0.7.9.
+ *
+ * AI 가 `runCommand({command})` 호출. 두 단계 게이트:
+ *   1. **enable 토글** (기본 OFF). OFF 면 catalog 에 도구 노출 안 됨.
+ *   2. **allowlist** (한 줄에 하나의 prefix). 비어있으면 enable 라도
+ *      모든 호출 거부 (deny-by-default).
+ *
+ * 본 UI 는 두 상태 관리. 실제 명령 실행 / 보안 게이트는 main process.
+ */
+function BashSection(): JSX.Element {
+  const [enabled, setEnabled] = useState(false);
+  const [patterns, setPatterns] = useState<string[]>([]);
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const refresh = useCallback(async (): Promise<{
+    enabled: boolean;
+    patterns: string[];
+  }> => {
+    const [en, pats] = await Promise.all([
+      window.api.bash.isEnabled(),
+      window.api.bash.getAllowlist(),
+    ]);
+    return { enabled: en, patterns: pats };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const r = await refresh();
+        if (cancelled) return;
+        setEnabled(r.enabled);
+        setPatterns(r.patterns);
+        setDraft(r.patterns.join('\n'));
+      } catch (err) {
+        console.warn('[settings] bash refresh failed', err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [refresh]);
+
+  const onToggle = async (on: boolean): Promise<void> => {
+    setBusy(true);
+    try {
+      await window.api.bash.setEnabled(on);
+      setEnabled(on);
+    } catch (err) {
+      console.warn('[settings] bash setEnabled failed', err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onSaveAllowlist = async (): Promise<void> => {
+    setBusy(true);
+    try {
+      const lines = draft
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0);
+      await window.api.bash.setAllowlist(lines);
+      setPatterns(lines);
+    } catch (err) {
+      console.warn('[settings] bash setAllowlist failed', err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const isDirty = draft.trim() !== patterns.join('\n').trim();
+
+  return (
+    <div className="space-y-3 text-xs" data-testid="settings-bash">
+      <div className="flex items-start gap-2 rounded border border-amber-300/50 bg-amber-50/50 px-3 py-2 dark:border-amber-700/50 dark:bg-amber-900/20">
+        <span className="text-amber-700 dark:text-amber-300">⚠️</span>
+        <div className="flex-1">
+          <p className="font-medium text-amber-900 dark:text-amber-200">
+            AI 가 shell 명령을 실행할 수 있는 도구입니다.
+          </p>
+          <p className="mt-0.5 text-[10px] text-muted-foreground">
+            의도하지 않은 명령으로 파일이 변경될 수 있습니다. allowlist 의
+            prefix 와 정확히 매치하는 명령만 허용됩니다. hardcoded blocklist
+            (sudo / rm -rf / fork bomb 등) 는 allowlist 와 무관하게 항상 거부.
+            작업 디렉토리는 워크스페이스 폴더 안만.
+          </p>
+        </div>
+      </div>
+
+      <div
+        className="flex items-center justify-between rounded border border-border px-3 py-2"
+        data-testid="settings-bash-enable-row"
+      >
+        <label
+          htmlFor="settings-bash-enabled"
+          className="flex flex-col gap-0.5"
+        >
+          <span className="font-medium">활성화</span>
+          <span className="text-[10px] text-muted-foreground">
+            OFF 면 AI catalog 에 `runCommand` 도구 노출 안 됨. allowlist 가
+            비어있으면 ON 이라도 모든 호출 거부.
+          </span>
+        </label>
+        <input
+          id="settings-bash-enabled"
+          data-testid="settings-bash-enabled-input"
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => void onToggle(e.target.checked)}
+          disabled={busy}
+          className="h-4 w-4"
+        />
+      </div>
+
+      <div
+        className="flex flex-col gap-2 rounded border border-border px-3 py-2"
+        data-testid="settings-bash-allowlist-row"
+      >
+        <label
+          htmlFor="settings-bash-allowlist"
+          className="flex items-center justify-between font-medium"
+        >
+          <span>Allowlist (한 줄에 하나)</span>
+          <span className="text-[10px] text-muted-foreground">
+            {patterns.length} 패턴 등록됨
+          </span>
+        </label>
+        <p className="text-[10px] text-muted-foreground">
+          명령의 prefix 패턴. 예: <code>git status</code>, <code>git diff</code>
+          , <code>npm test</code>, <code>npm run build</code>, <code>ls</code>.
+          매치 = 명령이 이 prefix 로 시작 + 다음 문자가 공백 또는 끝.
+        </p>
+        <textarea
+          id="settings-bash-allowlist"
+          data-testid="settings-bash-allowlist-input"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder={'git status\ngit diff\nnpm test\nls'}
+          rows={6}
+          spellCheck={false}
+          className="rounded border border-input bg-background px-2 py-1 font-mono text-[11px] focus:outline-hidden focus:ring-2 focus:ring-ring"
+          disabled={busy}
+        />
+        <div className="flex items-center justify-end gap-2">
+          {isDirty && (
+            <span className="text-[10px] text-amber-600 dark:text-amber-400">
+              저장되지 않은 변경
+            </span>
+          )}
+          <button
+            data-testid="settings-bash-allowlist-save"
+            type="button"
+            onClick={onSaveAllowlist}
+            disabled={busy || !isDirty}
+            className="rounded border border-input bg-background px-3 py-1 hover:bg-accent disabled:opacity-50"
+          >
+            저장
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
