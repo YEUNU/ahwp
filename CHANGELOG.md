@@ -6,6 +6,51 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-27
+
+### Added — Task-Mode Architecture (infra only)
+
+minor 가 아닌 **architectural jump**. 0.6.x 의 mole-whacking 패턴
+(본문 dump / scope 오류 / patches 회귀 / NIM 호환 / validator strip)
+의 공통 root cause = "55 generic tool 을 모든 task 에 노출" 의 mismatch.
+0.7.x 가 각 task 의 contract 별로 tool surface 를 슬라이스.
+
+#### 0.7.0 — 인프라만 (동작 0.6.20 과 동일)
+
+- 신규 `shared/ai-modes.ts` — `TaskMode` union (`free-authoring` /
+  `form-fill` / `body-edit` / `table-manipulation` / `formatting` /
+  `cross-doc-research`) + `MODE_REGISTRY` + `resolveAllowedTools`.
+  모든 mode 의 `tools` 가 0.7.0 에서는 `'all'` (placeholder) — 0.7.1 부터
+  실제 subset.
+- 신규 `src/features/chat/mode-detector.ts` — `detectMode(input)` 가
+  user override 만 반영, 나머지는 default. 0.7.1 부터 docSummary /
+  user intent 휴리스틱 활성화.
+- `shared/ai-tool-catalog.ts` `getAhwpToolCatalog(modeContext?)` —
+  mode whitelist 로 카탈로그 slice. 0.7.0 placeholder 라 실제 효과 X.
+- `src/features/chat/prompts.ts` `appendModePrompt(base, ctx)` — base
+  prompt 뒤에 mode 의 short fragment append (현재 모두 빈 fragment).
+- `ChatRequest` 에 `modeContext?: ModeContext` 추가 — provider 어댑터는
+  transparent (renderer 가 catalog / prompt 를 미리 좁힘).
+- `useChatStreaming` 이 turn 마다 `detectMode()` 호출 → catalog +
+  prompt + ChatRequest 에 mode 전달.
+- `ChatPanel` provider bar 에 신규 `ModeBadge` (현재 항상 "편집" 표시,
+  0.7.1 부터 mode 자동 진입 + override 토글 활성화).
+
+#### 검증
+
+- vitest 255/255 (242 → +13). 신규: `ai-modes.test.ts` 6 / `ai-tool-catalog.test.ts` 3 / `mode-detector.test.ts` 4.
+- 영향 받은 e2e (chat / chat-prefetch / settings) 24/24 + 1 flaky (SLOW
+  abort, mode 와 무관 기존 race).
+- typecheck 통과.
+
+#### 다음 chunk
+
+- 0.7.1 — FormFill mode 활성화 (schema extractor + fillFormSlots batch tool + body write hard-block + mode 자동 진입).
+- 0.7.2 — BodyEdit mode + anchor schema.
+- 0.7.3 — defineTool refactor (schema / validator / dispatcher single source of truth).
+- 0.7.4 — Provider × Mode capability matrix.
+- 0.7.5 — 나머지 mode.
+
 ## [0.6.20] - 2026-05-27
 
 ### Added — Provider vision integration (OpenAI + Google Gemini)

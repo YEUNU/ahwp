@@ -151,6 +151,13 @@ export interface ChatRequest {
    *  reasoning_tokens 최소 (router 등 빠른 응답이 중요한 호출에서 사용).
    *  non-reasoning 모델은 무시. */
   reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high';
+  /**
+   * 0.7.0 — Task-Mode 컨텍스트. 어느 mode 로 이 turn 을 수행하는지.
+   * provider 어댑터는 직접 사용하지 않고 (transparent passthrough), 호출
+   * 측 (useChatStreaming) 이 tools / prompt 를 mode 에 맞춰 미리 좁힘.
+   * 누락 시 default = free-authoring (현재 동작).
+   */
+  modeContext?: import('./ai-modes').ModeContext;
 }
 
 /**

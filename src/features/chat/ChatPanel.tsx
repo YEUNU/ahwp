@@ -846,6 +846,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               ))}
             </select>
             <KeyStatusIcon hasKey={hasKey} providerLabel={providerLabel} />
+            <ModeBadge />
             <IconButton
               onClick={() => {
                 const next = !historyOpen;
@@ -1312,6 +1313,25 @@ function IconButton({
 // chunk 77 — API 키 상태 아이콘. lucide Key (등록) / KeyRound 윤곽
 // (미등록) / Loader2 (확인 중). 테마의 emerald / muted-foreground 토큰
 // 사용. 텍스트 "키 ●" / "키 ○" 이모지 → SVG 교체.
+/**
+ * 0.7.0 — Task-Mode badge. 현재 모드 (free-authoring / form-fill / ...)
+ * 를 provider bar 에 표시. 0.7.0 에서는 detection 없이 항상 "편집" (free-
+ * authoring) 표시. 0.7.1 부터 자동 진입 + 사용자 override 토글 활성화.
+ */
+function ModeBadge(): JSX.Element {
+  // 0.7.0: 항상 free-authoring. 0.7.1 에서 useModeContext() 훅으로 교체.
+  return (
+    <span
+      className="flex h-7 shrink-0 items-center rounded-md border border-border bg-background px-2 text-[10px] font-medium text-muted-foreground"
+      data-testid="chat-mode-badge"
+      data-mode="free-authoring"
+      title="현재 모드: 자유 편집. 다른 모드 자동 진입은 0.7.1 부터."
+    >
+      편집
+    </span>
+  );
+}
+
 function KeyStatusIcon({
   hasKey,
   providerLabel,

@@ -36,7 +36,9 @@ import {
   collectReferenceOutlines,
   buildReferenceSystemBlock,
   buildExcerptSystemPrompt,
+  appendModePrompt,
 } from '../prompts';
+import { detectMode } from '../mode-detector';
 import { selectToolsViaLlm, resetRouterCache } from '../toolRouter';
 import { svgToPngBase64 } from '../svg-to-png';
 
@@ -895,14 +897,25 @@ export function useChatStreaming(
       // chunk 99 follow-up — plan mode suffix. catalog 가 read-only 로
       // 필터링되므로 모델은 write 호출 자체가 불가능. suffix 로 "plan 만
       // 작성" 지시 + 사용자 검토 흐름 안내.
+      // 0.7.0 — Task-Mode 진입. 현재는 detection 휴리스틱 없음 (항상
+      // DEFAULT = free-authoring). 0.7.1 부터 docSummary / userMessage
+      // 기반으로 form-fill 자동 진입 등 활성화. mode 가 결정되면 base
+      // prompt 뒤에 mode fragment append + catalog 를 mode 의 whitelist
+      // 로 좁힘.
+      const modeContext = detectMode({
+        docSummaryPrefix: '',
+        lastUserMessage: '',
+        userOverride: null,
+      });
+      const baseAgentPrompt = planModeNow
+        ? SYSTEM_PROMPT_AGENT_GUIDE + SYSTEM_PROMPT_PLAN_MODE_SUFFIX
+        : SYSTEM_PROMPT_AGENT_GUIDE;
       messages.unshift({
         role: 'system',
-        content: planModeNow
-          ? SYSTEM_PROMPT_AGENT_GUIDE + SYSTEM_PROMPT_PLAN_MODE_SUFFIX
-          : SYSTEM_PROMPT_AGENT_GUIDE,
+        content: appendModePrompt(baseAgentPrompt, modeContext),
       });
 
-      const request: ChatRequest = { provider, model, messages };
+      const request: ChatRequest = { provider, model, messages, modeContext };
       // chunk 99 — LLM 기반 tool 라우터. 사용자 선택 모델로 router LLM 호출
       // → JSON tool 이름 배열 응답 → 본 LLM 호출에 그 subset 만 주입. 60+
       // 의 tool catalog 전체를 본 turn 마다 노출하면 (a) NIM hosted 모델
@@ -916,7 +929,7 @@ export function useChatStreaming(
         recentToolCalls: agentToolHistoryRef.current,
       });
       const allowed = new Set(selection.tools);
-      request.tools = getAhwpToolCatalog()
+      request.tools = getAhwpToolCatalog(modeContext)
         .filter((d) => allowed.has(d.name))
         // chunk 99 follow-up — plan mode 일 땐 catalog 를 read-only 로
         // 한정. 모델이 write 도구를 호출하려고 시도해도 catalog 에 없어

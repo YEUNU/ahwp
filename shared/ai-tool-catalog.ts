@@ -8,6 +8,9 @@
  * `validateArgs` switch 분기와 lockstep 이라 변경 시 양쪽 같이 갱신.
  */
 import type { AhwpToolDescriptor } from './ai-tools';
+import { AHWP_TOOL_NAMES } from './ai-tools';
+import type { ModeContext } from './ai-modes';
+import { resolveAllowedTools } from './ai-modes';
 
 const TOOL_DESCRIPTORS: AhwpToolDescriptor[] = [
   {
@@ -1101,7 +1104,17 @@ const TOOL_DESCRIPTORS: AhwpToolDescriptor[] = [
  * 가져오기. provider 어댑터에서 native 형식으로 변환 (OpenAI:
  * `{type:'function', function:{...}}`, Anthropic: `{name, description,
  * input_schema}`, Google: `{functionDeclarations:[...]}`).
+ *
+ * 0.7.0 — Task-Mode 진입. `modeContext` 가 있으면 그 mode 의 tool
+ * whitelist 로 좁힌 카탈로그 반환. 없으면 전체 (0.6.20 호환). 0.7.0 에서는
+ * 모든 mode 가 'all' 이라 실제 동작 차이 X — 0.7.1 부터 mode 별 subset.
  */
-export function getAhwpToolCatalog(): AhwpToolDescriptor[] {
-  return TOOL_DESCRIPTORS;
+export function getAhwpToolCatalog(
+  modeContext?: ModeContext,
+): AhwpToolDescriptor[] {
+  if (!modeContext) return TOOL_DESCRIPTORS;
+  const allowed = new Set<string>(
+    resolveAllowedTools(modeContext, AHWP_TOOL_NAMES),
+  );
+  return TOOL_DESCRIPTORS.filter((d) => allowed.has(d.name));
 }

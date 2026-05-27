@@ -4,6 +4,7 @@
  * 사용. R2.3 에서 ChatPanel 으로부터 분리.
  */
 import type { ExcerptAttachment } from '@shared/ai-excerpt';
+import { MODE_REGISTRY, type ModeContext } from '@shared/ai-modes';
 
 export const SYSTEM_PROMPT_DOC_CONTEXT = `You are a Hancom HWP document assistant.
 
@@ -242,6 +243,27 @@ The user has enabled **Plan mode** for this turn. Override the "always call tool
 4. **The user will review your plan.** They click "이 계획대로 실행" to switch to edit mode and re-run the same task — at which point you'll have full write access. If they ask follow-up questions instead, answer them but stay in plan mode.
 
 Plan mode exists to let the user audit large / risky / ambiguous edits before any IR mutation. Treat it as a chance to surface assumptions, not a roadblock.`;
+
+/**
+ * 0.7.0 — Task-Mode 진입.
+ *
+ * Mode 별 short prompt fragment 를 base prompt 뒤에 append. 거대한 if-else
+ * 가 아니라 mode 가 자기 contract 만 명시 — 추가 mode 가 prompt 길이를
+ * 선형으로만 늘림 (해당 turn 의 mode 만 활성화되니 다른 mode 의 가이드는
+ * AI 가 안 봄). 0.7.0 에서는 모든 mode 가 빈 fragment (실제 제약은 0.7.1
+ * 부터 mode 별로 채워짐).
+ *
+ * 호출 측 (useChatStreaming) 이 모든 system message 조립 후 마지막에 호출.
+ */
+export function appendModePrompt(
+  basePrompt: string,
+  modeContext?: ModeContext,
+): string {
+  if (!modeContext) return basePrompt;
+  const def = MODE_REGISTRY[modeContext.primary];
+  if (!def || !def.promptFragment) return basePrompt;
+  return `${basePrompt}\n\n#### MODE: ${def.label}\n\n${def.promptFragment}`;
+}
 
 /** Collect `{ label, outline }` for each reference doc the user has
  * opted in — chunk 21. Filters out paths that no longer correspond to
