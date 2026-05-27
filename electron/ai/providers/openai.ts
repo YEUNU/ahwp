@@ -41,26 +41,54 @@ interface OpenAIChunk {
  * - assistant + tool_calls: assistant 메시지에 tool_calls 배열
  * - tool result: role='tool' + tool_call_id (직전 호출 id)
  */
-function toOpenAIMessage(m: ChatMessage): Record<string, unknown> {
+export function toOpenAIMessages(m: ChatMessage): Record<string, unknown>[] {
   if (m.role === 'tool' && m.toolResult) {
-    return {
-      role: 'tool',
-      tool_call_id: m.toolResult.id,
-      content: m.toolResult.content,
-    };
+    const out: Record<string, unknown>[] = [
+      {
+        role: 'tool',
+        tool_call_id: m.toolResult.id,
+        content: m.toolResult.content,
+      },
+    ];
+    // 0.6.20 — vision integration. tool_result 자체는 text 만 받으므로
+    // image 가 있으면 별도 user 메시지로 inject. AI 가 다음 turn 에서
+    // tool 텍스트 + image 둘 다 보고 추론. 모델이 vision 미지원이면
+    // OpenAI 서버가 image part 를 무시 / 또는 model error — 양쪽 모두
+    // 빠르게 surface (어쨌든 vision 모델만 호출 가능).
+    const tr = m.toolResult;
+    if (tr.imageBase64 && tr.imageMediaType) {
+      out.push({
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: '[Tool image attachment — visual rendering of the page from the previous tool result. Inspect to verify placement.]',
+          },
+          {
+            type: 'image_url',
+            image_url: {
+              url: `data:${tr.imageMediaType};base64,${tr.imageBase64}`,
+            },
+          },
+        ],
+      });
+    }
+    return out;
   }
   if (m.role === 'assistant' && m.toolUses && m.toolUses.length > 0) {
-    return {
-      role: 'assistant',
-      content: m.content || null,
-      tool_calls: m.toolUses.map((u) => ({
-        id: u.id,
-        type: 'function',
-        function: { name: u.name, arguments: JSON.stringify(u.args ?? {}) },
-      })),
-    };
+    return [
+      {
+        role: 'assistant',
+        content: m.content || null,
+        tool_calls: m.toolUses.map((u) => ({
+          id: u.id,
+          type: 'function',
+          function: { name: u.name, arguments: JSON.stringify(u.args ?? {}) },
+        })),
+      },
+    ];
   }
-  return { role: m.role, content: m.content };
+  return [{ role: m.role, content: m.content }];
 }
 
 function mapFinishReason(s: string | null | undefined): ChatFinishReason {
@@ -120,16 +148,37 @@ function shouldUseResponsesApi(model: string): boolean {
  * fix: 이전엔 다중 호출을 `{ type: 'list', items: [...] }` wrapper 로
  * 보냈는데 Responses API 가 'list' 타입 모름 → 400 invalid_value. 이제
  * 각 호출이 individual `type: 'function_call'` item 으로 평탄화. */
-function toResponsesInputItems(m: ChatMessage): Record<string, unknown>[] {
+export function toResponsesInputItems(
+  m: ChatMessage,
+): Record<string, unknown>[] {
   if (m.role === 'tool' && m.toolResult) {
     // 직전 turn 의 tool 호출 결과 회신 — function_call_output.
-    return [
+    const out: Record<string, unknown>[] = [
       {
         type: 'function_call_output',
         call_id: m.toolResult.id,
         output: m.toolResult.content,
       },
     ];
+    // 0.6.20 — vision: image 가 있으면 user 메시지로 inject. Responses
+    // API 의 user content 는 input_text / input_image part 형식 사용.
+    const tr = m.toolResult;
+    if (tr.imageBase64 && tr.imageMediaType) {
+      out.push({
+        role: 'user',
+        content: [
+          {
+            type: 'input_text',
+            text: '[Tool image attachment — visual rendering of the page from the previous tool result. Inspect to verify placement.]',
+          },
+          {
+            type: 'input_image',
+            image_url: `data:${tr.imageMediaType};base64,${tr.imageBase64}`,
+          },
+        ],
+      });
+    }
+    return out;
   }
   if (m.role === 'assistant' && m.toolUses && m.toolUses.length > 0) {
     // assistant 가 도구 호출한 turn 은 각 호출이 별도 function_call item.
@@ -199,14 +248,73 @@ async function* parseResponsesSse(
   }
 }
 
+/**
+ * Sanitize the Responses-API input array. With `store: false` every
+ * request must be self-consistent: each `function_call_output` MUST be
+ * preceded by a `function_call` with the same `call_id`. Otherwise the
+ * server returns 400 "No tool call found for function call output with
+ * call_id ...".
+ *
+ * The orphan can arise when (a) the renderer's React state mid-turn
+ * has a `tool` message whose preceding `assistant` lost its `toolUses`
+ * field (e.g. setMessages race, persistence round-trip), (b) a previous
+ * stream was aborted mid-flight, (c) the model emitted a call that
+ * never reached the assistant.toolUses serializer.
+ *
+ * Strategy: walk the input list, collect all `function_call` call_ids
+ * seen so far, and:
+ *  - drop any `function_call_output` whose call_id is unknown
+ *  - log a console.warn so we can root-cause separately
+ * Defensive — prevents the 400 even when an upstream bug produces an
+ * inconsistent history.
+ */
+export function sanitizeResponsesInput(items: Record<string, unknown>[]): {
+  items: Record<string, unknown>[];
+  droppedCount: number;
+  droppedIds: string[];
+} {
+  const knownCallIds = new Set<string>();
+  const out: Record<string, unknown>[] = [];
+  const droppedIds: string[] = [];
+  for (const item of items) {
+    const type = item.type;
+    if (type === 'function_call') {
+      const id = item.call_id;
+      if (typeof id === 'string') knownCallIds.add(id);
+      out.push(item);
+      continue;
+    }
+    if (type === 'function_call_output') {
+      const id = item.call_id;
+      if (typeof id !== 'string' || !knownCallIds.has(id)) {
+        droppedIds.push(typeof id === 'string' ? id : '<missing>');
+        continue;
+      }
+    }
+    out.push(item);
+  }
+  return { items: out, droppedCount: droppedIds.length, droppedIds };
+}
+
 async function* chatViaResponses(
   req: Parameters<Provider['chat']>[0],
   opts: ProviderRuntimeOptions,
 ): AsyncIterable<ChatStreamEvent> {
   const url = `${trimBaseUrl(opts.baseUrl)}/responses`;
+  const rawInput = req.messages.flatMap(toResponsesInputItems);
+  const {
+    items: input,
+    droppedCount,
+    droppedIds,
+  } = sanitizeResponsesInput(rawInput);
+  if (droppedCount > 0) {
+    console.warn(
+      `[openai responses] dropped ${droppedCount} orphan function_call_output(s) — call_ids ${droppedIds.join(', ')}. Upstream renderer state likely lost assistant.toolUses for a prior turn.`,
+    );
+  }
   const body: Record<string, unknown> = {
     model: req.model,
-    input: req.messages.flatMap(toResponsesInputItems),
+    input,
     stream: true,
     store: false,
   };
@@ -349,7 +457,7 @@ export const openaiProvider: Provider = {
     const url = `${trimBaseUrl(opts.baseUrl)}/chat/completions`;
     const body: Record<string, unknown> = {
       model: req.model,
-      messages: req.messages.map(toOpenAIMessage),
+      messages: req.messages.flatMap(toOpenAIMessages),
       stream: true,
       stream_options: { include_usage: true },
       ...(typeof req.temperature === 'number'

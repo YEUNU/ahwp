@@ -6,6 +6,44 @@
 
 ## [Unreleased]
 
+## [0.6.20] - 2026-05-27
+
+### Added — Provider vision integration (OpenAI + Google Gemini)
+
+0.6.17 / 0.6.19 가 `getPageSvg` 도구 + chat UI inline SVG render 까지
+연결했지만 AI 자체는 SVG 를 못 봤음. 0.6.20 이 multimodal 경로를 닫음:
+
+- `shared/ai.ts` `ToolResultRecord` 에 `imageBase64` + `imageMediaType`
+  optional 필드 추가. tool 결과가 image 를 carry 할 수 있게.
+- `src/features/chat/svg-to-png.ts` 신규 — renderer-side SVG → PNG
+  변환 (Blob → Image → Canvas → toDataURL). 흰 배경 + 1280px 다운스케일.
+- `src/features/chat/hooks/useChatStreaming.ts` 의 tool 결과 build
+  코드가 `getPageSvg` 결과면 SVG 추출 → PNG 변환 → `imageBase64` /
+  `imageMediaType` 채움. 변환 실패면 graceful degrade (text content
+  만 보냄).
+- `electron/ai/providers/openai.ts` — chat-completions 와 responses
+  API 양쪽 형식 모두 tool message 다음에 image-carrying user 메시지
+  inject (chat-completions 는 `image_url` part, responses 는
+  `input_image` part). vision-capable OpenAI 모델 (gpt-4o, gpt-5.x
+  계열) 이 image 도 보고 form-fill 결과를 직접 시각 검증 가능.
+- `electron/ai/providers/google.ts` — Gemini 의 `functionResponse`
+  part 자체는 multimodal 미지원이라 따라 붙는 user 메시지에 `inlineData`
+  part 로 inject. Gemini 2.x flash / pro 가 이미지 해석.
+- Anthropic 어댑터는 현재 미구현 (CLAUDE.md "키 결정 대기") — 향후
+  추가 시 `tool_result.content` 안에 image block 으로 native multimodal
+  지원 가능.
+
+### 테스트
+
+- vitest 242/242. 신규:
+  - `openai.test.ts` — vision 4 케이스 (plain / with-image, chat-completions
+    - responses API 양쪽).
+  - `google.test.ts` — Gemini 3 케이스 (plain / with-image / system 병합).
+- 영향 받은 e2e 14/14 통과 (chat / chat-prefetch).
+- 실제 vision flow round-trip 은 live API 키 필요라 manual smoke 영역
+  (이후 사용자가 OpenAI gpt-5-mini 로 "양식 채우고 페이지 캡쳐해서
+  확인해줘" 시나리오 실행 시 검증됨).
+
 ## [0.6.19] - 2026-05-27
 
 ### Added — Chat UI 가 `getPageSvg` 결과를 inline 이미지로 즉시 표시

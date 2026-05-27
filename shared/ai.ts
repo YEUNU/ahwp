@@ -107,6 +107,20 @@ export interface ToolResultRecord {
    * machine-readable reason 코드. provider에 다시 들려보냄. */
   content: string;
   isError?: boolean;
+  /**
+   * 0.6.20 — visual verification. tool 이 image 를 반환했을 때 base64
+   * 인코딩된 raster (PNG 권장). vision-capable provider 가 모델에 image
+   * 도 함께 전달. provider 별 처리:
+   * - OpenAI: tool message 다음에 user 메시지 inject (image_url 형태).
+   * - Google (Gemini): functionResponse 다음에 user 메시지 inject
+   *   (inlineData 형태).
+   * - Anthropic (미구현): tool_result content 안에 image block 추가
+   *   가능 (native multimodal tool_result 표준).
+   * vision 미지원 provider 는 imageBase64 무시하고 content text 만
+   * 사용 — graceful degrade.
+   */
+  imageBase64?: string;
+  imageMediaType?: 'image/png' | 'image/svg+xml' | 'image/jpeg';
 }
 
 /**

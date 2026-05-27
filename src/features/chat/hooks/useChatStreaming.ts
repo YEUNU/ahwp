@@ -38,6 +38,7 @@ import {
   buildExcerptSystemPrompt,
 } from '../prompts';
 import { selectToolsViaLlm, resetRouterCache } from '../toolRouter';
+import { svgToPngBase64 } from '../svg-to-png';
 
 interface UiToolEntry {
   id: string;
@@ -1244,9 +1245,41 @@ export function useChatStreaming(
       assistantIdRef.current = null;
       return;
     }
-    setMessages((prev: any) => {
-      const toolMsgs: UiMessage[] = toolResults.map((r) => {
+    // 0.6.14 — root-cause fix for "No tool call found for function call
+    // output with call_id ..." 400.
+    //
+    // 이전 구현은 setMessages 의 updater 안에서 toolMsgs (각 id 가
+    // newId() 로 매번 생성됨) 를 만들고 queueMicrotask 로 fireChat 를
+    // schedule 했음. React StrictMode (src/main.tsx 의 <React.StrictMode>)
+    // 는 dev 에서 setState updater 를 두 번 호출해 invariant 검사함 —
+    // updater 안의 side effect (queueMicrotask + fireChat) 가 두 번 발화
+    // → 두 개의 동시 OpenAI 요청이 같은 turn 에 발사 → 두 응답이 같은
+    // refs (agentToolUsesRef / assistantIdRef) 에 interleave 되며 tool
+    // call/result pairing 이 깨짐. 결과적으로 어느 한 stream 의 assistant
+    // 가 toolUses 일부를 잃어 다음 turn 에 orphan function_call_output
+    // 이 생기고 OpenAI 가 400 반환.
+    //
+    // Fix:
+    //  (a) toolMsgs 를 updater 밖에서 단 한 번 생성 — newId() 가 두 번
+    //      불려 ID 가 매번 달라지는 일을 차단.
+    //  (b) queueMicrotask 는 updater 안에서 호출하되 `fired` flag 로
+    //      dedup — StrictMode 가 updater 를 두 번 호출해도 fireChat 는
+    //      정확히 한 번만 schedule.
+    //
+    // Note: queueMicrotask 를 updater 밖에 두는 변형은 React 의 commit
+    // 타이밍보다 microtask 가 먼저 실행되는 경우가 있어 (next snapshot
+    // 이 null 일 때 fireChat 가 skip) Turn 2 가 무한 대기에 빠질 수 있어
+    // 채택하지 않음. updater 안에 두면 commit 시점에 정확히 한 번만
+    // schedule 되고, queueMicrotask 의 callback 은 다음 microtask 에서
+    // 안전하게 실행됨.
+    // 0.6.20 — getPageSvg 결과는 SVG → PNG 변환해 imageBase64 로 첨부.
+    // vision-capable provider 가 model 에 image 도 함께 전달 → AI 가 직접
+    // 시각 검증 가능. 변환 실패면 text content 만으로 graceful degrade.
+    const toolMsgs: UiMessage[] = await Promise.all(
+      toolResults.map(async (r) => {
         let content: string;
+        let imageBase64: string | undefined;
+        let imageMediaType: 'image/png' | undefined;
         if (r.ok) {
           if (r.data !== undefined) {
             let json: string;
@@ -1262,6 +1295,19 @@ export function useChatStreaming(
             const cap = isReadOnlyTool(r.name) ? 16384 : 4096;
             if (json.length > cap) json = json.slice(0, cap) + '…';
             content = json;
+            // getPageSvg 결과: { pageIdx, svg, truncated, originalBytes? }.
+            // SVG 추출 후 PNG 변환. tool result content (json) 은 그대로
+            // 두고 imageBase64 만 추가 — text 기반 모델/provider 도 영향 X.
+            if (r.name === 'getPageSvg') {
+              const svg = (r.data as { svg?: unknown } | undefined)?.svg;
+              if (typeof svg === 'string' && svg.length > 0) {
+                const png = await svgToPngBase64(svg, { maxWidth: 1280 });
+                if (png) {
+                  imageBase64 = png.base64;
+                  imageMediaType = 'image/png';
+                }
+              }
+            }
           } else {
             // chunk 99 follow-up — write 성공 시 상태 hint 를 모델에
             // 알려서 retry / verification 판단 도움. e.g. "ok: insertText
@@ -1278,16 +1324,29 @@ export function useChatStreaming(
           id: newId(),
           role: 'tool' as const,
           content,
-          toolResult: { id: r.id, content, isError: !r.ok },
+          toolResult: {
+            id: r.id,
+            content,
+            isError: !r.ok,
+            ...(imageBase64 && imageMediaType
+              ? { imageBase64, imageMediaType }
+              : {}),
+          },
         };
-      });
+      }),
+    );
+    let fired = false;
+    setMessages((prev: UiMessage[]) => {
       const next = [...prev, ...toolMsgs];
-      queueMicrotask(() => {
-        // chunk 99 follow-up — stop 버튼이 mid-loop 에 눌리면 다음
-        // turn 진입을 차단. tool 결과 메시지는 그대로 history 에 남음.
-        if (agentStoppedRef.current) return;
-        fireChatRef.current?.(next, agentVerifiedExcerptsRef.current);
-      });
+      if (!fired) {
+        fired = true;
+        queueMicrotask(() => {
+          // chunk 99 follow-up — stop 버튼이 mid-loop 에 눌리면 다음
+          // turn 진입을 차단. tool 결과 메시지는 그대로 history 에 남음.
+          if (agentStoppedRef.current) return;
+          fireChatRef.current?.(next, agentVerifiedExcerptsRef.current);
+        });
+      }
       return next;
     });
     assistantBufferRef.current = '';
