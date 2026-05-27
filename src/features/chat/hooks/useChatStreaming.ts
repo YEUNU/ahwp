@@ -896,12 +896,24 @@ export function useChatStreaming(
           assistantIdRef.current = null;
           // 누적된 turn depth / tool history / router cache 는 보존 — 같은
           // user-task 의 연속이라 reasoning context 가 끊기면 안 됨.
+          //
+          // 0.7.6 — StrictMode 이중 fire 차단. React.StrictMode 가 dev 에서
+          // setMessages 의 updater 를 두 번 호출해 invariant 검사함. 이전
+          // 구현은 updater 안에서 queueMicrotask(fireChat) 를 호출해 두 개의
+          // 동시 fireChat 가 발사 → 두 개의 LLM 요청이 같은 user-task 에
+          // interleave 되며 cap counter 무력화 (사용자 보고 "auto continue
+          // 무한 시도"). advanceAgentLoop 에는 이미 같은 fix 가 있었는데
+          // 0.7.2 의 form guard 추가 시 누락. `fired` flag 로 한 번만 schedule.
+          let fired = false;
           setMessages((prev: UiMessage[]) => {
             const next = [...prev, userMsg];
-            queueMicrotask(() => {
-              if (agentStoppedRef.current) return;
-              fireChatRef.current?.(next, agentVerifiedExcerptsRef.current);
-            });
+            if (!fired) {
+              fired = true;
+              queueMicrotask(() => {
+                if (agentStoppedRef.current) return;
+                fireChatRef.current?.(next, agentVerifiedExcerptsRef.current);
+              });
+            }
             return next;
           });
           return;

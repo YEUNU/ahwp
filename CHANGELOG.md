@@ -6,6 +6,49 @@
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-05-27
+
+### Fixed — form guard 무한 nudge loop (StrictMode 이중 fire + 잘못된 no-svg trigger)
+
+사용자 보고 "auto continue 무한히 시도하는데". 양식 prefix 가 있는 문서
+지만 실제 빈 셀이 0 인 경우 (휴리스틱 prefix count 와 실제 cell scan 의
+불일치) AI 가 "빈 셀 없어요" 정직 응답할 때 form guard 가 무한 nudge 발사.
+
+**원인 두 가지:**
+
+1. **React.StrictMode 이중 fire**: 0.7.2 의 form guard 가 `setMessages`
+   updater 안에서 `queueMicrotask(fireChat)` 를 호출했는데, StrictMode 가
+   updater 를 두 번 invoke 해서 fireChat 가 두 번 schedule. 두 개의 동시
+   LLM 요청이 같은 user-task 에 interleave 되며 cap counter (max 2) 가
+   무력화. `advanceAgentLoop` 에는 이미 같은 fix 가 있었는데 form guard
+   추가 시 누락.
+2. **잘못된 `no-svg` 단독 nudge**: 0.7.5 까지의 guard 는 `getPageSvg` 미
+   호출 만으로도 nudge 발사. prefix 는 form 신호인데 실제 빈 셀 0 인
+   case 에서 AI 가 svg 호출해도 다음 turn 에 또 nudge → 무한 loop.
+
+**수정:**
+
+- `src/features/chat/hooks/useChatStreaming.ts`: form guard 의 setMessages
+  updater 에 `let fired = false` flag 추가 — `advanceAgentLoop` 의 dedup
+  패턴과 정합. StrictMode 이중 invoke 가 와도 queueMicrotask(fireChat) 는
+  딱 1회만 schedule.
+- `src/features/chat/form-guard.ts`: logic 재설계. 3 case 로 단순화:
+  1. `formState === null` → discovery nudge (getEmptyFormFields 호출 강제)
+  2. `emptyCellsRemaining > 0` → fill nudge (메시지 안에 getPageSvg 권고 포함)
+  3. `emptyCellsRemaining === 0` → **nudge 안 함**. AI 의 "이건 양식 아니에요 /
+     이미 채워져 있어요" 응답이 정답. svg 단독 nudge 폐기.
+- `reason` 타입 정리: `'no-svg' | 'both'` 제거 → `'no-form-discovery' |
+'empty-cells-remain'` 로 단순화.
+
+### 검증
+
+- vitest 289/289 (288 → +1). form-guard 테스트 갱신 (10 케이스): mode 외
+  비활성 / formState null discovery / 빈 셀 fill / svg 이미 호출 / **0.7.5
+  회귀 직접 재현** (prefix 는 form 인데 빈 셀 0 + svg 미호출 → nudge 안 함)
+  / 빈 셀 0 + svg 호출 / cap 도달 / agentStopped / 빈 tableSummary / cap
+  도달 시 discovery 도 비활성.
+- typecheck + eslint 통과. 0.7.5 → 0.7.6 patch bump.
+
 ## [0.7.5] - 2026-05-27
 
 ### Fixed — iframe 포커스 상태에서 글로벌 단축키 동작 안 함
