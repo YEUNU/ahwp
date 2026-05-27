@@ -1266,12 +1266,18 @@ export class BridgeIrHelper {
     const sectionEnd =
       filterSection !== undefined ? filterSection + 1 : sectionCount;
 
+    // 0.6.16 — scope 의 의미를 분리:
+    // - `tableInventory` 는 sectionScope 전체 (filterParentPara 무관) — AI
+    //   가 cellFields:[] 받고도 inventory 보고 "scope 잘못됐다" self-correct.
+    // - `cellFields` 는 filterParentPara 지정 시 그 paragraph 의 표만.
+    // 이전: parentParaIdx=0 / 5 처럼 표가 없는 단락으로 좁히면 inventory
+    // 까지 [] 가 되어 AI 가 "양식 빈 셀 없네" 오판 → body insertText
+    // fallback (양식 표에 안 들어가고 본문에 들어감) 회귀가 있었음.
     for (let s = sectionStart; s < sectionEnd && s < sectionCount; s++) {
       const paraCount = await this.getParagraphCount(s);
-      const paraStart = filterParentPara ?? 0;
-      const paraEnd =
-        filterParentPara !== undefined ? filterParentPara + 1 : paraCount;
-      for (let p = paraStart; p < paraEnd && p < paraCount; p++) {
+      for (let p = 0; p < paraCount; p++) {
+        const inCellScope =
+          filterParentPara === undefined || filterParentPara === p;
         for (let ctrl = 0; ctrl < MAX_CTRLS_PER_PARA; ctrl++) {
           const raw = await this.invokeRead<string | object>(
             'getTableDimensions',
@@ -1283,6 +1289,9 @@ export class BridgeIrHelper {
 
           // Always start an inventory entry — AI navigates large forms by
           // picking a table from this list and re-calling with parentParaIdx.
+          // 0.6.16 — inventory 는 scope 와 무관하게 항상 채움. cell 스캔만
+          // scope 제한 (out-of-scope 표는 emptyCells=0 으로 남음 — 정확
+          // 카운트는 unscoped 호출에서 받은 첫 응답에 있음).
           let tableEntry: TableEntry | null = null;
           if (tableInventory.length < TABLE_INVENTORY_MAX) {
             tableEntry = {
@@ -1297,6 +1306,11 @@ export class BridgeIrHelper {
             };
             tableInventory.push(tableEntry);
           }
+
+          // Cell-level work (grid map + per-cell scan) 는 scope 제한.
+          // 비싼 work 라 out-of-scope 표는 건너뛴다 — inventory 만 채워서
+          // AI 가 "scope 잘못됐다" self-correct 가능.
+          if (!inCellScope) continue;
 
           // (row,col) → cellIdx grid map. 병합된 표에서 진짜 인접 셀을
           // 찾기 위함. cellCount 가 크면 (>MAX_CELLS_FOR_GRID_MAP) 비용

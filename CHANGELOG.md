@@ -6,6 +6,25 @@
 
 ## [Unreleased]
 
+## [0.6.16] - 2026-05-27
+
+### Fixed — `getEmptyFormFields` scope 잘못 잡으면 양식 무시하고 본문에 dump 되던 회귀
+
+AI 가 `parentParaIdx` 를 표가 anchor 되지 않는 paragraph (heading 등) 로
+좁히면 `cellFields:[]` + `tableInventory:[]` 가 반환됐었음 → "양식 빈
+셀이 없네" 오판 → body-level `insertText` fallback 으로 본문 한가운데에
+양식 내용 dump (실제 양식 표는 그대로 빈 채). 9개 표 / 212 빈 셀짜리
+중간보고서에서 0개 inventory 반환.
+
+`tableInventory` 는 scope 와 무관하게 항상 섹션 전체 표 목록을 반환하
+도록 수정. `cellFields` 만 `parentParaIdx` 로 좁힘. AI 는 `cellFields:[]`
+
+- non-empty `tableInventory` 보고 즉시 self-correct (올바른 paragraphIndex
+  로 재호출).
+
+system prompt 도 명시: form-fill workflow 1단계는 unscoped 호출 (전체
+inventory 확보), scope 잘못된 경우 body fallback 절대 금지.
+
 ## [0.6.15] - 2026-05-27
 
 ### Fixed — 병합 표에서 `getEmptyFormFields` labelHint 가 잘못된 셀을 가리키던 버그

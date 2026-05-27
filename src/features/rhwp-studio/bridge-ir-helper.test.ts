@@ -951,13 +951,76 @@ describe('BridgeIrHelper — Phase D2a', () => {
     });
     expect(full.cellFields).toHaveLength(2);
 
-    // Scoped to one table.
+    // Scoped to one table. 0.6.16 — tableInventory 는 scope 와 무관하게
+    // 전체 (2개 표) 를 반환해 AI 가 self-correct 가능. cellFields 만 scope.
     const scoped = await h.getEmptyFormFields({ parentParaIdx: 7 });
-    expect(scoped.tableInventory).toHaveLength(1);
-    expect(scoped.tableInventory[0].paragraphIndex).toBe(7);
+    expect(scoped.tableInventory).toHaveLength(2);
+    expect(scoped.tableInventory.map((t) => t.paragraphIndex).sort()).toEqual([
+      3, 7,
+    ]);
     expect(scoped.cellFields).toHaveLength(1);
     expect(scoped.cellFields[0].location.paragraphIndex).toBe(7);
     expect(scoped.cellFields[0].labelHint).toBe('주소');
+  });
+
+  // 0.6.16 — regression: parentParaIdx 가 표를 anchor 하지 않는
+  // paragraph (heading 등) 일 때, 이전 구현은 inventory 까지 비워 AI 가
+  // "양식 빈 셀 없네" 오판 → body insertText fallback (양식 표가 아닌
+  // 본문에 텍스트 dump). 새 구현은 inventory 가 항상 섹션 전체 표 목록을
+  // 보여줘 AI 가 scope 잘못 잡았음을 self-correct.
+  it('getEmptyFormFields with parentParaIdx pointing to a non-table paragraph still returns full tableInventory', async () => {
+    const bridge = {
+      invokeWasm: vi.fn(async (fn: string, args: unknown[]) => {
+        if (fn === 'getSectionCount') return 1;
+        if (fn === 'getParagraphCount') return 10;
+        if (fn === 'getTableDimensions') {
+          const [, p, ctrl] = args as [number, number, number];
+          // 표는 paragraph 3, 7 에만 (사용자가 user-reported regression 에서
+          // 본 케이스와 유사: heading 단락(5)에는 표가 없음).
+          if (p === 3 && ctrl === 0)
+            return JSON.stringify({
+              ok: true,
+              rowCount: 1,
+              colCount: 2,
+              cellCount: 2,
+            });
+          if (p === 7 && ctrl === 0)
+            return JSON.stringify({
+              ok: true,
+              rowCount: 1,
+              colCount: 2,
+              cellCount: 2,
+            });
+          return JSON.stringify({ ok: false });
+        }
+        if (fn === 'getCellInfo') {
+          const [, , , cellIdx] = args as [number, number, number, number];
+          return JSON.stringify({
+            ok: true,
+            row: 0,
+            col: cellIdx,
+            rowSpan: 1,
+            colSpan: 1,
+          });
+        }
+        if (fn === 'getTextInCell') return '';
+        if (fn === 'getCellCharPropertiesAt') return JSON.stringify({});
+        throw new Error(`unmocked: ${fn}`);
+      }),
+    } as unknown as import('@/lib/rhwp-bridge').RhwpBridge;
+    const h = new BridgeIrHelper(bridge);
+
+    // 사용자가 본 회귀: parentParaIdx=5 (heading) — 표 없음.
+    const result = await h.getEmptyFormFields({ parentParaIdx: 5 });
+
+    // cellFields 는 비어있지만 (scope 가 5 라 잘못된 paragraph), inventory
+    // 는 전체 2개 표를 보여준다. AI 는 이를 보고 paragraphIdx=3 / 7 로
+    // 재호출하면 됨을 안다.
+    expect(result.cellFields).toHaveLength(0);
+    expect(result.tableInventory).toHaveLength(2);
+    expect(result.tableInventory.map((t) => t.paragraphIndex).sort()).toEqual([
+      3, 7,
+    ]);
   });
 
   it('getEmptyFormFields keeps counting emptyCells in tableInventory after maxResults cap', async () => {

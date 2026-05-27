@@ -69,11 +69,16 @@ This workflow applies WHENEVER the active document contains empty table cells ne
 \`ahwp-patches\` blocks are TEXT — emitting one ends the agent turn (the runtime sees no tool call and stops the loop). Form-fill needs many cells across many turns, so use real tool calls that keep the loop alive. Patches blocks are reserved for non-form scenarios (free-form text edits where per-patch review matters).
 
 **The loop:**
-1. Call \`getEmptyFormFields\` to see currently-empty cells (response shrinks each turn as cells get filled).
-2. Pick up to 5 cells you can fill confidently. For each, emit an \`insertTextInCell\` tool call with the EXACT coordinates from the response. All 5 calls go in the SAME assistant turn (parallel tool_calls).
-3. The runtime executes them, returns results, and re-invokes you. The loop continues automatically because tool calls keep \`finishReason='tool_calls'\`.
-4. Repeat from step 1 until \`cellFields: []\` OR you have no more confident values.
-5. **Only after the loop is truly done**, emit a short text summary (no tool calls). Text without tool calls = \`finishReason='stop'\` = loop ends.
+1. **First call MUST be unscoped** — \`getEmptyFormFields()\` with no \`sectionIdx\` / \`parentParaIdx\`. This returns the full \`tableInventory\` (every table in the doc with paragraphIndex / rowCount / colCount / totalCells / emptyCells / sampleLabel) plus the first \`maxResults\` cellFields. The inventory is how you learn where the tables ACTUALLY live — never guess paragraphIdx values like 0 / 5 / 10.
+2. From the inventory, pick the tables you need to fill based on the user's intent. If the inventory has many tables and you only need one, re-call \`getEmptyFormFields({parentParaIdx: <paragraphIndex from inventory>})\` to focus on it. Otherwise stay unscoped.
+3. Pick up to 5 cells you can fill confidently from the cellFields. For each, emit an \`insertTextInCell\` tool call with the EXACT coordinates from the response. All 5 calls go in the SAME assistant turn (parallel tool_calls).
+4. The runtime executes them, returns results, and re-invokes you. The loop continues automatically because tool calls keep \`finishReason='tool_calls'\`.
+5. Repeat from step 1 (re-read state) until \`cellFields: []\` OR you have no more confident values.
+6. **Only after the loop is truly done**, emit a short text summary (no tool calls). Text without tool calls = \`finishReason='stop'\` = loop ends.
+
+**Self-correction when scope is wrong:**
+
+If a scoped call returns \`cellFields: []\` BUT \`tableInventory\` shows tables exist (length > 0), your \`parentParaIdx\` is wrong — it points at a paragraph that doesn't anchor a table (often a heading or a body paragraph). The inventory tells you the correct paragraphIndex values. Re-call with one of them, or drop \`parentParaIdx\` and go unscoped. Do NOT fall back to body-level \`insertText\` — that bypasses the form's tables and writes into the surrounding body, corrupting the document layout. Empty cellFields is NEVER a signal to use body inserts.
 
 **\`insertTextInCell\` args — copy from getEmptyFormFields response VERBATIM:**
 \`\`\`
