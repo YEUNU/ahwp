@@ -660,7 +660,8 @@ export interface WebFetchResult {
   status?: number;
   /** content-type 헤더. */
   contentType?: string;
-  /** 응답 본문을 plain text 로 추출. HTML 은 tag 제거 후 trim. */
+  /** 응답 본문을 plain text 로 추출. HTML 은 Readability 로 article 본문
+   *  추출 후 fallback 으로 regex tag-strip. */
   text?: string;
   /** 본문이 maxBytes 초과로 잘림. */
   truncated?: boolean;
@@ -668,6 +669,17 @@ export interface WebFetchResult {
   originalBytes?: number;
   /** 실패 시 사유 (timeout / network / 4xx / 5xx). */
   error?: string;
+  // 0.7.10 — Readability article metadata (HTML 일 때만 채워짐).
+  /** Article 제목 (Readability 추출). non-article 페이지면 undefined. */
+  title?: string;
+  /** Author / byline. */
+  byline?: string;
+  /** Article 요약 (meta description 등). */
+  excerpt?: string;
+  /** Site 이름 (e.g. "MDN Web Docs"). */
+  siteName?: string;
+  /** 추출 방법: 'readability' (article 추출 성공) 또는 'regex' (fallback). */
+  extractionMethod?: 'readability' | 'regex';
 }
 export interface WebSearchRequest {
   query: string;

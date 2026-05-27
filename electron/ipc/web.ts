@@ -18,6 +18,8 @@
  * Settings 에서 API 키 받아 별도 backend 로 추가 (future chunk).
  */
 import { BrowserWindow, ipcMain } from 'electron';
+import { Readability } from '@mozilla/readability';
+import { parseHTML } from 'linkedom';
 import type {
   ActiveSearchBackend,
   WebFetchRequest,
@@ -57,12 +59,12 @@ function ensureHttpUrl(url: unknown): URL {
 }
 
 /**
- * 매우 간소화된 HTML → text 변환. `<script>` / `<style>` block 제거,
- * 나머지 tag 제거, &nbsp; 등 일부 entity decode, whitespace 정규화.
- * full-fledged HTML parser (cheerio 등) 가 더 정확하지만 의존성 회피
- * + AI 의 token budget 도 빠듯하니 best-effort.
+ * Legacy HTML → text 변환 — 정규식 best-effort. `<script>` / `<style>`
+ * 제거, tag strip, entity decode, whitespace 정규화. 0.7.10 부터는
+ * Readability 가 실패한 경우 (article 아님 / parse 실패) 에만 fallback
+ * 으로 사용.
  */
-function htmlToText(html: string): string {
+function legacyHtmlToText(html: string): string {
   let t = html;
   // strip script / style blocks (case-insensitive, multi-line)
   t = t.replace(/<script[\s\S]*?<\/script>/gi, ' ');
@@ -88,6 +90,71 @@ function htmlToText(html: string): string {
     .replace(/\n[ \t]+/g, '\n')
     .replace(/\n{3,}/g, '\n\n');
   return t.trim();
+}
+
+/**
+ * HTML → article text + metadata 변환 (0.7.10).
+ *
+ * Mozilla 의 Readability (Firefox Reader Mode 엔진) + linkedom (light
+ * DOM impl) 사용. Readability 는 페이지의 article body 만 정확히 추출
+ * (nav / sidebar / footer / ad 제거) + 자동 metadata (title / byline /
+ * siteName / excerpt) 추출.
+ *
+ * 동작:
+ *   - HTML 을 linkedom 으로 parse → DOM Document
+ *   - Readability(doc).parse() → { title, content, textContent, byline,
+ *     siteName, excerpt }
+ *   - article 페이지가 아니거나 parse 실패하면 null → legacyHtmlToText
+ *     fallback
+ *
+ * `extractionMethod` 로 어떤 path 가 적용됐는지 caller 가 인지.
+ */
+function htmlToArticle(
+  html: string,
+  url: string,
+): {
+  text: string;
+  title?: string;
+  byline?: string;
+  excerpt?: string;
+  siteName?: string;
+  extractionMethod: 'readability' | 'regex';
+} {
+  try {
+    const { document } = parseHTML(html);
+    // Readability 가 base URL 필요 — linkedom 의 document 에 baseURI 주입.
+    // parseHTML(html, {url}) 패턴이 linkedom 에 없어서 직접 attribute 설정.
+    // 단, Readability 가 baseURI 없어도 동작은 함 (relative URL 처리만
+    // 영향). 안전을 위해 try-catch.
+    try {
+      const baseEl = document.createElement('base');
+      baseEl.setAttribute('href', url);
+      document.head?.appendChild(baseEl);
+    } catch {
+      /* base 주입 실패 — relative URL 만 영향, 본문 추출은 OK. */
+    }
+    const article = new Readability(document as unknown as Document).parse();
+    if (
+      article &&
+      typeof article.textContent === 'string' &&
+      article.textContent.trim().length > 0
+    ) {
+      return {
+        text: article.textContent.trim(),
+        title: article.title ?? undefined,
+        byline: article.byline ?? undefined,
+        excerpt: article.excerpt ?? undefined,
+        siteName: article.siteName ?? undefined,
+        extractionMethod: 'readability',
+      };
+    }
+  } catch (err) {
+    console.warn(
+      `[web] Readability failed for ${url}, falling back to regex:`,
+      (err as Error).message,
+    );
+  }
+  return { text: legacyHtmlToText(html), extractionMethod: 'regex' };
 }
 
 export async function webFetchImpl(
@@ -121,16 +188,33 @@ export async function webFetchImpl(
     const originalBytes = ab.byteLength;
     const slice = originalBytes > maxBytes ? ab.slice(0, maxBytes) : ab;
     const truncated = originalBytes > maxBytes;
-    let text = new TextDecoder('utf-8', { fatal: false }).decode(slice);
-    // content-type 이 html 이면 plain text 변환. JSON / plain text 는 그대로.
+    const rawText = new TextDecoder('utf-8', { fatal: false }).decode(slice);
+    // 0.7.10 — content-type 이 html 이면 Readability 로 article 추출.
+    // 그 외 (JSON / plain text) 는 raw 그대로. text/html 인데 article 이
+    // 아니면 (e.g. 검색 결과 페이지 / SPA shell) Readability 가 null 반환
+    // → legacyHtmlToText regex fallback.
     if (contentType && /text\/html|application\/xhtml/i.test(contentType)) {
-      text = htmlToText(text);
+      const article = htmlToArticle(rawText, url.toString());
+      return {
+        ok: res.ok,
+        status,
+        contentType,
+        text: article.text,
+        truncated,
+        originalBytes,
+        error: res.ok ? undefined : `http-${status}`,
+        title: article.title,
+        byline: article.byline,
+        excerpt: article.excerpt,
+        siteName: article.siteName,
+        extractionMethod: article.extractionMethod,
+      };
     }
     return {
       ok: res.ok,
       status,
       contentType,
-      text,
+      text: rawText,
       truncated,
       originalBytes,
       error: res.ok ? undefined : `http-${status}`,
@@ -181,12 +265,12 @@ function parseDuckDuckGoHtml(
     } catch {
       /* parse 실패 시 raw 그대로 사용 */
     }
-    const title = htmlToText(aMatch[2]).slice(0, 256);
+    const title = legacyHtmlToText(aMatch[2]).slice(0, 256);
     const snipMatch = /<a\s+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/.exec(
       blk,
     );
     const snippet = snipMatch
-      ? htmlToText(snipMatch[1]).slice(0, 512)
+      ? legacyHtmlToText(snipMatch[1]).slice(0, 512)
       : undefined;
     if (title && rawUrl) items.push({ title, url: rawUrl, snippet });
   }

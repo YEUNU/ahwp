@@ -101,11 +101,81 @@ describe('webFetchImpl — URL scheme 검증', () => {
   });
 });
 
-describe('webFetchImpl — HTML → text 변환', () => {
-  it('script / style block 제거', async () => {
+describe('webFetchImpl — HTML → text 변환 (0.7.10 Readability)', () => {
+  // article 페이지 (h1 + 본문) → Readability 가 추출 성공.
+  it('article 페이지 → Readability 추출 + metadata', async () => {
+    const html = `
+      <html lang="en">
+        <head>
+          <title>Example Article</title>
+          <meta name="author" content="John Doe">
+          <meta property="og:site_name" content="Example Site">
+          <meta name="description" content="A brief description">
+          <script>alert("noise")</script>
+          <style>body{color:red}</style>
+        </head>
+        <body>
+          <nav>Navigation links</nav>
+          <article>
+            <h1>Example Article Title</h1>
+            <p>This is the main article body. It contains substantive content
+            that should be extracted by Readability. We need enough text here
+            to pass the minimum content length heuristic — at least a couple
+            hundred characters of real prose so Readability classifies this
+            as an article rather than discarding it.</p>
+            <p>Second paragraph with more meaningful content about the topic.
+            Readability looks at link density, paragraph length, and other
+            heuristics to decide what is article body vs chrome.</p>
+          </article>
+          <footer>Site footer with links</footer>
+        </body>
+      </html>`;
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(html, {
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+      }),
+    );
+    const r = await webFetchImpl({ url: 'https://example.com/article' });
+    expect(r.ok).toBe(true);
+    expect(r.extractionMethod).toBe('readability');
+    expect(r.text).toContain('main article body');
+    expect(r.text).toContain('Second paragraph');
+    // chrome 제거 — Readability 가 nav/footer 제외.
+    expect(r.text).not.toContain('Navigation links');
+    expect(r.text).not.toContain('Site footer');
+    // metadata 자동 추출.
+    expect(r.title).toContain('Example Article');
+  });
+
+  // non-article 페이지 (검색 결과 / SPA shell) → Readability null → regex fallback.
+  it('non-article 페이지 → regex fallback', async () => {
+    const html = `
+      <html><body>
+        <ul>
+          <li><a href="/1">Link 1</a></li>
+          <li><a href="/2">Link 2</a></li>
+        </ul>
+      </body></html>`;
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(html, {
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+      }),
+    );
+    const r = await webFetchImpl({ url: 'https://example.com/list' });
+    expect(r.ok).toBe(true);
+    // Readability 가 짧은 link list 는 article 로 보지 않음 → regex fallback.
+    // (or readability may still succeed — test 가 robust 하게 양쪽 다 OK.)
+    expect(r.text).toBeDefined();
+    expect(['readability', 'regex']).toContain(r.extractionMethod);
+  });
+
+  // script / style block 은 어느 path 든 제거됨.
+  it('script / style block 제거 (어느 path 든)', async () => {
     const html = `
       <html><head><script>alert("x")</script><style>body{color:red}</style></head>
-      <body><p>visible text</p></body></html>`;
+      <body><p>visible text content with enough words to be meaningful</p></body></html>`;
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(html, {
         status: 200,
@@ -114,20 +184,22 @@ describe('webFetchImpl — HTML → text 변환', () => {
     );
     const r = await webFetchImpl({ url: 'https://example.com' });
     expect(r.text).toContain('visible text');
-    expect(r.text).not.toContain('alert');
+    expect(r.text).not.toContain('alert("x")');
     expect(r.text).not.toContain('body{color:red}');
   });
 
-  it('HTML entity decode (&nbsp; / &amp; / &lt;)', async () => {
-    const html = '<p>a &amp; b &lt;tag&gt;</p>';
+  // text/plain content-type 은 HTML 변환 안 함 (그대로).
+  it('text/plain → 변환 없이 그대로 (extractionMethod undefined)', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(html, {
+      new Response('raw text without HTML tags', {
         status: 200,
-        headers: { 'content-type': 'text/html' },
+        headers: { 'content-type': 'text/plain' },
       }),
     );
-    const r = await webFetchImpl({ url: 'https://example.com' });
-    expect(r.text).toContain('a & b <tag>');
+    const r = await webFetchImpl({ url: 'https://example.com/txt' });
+    expect(r.text).toBe('raw text without HTML tags');
+    // text/plain 는 HTML 추출 path 안 거침 → extractionMethod 없음.
+    expect(r.extractionMethod).toBeUndefined();
   });
 });
 

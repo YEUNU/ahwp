@@ -6,6 +6,57 @@
 
 ## [Unreleased]
 
+## [0.7.10] - 2026-05-27
+
+### Improved — webFetch 콘텐츠 추출 품질 (Readability + linkedom)
+
+0.7.7 의 `webFetch` 는 HTML 을 정규식 best-effort 로 plain text 변환했음.
+nav / sidebar / footer / ad 도 같이 들어가 AI 가 받는 컨텍스트 잡음 많음.
+0.7.10 부터 Mozilla 의 **Readability** (Firefox Reader Mode 엔진) + light
+DOM 구현 **linkedom** 으로 article body 만 정확히 추출.
+
+**의존성 추가** (둘 다 production deps):
+
+- `@mozilla/readability` ^0.6.0 — Firefox Reader Mode 엔진, MIT, ~30KB.
+- `linkedom` ^0.18.12 — jsdom 의 light 대체 (jsdom 의 ~30x 작음), MIT, ~100KB.
+
+**변경:**
+
+- `electron/ipc/web.ts`:
+  - `htmlToArticle(html, url)` (신규) — linkedom 으로 DOM parse →
+    Readability 로 article 추출. metadata (title / byline / excerpt /
+    siteName) 자동 반환. parse 실패 / non-article 페이지면 `null` →
+    `legacyHtmlToText` regex fallback.
+  - `legacyHtmlToText` — 기존 정규식 path. Readability fallback +
+    `parseDuckDuckGoHtml` 의 anchor 텍스트 정리에 계속 사용.
+  - `webFetchImpl` 이 HTML content-type 일 때 Readability path 우선,
+    응답에 metadata + `extractionMethod` (`'readability'` 또는
+    `'regex'`) 포함.
+- `shared/api.ts` — `WebFetchResult` 에 `title` / `byline` / `excerpt` /
+  `siteName` / `extractionMethod` 필드 추가.
+- `shared/ai-tools-defined/web.ts` — `webFetch` description 갱신
+  (Readability 명시 + metadata 반환 안내).
+
+**효과:**
+
+- AI 의 webFetch 응답이 본문 중심으로 깔끔 — context window 절약.
+- Article 의 author / 발행일 / siteName 자동 인지 → 인용 / 출처 표기 정확.
+- Non-article (검색 결과 / SPA shell) 은 자동으로 regex fallback —
+  회귀 없음.
+
+### 검증
+
+- vitest 351/351 (349 → +2). 신규 케이스:
+  - Article 페이지 → Readability 추출 + nav/footer 제거 + title 자동.
+  - non-article (link list) → 정상 동작 (Readability or regex 어느 path 든).
+  - text/plain 은 변환 안 함 (extractionMethod undefined).
+  - script / style block 제거 (어느 path 든).
+- typecheck + eslint 통과. 0.7.9 → 0.7.10.
+
+### 다음 chunk
+
+- 0.7.11 — Agent (sub-agent dispatch).
+
 ## [0.7.9] - 2026-05-27
 
 ### Added — Bash 명령 실행 도구 (allowlist + 7 단계 보안 게이트)
