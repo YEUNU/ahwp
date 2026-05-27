@@ -92,11 +92,52 @@ const FORM_FILL: ModeDefinition = {
   shortLabel: '양식',
   description:
     '양식 / 보고서 / 신청서 / 점검표 문서. 정의된 셀 슬롯만 채움. 본문 작성 / 표 구조 변경 금지.',
-  // 0.7.0 placeholder — 0.7.1 에서 실제 subset 으로 좁힘.
-  // 예상 최종: getEmptyFormFields / insertTextInCell / replaceTextInCell /
-  // getCellInfo / getPageSvg / fillFormSlots (신규) 등.
-  tools: 'all',
-  promptFragment: '',
+  // 0.7.1 — 실제 subset. body write (insertText / applyHtml / patches) 가
+  // catalog 에서 빠짐 → AI 가 emit 할 방법 자체가 없음. cell-level + read
+  // 도구만 노출.
+  tools: [
+    // Cell write
+    'insertTextInCell',
+    'replaceTextInCell',
+    // Cell / form read
+    'getEmptyFormFields',
+    'getCellInfo',
+    // 시각 검증
+    'getPageSvg',
+    // 일반 read (위치 결정 / 컨텍스트)
+    'getDocumentOutline',
+    'getDocumentSummary',
+    'getCaretPosition',
+    'getCharPropertiesAt',
+    'getParaPropertiesAt',
+    'getStyleAt',
+    'getStyleListJson',
+    'getTextRange',
+    'findInDocument',
+    // 셀 서식 (작성한 값의 typography 일관성)
+    'applyCharFormat',
+    'applyCellStyle',
+    // Cross-doc (참조 자료)
+    'searchWorkspaceOutlines',
+    'readParagraphByPath',
+    'switchTargetDoc',
+  ],
+  promptFragment: `You are in **Form Fill Mode**. The document is a template (양식 / 보고서 / 신청서 / 점검표) with predefined cell slots. Your job is to fill those slots — NOT to author body text.
+
+**Hard rules enforced server-side:**
+- Body write tools (insertText, applyHtml, ahwp-patches blocks) are NOT in your catalog. If you try to emit a patches block, it will be ignored.
+- You CAN ONLY mutate the document through cell-level tools: \`insertTextInCell\` (empty cells), \`replaceTextInCell\` (filled cells / placeholders).
+- Coordinates MUST come from \`getEmptyFormFields\` — never invent paragraphIdx / cellIdx.
+
+**Workflow:**
+1. First turn: call \`getEmptyFormFields()\` (unscoped) to get the full tableInventory + initial cellFields.
+2. For tables with many empty cells, scope-call \`getEmptyFormFields({parentParaIdx: <paragraphIndex from inventory>, includeFilled: true})\` to see both empty and filled cells (latter often contains italic+blue placeholder example text that should be REPLACED via \`replaceTextInCell\`, not preserved).
+3. Emit cell writes in parallel (up to 5 per turn), using EXACT coordinates from the response.
+4. Iterate until no relevant empty cells remain.
+5. Before announcing completion: call \`getPageSvg({pageIdx})\` on key pages to visually verify (provider with vision will see the image and confirm placement / placeholder removal / consistency).
+6. If verification flags issues, fix with \`replaceTextInCell\` and re-verify.
+
+If the user's intent clearly does not fit any slot, say so briefly and stop — do NOT invent body paragraphs.`,
   requiresProviderCapability: ['vision', 'tool-use'],
 };
 

@@ -24,12 +24,27 @@ describe('MODE_REGISTRY', () => {
     }
   });
 
-  it('every mode in 0.7.0 exposes "all" tools (placeholder)', () => {
-    // 0.7.1+ 에서 mode 별 subset 으로 좁아질 때 이 테스트는 mode 별
-    // expected tool list 로 분기해야 함. 지금은 baseline.
+  it('0.7.1 — form-fill 만 real subset, 나머지는 "all" placeholder', () => {
     for (const m of TASK_MODES) {
-      expect(MODE_REGISTRY[m].tools).toBe('all');
+      if (m === 'form-fill') {
+        expect(Array.isArray(MODE_REGISTRY[m].tools)).toBe(true);
+      } else {
+        expect(MODE_REGISTRY[m].tools).toBe('all');
+      }
     }
+  });
+
+  it('form-fill subset 가 본문 write tool 을 제외, 셀 tool 은 포함', () => {
+    const tools = MODE_REGISTRY['form-fill'].tools as readonly string[];
+    expect(tools).toContain('insertTextInCell');
+    expect(tools).toContain('replaceTextInCell');
+    expect(tools).toContain('getEmptyFormFields');
+    expect(tools).toContain('getPageSvg');
+    // 본문 write 류 절대 포함 X — easy-path 회귀 원천 차단.
+    expect(tools).not.toContain('insertText');
+    expect(tools).not.toContain('applyHtml');
+    expect(tools).not.toContain('deleteRange');
+    expect(tools).not.toContain('insertParagraph');
   });
 });
 

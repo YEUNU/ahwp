@@ -54,6 +54,8 @@ import {
 } from './hooks/useChatStreaming';
 import { useExcerptAttachments } from './hooks/useExcerptAttachments';
 import { previewArgs } from './tools';
+import type { ModeContext } from '@shared/ai-modes';
+import { MODE_REGISTRY } from '@shared/ai-modes';
 
 type ChatProviderId = Extract<ProviderId, 'openai' | 'google' | 'custom'>;
 
@@ -443,6 +445,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     useEffect(() => {
       conversationIdRef.current = conversationId;
     }, [conversationId]);
+    // 0.7.1 — Task-Mode 상태. useChatStreaming 이 매 turn 갱신.
+    const [modeContext, setModeContext] = useState<ModeContext | null>(null);
     // chunk 31 — 자동 제목 요약. assistant turn 종료 시 messages.length가
     // 4 이상이면 1회 한정 background AI 호출로 짧은 한국어 제목 생성 →
     // chatHistory.rename. 이미 처리된 conversationId는 set에 등록해
@@ -722,6 +726,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       setStreaming,
       setError,
       setAgentTurn,
+      setModeContext,
       hasKey,
       provider,
       model,
@@ -846,7 +851,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               ))}
             </select>
             <KeyStatusIcon hasKey={hasKey} providerLabel={providerLabel} />
-            <ModeBadge />
+            <ModeBadge modeContext={modeContext} />
             <IconButton
               onClick={() => {
                 const next = !historyOpen;
@@ -1314,20 +1319,41 @@ function IconButton({
 // (미등록) / Loader2 (확인 중). 테마의 emerald / muted-foreground 토큰
 // 사용. 텍스트 "키 ●" / "키 ○" 이모지 → SVG 교체.
 /**
- * 0.7.0 — Task-Mode badge. 현재 모드 (free-authoring / form-fill / ...)
- * 를 provider bar 에 표시. 0.7.0 에서는 detection 없이 항상 "편집" (free-
- * authoring) 표시. 0.7.1 부터 자동 진입 + 사용자 override 토글 활성화.
+ * 0.7.0 / 0.7.1 — Task-Mode badge. 현재 모드를 provider bar 에 표시.
+ *
+ * 0.7.1 에서 dynamic: useChatStreaming 이 매 turn 갱신하는 modeContext
+ * 를 caller (ChatPanel) 가 ref 로 받아 prop 으로 주입. 0.7.2 에서
+ * 사용자가 badge 클릭 → mode override 토글 (현재는 read-only display).
  */
-function ModeBadge(): JSX.Element {
-  // 0.7.0: 항상 free-authoring. 0.7.1 에서 useModeContext() 훅으로 교체.
+function ModeBadge({
+  modeContext,
+}: {
+  modeContext?: ModeContext | null;
+}): JSX.Element {
+  const primary = modeContext?.primary ?? 'free-authoring';
+  const def = MODE_REGISTRY[primary];
+  const isOverride = modeContext?.source === 'user-override';
+  const isDetected = modeContext?.source === 'detected';
   return (
     <span
-      className="flex h-7 shrink-0 items-center rounded-md border border-border bg-background px-2 text-[10px] font-medium text-muted-foreground"
+      className={cn(
+        'flex h-7 shrink-0 items-center rounded-md border px-2 text-[10px] font-medium',
+        isDetected
+          ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+          : isOverride
+            ? 'border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+            : 'border-border bg-background text-muted-foreground',
+      )}
       data-testid="chat-mode-badge"
-      data-mode="free-authoring"
-      title="현재 모드: 자유 편집. 다른 모드 자동 진입은 0.7.1 부터."
+      data-mode={primary}
+      data-source={modeContext?.source ?? 'default'}
+      title={
+        modeContext?.reason
+          ? `${def.label} — ${modeContext.reason}`
+          : `${def.label} — ${def.description}`
+      }
     >
-      편집
+      {def.shortLabel}
     </span>
   );
 }

@@ -216,6 +216,13 @@ export interface UseChatStreamingOptions {
    *  이 React state 의 planMode 를 false 로 동기화 (localStorage 는
    *  hook 안에서 이미 갱신). */
   onPlanModeAutoDisengage?: () => void;
+  /** 0.7.1 — 사용자가 ModeBadge 에서 명시 선택한 TaskMode. detection 보다
+   *  우선. null/undefined 면 detection 결과 사용. */
+  modeOverride?: import('@shared/ai-modes').TaskMode | null;
+  /** 0.7.1 — detectMode 결과를 UI 에 반영. ChatPanel 의 React state 가
+   *  ModeBadge 를 reactive 하게 그릴 수 있게. ref 만으로는 re-render
+   *  trigger 안 됨 — setter 형태로 받음. */
+  setModeContext?: (ctx: import('@shared/ai-modes').ModeContext) => void;
 }
 
 export interface ChatStreamingHandle {
@@ -231,6 +238,11 @@ export interface ChatStreamingHandle {
   agentToolUsesRef: MutableRefObject<any>;
   agentTurnDepthRef: MutableRefObject<number>;
   agentVerifiedExcerptsRef: MutableRefObject<any>;
+  /** 0.7.1 — 직전 turn 에서 detectMode 가 결정한 ModeContext. UI badge
+   *  가 reactive 표시 위해 참조. send / fireChat 마다 갱신. */
+  currentModeRef: MutableRefObject<
+    import('@shared/ai-modes').ModeContext | null
+  >;
   /** chunk 97 — pending write tool 에 대한 사용자 결정. accept=true 면
    *  dispatch + tool_result 'ok', false 면 'user-rejected'. 모든 pending
    *  이 resolve 되면 자동으로 다음 turn 진입. */
@@ -300,6 +312,11 @@ export function useChatStreaming(
   >([]);
   const agentTurnDepthRef = useRef(0);
   const agentVerifiedExcerptsRef = useRef<ExcerptAttachment[]>([]);
+  /** 0.7.1 — 직전 turn 의 ModeContext. fireChat 가 detectMode 호출 후
+   *  여기에 stash. ChatPanel 이 ModeBadge 에 표시. */
+  const currentModeRef = useRef<import('@shared/ai-modes').ModeContext | null>(
+    null,
+  );
   // chunk 99 follow-up — stop 버튼이 turn loop 도 강제 종료. flag 가
   // true 이면 advanceAgentLoop 가 다음 turn 진입 직전 short-circuit.
   // 매 send / sendDirect / regenerate / acceptDirect 시작 시 false 로
@@ -897,16 +914,29 @@ export function useChatStreaming(
       // chunk 99 follow-up — plan mode suffix. catalog 가 read-only 로
       // 필터링되므로 모델은 write 호출 자체가 불가능. suffix 로 "plan 만
       // 작성" 지시 + 사용자 검토 흐름 안내.
-      // 0.7.0 — Task-Mode 진입. 현재는 detection 휴리스틱 없음 (항상
-      // DEFAULT = free-authoring). 0.7.1 부터 docSummary / userMessage
-      // 기반으로 form-fill 자동 진입 등 활성화. mode 가 결정되면 base
-      // prompt 뒤에 mode fragment append + catalog 를 mode 의 whitelist
-      // 로 좁힘.
+      // 0.7.1 — Task-Mode detection. 가장 최근 getDocumentSummary tool
+      // result 의 content prefix 를 detector 에 전달. content 가 `[form:
+      // N tables, M empty cells ...]` 로 시작하면 form-fill 자동 진입.
+      // 사용자가 manual override 한 경우 그 값 우선 (opts.modeOverride).
+      let docSummaryPrefix = '';
+      for (let i = history.length - 1; i >= 0; i--) {
+        const m = history[i];
+        if (m.role !== 'tool' || !m.toolResult) continue;
+        const c = m.toolResult.content ?? '';
+        // getDocumentSummary 결과는 JSON-stringified string 으로 들어와서
+        // 처음에 따옴표가 있을 수 있음. 둘 다 매칭.
+        if (c.includes('[form:')) {
+          docSummaryPrefix = c.slice(0, 200);
+          break;
+        }
+      }
       const modeContext = detectMode({
-        docSummaryPrefix: '',
+        docSummaryPrefix,
         lastUserMessage: '',
-        userOverride: null,
+        userOverride: opts.modeOverride ?? null,
       });
+      currentModeRef.current = modeContext;
+      opts.setModeContext?.(modeContext);
       const baseAgentPrompt = planModeNow
         ? SYSTEM_PROMPT_AGENT_GUIDE + SYSTEM_PROMPT_PLAN_MODE_SUFFIX
         : SYSTEM_PROMPT_AGENT_GUIDE;
@@ -1491,6 +1521,7 @@ export function useChatStreaming(
     agentToolUsesRef,
     agentTurnDepthRef,
     agentVerifiedExcerptsRef,
+    currentModeRef,
     resolveApproval,
     requestPlanSkip: () => {
       planSkipNextRef.current = true;

@@ -14,13 +14,32 @@ describe('detectMode (0.7.0)', () => {
     expect(ctx.source).toBe('default');
   });
 
-  it('with form summary prefix → still default (0.7.0 placeholder)', () => {
-    // 0.7.1 에서 이 케이스는 'form-fill' 로 진입해야 함. 그때 expect 갱신.
+  // 0.7.1 — form prefix → form-fill 자동 진입.
+  it('with [form: N tables, M empty cells] prefix → form-fill (source=detected)', () => {
     const ctx = detectMode({
       docSummaryPrefix: '[form: 9 tables, 212 empty cells]',
     });
+    expect(ctx.primary).toBe('form-fill');
+    expect(ctx.source).toBe('detected');
+    expect(ctx.reason).toContain('9');
+    expect(ctx.reason).toContain('212');
+  });
+
+  it('with form prefix but empty cells below threshold → default', () => {
+    const ctx = detectMode({
+      docSummaryPrefix: '[form: 1 tables, 1 empty cells]',
+    });
+    // threshold 3 — 1 < 3 라 default 유지.
     expect(ctx.primary).toBe('free-authoring');
-    expect(ctx.source).toBe('default');
+  });
+
+  it('userOverride beats detection', () => {
+    const ctx = detectMode({
+      docSummaryPrefix: '[form: 9 tables, 212 empty cells]',
+      userOverride: 'free-authoring',
+    });
+    expect(ctx.primary).toBe('free-authoring');
+    expect(ctx.source).toBe('user-override');
   });
 
   it('userOverride 가 있으면 그 mode 로 진입 + source=user-override', () => {

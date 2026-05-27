@@ -6,6 +6,52 @@
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-05-27
+
+### Added — FormFill mode 활성화
+
+0.7.0 의 infra 위에 첫 mode 실제 동작 enable. 양식 문서 자동 진입 →
+body write tool 이 AI catalog 에서 빠짐 → 본문 dump 회귀 channel 1
+원천 차단.
+
+- `form-fill` mode 의 `tools` 가 실제 subset 으로 좁아짐: cell write
+  (`insertTextInCell`, `replaceTextInCell`) + cell read
+  (`getEmptyFormFields`, `getCellInfo`) + 시각 검증 (`getPageSvg`) +
+  일반 read (`getDocumentOutline`, `findInDocument` 등) + cell 서식
+  (`applyCharFormat`, `applyCellStyle`) + cross-doc read. **본문 write
+  (`insertText`, `applyHtml`, `deleteRange`, `insertParagraph` 등) 와
+  표 구조 변경 도구는 catalog 에서 제거** — AI 가 emit 할 방법 자체
+  없음.
+- `form-fill` mode 의 `promptFragment` 활성화 — "Form Fill Mode" 가이드
+  (workflow: unscoped getEmptyFormFields → cell writes parallel →
+  getPageSvg 시각 검증). `ahwp-patches` 블록 emit 도 자제하도록 명시
+  (catalog 차단은 0.7.2 의 patches dispatcher guard 에서 hard enforce).
+- `ModeDetector` — 최근 `getDocumentSummary` tool result 의 content 에
+  `[form: N tables, M empty cells]` 패턴 + M ≥ 3 검출하면 form-fill
+  자동 진입. userOverride 가 있으면 그 값 우선.
+- `useChatStreaming` — history 에서 form prefix 추출 후 `detectMode`
+  호출, 결정된 modeContext 를 (a) catalog filter, (b) prompt fragment
+  append, (c) ChatRequest.modeContext, (d) ChatPanel UI state 에 모두
+  전달. `opts.setModeContext` setter / `currentModeRef` ref 양쪽 노출.
+- `ChatPanel` — `ModeBadge` 가 reactive. detected (form-fill 자동
+  진입) 일 땐 emerald, user-override 일 땐 amber, default 일 땐 기본.
+  툴팁에 reason 표시 ("문서에서 9 개 표 / 212 개 빈 셀 감지").
+
+### 검증
+
+- vitest 258/258 (255 → +3). 신규: form-fill subset assertion + 본문
+  write 제외 assertion + ModeDetector form-prefix 진입 / threshold
+  미달 / override 우선 케이스.
+- 영향 e2e 14/14 통과 (chat / chat-prefetch).
+- typecheck 통과.
+
+### 다음 chunk
+
+- 0.7.2 — patches dispatcher form-context guard (현재 prompt 권고만, AI
+  가 무시하면 패치 적용까지 가는 risk 잔존 → 0.7.2 에서 runtime hard
+  reject + constructive error).
+- 0.7.3 — defineTool refactor.
+
 ## [0.7.0] - 2026-05-27
 
 ### Added — Task-Mode Architecture (infra only)

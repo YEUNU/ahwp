@@ -30,8 +30,17 @@ export interface DetectInput {
 }
 
 /**
- * Mode 결정. 0.7.0 은 override 만 반영, 나머지는 default.
+ * Mode 결정. 0.7.1 — form-fill 자동 진입 휴리스틱 활성화.
+ *
+ * 우선순위:
+ * 1. userOverride 있으면 그대로 (사용자 의지 최우선).
+ * 2. docSummaryPrefix 에 `[form: N tables, M empty cells]` 패턴 + M ≥
+ *    threshold → form-fill 진입.
+ * 3. 그 외 default (free-authoring).
  */
+const FORM_SIGNAL_RE = /\[form:\s*(\d+)\s*tables?,\s*(\d+)\s*empty\s*cells?/i;
+const FORM_FILL_THRESHOLD = 3;
+
 export function detectMode(input: DetectInput): ModeContext {
   if (input.userOverride && MODE_REGISTRY[input.userOverride]) {
     return {
@@ -41,7 +50,18 @@ export function detectMode(input: DetectInput): ModeContext {
       reason: `사용자가 ${MODE_REGISTRY[input.userOverride].label} 로 고정`,
     };
   }
-  // 0.7.0 placeholder: detection 휴리스틱 없음. 모든 케이스 default.
-  // 0.7.1 부터 docSummaryPrefix 의 `[form: ...]` 패턴 → form-fill 진입.
+  const prefix = input.docSummaryPrefix ?? '';
+  const m = FORM_SIGNAL_RE.exec(prefix);
+  if (m) {
+    const emptyCells = parseInt(m[2], 10);
+    if (Number.isFinite(emptyCells) && emptyCells >= FORM_FILL_THRESHOLD) {
+      return {
+        primary: 'form-fill',
+        addons: [],
+        source: 'detected',
+        reason: `문서에서 ${m[1]} 개 표 / ${m[2]} 개 빈 셀 감지`,
+      };
+    }
+  }
   return DEFAULT_MODE_CONTEXT;
 }
