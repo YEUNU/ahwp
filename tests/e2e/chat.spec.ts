@@ -232,3 +232,19 @@ test.describe('secrets IPC — direct round-trip', () => {
     expect(errors[1]).toMatch(/string/i);
   });
 });
+
+// 0.7.0 / 0.7.1 — Task-Mode UI smoke. ModeBadge 가 provider bar 에 마운트
+// 되고 default state (free-authoring / "편집") 로 렌더링되는지 확인.
+// dynamic switching (form-fill 자동 진입) 은 useChatStreaming 가 chat
+// turn 마다 detectMode 호출 시 발동 — unit/integration 테스트가 검증.
+// e2e 는 mount 검증 + 사용자 가시성 만 다룸.
+test.describe('Task-Mode UI badge (0.7.1)', () => {
+  test('ModeBadge default 마운트 — free-authoring / "편집" / source=default', async () => {
+    const { page } = launched;
+    const badge = page.getByTestId('chat-mode-badge');
+    await expect(badge).toBeVisible();
+    await expect(badge).toHaveAttribute('data-mode', 'free-authoring');
+    await expect(badge).toHaveAttribute('data-source', 'default');
+    await expect(badge).toHaveText('편집');
+  });
+});
