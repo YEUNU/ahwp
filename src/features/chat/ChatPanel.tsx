@@ -2508,6 +2508,17 @@ function ToolEntryRow({
           ) : null}
         </div>
       ) : null}
+      {/* 0.6.19 — getPageSvg 결과는 inline 이미지로 즉시 표시 (사용자 확인용).
+          tool result 가 {svg, ...} 형태 JSON 일 때만 활성. SVG 를 base64
+          data-URL 로 img src 에 박아 <script> 실행 위험 회피 (브라우저는
+          <img src="data:image/svg+xml..."> 의 SVG 내부 스크립트를 inert
+          처리). 그래도 entry.name 으로 게이트 — 다른 tool 의 임의 결과를
+          오해석해 렌더하지 않게. */}
+      {entry.name === 'getPageSvg' &&
+      entry.status === 'ok' &&
+      entry.resultPreview ? (
+        <PageSvgPreview resultJson={entry.resultPreview} />
+      ) : null}
       {expanded && hasDetail ? (
         <pre
           data-testid="chat-tool-result"
@@ -2516,6 +2527,65 @@ function ToolEntryRow({
           {entry.resultPreview}
         </pre>
       ) : null}
+    </div>
+  );
+}
+
+/** 0.6.19 — getPageSvg tool 결과를 inline 이미지로 렌더.
+ *  result 가 `{ pageIdx, svg, truncated, originalBytes? }` 형태. svg 가
+ *  truncated 면 잘렸음을 hint 표시. base64 인코딩은 unicode 안전 처리. */
+function PageSvgPreview({
+  resultJson,
+}: {
+  resultJson: string;
+}): JSX.Element | null {
+  type Result = {
+    pageIdx?: number;
+    svg?: string;
+    truncated?: boolean;
+    originalBytes?: number;
+  };
+  let parsed: Result;
+  try {
+    parsed = JSON.parse(resultJson) as Result;
+  } catch {
+    return null;
+  }
+  if (typeof parsed.svg !== 'string' || parsed.svg.length === 0) {
+    return null;
+  }
+  // base64-encode the SVG safely (handles multi-byte UTF-8 via TextEncoder).
+  let dataUrl: string;
+  try {
+    const bytes = new TextEncoder().encode(parsed.svg);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    dataUrl = `data:image/svg+xml;base64,${btoa(binary)}`;
+  } catch {
+    return null;
+  }
+  return (
+    <div
+      className="mt-1 rounded border border-border/50 bg-background/50 p-1"
+      data-testid="chat-tool-svg-preview"
+    >
+      {parsed.truncated ? (
+        <div className="mb-0.5 text-[10px] text-muted-foreground">
+          페이지 {parsed.pageIdx ?? '?'} (truncated · 원본{' '}
+          {parsed.originalBytes ?? '?'}B)
+        </div>
+      ) : (
+        <div className="mb-0.5 text-[10px] text-muted-foreground">
+          페이지 {parsed.pageIdx ?? '?'}
+        </div>
+      )}
+      <img
+        src={dataUrl}
+        alt={`Page ${parsed.pageIdx ?? '?'} preview`}
+        className="block max-h-[600px] w-full rounded border border-border/30 bg-white object-contain"
+      />
     </div>
   );
 }

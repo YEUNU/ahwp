@@ -6,6 +6,21 @@
 
 ## [Unreleased]
 
+## [0.6.19] - 2026-05-27
+
+### Added — Chat UI 가 `getPageSvg` 결과를 inline 이미지로 즉시 표시
+
+0.6.17 의 `getPageSvg` AI 도구는 SVG 문자열을 반환하지만 이전엔 `▶`
+펼치기 버튼으로 raw JSON 을 봐야 시각 확인 가능했음. 0.6.19 에서
+`ToolEntryRow` 가 `entry.name === 'getPageSvg'` 일 때 result JSON 의
+`svg` field 를 base64 data-URL 로 인코딩해 `<img src="data:image/svg+xml..."/>`
+로 inline 표시. 사용자는 form-fill 완료 직후 채팅 안에서 바로 페이지
+상태를 시각 확인 가능. truncated flag 가 있으면 "잘림 · 원본 NB" hint
+도 함께. `<img>` 사용으로 SVG 내부 `<script>` 가 inert 처리되어 XSS 안전.
+
+UTF-8 한글 SVG 도 정상 인코딩 — `TextEncoder` + `String.fromCharCode`
+로직으로 multi-byte 안전 처리 (`btoa` 가 latin1 만 받는 brower 제약 회피).
+
 ## [0.6.18] - 2026-05-27
 
 ### Removed — NVIDIA NIM provider 전용 어댑터 (vision 부재로 form-fill 시각 검증과 비호환)
