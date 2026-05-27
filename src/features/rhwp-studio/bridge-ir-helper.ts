@@ -18,6 +18,7 @@
  */
 import type { RhwpBridge } from '@/lib/rhwp-bridge';
 import type { RhwpCaretPosition, RhwpSearchHit } from '@shared/rhwp-bridge';
+import { inferExpectedFormat, type ExpectedFormat } from '@shared/form-format';
 
 /** wasm-bridge 의 write op 들이 돌려주는 status JSON 의 공통 모양. */
 interface IrOpResult {
@@ -1206,6 +1207,14 @@ export class BridgeIrHelper {
       isEmpty: boolean;
       contentCharShape?: Record<string, unknown>;
       slotKind: 'value-slot' | 'instruction' | 'sub-header' | 'content';
+      /** 0.7.12 — 행 첫 칸 텍스트 ((row, 0) 의 셀). 큰 표 / 미해석 시 ''. */
+      rowLabel: string;
+      /** 0.7.12 — 컬럼 헤더 텍스트 ((0, col) 의 셀). 큰 표 / 미해석 시 ''. */
+      columnHeader: string;
+      /** 0.7.12 — columnHeader+rowLabel 휴리스틱으로 추론한 expectedFormat.
+       *  marker / number / currency / date / text. write 도구가 이 값을
+       *  args 에 echo 하면 dispatcher 가 text 와 함께 검증. */
+      expectedFormat: ExpectedFormat;
     }[];
     truncated: boolean;
     tableInventory: {
@@ -1247,6 +1256,9 @@ export class BridgeIrHelper {
       isEmpty: boolean;
       contentCharShape?: Record<string, unknown>;
       slotKind: SlotKind;
+      rowLabel: string;
+      columnHeader: string;
+      expectedFormat: ExpectedFormat;
     };
     // 0.7.2 — slot 분류 휴리스틱.
     //
@@ -1549,6 +1561,29 @@ export class BridgeIrHelper {
               : undefined;
 
             const slotKind = classifySlot(empty, txt, contentCharShape);
+
+            // 0.7.12 — rowLabel / columnHeader 추출 + expectedFormat 추론.
+            // gridMap 이 있는 경우에만 (작은 표) 가능. 큰 표는 '' / 'text'.
+            // self-cell (자기 자신이 헤더 / 라벨인 경우) 은 skip.
+            let rowLabel = '';
+            let columnHeader = '';
+            let expectedFormat: ExpectedFormat = 'text';
+            if (info && gridMap) {
+              const rowLabelIdx = gridMap.get(`${info.row},0`);
+              if (rowLabelIdx !== undefined && rowLabelIdx !== c) {
+                const fetched = await fetchLabel(s, p, ctrl, rowLabelIdx);
+                if (fetched) rowLabel = fetched.text;
+              }
+              const colHeaderIdx = gridMap.get(`0,${info.col}`);
+              if (colHeaderIdx !== undefined && colHeaderIdx !== c) {
+                const fetched = await fetchLabel(s, p, ctrl, colHeaderIdx);
+                if (fetched) columnHeader = fetched.text;
+              }
+              if (columnHeader || rowLabel) {
+                expectedFormat = inferExpectedFormat(columnHeader, rowLabel);
+              }
+            }
+
             cellFields.push({
               location: {
                 sectionIndex: s,
@@ -1563,6 +1598,9 @@ export class BridgeIrHelper {
               isEmpty: empty,
               contentCharShape,
               slotKind,
+              rowLabel,
+              columnHeader,
+              expectedFormat,
             });
           }
         }

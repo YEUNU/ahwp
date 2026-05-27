@@ -13,6 +13,8 @@
  * - eval 절대 금지 — 핸들러는 명시적 switch 분기로만 등록 (chat/tools.ts)
  */
 
+import type { ExpectedFormat } from './form-format';
+
 export const AHWP_TOOL_NAMES = [
   // chunk 19 — manual mode dispatcher (Phase 2)
   'applyHtml',
@@ -435,7 +437,8 @@ export interface AhwpToolArgs {
     paragraphIdx: number;
     controlIdx: number;
   };
-  // 0.4.16 — cell-level write
+  // 0.4.16 — cell-level write.
+  // 0.7.12 — optional expectedFormat 로 컬럼 의미 미준수 reject.
   insertTextInCell: {
     sectionIdx: number;
     parentParaIdx: number;
@@ -444,10 +447,14 @@ export interface AhwpToolArgs {
     cellParaIdx: number;
     charOffset: number;
     text: string;
+    /** 셀의 expectedFormat (getEmptyFormFields 결과에서 그대로 echo).
+     *  지정 시 text 가 포맷을 위반하면 dispatch 전 reject. */
+    expectedFormat?: ExpectedFormat;
   };
   // 0.6.15 — atomic replace. 기존 셀 내용을 모두 지우고 text 로 교체.
   // text='' 는 effectively clear. charOffset 인자가 없는 이유:
   // replace 의미상 "셀 전체" 가 대상이라 offset 이 무의미.
+  // 0.7.12 — optional expectedFormat (insertTextInCell 과 동일 의미).
   replaceTextInCell: {
     sectionIdx: number;
     parentParaIdx: number;
@@ -455,6 +462,8 @@ export interface AhwpToolArgs {
     cellIdx: number;
     cellParaIdx: number;
     text: string;
+    /** 셀의 expectedFormat (getEmptyFormFields 결과에서 그대로 echo). */
+    expectedFormat?: ExpectedFormat;
   };
   // Phase 3 chunk 51 — read-only Agent tools
   getDocumentOutline: Record<string, never>;

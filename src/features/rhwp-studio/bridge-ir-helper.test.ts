@@ -687,6 +687,108 @@ describe('BridgeIrHelper — Phase D2a', () => {
     }
   });
 
+  // 0.7.12 — rowLabel / columnHeader / expectedFormat enrichment.
+  // 사용자 transcript 의 실제 양식 구조 (3x3 mini): 헤더 행 + ERP/SCM 행 +
+  // 도입여부(O/X) / 추정금액(백만원) 컬럼.
+  it('getEmptyFormFields enriches each cell with rowLabel / columnHeader / expectedFormat', async () => {
+    // 3 행 × 3 열 grid:
+    //   row 0: [구분] [도입여부 (O/X)] [추정금액(백만원)]   (헤더 행)
+    //   row 1: [ERP]  []                []                    (빈 셀 2개)
+    //   row 2: [SCM]  []                []                    (빈 셀 2개)
+    const textByCell: Record<number, string> = {
+      0: '구분',
+      1: '도입여부 (O/X)',
+      2: '추정금액(백만원)',
+      3: 'ERP',
+      4: '',
+      5: '',
+      6: 'SCM',
+      7: '',
+      8: '',
+    };
+    const cellToRowCol: Record<number, { row: number; col: number }> = {
+      0: { row: 0, col: 0 },
+      1: { row: 0, col: 1 },
+      2: { row: 0, col: 2 },
+      3: { row: 1, col: 0 },
+      4: { row: 1, col: 1 },
+      5: { row: 1, col: 2 },
+      6: { row: 2, col: 0 },
+      7: { row: 2, col: 1 },
+      8: { row: 2, col: 2 },
+    };
+    const bridge = {
+      invokeWasm: vi.fn(async (fn: string, args: unknown[]) => {
+        if (fn === 'getSectionCount') return 1;
+        if (fn === 'getParagraphCount') return 1;
+        if (fn === 'getTableDimensions') {
+          const [, p, ctrl] = args as [number, number, number];
+          if (p === 0 && ctrl === 0)
+            return JSON.stringify({
+              ok: true,
+              rowCount: 3,
+              colCount: 3,
+              cellCount: 9,
+            });
+          return JSON.stringify({ ok: false });
+        }
+        if (fn === 'getCellInfo') {
+          const [, , , cellIdx] = args as [number, number, number, number];
+          const rc = cellToRowCol[cellIdx];
+          if (!rc) return JSON.stringify({ ok: false });
+          return JSON.stringify({
+            ok: true,
+            row: rc.row,
+            col: rc.col,
+            rowSpan: 1,
+            colSpan: 1,
+          });
+        }
+        if (fn === 'getTextInCell') {
+          const [, , , cellIdx] = args as [number, number, number, number];
+          return textByCell[cellIdx] ?? '';
+        }
+        if (fn === 'getCellCharPropertiesAt') {
+          return JSON.stringify({ ok: false });
+        }
+        throw new Error(`unmocked: ${fn}`);
+      }),
+    } as unknown as import('@/lib/rhwp-bridge').RhwpBridge;
+
+    const h = new BridgeIrHelper(bridge);
+    const full = await h.getEmptyFormFields();
+    // 빈 셀만 (4개? 사실 4,5,7,8) 4개 나와야 함.
+    expect(full.cellFields.length).toBe(4);
+    const byIdx = new Map(
+      full.cellFields.map((f) => [f.location.cellIndex, f]),
+    );
+
+    // ERP 행 × 도입여부 컬럼
+    const cell4 = byIdx.get(4);
+    expect(cell4).toBeDefined();
+    expect(cell4!.rowLabel).toBe('ERP');
+    expect(cell4!.columnHeader).toBe('도입여부 (O/X)');
+    expect(cell4!.expectedFormat).toBe('marker');
+
+    // ERP 행 × 추정금액 컬럼
+    const cell5 = byIdx.get(5);
+    expect(cell5!.rowLabel).toBe('ERP');
+    expect(cell5!.columnHeader).toBe('추정금액(백만원)');
+    expect(cell5!.expectedFormat).toBe('currency');
+
+    // SCM 행 × 도입여부 컬럼
+    const cell7 = byIdx.get(7);
+    expect(cell7!.rowLabel).toBe('SCM');
+    expect(cell7!.columnHeader).toBe('도입여부 (O/X)');
+    expect(cell7!.expectedFormat).toBe('marker');
+
+    // SCM 행 × 추정금액 컬럼
+    const cell8 = byIdx.get(8);
+    expect(cell8!.rowLabel).toBe('SCM');
+    expect(cell8!.columnHeader).toBe('추정금액(백만원)');
+    expect(cell8!.expectedFormat).toBe('currency');
+  });
+
   // 0.6.15 — replaceTextInCell: 기존 텍스트 길이만큼 deleteTextInCell 후
   // insertTextInCell. 하나의 atomic 작업 (그룹 undo 내부).
   it('replaceTextInCell deletes existing text then inserts new', async () => {

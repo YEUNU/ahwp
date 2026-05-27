@@ -6,6 +6,57 @@
 
 ## [Unreleased]
 
+## [0.7.12] - 2026-05-27
+
+### Added — form-fill column semantics (rowLabel / columnHeader / expectedFormat)
+
+사용자 transcript 에서 "도입여부 (O/X)" 컬럼에 "예지보전 솔루션" / "85"
+같은 잘못된 텍스트가 박히는 패턴이 반복. 원인: 모델이 `cellIdx` 만 보고
+의미를 모름. `getEmptyFormFields` 가 컬럼 헤더 / 행 라벨 / expectedFormat
+을 추가 노출하고, `insertTextInCell` / `replaceTextInCell` 에 optional
+expectedFormat 인자 + tool-level 검증 추가.
+
+**Heuristic (`shared/form-format.ts`):**
+
+- `marker` — 컬럼 헤더에 `(O/X)` / `O/X` / `(○/X)` 패턴.
+- `currency` — 금액 / 단가 / 비용 / 예산 / 백만원 / 만원 / 매출 / 매입.
+- `date` — 일자 / 날짜 / 년월일 / 연월일.
+- `number` — 수량 / 개수 / 건수 / 횟수 / 비율 / %.
+- `text` — default (permissive).
+
+**검증 (opt-in, backward compat):**
+
+- 모델이 args 에 expectedFormat 미지정 → 기존처럼 통과.
+- 지정 시 `validateTextForFormat(text, format)` 가 reject 사유 반환:
+  `marker-too-long` / `marker-invalid-char` / `number-non-numeric` /
+  `currency-non-numeric` / `date-invalid-char`.
+
+**파일:**
+
+- `shared/form-format.ts` (신규) — `ExpectedFormat` 타입 + 두 헬퍼.
+- `shared/form-format.test.ts` (신규) — heuristic + 검증 단위 테스트.
+- `shared/ai-tools.ts` — `insertTextInCell` / `replaceTextInCell` args 에
+  `expectedFormat?` 추가 + 타입 import.
+- `shared/ai-tools-defined/cell.ts` — 두 도구 schema + validate 확장.
+  `getEmptyFormFields` description 갱신.
+- `shared/ai-tools-defined/cell.test.ts` (신규) — expectedFormat
+  validation 테스트.
+- `src/features/rhwp-studio/bridge-ir-helper.ts` — getEmptyFormFields 가
+  각 셀에 rowLabel / columnHeader / expectedFormat 채움. gridMap 활용.
+- `src/features/rhwp-studio/bridge-ir-helper.test.ts` — 3×3 mini-form
+  regression.
+- `src/features/chat/viewer-handle-types.ts` — return type 동기화.
+- `src/features/chat/prompts.ts` — form-fill 모드 prompt 에 column
+  semantics 섹션 추가 + args template 에 expectedFormat 필드 명시.
+
+**Why opt-in (왜 강제 require 가 아닌가):**
+
+엄격하게 require 로 만들면 모델이 expectedFormat 한 줄 빼먹을 때마다
+모든 cell 쓰기가 fail → 진행이 막힘. opt-in 으로 두면 잘 따르는 모델은
+보호받고 (e.g. "도입여부 (O/X)" 에 "예지보전 솔루션" 절대 못 들어감),
+무시하는 모델도 기존 동작 유지. Future tightening 은 라이브 데이터 보고
+판단.
+
 ## [0.7.11] - 2026-05-27
 
 ### Added — `runAgent` sub-agent dispatch (Claude Code Task 패턴)

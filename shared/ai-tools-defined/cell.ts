@@ -16,6 +16,33 @@ import type { AhwpToolArgs } from '../ai-tools';
 import { AHWP_TOOL_LIMITS } from '../ai-tools';
 import { defineTool } from '../ai-tool-def';
 import { byteLen, coerceNonNegInt, nonNegInts } from '../ai-tool-validate';
+import {
+  VALID_EXPECTED_FORMATS,
+  validateTextForFormat,
+  type ExpectedFormat,
+} from '../form-format';
+
+/**
+ * 0.7.12 — 두 도구 공통의 `expectedFormat` 검증 헬퍼. 호출자가
+ * `validate()` 안에서 text 유효성 검사 직후 호출. expectedFormat 미지정
+ * 시 통과 (backward compat).
+ *
+ * args 객체에 expectedFormat 을 stamp 하고, 위반 시 reason 반환.
+ */
+function checkExpectedFormat(
+  raw: { expectedFormat?: unknown },
+  text: string,
+): { ok: true; format?: ExpectedFormat } | { ok: false; reason: string } {
+  if (raw.expectedFormat === undefined) return { ok: true };
+  if (typeof raw.expectedFormat !== 'string')
+    return { ok: false, reason: 'expectedFormat-not-string' };
+  if (!VALID_EXPECTED_FORMATS.has(raw.expectedFormat as ExpectedFormat))
+    return { ok: false, reason: 'expectedFormat-unknown' };
+  const fmt = raw.expectedFormat as ExpectedFormat;
+  const v = validateTextForFormat(text, fmt);
+  if (!v.ok) return { ok: false, reason: v.reason };
+  return { ok: true, format: fmt };
+}
 
 export const insertTextInCell = defineTool<
   'insertTextInCell',
@@ -23,7 +50,7 @@ export const insertTextInCell = defineTool<
 >({
   name: 'insertTextInCell',
   description:
-    'Insert text into a specific cell + cellParagraph + charOffset of a table control. Cell-scoped, safe even where body-level insertText would break table layout. Prereq: call getCellInfo first to confirm cellParaCount and that cellParaIdx is within range. For the first insertion into an empty cell use cellParaIdx=0, charOffset=0. cellParaIdx out of range returns out-of-range. Use \\n for multi-paragraph content within one cell. Does NOT clear existing content — only inserts at charOffset. For replacing existing cell content (modifying filled cells / removing template placeholders), use replaceTextInCell. slotKind from getEmptyFormFields tells you which: value-slot → insertTextInCell, instruction → replaceTextInCell.',
+    "Insert text into a specific cell + cellParagraph + charOffset of a table control. Cell-scoped, safe even where body-level insertText would break table layout. Prereq: call getCellInfo first to confirm cellParaCount and that cellParaIdx is within range. For the first insertion into an empty cell use cellParaIdx=0, charOffset=0. cellParaIdx out of range returns out-of-range. Use \\n for multi-paragraph content within one cell. Does NOT clear existing content — only inserts at charOffset. For replacing existing cell content (modifying filled cells / removing template placeholders), use replaceTextInCell. slotKind from getEmptyFormFields tells you which: value-slot → insertTextInCell, instruction → replaceTextInCell. 0.7.12 — pass `expectedFormat` (echo the value from getEmptyFormFields) so the system can verify the text matches the column's semantics. Without it, no format check runs; with it, format-mismatches are rejected before dispatch (e.g. writing '85' into a marker column is refused).",
   inputSchema: {
     type: 'object',
     properties: {
@@ -34,6 +61,12 @@ export const insertTextInCell = defineTool<
       cellParaIdx: { type: 'integer', minimum: 0 },
       charOffset: { type: 'integer', minimum: 0 },
       text: { type: 'string', maxLength: 4096 },
+      expectedFormat: {
+        type: 'string',
+        enum: ['marker', 'number', 'currency', 'date', 'text'],
+        description:
+          "Echo the cell's expectedFormat from getEmptyFormFields. Enables tool-level format check (e.g. marker column only accepts O/X-class chars; number column rejects Korean text).",
+      },
     },
     required: [
       'sectionIdx',
@@ -60,10 +93,17 @@ export const insertTextInCell = defineTool<
       return { ok: false, reason: 'text-not-string' };
     if (byteLen(text) > AHWP_TOOL_LIMITS.maxTextBytes)
       return { ok: false, reason: 'text-too-large' };
-    return {
-      ok: true,
-      args: { ...v.value, text } as AhwpToolArgs['insertTextInCell'],
+    const ef = checkExpectedFormat(raw, text);
+    if (!ef.ok) return { ok: false, reason: ef.reason };
+    const args: AhwpToolArgs['insertTextInCell'] = {
+      ...(v.value as Omit<
+        AhwpToolArgs['insertTextInCell'],
+        'text' | 'expectedFormat'
+      >),
+      text,
     };
+    if (ef.format !== undefined) args.expectedFormat = ef.format;
+    return { ok: true, args };
   },
 });
 
@@ -73,7 +113,7 @@ export const replaceTextInCell = defineTool<
 >({
   name: 'replaceTextInCell',
   description:
-    "Atomically replace a cell paragraph's entire text with a new value. Internally deletes existing content then inserts the new text in one logical step (single group-undo). Use for: (a) modifying a previously-filled cell to a corrected value, (b) clearing template placeholder / example text (slotKind='instruction' from getEmptyFormFields — italic with non-black color) before writing the real value. Pass text='' to clear without re-inserting. Same coordinate system as insertTextInCell (sectionIdx / parentParaIdx / controlIdx / cellIdx / cellParaIdx must come from getEmptyFormFields response).",
+    "Atomically replace a cell paragraph's entire text with a new value. Internally deletes existing content then inserts the new text in one logical step (single group-undo). Use for: (a) modifying a previously-filled cell to a corrected value, (b) clearing template placeholder / example text (slotKind='instruction' from getEmptyFormFields — italic with non-black color) before writing the real value. Pass text='' to clear without re-inserting. Same coordinate system as insertTextInCell (sectionIdx / parentParaIdx / controlIdx / cellIdx / cellParaIdx must come from getEmptyFormFields response). 0.7.12 — pass `expectedFormat` (echo from getEmptyFormFields) to enable tool-level format check.",
   inputSchema: {
     type: 'object',
     properties: {
@@ -83,6 +123,12 @@ export const replaceTextInCell = defineTool<
       cellIdx: { type: 'integer', minimum: 0 },
       cellParaIdx: { type: 'integer', minimum: 0 },
       text: { type: 'string', maxLength: 4096 },
+      expectedFormat: {
+        type: 'string',
+        enum: ['marker', 'number', 'currency', 'date', 'text'],
+        description:
+          "Echo the cell's expectedFormat from getEmptyFormFields. Enables tool-level format check.",
+      },
     },
     required: [
       'sectionIdx',
@@ -107,10 +153,17 @@ export const replaceTextInCell = defineTool<
       return { ok: false, reason: 'text-not-string' };
     if (byteLen(text) > AHWP_TOOL_LIMITS.maxTextBytes)
       return { ok: false, reason: 'text-too-large' };
-    return {
-      ok: true,
-      args: { ...v.value, text } as AhwpToolArgs['replaceTextInCell'],
+    const ef = checkExpectedFormat(raw, text);
+    if (!ef.ok) return { ok: false, reason: ef.reason };
+    const args: AhwpToolArgs['replaceTextInCell'] = {
+      ...(v.value as Omit<
+        AhwpToolArgs['replaceTextInCell'],
+        'text' | 'expectedFormat'
+      >),
+      text,
     };
+    if (ef.format !== undefined) args.expectedFormat = ef.format;
+    return { ok: true, args };
   },
 });
 
@@ -192,7 +245,7 @@ export const getEmptyFormFields = defineTool<
 >({
   name: 'getEmptyFormFields',
   description:
-    "Enumerate fillable cells in the document. For each cell returns the coordinate, a label hint (text of the adjacent cell — left sibling first, then top sibling), the label's char-shape, the cell's currentText, isEmpty, and slotKind. slotKind is one of: 'value-slot' (empty cell — use insertTextInCell), 'instruction' (italic + non-black placeholder e.g. '예) …' — use replaceTextInCell to swap), 'sub-header' (bold + short in-cell label — do not touch), 'content' (filled real data — leave alone unless user asked). By default returns only empty cells. Pass includeFilled=true to also see filled cells (and detect 'instruction' / 'sub-header' / 'content' slots). parentParaIdx scopes to one table (composable with sectionIdx). Read-only — does not mutate IR. Cap maxResults to keep response small (default 200).",
+    "Enumerate fillable cells in the document. For each cell returns the coordinate, a label hint (text of the adjacent cell — left sibling first, then top sibling), the label's char-shape, the cell's currentText, isEmpty, slotKind, rowLabel (text of the (row,0) cell — the row header in the first column), columnHeader (text of the (0,col) cell — the column header in the first row), and expectedFormat. slotKind is one of: 'value-slot' (empty cell — use insertTextInCell), 'instruction' (italic + non-black placeholder e.g. '예) …' — use replaceTextInCell to swap), 'sub-header' (bold + short in-cell label — do not touch), 'content' (filled real data — leave alone unless user asked). expectedFormat is one of: 'marker' (O/X-style boolean column), 'number' (count/percent), 'currency' (금액/백만원), 'date' (일자/년월일), or 'text' (free-form, default). When you call insertTextInCell / replaceTextInCell, echo the expectedFormat in the args so the system can reject obvious mismatches before they touch the document (e.g. writing '85' into a marker column). The (rowLabel, columnHeader) pair tells you exactly which row × column you're filling — never rely on cellIdx alone for semantics. By default returns only empty cells. Pass includeFilled=true to also see filled cells. parentParaIdx scopes to one table (composable with sectionIdx). Read-only. Cap maxResults to keep response small (default 200).",
   inputSchema: {
     type: 'object',
     properties: {

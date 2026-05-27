@@ -707,6 +707,13 @@ export interface ViewerHandle {
        * - 'content' (정상 데이터): 사용자가 명시 수정 안 하면 보존
        */
       slotKind: 'value-slot' | 'instruction' | 'sub-header' | 'content';
+      /** 0.7.12 — 행의 첫 칸 텍스트 ((row,0)). 큰 표 / 미해석 시 ''. */
+      rowLabel: string;
+      /** 0.7.12 — 컬럼 헤더 텍스트 ((0,col)). 큰 표 / 미해석 시 ''. */
+      columnHeader: string;
+      /** 0.7.12 — columnHeader+rowLabel 휴리스틱으로 추론한 셀 포맷.
+       *  write 도구가 args 에 echo 하면 dispatcher 가 검증해서 reject. */
+      expectedFormat: 'marker' | 'number' | 'currency' | 'date' | 'text';
     }[];
     truncated: boolean;
     tableInventory?: {

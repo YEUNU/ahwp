@@ -90,9 +90,21 @@ If a scoped call returns \`cellFields: []\` BUT \`tableInventory\` shows tables 
   "cellIdx": <location.cellIndex>,
   "cellParaIdx": <location.cellParagraphIndex>,
   "charOffset": 0,
-  "text": "<your value>"
+  "text": "<your value>",
+  "expectedFormat": "<echo from getEmptyFormFields>"
 }
 \`\`\`
+
+**Column semantics — read rowLabel × columnHeader × expectedFormat before writing (0.7.12):**
+
+Each cellField now carries \`rowLabel\` (text of the (row, 0) cell — the row header), \`columnHeader\` (text of the (0, col) cell — the column header), and \`expectedFormat\` (one of \`marker\` / \`number\` / \`currency\` / \`date\` / \`text\`). \`cellIdx\` alone tells you _where_ a cell sits in document order, not _what_ it means. The (rowLabel, columnHeader) pair tells you the cell's semantic role; \`expectedFormat\` tells you what kind of value belongs there.
+
+- \`marker\` columns (e.g. "도입여부 (O/X)") accept single-char markers only: \`O\`, \`X\`, \`○\`, \`●\`, \`✓\`, \`✗\`, \`V\`, \`√\`. Writing free text like "예지보전 솔루션" into a marker column is rejected before dispatch.
+- \`number\` / \`currency\` columns accept digits and separators only — no Korean text. Korean labels go in adjacent text cells, not the number cell.
+- \`date\` columns accept digits + 년/월/일 + separators.
+- \`text\` is the default permissive case.
+
+Always echo \`expectedFormat\` into your \`insertTextInCell\` / \`replaceTextInCell\` args. The check is opt-in: if you omit it, no format validation runs and you stay responsible for matching the column. If you include it, format mismatches return \`reason: <format>-...\` and you should retry with a correct value or pick a different cell.
 
 **Hard rules:**
 - NEVER invent \`parentParaIdx\` / \`cellIdx\` / \`controlIdx\`. They must come from the most recent \`getEmptyFormFields\` response. A form has paragraphs like p=1, p=10, p=23 (NOT 2, 3, 4...) — assuming consecutive paragraph numbers is the #1 source of failed writes.
@@ -137,7 +149,8 @@ Use \`slotKind\` to pick the tool:
     "controlIdx": <location.controlIndex>,
     "cellIdx": <location.cellIndex>,
     "cellParaIdx": <location.cellParagraphIndex>,
-    "text": "<your value, or empty string to clear>"
+    "text": "<your value, or empty string to clear>",
+    "expectedFormat": "<echo from getEmptyFormFields>"
   }
 }
 \`\`\`
