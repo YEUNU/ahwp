@@ -24,14 +24,32 @@ describe('MODE_REGISTRY', () => {
     }
   });
 
-  it('0.7.1 — form-fill 만 real subset, 나머지는 "all" placeholder', () => {
+  // 0.7.1 — form-fill 활성화 / 0.7.7 — cross-doc-research 활성화.
+  it('mode subset 상태: form-fill / cross-doc-research = array, 나머지는 "all" placeholder', () => {
+    const ACTIVATED = new Set<string>(['form-fill', 'cross-doc-research']);
     for (const m of TASK_MODES) {
-      if (m === 'form-fill') {
+      if (ACTIVATED.has(m)) {
         expect(Array.isArray(MODE_REGISTRY[m].tools)).toBe(true);
       } else {
         expect(MODE_REGISTRY[m].tools).toBe('all');
       }
     }
+  });
+
+  it('0.7.7 — cross-doc-research subset 는 read-only + web 도구만, 본문 write 제외', () => {
+    const tools = MODE_REGISTRY['cross-doc-research']
+      .tools as readonly string[];
+    // web access 핵심 도구 포함.
+    expect(tools).toContain('webFetch');
+    expect(tools).toContain('webSearch');
+    expect(tools).toContain('searchWorkspaceOutlines');
+    expect(tools).toContain('readParagraphByPath');
+    // 본문 / 셀 write 류 절대 포함 X.
+    expect(tools).not.toContain('insertText');
+    expect(tools).not.toContain('applyHtml');
+    expect(tools).not.toContain('insertTextInCell');
+    expect(tools).not.toContain('replaceTextInCell');
+    expect(tools).not.toContain('createTable');
   });
 
   it('form-fill subset 가 본문 write tool 을 제외, 셀 tool 은 포함', () => {

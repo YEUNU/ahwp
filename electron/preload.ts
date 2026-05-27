@@ -188,6 +188,11 @@ const api: AhwpApi = {
     getPrefs: () => ipcRenderer.invoke('updater:get-prefs'),
     setPrefs: (patch) => ipcRenderer.invoke('updater:set-prefs', patch),
   },
+  // 0.7.7 — external world access (web fetch / search) for AI tools.
+  web: {
+    fetch: (req) => ipcRenderer.invoke('web:fetch', req),
+    search: (req) => ipcRenderer.invoke('web:search', req),
+  },
 };
 
 contextBridge.exposeInMainWorld('api', api);

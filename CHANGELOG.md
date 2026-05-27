@@ -6,6 +6,65 @@
 
 ## [Unreleased]
 
+## [0.7.7] - 2026-05-27
+
+### Added — webFetch / webSearch + cross-doc-research mode 활성화
+
+AI 가 워크스페이스 외 정보 (HTTP URL / 검색 결과) 를 직접 가져올 수
+있도록 외부 세계 access 도구 2개 추가. cross-doc-research mode 의
+실질적 활용이 시작됨.
+
+**신규 도구:**
+
+- `webFetch({url, prompt?, maxBytes?})` — 단일 URL 의 본문 가져오기.
+  http / https only. HTML 은 자동으로 plain text 로 변환 (tag 제거 +
+  entity decode + whitespace 정규화). 30s timeout, 기본 32KB cap.
+- `webSearch({query, maxResults?})` — 웹 검색. DuckDuckGo HTML 인터페이스
+  사용 (API key 불필요). 결과 = {title, url, snippet}[]. maxResults
+  1-20, 기본 10.
+
+둘 다 `readonly: true` — 사용자 confirm 게이트 우회, 즉시 실행. URL
+scheme 강제 (http / https 외 거부), size cap, timeout 으로 safety.
+
+**아키텍처:**
+
+- `shared/ai-tools-defined/web.ts` (신규) — defineTool entries.
+  cross-doc-research / free-authoring / body-edit mode 노출.
+- `electron/ipc/web.ts` (신규) — main process IPC handler.
+  Node 의 global `fetch` 사용. HTML → text 는 정규식 기반 best-effort
+  (cheerio 등 외부 의존 회피). DuckDuckGo HTML 결과 페이지 파싱은
+  `<a class="result__a">` / `result__snippet>` 패턴 기반 — 비정식
+  API 라 변경에 fragile, 향후 Brave Search 등 정식 API 옵션 추가 예정.
+- `shared/api.ts` — `WebApi` namespace + `AhwpApi.web` 추가.
+- `electron/preload.ts` — `window.api.web` 노출.
+- `src/features/chat/tools.ts` — dispatcher case + summary fn.
+- `shared/ai-modes.ts` — cross-doc-research mode 의 `tools` 가 'all' →
+  실제 read-only subset (workspace read + web access + 활성 doc read,
+  본문 / 셀 write 전부 제외). promptFragment 도 실제 가이드로 채움.
+
+### 검증
+
+- vitest 320/320 (289 → +31, 신규 케이스):
+  - `shared/ai-tools-defined/web.test.ts` (12) — registry / readonly /
+    URL scheme 거부 (file:// / ftp://) / args size cap / maxBytes /
+    maxResults 범위.
+  - `electron/ipc/web.test.ts` (14) — webFetchImpl mock fetch (http /
+    https / 4xx / timeout / maxBytes truncate / HTML→text 변환 /
+    script·style 제거 / entity decode), webSearchImpl (정상 파싱 /
+    uddg redirect 디코딩 / maxResults cap / 빈 query / fetch 실패).
+  - `mode-integration.test.ts` (+1) — cross-doc-research catalog 가
+    web 도구 포함하고 본문 write 제외, prompt fragment 활성.
+  - `shared/ai-modes.test.ts` (갱신) — 활성 mode set 에
+    cross-doc-research 추가, subset assertion.
+- typecheck + eslint 통과. 0.7.6 → 0.7.7.
+
+### 다음 chunk
+
+- 0.7.8 — Settings 에서 Brave Search / SerpAPI 등 정식 API key 옵션
+  (DDG fallback).
+- 0.7.9 — BashExec (allowlist + confirm 게이트).
+- 0.7.10 — Agent (sub-agent dispatch).
+
 ## [0.7.6] - 2026-05-27
 
 ### Fixed — form guard 무한 nudge loop (StrictMode 이중 fire + 잘못된 no-svg trigger)

@@ -592,6 +592,8 @@ export interface AhwpApi {
   ai: AiApi;
   chatHistory: ChatHistoryApi;
   updater: UpdaterApi;
+  /** 0.7.7 — external world access (web fetch / search). */
+  web: WebApi;
 }
 
 /**
@@ -633,6 +635,58 @@ export interface UpdaterPrefs {
   /** 새 버전 발견 시 자동 다운로드 진행. default true. false 면 사용자가
    *  banner 의 "지금 받기" 클릭 시에만 다운로드. */
   autoDownload: boolean;
+}
+
+/**
+ * 0.7.7 — external world access surface. AI 의 webFetch / webSearch 도구
+ * 의 main-process 대응. 모두 read-only — IR 변경 없음, 네트워크만 사용.
+ *
+ * CSP: 본 호출은 renderer 의 fetch 가 아니라 main process 에서 실행 →
+ * 렌더러 CSP 우회 없이 임의 도메인 접근 가능. URL scheme 은 http/https
+ * 만 허용 (main 측 validator).
+ */
+export interface WebFetchRequest {
+  url: string;
+  /** AI 가 받은 본문에서 추출하고 싶은 의도 hint. 호출 결과에 echo. */
+  prompt?: string;
+  /** 응답 본문의 최대 byte 수. 기본 32768. */
+  maxBytes?: number;
+}
+export interface WebFetchResult {
+  ok: boolean;
+  /** 응답 status code (200 / 404 등). */
+  status?: number;
+  /** content-type 헤더. */
+  contentType?: string;
+  /** 응답 본문을 plain text 로 추출. HTML 은 tag 제거 후 trim. */
+  text?: string;
+  /** 본문이 maxBytes 초과로 잘림. */
+  truncated?: boolean;
+  /** 원본 byte 길이 (잘리기 전). */
+  originalBytes?: number;
+  /** 실패 시 사유 (timeout / network / 4xx / 5xx). */
+  error?: string;
+}
+export interface WebSearchRequest {
+  query: string;
+  /** 결과 최대 개수. 1-20, 기본 10. */
+  maxResults?: number;
+}
+export interface WebSearchResultItem {
+  title: string;
+  url: string;
+  /** 검색엔진이 제공한 짧은 snippet (없을 수 있음). */
+  snippet?: string;
+}
+export interface WebSearchResult {
+  ok: boolean;
+  query: string;
+  results: WebSearchResultItem[];
+  error?: string;
+}
+export interface WebApi {
+  fetch: (req: WebFetchRequest) => Promise<WebFetchResult>;
+  search: (req: WebSearchRequest) => Promise<WebSearchResult>;
 }
 
 export interface UpdaterApi {

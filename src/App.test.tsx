@@ -117,6 +117,11 @@ describe('App', () => {
         getPrefs: vi.fn().mockResolvedValue({ autoDownload: true }),
         setPrefs: vi.fn().mockResolvedValue({ autoDownload: true }),
       },
+      // 0.7.7 — external world access.
+      web: {
+        fetch: vi.fn().mockResolvedValue({ ok: true, text: '' }),
+        search: vi.fn().mockResolvedValue({ ok: true, query: '', results: [] }),
+      },
     };
     Object.defineProperty(window, 'api', {
       value: mockApi,

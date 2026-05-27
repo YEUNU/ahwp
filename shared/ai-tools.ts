@@ -99,6 +99,11 @@ export const AHWP_TOOL_NAMES = [
   // turn 의 활성 write target 을 절대 경로로 변경. read-only 분류 (실제
   // IR 변경 없음 — 그냥 라우팅 ref 갱신).
   'switchTargetDoc',
+  // 0.7.7 — external world access (cross-doc-research mode 의 핵심).
+  // 워크스페이스 외 정보 (URL / 검색결과) 조회. 모두 read-only — IR 변경
+  // 없음. 사용자 confirm 게이트 없이 즉시 실행.
+  'webFetch',
+  'webSearch',
 ] as const;
 
 export type AhwpToolName = (typeof AHWP_TOOL_NAMES)[number];
@@ -129,6 +134,9 @@ export const READONLY_TOOL_NAMES = new Set<AhwpToolName>([
   // chunk 99 follow-up — switchTargetDoc 는 IR 을 변경하지 않으므로
   // read-only 게이트로 분류 (즉시 실행, 사용자 승인 불필요).
   'switchTargetDoc',
+  // 0.7.7 — external world read-only.
+  'webFetch',
+  'webSearch',
 ]);
 
 export function isReadOnlyTool(name: string): boolean {
@@ -513,6 +521,22 @@ export interface AhwpToolArgs {
   };
   // chunk 99 follow-up — switchTargetDoc args.
   switchTargetDoc: { path: string };
+  // 0.7.7 — external world access.
+  webFetch: {
+    /** http:// or https:// URL. 그 외 scheme 거부. */
+    url: string;
+    /** 선택. AI 가 받은 본문에서 요약 / 추출하고 싶은 의도 hint
+     *  (응답에 그대로 echo — 모델이 자기 prompt 에서 활용). */
+    prompt?: string;
+    /** 응답 본문의 최대 byte 수. 기본 32768 (32 KB). 큰 페이지는 trim. */
+    maxBytes?: number;
+  };
+  webSearch: {
+    /** 검색어. 1024 bytes 이하. */
+    query: string;
+    /** 결과 최대 개수. 1-20, 기본 10. */
+    maxResults?: number;
+  };
 }
 
 /** A single op as it appears inside the model-authored block. */

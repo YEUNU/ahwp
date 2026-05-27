@@ -52,6 +52,36 @@ describe('Task-Mode integration (form-fill chain)', () => {
     expect(prompt).toContain('getPageSvg');
   });
 
+  // 0.7.7 — Cross-Doc Research mode 활성화 검증.
+  it('cross-doc-research mode → catalog 가 read-only + web 도구만, 본문 write 제외', () => {
+    const ctx = {
+      primary: 'cross-doc-research' as const,
+      addons: [],
+      source: 'user-override' as const,
+    };
+    const catalog = getAhwpToolCatalog(ctx);
+    const names = catalog.map((d) => d.name);
+    // 0.7.7 web 도구 포함.
+    expect(names).toContain('webFetch');
+    expect(names).toContain('webSearch');
+    // 워크스페이스 read 도구 포함.
+    expect(names).toContain('searchWorkspaceOutlines');
+    expect(names).toContain('readParagraphByPath');
+    // 본문 write 도구는 제외.
+    expect(names).not.toContain('insertText');
+    expect(names).not.toContain('applyHtml');
+    expect(names).not.toContain('insertTextInCell');
+    expect(names).not.toContain('replaceTextInCell');
+    expect(names).not.toContain('createTable');
+
+    // prompt fragment 가 cross-doc-research 가이드 포함.
+    const prompt = appendModePrompt('BASE', ctx);
+    expect(prompt).toContain('Cross-Doc Research Mode');
+    expect(prompt).toContain('webSearch');
+    expect(prompt).toContain('webFetch');
+    expect(prompt).toContain('cite');
+  });
+
   it('non-form 문서 → free-authoring 유지 → 전체 catalog', () => {
     const ctx = detectMode({
       docSummaryPrefix: '"normal document with three sections"',

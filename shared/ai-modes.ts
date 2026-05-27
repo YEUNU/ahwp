@@ -186,9 +186,48 @@ const CROSS_DOC_RESEARCH: ModeDefinition = {
   label: '문서 참조 모드',
   shortLabel: '참조',
   description:
-    '워크스페이스 내 다른 문서 검색 / 인용. read-only. 활성 문서 write 는 다른 mode 진입 필요.',
-  tools: 'all',
-  promptFragment: '',
+    '워크스페이스 내 다른 문서 + 외부 웹 정보 검색 / 인용. read-only. 활성 문서 write 는 다른 mode 진입 필요.',
+  // 0.7.7 — 실제 subset. read-only tool 만 노출 + cross-doc + web access.
+  // mode 전환 (form-fill / body-edit 등) 없이는 IR mutation 불가.
+  tools: [
+    // Workspace 검색 / 읽기
+    'searchWorkspaceOutlines',
+    'readParagraphByPath',
+    // 활성 문서 read
+    'getDocumentOutline',
+    'getDocumentSummary',
+    'getCaretPosition',
+    'getStyleListJson',
+    'getStyleAt',
+    'getCharPropertiesAt',
+    'getParaPropertiesAt',
+    'getTextRange',
+    'findInDocument',
+    'getCellInfo',
+    'getEmptyFormFields',
+    'getPageSvg',
+    'getColumnDef',
+    'getFootnoteAtCursor',
+    // 0.7.7 — 외부 웹 정보
+    'webFetch',
+    'webSearch',
+    // 다른 doc 으로 라우팅 (write 는 mode 전환 후)
+    'switchTargetDoc',
+  ],
+  promptFragment: `You are in **Cross-Doc Research Mode**. Read-only investigation across workspace files and the open web. IR mutation tools are NOT in your catalog — to actually edit the active document, the user needs to switch out of this mode (or you can suggest doing so).
+
+**Use cases:**
+- Gather facts from referenced workspace docs (\`searchWorkspaceOutlines\` to inventory, \`readParagraphByPath\` to fetch specific bodies).
+- Look up external info via \`webSearch\` (find candidate URLs) → \`webFetch\` (read the page body).
+- Synthesize findings into a written response — cite URLs and workspace file paths so the user can verify.
+
+**External web tools (0.7.7):**
+- \`webSearch({query, maxResults})\` returns ranked results (title, url, snippet). Use to discover candidate pages.
+- \`webFetch({url, prompt?, maxBytes?})\` retrieves a page as plain text. http / https only. 30s timeout, 32KB default cap. Pair with webSearch for typical "find + read" workflows.
+- Do NOT fetch the same URL repeatedly. If a page is paginated, fetch each page once.
+- Do NOT make up URLs — only use ones returned by webSearch or explicitly provided by the user.
+
+Your final response should cite sources (URLs / file paths) so the user can verify. If the workspace + web evidence is insufficient, say so briefly rather than fabricate.`,
 };
 
 /**

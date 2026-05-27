@@ -1537,6 +1537,42 @@ async function runOne(
         // 누락 — 동작은 무해.
         return { ok: true, tool: call.tool, data: { noop: true } };
       }
+      // 0.7.7 — external world access. main process IPC 로 위임 (renderer
+      // 의 CSP 우회 + Node fetch 사용). 모두 read-only, 사용자 confirm 게이트
+      // 우회 (READONLY_TOOL_NAMES 에 포함).
+      case 'webFetch': {
+        const a = call.args;
+        try {
+          const r = await window.api.web.fetch({
+            url: a.url,
+            prompt: a.prompt,
+            maxBytes: a.maxBytes,
+          });
+          return { ok: true, tool: call.tool, data: r };
+        } catch (e) {
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: `webFetch-failed:${(e as Error).message ?? String(e)}`,
+          };
+        }
+      }
+      case 'webSearch': {
+        const a = call.args;
+        try {
+          const r = await window.api.web.search({
+            query: a.query,
+            maxResults: a.maxResults,
+          });
+          return { ok: true, tool: call.tool, data: r };
+        } catch (e) {
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: `webSearch-failed:${(e as Error).message ?? String(e)}`,
+          };
+        }
+      }
       default: {
         // The pre-flight validator narrows AhwpToolCall to the union, so
         // this is unreachable without a registry/type drift.
@@ -1789,6 +1825,20 @@ export function previewArgs(call: AhwpToolCall): string {
     case 'switchTargetDoc': {
       const base = call.args.path.split(/[\\/]/).pop() ?? call.args.path;
       return `→ ${base}`;
+    }
+    // 0.7.7 — external world access.
+    case 'webFetch': {
+      const u = call.args.url;
+      try {
+        const host = new URL(u).host;
+        return host;
+      } catch {
+        return u.length > 40 ? u.slice(0, 40) + '…' : u;
+      }
+    }
+    case 'webSearch': {
+      const q = call.args.query.replace(/\s+/g, ' ').trim();
+      return `"${q.length > 30 ? q.slice(0, 30) + '…' : q}"`;
     }
   }
 }
