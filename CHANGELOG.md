@@ -6,6 +6,59 @@
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-05-27
+
+### Changed — defineTool refactor (single source of truth)
+
+이전 0.7.3 까지는 각 도구가 4 파일을 lockstep 으로 정의:
+
+- `shared/ai-tools.ts` — `AHWP_TOOL_NAMES`, `AhwpToolArgs[name]`
+- `shared/ai-tool-catalog.ts` — `TOOL_DESCRIPTORS` 의 schema + description
+- `shared/ai-tool-validate.ts` — `validateArgs` switch 의 args 검증
+- (선택) `shared/ai-tools.ts` 의 `READONLY_TOOL_NAMES` set
+
+한 파일 빼먹으면 사일런트 회귀. 0.6.17 의 `includeFilled` strip 회귀가
+정확히 이 lockstep 깨짐 — schema 에는 있고 validator 에서는 누락되어
+dispatcher 까지 도달 못 함.
+
+0.7.4 는 도구당 한 곳 정의로 통합:
+
+- **`shared/ai-tool-def.ts`** (신규) — `defineTool({...})` helper +
+  `buildToolRegistry(defs)`. 한 도구의 schema + validate + readonly +
+  modes 가 한 객체 안.
+- **`shared/ai-tools-defined/`** (신규 디렉토리, 6 카테고리 파일) —
+  55 도구 전부 migration:
+  - `format.ts` (13) — caret 서식 + 본문 텍스트 primitive + paragraph 서식
+  - `cell.ts` (5) — 셀 read/write + form-fill discovery
+  - `table.ts` (12) — 표 구조 변경 / properties / 수식
+  - `shape.ts` (7) — 도형 / 그림
+  - `page.ts` (19) — page / section / header-footer / bookmark /
+    footnote / equation / style
+  - `read.ts` (10) — read-only 조회 / 시각 캡처 / cross-doc 라우팅
+- **`shared/ai-tool-catalog.ts`** — 1100-line `TOOL_DESCRIPTORS` 배열
+  제거. registry 의 descriptors 를 mode filter 와 같이 노출하는 ~50줄
+  thin wrapper.
+- **`shared/ai-tool-validate.ts`** — 800-line `validateArgs` switch 제거.
+  registry 의 validator map 으로 dispatch 하는 thin wrapper. helper
+  함수들 (isObj, byteLen, coerceNonNegInt, nonNegInts) 만 export
+  (defineTool 의 validate 안에서 재사용).
+
+새 도구 추가 시 `shared/ai-tools-defined/<카테고리>.ts` 에 `defineTool`
+한 번만 호출 — schema + validator + readonly 메타가 한 곳에 모임.
+
+### 검증
+
+- vitest 281/281 (273 → +8). 신규 `shared/ai-tool-def.test.ts` 가
+  registry vs `AHWP_TOOL_NAMES` 완전 일치 / readonly drift / 중복
+  등록 차단 / 모든 validator 결정적 응답 / 0.6.17 회귀 재현 (includeFilled
+  boolean) 검증.
+- typecheck + eslint 통과.
+
+### 다음 chunk
+
+- 0.7.5 — Provider × Mode capability matrix + 나머지 mode 활성화
+  (BodyEdit / TableManipulation / Formatting / CrossDocResearch).
+
 ## [0.7.3] - 2026-05-27
 
 ### Fixed — patches dispatcher hardening + diff side panel + UI polish
