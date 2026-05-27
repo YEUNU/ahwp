@@ -1,17 +1,22 @@
 /**
- * Web IPC pure-logic 테스트 — 0.7.7.
+ * Web IPC pure-logic 테스트 — 0.7.7 / 0.7.8.
  *
  * 실제 network fetch 는 e2e 영역. 본 테스트는 IPC handler 안의 pure
  * 변환 / 파싱 부분만 검증:
  *   - URL scheme 거부 (file:// / ftp://)
  *   - HTML → text 변환 (script / style 제거, tag strip, entity decode)
  *   - DuckDuckGo HTML 결과 파싱
+ *   - 0.7.8 — Brave Search JSON API + backend 자동 선택 + fallback
  *
  * fetch 자체는 vi.spyOn(globalThis, 'fetch') 로 mock — actual network
  * 호출 없이 handler 의 전체 flow 검증.
+ *
+ * web-keys store 도 mock — safeStorage / Electron app context 없이 테스트
+ * 가능하도록 helper module 의 export 를 mock.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { webFetchImpl, webSearchImpl } from './web';
+import * as webKeys from '../store/web-keys';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -210,5 +215,117 @@ describe('webSearchImpl — DDG HTML 파싱', () => {
     const r = await webSearchImpl({ query: 'x' });
     expect(r.ok).toBe(false);
     expect(r.error).toBe('http-429');
+  });
+});
+
+// ── 0.7.8 — Brave backend + fallback ─────────────────────────────────
+
+describe('webSearchImpl — Brave Search backend (0.7.8)', () => {
+  it('Brave key 등록 시 Brave API 우선 사용', async () => {
+    vi.spyOn(webKeys, 'pickActiveSearchBackend').mockResolvedValue('brave');
+    vi.spyOn(webKeys, 'getWebSearchKeyPlaintext').mockResolvedValue(
+      'test-brave-key',
+    );
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          web: {
+            results: [
+              {
+                title: 'Brave Result',
+                url: 'https://example.com/brave',
+                description: 'Brave snippet',
+              },
+            ],
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+    const r = await webSearchImpl({ query: 'test' });
+    expect(r.ok).toBe(true);
+    expect(r.results).toHaveLength(1);
+    expect(r.results[0]).toEqual({
+      title: 'Brave Result',
+      url: 'https://example.com/brave',
+      snippet: 'Brave snippet',
+    });
+    // Brave endpoint 가 호출됐는지.
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringContaining('api.search.brave.com'),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'X-Subscription-Token': 'test-brave-key',
+        }),
+      }),
+    );
+  });
+
+  it('Brave API 실패 시 DDG fallback', async () => {
+    vi.spyOn(webKeys, 'pickActiveSearchBackend').mockResolvedValue('brave');
+    vi.spyOn(webKeys, 'getWebSearchKeyPlaintext').mockResolvedValue('test-key');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    // 첫 번째 호출 (Brave) — 429 rate-limit
+    fetchSpy.mockResolvedValueOnce(new Response('', { status: 429 }));
+    // 두 번째 호출 (DDG) — 정상
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        `<div class="result"><a class="result__a" href="https://ddg.example/r">DDG Result</a></div>`,
+        { status: 200, headers: { 'content-type': 'text/html' } },
+      ),
+    );
+    const r = await webSearchImpl({ query: 'q' });
+    expect(r.ok).toBe(true);
+    expect(r.results[0].title).toBe('DDG Result');
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('Brave key 없음 → DDG 바로 사용', async () => {
+    vi.spyOn(webKeys, 'pickActiveSearchBackend').mockResolvedValue(null);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('<div class="result"></div>', {
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+      }),
+    );
+    await webSearchImpl({ query: 'q' });
+    // Brave endpoint 호출 안 되고 DDG 만.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringContaining('duckduckgo.com'),
+      expect.any(Object),
+    );
+  });
+
+  it('Brave 응답 maxResults cap 적용', async () => {
+    vi.spyOn(webKeys, 'pickActiveSearchBackend').mockResolvedValue('brave');
+    vi.spyOn(webKeys, 'getWebSearchKeyPlaintext').mockResolvedValue('k');
+    const manyResults = Array.from({ length: 15 }, (_, i) => ({
+      title: `R${i}`,
+      url: `https://x/${i}`,
+      description: `s${i}`,
+    }));
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ web: { results: manyResults } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    const r = await webSearchImpl({ query: 'q', maxResults: 5 });
+    expect(r.results).toHaveLength(5);
+  });
+
+  it('Brave 응답에 web.results 없음 → 빈 results', async () => {
+    vi.spyOn(webKeys, 'pickActiveSearchBackend').mockResolvedValue('brave');
+    vi.spyOn(webKeys, 'getWebSearchKeyPlaintext').mockResolvedValue('k');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    const r = await webSearchImpl({ query: 'q' });
+    expect(r.ok).toBe(true);
+    expect(r.results).toEqual([]);
   });
 });

@@ -17,14 +17,24 @@
  * 변경에 fragile 함. 정식 API 가 필요하면 Brave Search / SerpAPI 등을
  * Settings 에서 API 키 받아 별도 backend 로 추가 (future chunk).
  */
-import { ipcMain } from 'electron';
+import { BrowserWindow, ipcMain } from 'electron';
 import type {
+  ActiveSearchBackend,
   WebFetchRequest,
   WebFetchResult,
+  WebSearchBackend,
   WebSearchRequest,
   WebSearchResult,
   WebSearchResultItem,
 } from '../../shared/api';
+import {
+  deleteWebSearchKey,
+  getWebSearchKeyPlaintext,
+  hasWebSearchKey,
+  isWebSearchBackend,
+  pickActiveSearchBackend,
+  setWebSearchKey,
+} from '../store/web-keys';
 
 const FETCH_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_BYTES = 32 * 1024;
@@ -183,13 +193,70 @@ function parseDuckDuckGoHtml(
   return items;
 }
 
-export async function webSearchImpl(
-  req: WebSearchRequest,
+/**
+ * Brave Search API backend (0.7.8). 사용자가 API key 등록한 경우 자동
+ * 우선. 응답은 `{ web: { results: [{title, url, description}] } }` JSON.
+ * 무료 tier: 2000 q/month, rate 1 q/s.
+ */
+async function searchViaBrave(
+  query: string,
+  maxResults: number,
+  apiKey: string,
 ): Promise<WebSearchResult> {
-  const query = req.query?.trim() ?? '';
-  if (query.length === 0)
-    return { ok: false, query, results: [], error: 'query-empty' };
-  const maxResults = Math.min(Math.max(req.maxResults ?? 10, 1), 20);
+  const url = new URL('https://api.search.brave.com/res/v1/web/search');
+  url.searchParams.set('q', query);
+  url.searchParams.set('count', String(Math.min(maxResults, 20)));
+  const ctrl = new AbortController();
+  const timeout = setTimeout(() => ctrl.abort('timeout'), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url.toString(), {
+      signal: ctrl.signal,
+      headers: {
+        'X-Subscription-Token': apiKey,
+        Accept: 'application/json',
+        'Accept-Encoding': 'gzip',
+        'User-Agent': USER_AGENT,
+      },
+    });
+    clearTimeout(timeout);
+    if (!res.ok) {
+      return {
+        ok: false,
+        query,
+        results: [],
+        error: `brave-http-${res.status}`,
+      };
+    }
+    const json = (await res.json()) as {
+      web?: {
+        results?: Array<{ title?: string; url?: string; description?: string }>;
+      };
+    };
+    const items: WebSearchResultItem[] = (json.web?.results ?? [])
+      .slice(0, maxResults)
+      .map((r) => ({
+        title: (r.title ?? '').slice(0, 256),
+        url: r.url ?? '',
+        snippet: r.description ? r.description.slice(0, 512) : undefined,
+      }))
+      .filter((r) => r.title && r.url);
+    return { ok: true, query, results: items };
+  } catch (e) {
+    clearTimeout(timeout);
+    const msg = (e as Error).message ?? String(e);
+    return {
+      ok: false,
+      query,
+      results: [],
+      error: msg.includes('aborted') ? 'timeout' : `brave-error:${msg}`,
+    };
+  }
+}
+
+async function searchViaDdg(
+  query: string,
+  maxResults: number,
+): Promise<WebSearchResult> {
   const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
   const ctrl = new AbortController();
   const timeout = setTimeout(() => ctrl.abort('timeout'), FETCH_TIMEOUT_MS);
@@ -221,6 +288,44 @@ export async function webSearchImpl(
   }
 }
 
+/**
+ * Backend 자동 선택 + 실행. 우선순위:
+ *   1. Brave (사용자 API key 등록 시) — JSON 응답, 안정적
+ *   2. SerpAPI (등록 시) — placeholder, 0.7.8 에선 미구현
+ *   3. DuckDuckGo HTML scraping — fallback, no key
+ *
+ * Brave 호출이 실패하면 (rate limit / network) DDG 로 자동 retry — 한
+ * backend 의 일시적 문제로 검색 전체가 막히지 않도록.
+ */
+export async function webSearchImpl(
+  req: WebSearchRequest,
+): Promise<WebSearchResult> {
+  const query = req.query?.trim() ?? '';
+  if (query.length === 0)
+    return { ok: false, query, results: [], error: 'query-empty' };
+  const maxResults = Math.min(Math.max(req.maxResults ?? 10, 1), 20);
+
+  const active = await pickActiveSearchBackend();
+  if (active === 'brave') {
+    const key = await getWebSearchKeyPlaintext('brave');
+    if (key) {
+      const r = await searchViaBrave(query, maxResults, key);
+      if (r.ok) return r;
+      // Brave 실패 → DDG fallback. 사용자가 결과 받도록.
+      console.warn(`[web] brave failed (${r.error}), falling back to DDG`);
+    }
+  }
+  // serpapi: placeholder — 0.7.8 에선 DDG 로 fallthrough.
+  return await searchViaDdg(query, maxResults);
+}
+
+function broadcastBackendChanged(): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue;
+    win.webContents.send('web:backend-changed');
+  }
+}
+
 export function registerWebIpc(): void {
   ipcMain.handle(
     'web:fetch',
@@ -232,6 +337,44 @@ export function registerWebIpc(): void {
     'web:search',
     async (_event, req: WebSearchRequest): Promise<WebSearchResult> => {
       return await webSearchImpl(req);
+    },
+  );
+  // 0.7.8 — search backend key 관리.
+  ipcMain.handle(
+    'web:set-search-key',
+    async (_event, backend: unknown, key: unknown): Promise<void> => {
+      if (!isWebSearchBackend(backend)) {
+        throw new Error(`unknown-backend:${String(backend)}`);
+      }
+      if (typeof key !== 'string') {
+        throw new Error('key-not-string');
+      }
+      await setWebSearchKey(backend as WebSearchBackend, key);
+      broadcastBackendChanged();
+    },
+  );
+  ipcMain.handle(
+    'web:has-search-key',
+    async (_event, backend: unknown): Promise<boolean> => {
+      if (!isWebSearchBackend(backend)) return false;
+      return await hasWebSearchKey(backend as WebSearchBackend);
+    },
+  );
+  ipcMain.handle(
+    'web:delete-search-key',
+    async (_event, backend: unknown): Promise<void> => {
+      if (!isWebSearchBackend(backend)) {
+        throw new Error(`unknown-backend:${String(backend)}`);
+      }
+      await deleteWebSearchKey(backend as WebSearchBackend);
+      broadcastBackendChanged();
+    },
+  );
+  ipcMain.handle(
+    'web:get-active-backend',
+    async (): Promise<ActiveSearchBackend> => {
+      const b = await pickActiveSearchBackend();
+      return b ?? 'ddg';
     },
   );
 }

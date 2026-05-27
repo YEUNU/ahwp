@@ -189,9 +189,17 @@ const api: AhwpApi = {
     setPrefs: (patch) => ipcRenderer.invoke('updater:set-prefs', patch),
   },
   // 0.7.7 — external world access (web fetch / search) for AI tools.
+  // 0.7.8 — search backend key 관리 추가 (Brave / SerpAPI).
   web: {
     fetch: (req) => ipcRenderer.invoke('web:fetch', req),
     search: (req) => ipcRenderer.invoke('web:search', req),
+    setSearchKey: (backend, key) =>
+      ipcRenderer.invoke('web:set-search-key', backend, key),
+    hasSearchKey: (backend) =>
+      ipcRenderer.invoke('web:has-search-key', backend),
+    deleteSearchKey: (backend) =>
+      ipcRenderer.invoke('web:delete-search-key', backend),
+    getActiveSearchBackend: () => ipcRenderer.invoke('web:get-active-backend'),
   },
 };
 

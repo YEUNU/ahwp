@@ -684,9 +684,28 @@ export interface WebSearchResult {
   results: WebSearchResultItem[];
   error?: string;
 }
+/**
+ * 0.7.8 — 검색 backend 의 API 키 등록. plaintext key 는 renderer 에
+ * 노출 안 함 (get 미제공) — main process 가 직접 사용.
+ *
+ * `'brave'` = Brave Search API (https://api.search.brave.com). 무료
+ * tier 2000 q/month. JSON 응답, 빠름.
+ * `'serpapi'` = SerpAPI. Google 결과 직접. 무료 tier 100 q/month.
+ *   (0.7.8 에서는 등록만, 실제 backend 구현은 follow-up.)
+ *
+ * 키 없으면 DDG HTML scraping fallback.
+ */
+export type WebSearchBackend = 'brave' | 'serpapi';
+export type ActiveSearchBackend = WebSearchBackend | 'ddg';
 export interface WebApi {
   fetch: (req: WebFetchRequest) => Promise<WebFetchResult>;
   search: (req: WebSearchRequest) => Promise<WebSearchResult>;
+  /** 0.7.8 — search backend key 관리 (Brave / SerpAPI). */
+  setSearchKey: (backend: WebSearchBackend, key: string) => Promise<void>;
+  hasSearchKey: (backend: WebSearchBackend) => Promise<boolean>;
+  deleteSearchKey: (backend: WebSearchBackend) => Promise<void>;
+  /** 현재 활성 backend ('ddg' = key 없음 / fallback). UI 가 표시. */
+  getActiveSearchBackend: () => Promise<ActiveSearchBackend>;
 }
 
 export interface UpdaterApi {

@@ -117,10 +117,14 @@ describe('App', () => {
         getPrefs: vi.fn().mockResolvedValue({ autoDownload: true }),
         setPrefs: vi.fn().mockResolvedValue({ autoDownload: true }),
       },
-      // 0.7.7 — external world access.
+      // 0.7.7 — external world access. 0.7.8 — search backend keys.
       web: {
         fetch: vi.fn().mockResolvedValue({ ok: true, text: '' }),
         search: vi.fn().mockResolvedValue({ ok: true, query: '', results: [] }),
+        setSearchKey: vi.fn().mockResolvedValue(undefined),
+        hasSearchKey: vi.fn().mockResolvedValue(false),
+        deleteSearchKey: vi.fn().mockResolvedValue(undefined),
+        getActiveSearchBackend: vi.fn().mockResolvedValue('ddg'),
       },
     };
     Object.defineProperty(window, 'api', {

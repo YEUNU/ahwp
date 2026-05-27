@@ -372,9 +372,186 @@ function AiProvidersPane(): JSX.Element {
           <PlanModeDefaultRow />
           <HtmlPreviewRow />
         </div>
+        <div className="mt-5 space-y-3 border-t border-border pt-4">
+          <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Web 검색 백엔드 (0.7.8)
+          </h3>
+          <WebSearchBackendSection />
+        </div>
       </PaneBody>
       <PaneFooter hint="변경사항은 저장 버튼으로 반영됩니다. 키를 변경하려면 새 값을 입력하세요." />
     </>
+  );
+}
+
+/**
+ * Web search backend 키 등록 섹션 — 0.7.8.
+ *
+ * AI 의 webSearch 도구가 사용할 backend 선택. Brave Search API key 가
+ * 있으면 자동 우선. 없으면 DDG HTML scraping fallback (API key 불필요
+ * 지만 rate-limit / 품질 떨어짐).
+ *
+ * Brave Search API: https://api.search.brave.com/app/keys (무료 tier
+ * 2000 q/month). 가입 후 발급된 token 을 그대로 붙여넣기.
+ */
+function WebSearchBackendSection(): JSX.Element {
+  const [active, setActive] = useState<string>('ddg');
+  const [hasBrave, setHasBrave] = useState(false);
+  const [braveInput, setBraveInput] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const refresh = useCallback(async (): Promise<void> => {
+    try {
+      const [b, a] = await Promise.all([
+        window.api.web.hasSearchKey('brave'),
+        window.api.web.getActiveSearchBackend(),
+      ]);
+      setHasBrave(b);
+      setActive(a);
+    } catch (err) {
+      console.warn('[settings] web backend refresh failed', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    // React 19+ lint: setState 가 effect 직속이면 경고. async fn 으로 한
+    // 단계 indirection — setState 가 await 의 continuation 에서 발생하니
+    // 합법. 동작 자체는 동일 (mount 시 1회 fetch + state 갱신).
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [b, a] = await Promise.all([
+          window.api.web.hasSearchKey('brave'),
+          window.api.web.getActiveSearchBackend(),
+        ]);
+        if (cancelled) return;
+        setHasBrave(b);
+        setActive(a);
+      } catch (err) {
+        console.warn('[settings] web backend refresh failed', err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const onSaveBrave = async (): Promise<void> => {
+    const trimmed = braveInput.trim();
+    if (trimmed.length === 0) return;
+    setBusy(true);
+    try {
+      await window.api.web.setSearchKey('brave', trimmed);
+      setBraveInput('');
+      await refresh();
+    } catch (err) {
+      console.warn('[settings] save brave key failed', err);
+      window.alert(`키 저장 실패: ${(err as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onDeleteBrave = async (): Promise<void> => {
+    setBusy(true);
+    try {
+      await window.api.web.deleteSearchKey('brave');
+      await refresh();
+    } catch (err) {
+      console.warn('[settings] delete brave key failed', err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3 text-xs" data-testid="settings-web-backend">
+      <div className="flex items-center justify-between rounded border border-border bg-muted/30 px-3 py-2">
+        <div className="flex flex-col gap-0.5">
+          <span className="font-medium">현재 활성 백엔드</span>
+          <span className="text-[10px] text-muted-foreground">
+            {active === 'brave'
+              ? 'Brave Search API — 정식 JSON, 무료 tier 2000 q/month.'
+              : active === 'serpapi'
+                ? 'SerpAPI (Google) — 정식 JSON.'
+                : 'DuckDuckGo HTML scraping — API key 없음. rate-limit / 품질 fallback.'}
+          </span>
+        </div>
+        <span
+          data-testid="settings-web-backend-active"
+          className={`rounded px-2 py-0.5 font-mono text-[10px] ${
+            active === 'ddg'
+              ? 'bg-amber-100 text-amber-900 dark:bg-amber-900/30 dark:text-amber-200'
+              : 'bg-emerald-100 text-emerald-900 dark:bg-emerald-900/30 dark:text-emerald-200'
+          }`}
+        >
+          {active}
+        </span>
+      </div>
+
+      <div
+        className="flex flex-col gap-2 rounded border border-border px-3 py-2"
+        data-testid="settings-web-brave-row"
+      >
+        <div className="flex items-center justify-between">
+          <label htmlFor="settings-brave-key" className="font-medium">
+            Brave Search API key
+          </label>
+          {hasBrave && (
+            <span
+              data-testid="settings-web-brave-registered"
+              className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] text-emerald-900 dark:bg-emerald-900/30 dark:text-emerald-200"
+            >
+              등록됨
+            </span>
+          )}
+        </div>
+        <p className="text-[10px] text-muted-foreground">
+          <a
+            href="https://api.search.brave.com/app/keys"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-600 underline hover:text-blue-700 dark:text-blue-400"
+          >
+            api.search.brave.com/app/keys
+          </a>{' '}
+          에서 발급. 무료 tier 2000 q/month, 1 q/s. 키는 OS 키체인에 암호화되어
+          저장됩니다.
+        </p>
+        <div className="flex items-center gap-2">
+          <input
+            id="settings-brave-key"
+            data-testid="settings-brave-key-input"
+            type="password"
+            value={braveInput}
+            onChange={(e) => setBraveInput(e.target.value)}
+            placeholder={hasBrave ? '새 키로 교체...' : 'BSA...'}
+            className="flex-1 rounded border border-input bg-background px-2 py-1 font-mono focus:outline-hidden focus:ring-2 focus:ring-ring"
+            disabled={busy}
+          />
+          <button
+            data-testid="settings-brave-save"
+            type="button"
+            onClick={onSaveBrave}
+            disabled={busy || braveInput.trim().length === 0}
+            className="rounded border border-input bg-background px-3 py-1 hover:bg-accent disabled:opacity-50"
+          >
+            저장
+          </button>
+          {hasBrave && (
+            <button
+              data-testid="settings-brave-delete"
+              type="button"
+              onClick={onDeleteBrave}
+              disabled={busy}
+              className="rounded border border-destructive/30 bg-background px-3 py-1 text-destructive hover:bg-destructive/10 disabled:opacity-50"
+            >
+              삭제
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 

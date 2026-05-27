@@ -6,6 +6,70 @@
 
 ## [Unreleased]
 
+## [0.7.8] - 2026-05-27
+
+### Added — Brave Search API 지원 + Settings UI (DDG fallback 유지)
+
+0.7.7 의 DDG HTML scraping 은 IP rate-limit / 결과 품질 문제 잠재. 사용자가
+정식 API key 등록 시 자동 우선 사용, 없으면 DDG fallback.
+
+**신규:**
+
+- `electron/store/web-keys.ts` (신규) — Brave / SerpAPI key 의 safeStorage
+  암호화 store. provider key store 와 분리 (ProviderId union 오염 회피).
+  `getWebSearchKeyPlaintext` 는 **main process only** — renderer 에 plaintext
+  노출 안 됨. `pickActiveSearchBackend` 가 brave > serpapi > null 우선순위
+  자동 선택.
+- `electron/ipc/web.ts` 확장:
+  - `searchViaBrave` — Brave Search API (`api.search.brave.com/res/v1/web/
+search`) JSON 응답 파싱. 응답 = `{web:{results:[{title,url,description}]}}`.
+  - `webSearchImpl` 이 backend 자동 선택. Brave 실패 시 (rate / network) DDG
+    로 자동 retry → 한 backend 일시 문제로 검색 전체가 막히지 않음.
+  - 새 IPC: `web:set-search-key` / `web:has-search-key` / `web:delete-search-
+key` / `web:get-active-backend`.
+  - `web:backend-changed` broadcast — UI 가 reactive 갱신.
+- `shared/api.ts` — `WebApi` 확장 + `WebSearchBackend` / `ActiveSearchBackend`
+  타입.
+- `electron/preload.ts` — 새 IPC 노출.
+- `src/features/settings/SettingsDialog.tsx` — AI 공급자 탭에 "Web 검색
+  백엔드" 섹션 추가:
+  - 현재 활성 백엔드 표시 (`brave` / `serpapi` / `ddg` chip + 설명).
+  - Brave API key 입력 + 저장 + 삭제 버튼.
+  - `api.search.brave.com/app/keys` 발급 링크.
+  - 무료 tier 정보 (2000 q/month, 1 q/s).
+
+**보안:**
+
+- API key 는 OS 키체인 (`safeStorage`) 에 암호화 저장.
+- Renderer 에 plaintext 노출 없음 (`get` IPC 미제공).
+- 키 입력 필드는 type=password.
+
+### 검증
+
+- vitest 325/325 (320 → +5). 신규 Brave backend 케이스 (electron/ipc/
+  web.test.ts):
+  - Brave key 등록 시 Brave API 우선 (X-Subscription-Token 헤더 검증).
+  - Brave 실패 (429) → DDG fallback 정상 동작.
+  - Brave key 없음 → DDG 바로 사용 (fetch 1회만).
+  - maxResults cap 적용.
+  - 응답 web.results 없음 → 빈 array.
+- typecheck + eslint 통과. 0.7.7 → 0.7.8.
+
+### 사용 방법
+
+1. Settings → AI 공급자 → "Web 검색 백엔드" 섹션
+2. Brave Search 가입 (https://api.search.brave.com/app/keys) — 무료 tier 충분
+3. 발급된 token 을 "Brave Search API key" 필드에 붙여넣고 저장
+4. 현재 활성 백엔드 chip 이 `ddg` → `brave` 로 변경됨
+5. AI 의 webSearch 호출이 자동으로 Brave 사용
+
+키 없는 사용자는 DDG fallback 그대로 사용 — 기본 동작 변화 없음.
+
+### 다음 chunk
+
+- 0.7.9 — BashExec (allowlist + confirm 게이트).
+- 0.7.10 — Agent (sub-agent dispatch).
+
 ## [0.7.7] - 2026-05-27
 
 ### Added — webFetch / webSearch + cross-doc-research mode 활성화
