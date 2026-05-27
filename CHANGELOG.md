@@ -6,6 +6,76 @@
 
 ## [Unreleased]
 
+## [0.7.11] - 2026-05-27
+
+### Added — `runAgent` sub-agent dispatch (Claude Code Task 패턴)
+
+AI 가 자기 turn 안에서 별도 sub-agent 를 spawn 해서 복잡한 다단계 작업
+을 위임 가능. Claude Code 의 Task 도구와 유사. sub-agent 는 자기 mode /
+도구 set / 짧은 message history 로 self-contained 작업 후 final text 만
+parent 에 반환 — parent 의 context window 보존.
+
+**아키텍처:**
+
+- 실행 위치: **renderer-side** (`src/features/chat/sub-agent.ts`). tool
+  dispatcher 가 viewer / bridge / IPC 에 접근 필요해서 main 이 아닌 renderer.
+- `callLlmAwaitable` adapter: `window.api.ai.chat` 의 streaming events
+  를 Promise 로 wrap. sub-agent 의 매 turn 응답을 모아서 next turn 결정.
+- **재귀 차단**: sub-agent 의 catalog 에서 `runAgent` 자동 제외 (depth=1
+  강제). 무한 재귀 spawn 방지.
+- Provider: parent 의 provider/model 재사용 (다른 provider 옵션은 후속).
+- Max turns: 기본 10, 최대 30.
+
+**파일:**
+
+- `shared/ai-tools.ts` — `runAgent` tool name + args.
+- `shared/ai-tools-defined/agent.ts` (신규) — defineTool entry.
+- `src/features/chat/sub-agent.ts` (신규) — `runSubAgent` loop +
+  `callLlmAwaitable` + system prompt builder.
+- `src/features/chat/tools.ts` — `SubAgentContext` export + dispatcher
+  case (`runAgent` → `runSubAgent` 호출).
+- `src/features/chat/hooks/useChatStreaming.ts` — 매 turn dispatcher
+  호출 시 subAgentContext (provider / model / parentMode / baseSystemPrompt
+  / targetPath) inject.
+- `src/app/AppShell.tsx` — `runTools` prop wrapper 가 subAgentContext
+  forward.
+- `shared/ai-modes.ts` — cross-doc-research / form-fill mode 의 tools 에
+  `runAgent` 추가.
+
+**Use cases:**
+
+- "코렌스 회사 최근 보도자료 찾아서 정리해줘" → sub-agent (cross-doc-
+  research) 가 webSearch + webFetch + 요약 → parent 가 응축된 결과로
+  본문 작성.
+- "이 양식의 모든 표 구조 분석해서 카테고리화해줘" → sub-agent 가
+  getEmptyFormFields 반복 + 분류 → parent 가 결과로 작업 결정.
+- "git log 분석해서 changelog 초안 만들어줘" → sub-agent 가 runCommand
+  - 정리 → parent 가 받아 본문에 inject.
+
+### 검증
+
+- vitest 374/374 (351 → +23). 신규:
+  - `agent.test.ts` (15) — registry / prompt validation / 6 mode enum /
+    maxTurns 범위 / trim.
+  - `sub-agent.test.ts` (8) — text-only response / tool dispatch flow /
+    failed tool graceful / maxTurns guard / maxTurns clamp / LLM error /
+    **재귀 차단** (catalog 에 runAgent 없음).
+- typecheck + eslint 통과. 0.7.10 → 0.7.11.
+
+### "Claude Code 도구 통합" 시리즈 완료 (0.7.7 ~ 0.7.11)
+
+| Claude Code 도구     | ahwp 대응                                     | Version        |
+| -------------------- | --------------------------------------------- | -------------- |
+| Read / Glob / Grep   | searchWorkspaceOutlines + readParagraphByPath | 기존           |
+| Edit / Write (HWP)   | 55 도구 (defineTool registry)                 | 0.6.x + 0.7.4  |
+| WebFetch             | webFetch (Readability)                        | 0.7.7 + 0.7.10 |
+| WebSearch            | webSearch (DDG + Brave)                       | 0.7.7 + 0.7.8  |
+| Bash                 | runCommand (7 게이트)                         | 0.7.9          |
+| **Task (sub-agent)** | **runAgent**                                  | **0.7.11**     |
+
+이로써 ahwp 의 AI 가 워크스페이스 read + HWP edit + 외부 정보 (web /
+shell) + 작업 위임 (sub-agent) 의 agentic loop 전부 갖춤.
+
 ## [0.7.10] - 2026-05-27
 
 ### Improved — webFetch 콘텐츠 추출 품질 (Readability + linkedom)

@@ -53,6 +53,7 @@ import * as pageTools from './page';
 import * as readTools from './read';
 import * as webTools from './web';
 import * as bashTools from './bash';
+import * as agentTools from './agent';
 
 // 각 module 의 모든 named export 를 단일 배열로. Object.values 사용 +
 // 타입 narrow.
@@ -78,6 +79,7 @@ export const DEFINED_TOOLS: readonly ToolDef<string, unknown>[] = [
   ...collect(readTools),
   ...collect(webTools),
   ...collect(bashTools),
+  ...collect(agentTools),
 ];
 
 export const DEFINED_TOOL_REGISTRY = buildToolRegistry(DEFINED_TOOLS);

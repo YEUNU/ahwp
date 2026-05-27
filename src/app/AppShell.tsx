@@ -805,7 +805,11 @@ export default function AppShell() {
                       return false;
                     }
                   }}
-                  runTools={async (items, targetPath) => {
+                  runTools={async (
+                    items: import('@shared/ai-tools').AhwpPreflightItem[],
+                    targetPath?: string | null,
+                    subAgentContext?: import('@/features/chat/tools').SubAgentContext,
+                  ) => {
                     // Phase 3 chunk 50 — docId-aware routing. If the
                     // chat turn pinned a target path, look up the
                     // matching mounted viewer (it stays mounted with
@@ -847,7 +851,12 @@ export default function AppShell() {
                           await import('@/features/rhwp-studio/bridge-ir-helper')
                         ).BridgeIrHelper(bridge)
                       : null;
-                    const results = await runTools(v, items, helper);
+                    const results = await runTools(
+                      v,
+                      items,
+                      helper,
+                      subAgentContext,
+                    );
                     if (v && before) v.markChangedParagraphsSince(before);
                     return results;
                   }}

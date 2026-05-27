@@ -38,6 +38,7 @@ import {
   buildExcerptSystemPrompt,
   appendModePrompt,
 } from '../prompts';
+import type { SubAgentContext } from '../tools';
 import { detectMode } from '../mode-detector';
 import { selectToolsViaLlm, resetRouterCache } from '../toolRouter';
 import { svgToPngBase64 } from '../svg-to-png';
@@ -201,7 +202,11 @@ export interface UseChatStreamingOptions {
   onOpenSettings?: () => void;
   getDocHtml?: () => string;
   applyHtml?: (html: string) => void;
-  runTools?: (items: any, targetPath?: string | null) => any;
+  runTools?: (
+    items: any,
+    targetPath?: string | null,
+    subAgentContext?: SubAgentContext,
+  ) => any;
   captureExcerpt?: () => any;
   activeDocPath?: () => string | null;
   verifyExcerpt?: (anchor: any, expected: string) => any;
@@ -671,6 +676,17 @@ export function useChatStreaming(
         //  호출하거나 매 write 사이 re-read 해야 함. prompt 가이드 참조.)
         if (parallelBatch.length > 0 && dispatcher) {
           const dispatch = dispatcher;
+          // 0.7.11 — Sub-agent context. dispatcher 가 runAgent case 에서
+          // 사용. provider / model / parentMode / baseSystemPrompt 를
+          // 자기 (parent) 의 현재 상태로 inject — sub-agent 가 동일 provider
+          // 로 작동.
+          const subAgentContext: SubAgentContext = {
+            provider: providerRef.current,
+            model: modelRef.current,
+            parentMode: currentModeRef.current?.primary ?? 'free-authoring',
+            baseSystemPrompt: SYSTEM_PROMPT_AGENT_GUIDE,
+            targetPath: turnTargetPathRef.current,
+          };
           const reads = parallelBatch.filter((b) => isReadOnlyTool(b.tu.name));
           const writes = parallelBatch.filter(
             (b) => !isReadOnlyTool(b.tu.name),
@@ -679,7 +695,11 @@ export function useChatStreaming(
           // reads — 병렬
           const readResults = await Promise.allSettled(
             reads.map((b) =>
-              dispatch([{ ok: true, call: b.call }], turnTargetPathRef.current),
+              dispatch(
+                [{ ok: true, call: b.call }],
+                turnTargetPathRef.current,
+                subAgentContext,
+              ),
             ),
           );
           // writes — 직렬 (AI 가 호출한 순서 보존)
@@ -689,6 +709,7 @@ export function useChatStreaming(
               const v = await dispatch(
                 [{ ok: true, call: b.call }],
                 turnTargetPathRef.current,
+                subAgentContext,
               );
               writeResults.push({ status: 'fulfilled', value: v });
             } catch (err) {
@@ -1574,9 +1595,18 @@ export function useChatStreaming(
             reason: 'dispatcher-unavailable',
           });
         } else {
+          // 0.7.11 — pending 승인 dispatch 에도 sub-agent context 전달.
+          const subAgentContext: SubAgentContext = {
+            provider: providerRef.current,
+            model: modelRef.current,
+            parentMode: currentModeRef.current?.primary ?? 'free-authoring',
+            baseSystemPrompt: SYSTEM_PROMPT_AGENT_GUIDE,
+            targetPath: turnTargetPathRef.current,
+          };
           const out = await dispatcher(
             [{ ok: true, call }],
             turnTargetPathRef.current,
+            subAgentContext,
           );
           const first = out[0];
           if (first && first.ok) {

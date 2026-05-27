@@ -10,6 +10,9 @@ import {
   type AhwpToolCall,
   type AhwpToolResult,
 } from '@shared/ai-tools';
+import type { ProviderId } from '@shared/ai';
+import type { TaskMode } from '@shared/ai-modes';
+import { runSubAgent } from './sub-agent';
 // Phase 7 E2 — 본 file 이 사용하는 ViewerHandle 은 legacy StudioViewer 의
 // surface 였음. studio dir 폐기에 대비해 type 정의만 별도 file 로
 // 분리해 vendored (`./viewer-handle-types.ts`). rhwp-mode 가 default 라
@@ -48,6 +51,7 @@ async function runOne(
   viewerOrNull: ViewerHandle | null,
   call: AhwpToolCall,
   helper: BridgeIrHelper | null = null,
+  subAgentContext?: SubAgentContext,
 ): Promise<AhwpToolResult> {
   const viewer: ViewerHandle = viewerOrNull ?? NULL_VIEWER_STUB;
   try {
@@ -1595,6 +1599,48 @@ async function runOne(
           };
         }
       }
+      // 0.7.11 — Sub-agent dispatch. parent context (provider / model /
+      // parentMode / baseSystemPrompt) 가 inject 되지 않으면 거부.
+      // dispatcher 는 자기 자신 (runTools) 의 closure — sub-agent 가 tool
+      // 호출 시 같은 viewer / helper / context 사용 (재귀 차단은 runSubAgent
+      // 가 catalog 에서 runAgent 제외함으로 강제).
+      case 'runAgent': {
+        if (!subAgentContext) {
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: 'sub-agent-context-unavailable',
+          };
+        }
+        const a = call.args;
+        const subDispatcher = (
+          subItems: AhwpPreflightItem[],
+          subTargetPath?: string | null,
+        ): Promise<AhwpToolResult[]> => {
+          void subTargetPath; // sub-agent 는 parent 의 targetPath 만 사용
+          return runTools(viewer, subItems, helper, subAgentContext);
+        };
+        try {
+          const r = await runSubAgent({
+            prompt: a.prompt,
+            mode: a.mode ?? null,
+            maxTurns: a.maxTurns,
+            provider: subAgentContext.provider,
+            model: subAgentContext.model,
+            parentMode: subAgentContext.parentMode,
+            baseSystemPrompt: subAgentContext.baseSystemPrompt,
+            dispatcher: subDispatcher,
+            targetPath: subAgentContext.targetPath,
+          });
+          return { ok: true, tool: call.tool, data: r };
+        } catch (e) {
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: `runAgent-failed:${(e as Error).message ?? String(e)}`,
+          };
+        }
+      }
       default: {
         // The pre-flight validator narrows AhwpToolCall to the union, so
         // this is unreachable without a registry/type drift.
@@ -1623,10 +1669,25 @@ async function runOne(
  * so the user gets ONE undo entry for the whole AI-applied turn
  * (rather than N entries, one per op). The bracket holds even if some
  * ops throw — we always end the group in a finally. */
+/**
+ * Sub-agent context — `runAgent` case 가 sub-agent 를 spawn 하려면 parent
+ * 의 provider / model / mode / system prompt / dispatcher 필요. 본 매개
+ * 변수는 useChatStreaming 의 fireChat 가 매 turn 호출 시 inject. 없으면
+ * `runAgent` 호출은 reason='sub-agent-context-unavailable' 거부.
+ */
+export interface SubAgentContext {
+  provider: ProviderId;
+  model: string;
+  parentMode: TaskMode;
+  baseSystemPrompt: string;
+  targetPath: string | null;
+}
+
 export async function runTools(
   viewer: ViewerHandle | null,
   items: AhwpPreflightItem[],
   helper: BridgeIrHelper | null = null,
+  subAgentContext?: SubAgentContext,
 ): Promise<AhwpToolResult[]> {
   const out: AhwpToolResult[] = [];
   // Phase 7 E2c — rhwp-mode 에선 viewer 가 null 일 수 있음 (StudioViewer
@@ -1639,7 +1700,7 @@ export async function runTools(
         out.push({ ok: false, tool: item.tool, reason: item.reason });
         continue;
       }
-      out.push(await runOne(viewer, item.call, helper));
+      out.push(await runOne(viewer, item.call, helper, subAgentContext));
     }
   } finally {
     viewer?.endUndoGroup();
@@ -1866,6 +1927,13 @@ export function previewArgs(call: AhwpToolCall): string {
     case 'runCommand': {
       const c = call.args.command;
       return c.length > 40 ? c.slice(0, 40) + '…' : c;
+    }
+    // 0.7.11 — Sub-agent.
+    case 'runAgent': {
+      const p = call.args.prompt.replace(/\s+/g, ' ').trim();
+      const mode = call.args.mode ?? 'inherit';
+      const head = p.length > 40 ? p.slice(0, 40) + '…' : p;
+      return `[${mode}] ${head}`;
     }
   }
 }

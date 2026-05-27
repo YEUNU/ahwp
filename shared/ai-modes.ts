@@ -121,6 +121,8 @@ const FORM_FILL: ModeDefinition = {
     'searchWorkspaceOutlines',
     'readParagraphByPath',
     'switchTargetDoc',
+    // 0.7.11 — sub-agent (외부 정보 조사 위임 등)
+    'runAgent',
   ],
   promptFragment: `You are in **Form Fill Mode**. The document is a template (양식 / 보고서 / 신청서 / 점검표) with predefined cell slots. Your job is to fill those slots — NOT to author body text.
 
@@ -211,6 +213,8 @@ const CROSS_DOC_RESEARCH: ModeDefinition = {
     // 0.7.7 — 외부 웹 정보
     'webFetch',
     'webSearch',
+    // 0.7.11 — sub-agent 도 cross-doc-research 안에서 spawn 가능 (재귀 차단)
+    'runAgent',
     // 다른 doc 으로 라우팅 (write 는 mode 전환 후)
     'switchTargetDoc',
   ],

@@ -109,6 +109,11 @@ export const AHWP_TOOL_NAMES = [
   // 60s timeout + 32KB output cap + hardcoded blocklist (rm -rf, sudo 등).
   // catalog 노출은 enable 토글 ON + allowlist 비어있지 않을 때만.
   'runCommand',
+  // 0.7.11 — Sub-agent dispatch. AI 가 자기 turn 안에서 별도 sub-agent
+  // 호출. sub-agent 는 다른 mode / 도구 set 으로 자유롭게 작업 후 final
+  // text 만 parent 에 반환. context window 보존 + 복잡한 다단계 작업
+  // 위임. 재귀 차단 (sub-agent 의 catalog 에서 runAgent 제외).
+  'runAgent',
 ] as const;
 
 export type AhwpToolName = (typeof AHWP_TOOL_NAMES)[number];
@@ -550,6 +555,26 @@ export interface AhwpToolArgs {
     cwd?: string;
     /** Timeout (ms). 기본 60000, 최대 300000. */
     timeoutMs?: number;
+  };
+  // 0.7.11 — Sub-agent dispatch.
+  runAgent: {
+    /** Sub-agent 가 받는 task instruction. parent 가 명확한 목표 명시. */
+    prompt: string;
+    /** Sub-agent 의 mode. 없으면 parent mode 사용.
+     *  - 'cross-doc-research': 외부 검색 / 워크스페이스 read-only
+     *  - 'free-authoring': 모든 도구 사용 가능 (write 포함)
+     *  - 'form-fill': 셀 write 만 (양식 전용)
+     *  - 'body-edit': body text 편집 도구
+     */
+    mode?:
+      | 'cross-doc-research'
+      | 'free-authoring'
+      | 'form-fill'
+      | 'body-edit'
+      | 'table-manipulation'
+      | 'formatting';
+    /** Max turns (1-30, 기본 10). parent 의 agentMaxTurns 와 독립. */
+    maxTurns?: number;
   };
 }
 
