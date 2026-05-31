@@ -76,7 +76,7 @@ Channel naming is `domain:action` (`file:open`, `file:save`, `session:get`, `men
 
 ## Conventions
 
-- **Branches**: target `dev` for all PRs (`feat/*`, `fix/*`, `chore/*`); `main` is release-only. See `CONTRIBUTING.md`.
+- **Branches**: push work **straight to `dev` — no PR**. Commit `feat/*`/`fix/*`/`chore/*` work and push directly to `dev` (`main` stays release-only). The PR-to-`dev` workflow is retired; `CONTRIBUTING.md` predates this and is superseded on this point.
 - **Commits**: Conventional Commits (`feat(chat): …`, `fix(hwp): …`).
 - **Docs (압축 정책)**: 청크당 (a) `CHANGELOG.md`에 1-3줄 + (b) commit body에 디테일 + (c) `ROADMAP.md` 체크박스 토글만. **`PROGRESS.md`는 라운드/Phase 단위로만 일지 추가** — 청크별 작업 디테일은 `git log` + `git show <hash>`에 위임. `PROGRESS.md`를 매 청크마다 업데이트하지 말 것 (이전 패턴이라 누적되어 압축 작업 필요).
 - **Strict mode is non-negotiable** — `tsconfig.json` has `strict`, `noUnusedLocals`, `noUnusedParameters`, `noUncheckedSideEffectImports`. Don't disable; fix the type.
