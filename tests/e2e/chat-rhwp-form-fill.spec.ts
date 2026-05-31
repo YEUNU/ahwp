@@ -108,6 +108,11 @@ test.describe('Deterministic form-fill — fake AI getEmptyFormFields → fillFo
   test.beforeEach(async () => {
     launched = await launchApp({ env: { AHWP_E2E_FAKE_AI: '1' } });
     const { page } = launched;
+    // Own dialog handling so a diff-accept confirm doesn't trip Playwright's
+    // default auto-dismiss ("No dialog is showing" protocol error).
+    page.on('dialog', (d) => {
+      void d.accept().catch(() => {});
+    });
     await page.waitForLoadState('domcontentloaded');
     // provider=openai (fake adapter keeps the openai meta), plan-mode OFF so
     // the fillFormCells write auto-applies, fixture as active tab.
@@ -140,15 +145,14 @@ test.describe('Deterministic form-fill — fake AI getEmptyFormFields → fillFo
     await launched.close();
   });
 
-  // TODO(form-fill-det): held as fixme — the FORMFILL driver reaches step 2
-  // (getEmptyFormFields runs, fillFormCells fires) but the cell coords come
-  // through undefined: fillFormCells rejects with
-  // `cell[0].sectionIdx-not-non-negative-int`. Root cause is a field-name
-  // mismatch between getEmptyFormFields' `cellFields[]` element shape and the
-  // coord names fillFormCells requires (sectionIdx / parentParaIdx /
-  // controlIdx / cellIdx / cellParaIdx). Confirm the real element field names
-  // in src/features/rhwp-studio/bridge-ir-helper.ts (~L1201) and map them in
-  // electron/ai/providers/fake.ts's FORMFILL step-2, then flip back to test().
+  // TODO(form-fill-det): held as fixme. The coord mapping is fixed (fake.ts
+  // maps getEmptyFormFields' nested location.{sectionIndex,…} → fillFormCells'
+  // flat *Idx), so the tool chain runs and fillFormCells fires with valid
+  // coords. Remaining blocker is a Playwright harness issue: accepting the
+  // resulting diff card trips "Page.handleJavaScriptDialog: No dialog is
+  // showing" + stray teardown errors, even with a page.on('dialog') handler +
+  // try/catch. Resolve the diff-accept/dialog interaction (or assert the IR
+  // write directly without the Accept click) then flip back to test().
   test.fixme('FORMFILL driver writes a sentinel into the first empty cell', async () => {
     const { page } = launched;
     const sentinel = 'AHWPDET-' + Date.now().toString(36).toUpperCase();
@@ -163,46 +167,28 @@ test.describe('Deterministic form-fill — fake AI getEmptyFormFields → fillFo
     // The fake provider decodes this into the 2-tool chain.
     await sendChatPrompt(page, `FORMFILL:${sentinel}`, 90_000);
 
-    // fillFormCells write may surface as a diff/patches card; auto-accept any
-    // pending one (disabled = already auto-applied = normal).
+    // fillFormCells writes into the cell during tool execution; if a diff card
+    // is also shown, accept it (best-effort — the dialog handler swallows any
+    // confirm). The searchAllText assertion below is the source of truth.
     await page.waitForTimeout(500);
-    const acceptAll = page.getByTestId('diff-accept-all');
-    const acceptSingle = page.getByTestId('diff-accept-1');
-    if (
-      (await acceptAll.count()) > 0 &&
-      (await acceptAll.first().isEnabled())
-    ) {
-      await acceptAll.first().click();
-    } else if (
-      (await acceptSingle.count()) > 0 &&
-      (await acceptSingle.first().isEnabled())
-    ) {
-      await acceptSingle.first().click();
+    try {
+      const acceptAll = page.getByTestId('diff-accept-all');
+      const acceptSingle = page.getByTestId('diff-accept-1');
+      if (
+        (await acceptAll.count()) > 0 &&
+        (await acceptAll.first().isEnabled())
+      ) {
+        await acceptAll.first().click();
+      } else if (
+        (await acceptSingle.count()) > 0 &&
+        (await acceptSingle.first().isEnabled())
+      ) {
+        await acceptSingle.first().click();
+      }
+    } catch {
+      // diff already auto-applied or dialog race — ignore.
     }
     await page.waitForTimeout(2000);
-
-    // diag: surface the chat transcript + which tool cards rendered, so a
-    // failing run tells us where the chain broke (no card = tool never called;
-    // plan/차단 = write blocked; card present but no text = coords/parse wrong).
-    const msgs = await page
-      .locator('[data-testid="chat-message"]')
-      .allTextContents();
-    console.log('[formfill-debug] chat-message count:', msgs.length);
-    msgs.forEach((m, i) =>
-      console.log(
-        `[formfill-debug] msg ${i}:`,
-        m.replace(/\s+/g, ' ').slice(0, 400),
-      ),
-    );
-    const bodyText = await page.locator('body').innerText();
-    console.log(
-      '[formfill-debug] getEmptyFormFields card:',
-      bodyText.includes('getEmptyFormFields'),
-      '| fillFormCells card:',
-      bodyText.includes('fillFormCells'),
-      '| plan/차단:',
-      /plan mode|계획 모드|dry-run|차단/i.test(bodyText),
-    );
 
     const after = await readWasm<unknown[]>(page, 'searchAllText', [
       sentinel,

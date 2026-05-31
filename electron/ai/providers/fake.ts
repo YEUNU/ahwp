@@ -95,34 +95,37 @@ export const fakeProvider: Provider = {
         // first empty cell with the token.
         let cell:
           | {
-              sectionIdx: number;
-              parentParaIdx: number;
-              controlIdx: number;
-              cellIdx: number;
-              cellParaIdx: number;
+              location: {
+                sectionIndex: number;
+                paragraphIndex: number;
+                controlIndex: number;
+                cellIndex: number;
+                cellParagraphIndex: number;
+              };
             }
           | undefined;
         try {
           type CellRow = {
-            sectionIdx: number;
-            parentParaIdx: number;
-            controlIdx: number;
-            cellIdx: number;
-            cellParaIdx: number;
+            location: {
+              sectionIndex: number;
+              paragraphIndex: number;
+              controlIndex: number;
+              cellIndex: number;
+              cellParagraphIndex: number;
+            };
             isEmpty?: boolean;
           };
-          // The tool-result content may be the helper payload directly
-          // (`{cellFields}`) or wrapped (`{ok,data:{cellFields}}`) — handle both.
-          const data = JSON.parse(last) as {
-            cellFields?: CellRow[];
-            data?: { cellFields?: CellRow[] };
-          };
-          const fields = data.cellFields ?? data.data?.cellFields ?? [];
+          // getEmptyFormFields nests each cell's coords under `location` with
+          // `*Index` names; fillFormCells wants the flat `*Idx` form. The
+          // tool-result content is the helper payload (r.data) directly.
+          const data = JSON.parse(last) as { cellFields?: CellRow[] };
+          const fields = data.cellFields ?? [];
           cell = fields.find((f) => f.isEmpty) ?? fields[0];
         } catch {
           cell = undefined;
         }
         if (cell) {
+          const loc = cell.location;
           yield {
             type: 'tool-use',
             id: `call_${Date.now().toString(36)}`,
@@ -130,11 +133,11 @@ export const fakeProvider: Provider = {
             args: {
               cells: [
                 {
-                  sectionIdx: cell.sectionIdx,
-                  parentParaIdx: cell.parentParaIdx,
-                  controlIdx: cell.controlIdx,
-                  cellIdx: cell.cellIdx,
-                  cellParaIdx: cell.cellParaIdx,
+                  sectionIdx: loc.sectionIndex,
+                  parentParaIdx: loc.paragraphIndex,
+                  controlIdx: loc.controlIndex,
+                  cellIdx: loc.cellIndex,
+                  cellParaIdx: loc.cellParagraphIndex,
                   text: token,
                   mode: 'insert',
                 },
