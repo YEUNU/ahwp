@@ -31,7 +31,11 @@ export const READABLE_EXTENSIONS = [
   '.html',
   '.htm',
   '.xlsx',
-  '.xls',
+  // .xls (legacy BIFF8) 는 의도적으로 제외 — 추출기 (exceljs) 가 OOXML
+  // 전용이라 .xls 는 런타임에 throw 한다. "검증 못 하는 포맷은 선언하지
+  // 않는다" 원칙 (electron/files/readable-formats-binary.test.ts 가 선언
+  // 포맷마다 binary round-trip 검증). .xls 실지원은 kordoc parseXls 도입
+  // (검증 포함) 시 복원 예정.
 ] as const;
 
 export function isEditable(name: string): boolean {

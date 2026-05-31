@@ -134,4 +134,18 @@ describe('decideFormGuardNudge — Form-Fill 완료 guard (0.7.6 tightened)', ()
     });
     expect(r.shouldNudge).toBe(false);
   });
+
+  // 0.7.14 — 원칙 3 (의도적 빈칸 / 노-filler). empty-cells-remain nudge 가
+  // "전부 채워" 강제 대신 "값 없으면 빈칸, filler 금지" 정책을 담아야 함.
+  it('빈 셀 nudge 는 의도적 빈칸 + 노-filler 정책 포함 (원칙 3)', () => {
+    const r = decideFormGuardNudge({
+      ...BASE,
+      formState: { emptyCellsRemaining: 30, tableSummary: 'p=42 (30 empty)' },
+      getPageSvgCalled: true,
+    });
+    expect(r.shouldNudge).toBe(true);
+    expect(r.reason).toBe('empty-cells-remain');
+    expect(r.nudgeText).toContain('blank');
+    expect(r.nudgeText).toContain('filler');
+  });
 });

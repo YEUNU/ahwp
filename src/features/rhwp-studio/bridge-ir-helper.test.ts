@@ -1231,20 +1231,22 @@ describe('BridgeIrHelper — Phase D2a', () => {
     expect(scoped.cellFields[0].labelHint).toBe('주소');
   });
 
-  // 0.6.16 — regression: parentParaIdx 가 표를 anchor 하지 않는
-  // paragraph (heading 등) 일 때, 이전 구현은 inventory 까지 비워 AI 가
-  // "양식 빈 셀 없네" 오판 → body insertText fallback (양식 표가 아닌
-  // 본문에 텍스트 dump). 새 구현은 inventory 가 항상 섹션 전체 표 목록을
-  // 보여줘 AI 가 scope 잘못 잡았음을 self-correct.
-  it('getEmptyFormFields with parentParaIdx pointing to a non-table paragraph still returns full tableInventory', async () => {
+  // 0.7.15 — regression: parentParaIdx 가 표를 anchor 하지 않는 paragraph
+  // (heading 등) 일 때. 0.6.16 은 inventory 만 살렸지만 cellFields 는 []
+  // 이고 (게다가 out-of-scope 표의 emptyCells 가 0 으로 남아) AI 가 "양식
+  // 빈 셀 없네" 오판 → body insertText fallback (양식 표가 아닌 본문에
+  // 텍스트 dump). 0.7.15 는 (1) inventory.emptyCells 를 scope 와 무관하게
+  // 항상 truthful 하게 채우고 (2) 잘못된 scope 면 cellFields 를 unscoped 로
+  // self-heal — 잘못된 index 한 번으로 진짜 셀이 나온다.
+  it('getEmptyFormFields self-heals an invalid (non-table) parentParaIdx: truthful inventory + unscoped cellFields', async () => {
     const bridge = {
       invokeWasm: vi.fn(async (fn: string, args: unknown[]) => {
         if (fn === 'getSectionCount') return 1;
         if (fn === 'getParagraphCount') return 10;
         if (fn === 'getTableDimensions') {
           const [, p, ctrl] = args as [number, number, number];
-          // 표는 paragraph 3, 7 에만 (사용자가 user-reported regression 에서
-          // 본 케이스와 유사: heading 단락(5)에는 표가 없음).
+          // 표는 paragraph 3, 7 에만 (user-reported regression 과 유사:
+          // heading 단락(5)에는 표가 없음). 둘 다 빈 셀 2개씩.
           if (p === 3 && ctrl === 0)
             return JSON.stringify({
               ok: true,
@@ -1278,17 +1280,85 @@ describe('BridgeIrHelper — Phase D2a', () => {
     } as unknown as import('@/lib/rhwp-bridge').RhwpBridge;
     const h = new BridgeIrHelper(bridge);
 
-    // 사용자가 본 회귀: parentParaIdx=5 (heading) — 표 없음.
+    // 사용자가 본 회귀: parentParaIdx=5 (heading) — 표 없음 = invalid scope.
     const result = await h.getEmptyFormFields({ parentParaIdx: 5 });
 
-    // cellFields 는 비어있지만 (scope 가 5 라 잘못된 paragraph), inventory
-    // 는 전체 2개 표를 보여준다. AI 는 이를 보고 paragraphIdx=3 / 7 로
-    // 재호출하면 됨을 안다.
-    expect(result.cellFields).toHaveLength(0);
+    // inventory 는 전체 2개 표 + 각 표의 진짜 빈 셀 수 (각 2개) 를 보여준다.
     expect(result.tableInventory).toHaveLength(2);
     expect(result.tableInventory.map((t) => t.paragraphIndex).sort()).toEqual([
       3, 7,
     ]);
+    for (const entry of result.tableInventory) {
+      expect(entry.emptyCells).toBe(2);
+    }
+    // cellFields 는 unscoped 로 self-heal: 두 표의 빈 셀 4개 모두.
+    expect(result.cellFields).toHaveLength(4);
+    expect(
+      new Set(result.cellFields.map((f) => f.location.paragraphIndex)),
+    ).toEqual(new Set([3, 7]));
+  });
+
+  // 0.7.15 — 반대 케이스: parentParaIdx 가 진짜 표를 anchor 하지만 그 표가
+  // 가득 차 있으면 (빈 셀 0개) cellFields 는 정확히 [] 여야 한다 (self-heal
+  // fallback 금지 — 표는 진짜고 그냥 꽉 찼을 뿐). inventory 는 그래도 다른
+  // 표의 빈 셀을 truthful 하게 보여줘 AI 가 scope 를 옮길 수 있다.
+  it('getEmptyFormFields returns [] for a real-but-full scoped table while inventory stays truthful', async () => {
+    const bridge = {
+      invokeWasm: vi.fn(async (fn: string, args: unknown[]) => {
+        if (fn === 'getSectionCount') return 1;
+        if (fn === 'getParagraphCount') return 10;
+        if (fn === 'getTableDimensions') {
+          const [, p, ctrl] = args as [number, number, number];
+          // p=3 표는 가득 참, p=7 표는 빈 셀 있음.
+          if (p === 3 && ctrl === 0)
+            return JSON.stringify({
+              ok: true,
+              rowCount: 1,
+              colCount: 2,
+              cellCount: 2,
+            });
+          if (p === 7 && ctrl === 0)
+            return JSON.stringify({
+              ok: true,
+              rowCount: 1,
+              colCount: 2,
+              cellCount: 2,
+            });
+          return JSON.stringify({ ok: false });
+        }
+        if (fn === 'getCellInfo') {
+          const [, , , cellIdx] = args as [number, number, number, number];
+          return JSON.stringify({
+            ok: true,
+            row: 0,
+            col: cellIdx,
+            rowSpan: 1,
+            colSpan: 1,
+          });
+        }
+        if (fn === 'getTextInCell') {
+          const [, p, , c] = args as [number, number, number, number];
+          if (p === 3) return c === 0 ? '회사명' : '한컴'; // 가득 참
+          if (p === 7) return c === 0 ? '주소' : ''; // c=1 빈 셀
+          return '';
+        }
+        if (fn === 'getCellCharPropertiesAt') return JSON.stringify({});
+        throw new Error(`unmocked: ${fn}`);
+      }),
+    } as unknown as import('@/lib/rhwp-bridge').RhwpBridge;
+    const h = new BridgeIrHelper(bridge);
+
+    // 진짜 표 (p=3) 인데 가득 참 → valid scope, fallback 없음 → cellFields [].
+    const result = await h.getEmptyFormFields({ parentParaIdx: 3 });
+    expect(result.cellFields).toHaveLength(0);
+
+    // inventory 는 두 표 모두 + truthful 한 빈 셀 수 (p=3:0, p=7:1).
+    expect(result.tableInventory).toHaveLength(2);
+    const byPara = new Map(
+      result.tableInventory.map((t) => [t.paragraphIndex, t.emptyCells]),
+    );
+    expect(byPara.get(3)).toBe(0);
+    expect(byPara.get(7)).toBe(1);
   });
 
   it('getEmptyFormFields keeps counting emptyCells in tableInventory after maxResults cap', async () => {

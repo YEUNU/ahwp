@@ -38,7 +38,6 @@ describe('shared/file-formats — predicates', () => {
         'a.html',
         'a.htm',
         'a.xlsx',
-        'a.xls',
       ];
       for (const name of cases) {
         expect(isReadable(name)).toBe(true);
@@ -52,6 +51,15 @@ describe('shared/file-formats — predicates', () => {
       expect(isReadable('foo')).toBe(false);
       // edge — hidden file with HWP-like name shouldn't pass without ext
       expect(isReadable('.hwp.bak')).toBe(false);
+    });
+
+    // 0.7.16 — .xls (legacy BIFF8) 는 의도적으로 미지원. 추출기 (exceljs)
+    // 가 OOXML 전용이라 런타임 throw → "검증 못 하는 포맷은 선언 안 함".
+    // .xlsx 는 그대로 readable 이어야 함 (회귀 가드).
+    it('rejects legacy .xls (unsupported) but keeps .xlsx', () => {
+      expect(isReadable('budget.xls')).toBe(false);
+      expect(isReadable('BUDGET.XLS')).toBe(false);
+      expect(isReadable('budget.xlsx')).toBe(true);
     });
 
     it('case-insensitive across all formats', () => {

@@ -285,3 +285,113 @@ export const getEmptyFormFields = defineTool<
     return { ok: true, args: out };
   },
 });
+
+export const fillFormCells = defineTool<
+  'fillFormCells',
+  AhwpToolArgs['fillFormCells']
+>({
+  name: 'fillFormCells',
+  description:
+    "Fill many table cells in ONE call — the batch primitive for form-fill, strongly preferred over emitting many single insertTextInCell / replaceTextInCell calls. Pass `cells`: an array where each entry carries its OWN full coordinates (sectionIdx / parentParaIdx / controlIdx / cellIdx / cellParaIdx, copied VERBATIM from getEmptyFormFields) plus `text`. Per entry, `mode` picks the op: 'insert' (default — write into an empty value-slot, like insertTextInCell) or 'replace' (atomically clear then write, like replaceTextInCell — for instruction placeholders or fixing a prior value; text:'' clears). Optional `charOffset` (insert only, default 0) and `expectedFormat` (echo the cell's expectedFormat from getEmptyFormFields to enable the same per-cell format check). One call fills the whole batch in a single turn regardless of how many parallel tool_calls your model can emit, so a large form does not exhaust the turn budget. Cell coordinates never shift when text is written, so pass every still-empty cell from one getEmptyFormFields response in a single call. Returns { filled, failed, failures: [{cellIdx, reason}] } — retry only the failed cells. Max 200 cells per call.",
+  inputSchema: {
+    type: 'object',
+    properties: {
+      cells: {
+        type: 'array',
+        minItems: 1,
+        // Literal 200 = AHWP_TOOL_LIMITS.maxFormCellsPerCall. inputSchema is
+        // built at module load; reading the const eagerly here can hit a
+        // circular-init `undefined` (the const lives in ai-tools, which
+        // re-exports this registry). validate() enforces the real limit at
+        // runtime, where the const is safe.
+        maxItems: 200,
+        description:
+          'One entry per cell to fill. Coordinates VERBATIM from getEmptyFormFields.',
+        items: {
+          type: 'object',
+          properties: {
+            sectionIdx: { type: 'integer', minimum: 0 },
+            parentParaIdx: { type: 'integer', minimum: 0 },
+            controlIdx: { type: 'integer', minimum: 0 },
+            cellIdx: { type: 'integer', minimum: 0 },
+            cellParaIdx: { type: 'integer', minimum: 0 },
+            charOffset: { type: 'integer', minimum: 0 },
+            text: { type: 'string', maxLength: 4096 },
+            mode: {
+              type: 'string',
+              enum: ['insert', 'replace'],
+              description:
+                "'insert' (default) for empty value-slots; 'replace' to clear+write (instruction placeholders / fixes).",
+            },
+            expectedFormat: {
+              type: 'string',
+              enum: ['marker', 'number', 'currency', 'date', 'text'],
+              description:
+                "Echo the cell's expectedFormat from getEmptyFormFields.",
+            },
+          },
+          required: [
+            'sectionIdx',
+            'parentParaIdx',
+            'controlIdx',
+            'cellIdx',
+            'cellParaIdx',
+            'text',
+          ],
+        },
+      },
+    },
+    required: ['cells'],
+  },
+  validate(raw) {
+    const rawCells = raw.cells;
+    if (!Array.isArray(rawCells))
+      return { ok: false, reason: 'cells-not-array' };
+    if (rawCells.length === 0) return { ok: false, reason: 'cells-empty' };
+    if (rawCells.length > AHWP_TOOL_LIMITS.maxFormCellsPerCall)
+      return { ok: false, reason: 'cells-too-many' };
+    const out: AhwpToolArgs['fillFormCells']['cells'] = [];
+    for (let i = 0; i < rawCells.length; i++) {
+      const c = rawCells[i] as Record<string, unknown>;
+      const v = nonNegInts(c, [
+        'sectionIdx',
+        'parentParaIdx',
+        'controlIdx',
+        'cellIdx',
+        'cellParaIdx',
+      ]);
+      if (!v.ok) return { ok: false, reason: `cell[${i}].${v.reason}` };
+      const text = c.text;
+      if (typeof text !== 'string')
+        return { ok: false, reason: `cell[${i}].text-not-string` };
+      if (byteLen(text) > AHWP_TOOL_LIMITS.maxTextBytes)
+        return { ok: false, reason: `cell[${i}].text-too-large` };
+      let mode: 'insert' | 'replace' | undefined;
+      if (c.mode !== undefined) {
+        if (c.mode === 'insert' || c.mode === 'replace') mode = c.mode;
+        else return { ok: false, reason: `cell[${i}].mode-invalid` };
+      }
+      let charOffset: number | undefined;
+      if (c.charOffset !== undefined) {
+        const n = coerceNonNegInt(c.charOffset);
+        if (n === null)
+          return { ok: false, reason: `cell[${i}].charOffset-invalid` };
+        charOffset = n;
+      }
+      const ef = checkExpectedFormat(c, text);
+      if (!ef.ok) return { ok: false, reason: `cell[${i}].${ef.reason}` };
+      const entry: AhwpToolArgs['fillFormCells']['cells'][number] = {
+        ...(v.value as Omit<
+          AhwpToolArgs['fillFormCells']['cells'][number],
+          'text' | 'mode' | 'charOffset' | 'expectedFormat'
+        >),
+        text,
+      };
+      if (mode !== undefined) entry.mode = mode;
+      if (charOffset !== undefined) entry.charOffset = charOffset;
+      if (ef.format !== undefined) entry.expectedFormat = ef.format;
+      out.push(entry);
+    }
+    return { ok: true, args: { cells: out } };
+  },
+});

@@ -25,9 +25,9 @@ const ROUTER_TIMEOUT_MS = 30_000;
 
 /** 매 turn 항상 포함되는 도구 — 위치 / 구조 / 양식 파악과 가장 기본적인
  *  본문 편집은 어떤 작업에서도 흔히 필요. router LLM 이 빠뜨려도 이 set
- *  은 보장. getEmptyFormFields + insertTextInCell 는 form-fill workflow
- *  의 두 축 — 둘 다 빠지면 모델이 patches block (text) 으로 우회하면서
- *  agent loop 가 한 turn 만에 종료되는 회귀가 생김 (0.6.14 가드). */
+ *  은 보장. getEmptyFormFields + fillFormCells (+ insertTextInCell) 는
+ *  form-fill workflow 의 축 — 빠지면 모델이 patches block (text) 으로
+ *  우회하면서 agent loop 가 한 turn 만에 종료되는 회귀가 생김 (0.6.14 가드). */
 const ALWAYS_INCLUDE: readonly AhwpToolName[] = [
   'getCaretPosition',
   'getDocumentOutline',
@@ -36,6 +36,7 @@ const ALWAYS_INCLUDE: readonly AhwpToolName[] = [
   'findInDocument',
   'insertText',
   'insertTextInCell',
+  'fillFormCells',
   'applyHtml',
 ];
 

@@ -6,6 +6,104 @@
 
 ## [Unreleased]
 
+## [0.7.17] - 2026-05-31
+
+### Changed — kordoc 기반 DOCX/XLSX 추출 (mammoth/exceljs fallback)
+
+비-HWP 읽기 경로의 DOCX/XLSX 텍스트 추출을 kordoc (exact-pin `2.9.0`) 우선으로
+교체. kordoc 은 표/colspan/병합셀 구조를 markdown 파이프 표로 보존 — 기존
+mammoth (DOCX raw text) / exceljs 가 평면화하던 표 격자를 살려 AI 컨텍스트
+품질을 높인다 (colspan 헤더는 spanned 열에 걸쳐 반복되어 열 정렬 유지).
+
+- **품질 업그레이드는 fallback 뒤에 둠** (정확성의 hard dependency 아님):
+  DOCX/XLSX 모두 kordoc 을 먼저 시도하고, throw 하거나 빈/degenerate 출력을
+  내면 `console.warn` + `meta.warning` 후 기존 mammoth/exceljs 경로로 fallback.
+  kordoc 은 9 주 / 44 버전 churn-heavy 라이브러리 — worst case 가 "오늘의 동작"
+  이라, 실 정부 양식 검증 게이트를 아직 못 돌리는 상황의 안전망이 된다.
+- **ESM-only**: kordoc 의 .cjs 빌드가 `import.meta` 를 포함해 `require` 가
+  깨짐 → @rhwp/core 와 동일하게 `await import('kordoc')` dynamic import +
+  vite.config.ts external 처리.
+- **범위 = DOCX + XLSX 만**: PDF 는 kordoc 제외 (합성 PDF 에 빈 blocks 반환) —
+  extractPdf 는 pdf-parse 유지. `.xls` (legacy BIFF8) 도 의도적 미지원 유지
+  (0.7.16). 매핑: markdown→`text`, heading block→`headings`, block list→`chunks`.
+
+단위 테스트 추가 (colspan 표 DOCX 구조 보존 / 멀티시트 XLSX heading+행 /
+kordoc 실패 시 mammoth·exceljs fallback + meta.warning). attribution: kordoc MIT.
+
+## [0.7.16] - 2026-05-31
+
+### Fixed — 포맷 계약: 광고했지만 깨진 .xls 제거
+
+`.xls` (legacy BIFF8) 가 READABLE_EXTENSIONS 에 선언돼 폴더 트리·AI 툴
+설명에 "지원"으로 노출됐지만, 추출기 (exceljs) 는 OOXML 전용이라 실제 .xls
+는 런타임에 모호한 jszip "not a zip" 에러로 throw 했음 (DOA). "검증 못 하는
+포맷은 선언하지 않는다" 원칙에 따라 `.xls` 를 READABLE_EXTENSIONS / detectFamily
+/ FolderTree 아이콘에서 제거 → 이제 명확한 "unsupported format" 으로 거부.
+extractSpreadsheet 에도 방어 가드 추가. 회귀 테스트로 계약 고정 (.xls 미지원,
+.xlsx 유지). 실제 .xls 지원은 kordoc parseXls 도입 (검증 포함) 시 복원 예정.
+
+### Changed — form-fill 라벨/마커 추출 정확도 (kordoc 차용 휴리스틱)
+
+kordoc (MIT) 의 필드 추출 휴리스틱을 코드 레벨로 차용 (라이브러리 의존성
+추가 없음):
+
+- **P1 — 라벨 정규화** (`normalizeLabelText`): 표 헤더/행 라벨의 꼬리 콜론
+  ("성명:" → "성명") 과 각주 위첨자 ("등록기준지²" → "등록기준지") 제거.
+  labelHint / rowLabel / columnHeader 가 모두 이 경로를 타므로 한 곳에서
+  정규화. 문장 중간 콜론은 보존.
+- **P2 — 체크박스 글리프 marker 인식**: `□ ☐ ☑ ■ ✔ ✅` 를 marker 컬럼
+  신호로 추가 (기존엔 명시적 "(O/X)" 표기만 감지). marker 검증 char-class
+  에도 이 글리프들 + ✔(U+2714) 추가 — 이전엔 모델이 "☑" 를 쓰면 거부됐음.
+  헤더에 신호가 없어도 셀 자체에 체크박스 글리프가 있으면 marker 로 승격.
+
+단위 테스트 추가 (form-format P1/P2 + 포맷 계약). attribution: kordoc MIT.
+
+## [0.7.15] - 2026-05-31
+
+### Fixed — getEmptyFormFields 잘못된 scope 가 "빈 칸 없음" 오판 유발
+
+양식 문서(빈 셀 수천 개)인데도 AI 가 "채울 빈 칸이 없다"며 포기하던 버그.
+원인: `getEmptyFormFields` 를 표가 없는 `parentParaIdx` 로 호출하면 scope
+게이트가 모든 셀 작업을 건너뛰어 `cellFields:[]` + 모든 `tableInventory[]
+.emptyCells:0` 반환 → form-guard 의 `emptyCellsRemaining` 도 0 → 침묵. prefix
+`[form: N tables, M empty cells]` 는 unscoped 라 계속 form 모드 신호를 줘서
+"prefix 는 form, scan 은 0" 불일치 발생. (headless @rhwp/core 재현: 실제
+템플릿 64표/6752셀/4039 빈칸인데 비-표 문단 scope → 0.)
+
+수정 (`bridge-ir-helper.ts`): (1) `emptyCells` 카운트를 scope 무관하게 항상
+누적 → inventory 가 항상 truthful. (2) `parentParaIdx` 가 어떤 표도 anchor
+하지 않으면 (cheap `getTableDimensions` 사전 검사) effectiveScope 를 undefined
+로 낮춰 cellFields 를 unscoped 로 self-heal — 잘못된 index 한 번에 실제 셀
+반환. 실재하지만 꽉 찬 표 scope 는 그대로 `cellFields:[]` (fallback 안 함).
+회귀 테스트 2개 추가. 전체 unscoped 스캔 13ms (성능 영향 무시 가능).
+
+## [0.7.14] - 2026-05-31
+
+### Changed — form-fill 내용 일관성 (의도적 빈칸 / 노-filler)
+
+빈 셀을 무조건 채워 filler(O/X·0·미운영 등)를 박던 문제. prompt + auto-continue
+nudge + form-fill mode 에 일관성 3원칙 명문화: (1) includeFilled 로 읽고 상호
+참조 셀 정합성 수정, (2) 목표와 모순되는 기존값을 replaceTextInCell 로 덮어쓰기/
+삭제, (3) 진짜 값이 없으면 빈칸 — filler 금지. guard nudge 가 "전부 채워" 강제
+대신 빈칸 허용·filler 금지를 전달. form-guard 단위 테스트에 원칙 3 케이스 추가.
+
+## [0.7.13] - 2026-05-31
+
+### Added — fillFormCells (bulk cell fill)
+
+form-fill 이 큰 표(예: ~150 빈 셀)에서 turn cap(50)을 초과하던 문제 수정.
+원인: 프롬프트가 "turn 당 5셀 + 배치마다 getEmptyFormFields 재스캔"을 지시
+→ 실효 ~2.5셀/turn. 셀 텍스트 삽입은 다른 셀 좌표를 바꾸지 않으므로 재스캔은
+순수 낭비였음.
+
+- `fillFormCells` 신규 write 도구 — `cells[]` 배열로 다수 셀을 한 tool
+  call(= 한 turn)에 채움. 셀별 `mode`('insert'/'replace') · `charOffset` ·
+  `expectedFormat`. 모델의 parallel tool_call 상한과 무관하게 batch 보장
+  (최대 200셀/call). `{ filled, failed, failures }` 반환.
+- 프롬프트 + auto-continue 넛지(`prompts.ts` / `ai-modes.ts` / `form-guard.ts`)
+  를 "한 read → fillFormCells 로 전체 batch → 끝에 1회 검증"으로 재작성.
+  "up to 5" / 배치마다 재스캔 제거. 라우터 `ALWAYS_INCLUDE` 에 추가.
+
 ## [0.7.12] - 2026-05-27
 
 ### Added — form-fill column semantics (rowLabel / columnHeader / expectedFormat)

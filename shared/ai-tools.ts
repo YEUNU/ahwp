@@ -73,6 +73,8 @@ export const AHWP_TOOL_NAMES = [
   'insertTextInCell',
   // 0.6.15 — atomic replace (placeholder/예시문 제거 + 새 값) + modify workflow
   'replaceTextInCell',
+  // 0.7.13 — bulk cell fill (다수 셀 1 call = 1 turn)
+  'fillFormCells',
   // Phase 3 chunk 51 — read-only Agent tools (양식 매칭 / 위치 결정)
   'getDocumentOutline',
   'getDocumentSummary',
@@ -465,6 +467,26 @@ export interface AhwpToolArgs {
     /** 셀의 expectedFormat (getEmptyFormFields 결과에서 그대로 echo). */
     expectedFormat?: ExpectedFormat;
   };
+  // 0.7.13 — bulk cell fill. form-fill turn 예산 보호: 다수 셀을 한 tool
+  // call 로 채워 단일 insert/replace N회(= N turn)를 1회로 압축. 각 cell 이
+  // 자기 좌표를 모두 보유 (한 form 이 여러 표/control 에 걸쳐 hoist 불가).
+  fillFormCells: {
+    cells: {
+      sectionIdx: number;
+      parentParaIdx: number;
+      controlIdx: number;
+      cellIdx: number;
+      cellParaIdx: number;
+      text: string;
+      /** 'insert' (default; value-slot 채우기) | 'replace' (instruction
+       *  placeholder 교체 / 기존값 수정; atomic delete+insert). */
+      mode?: 'insert' | 'replace';
+      /** insert 시 삽입 위치. default 0. mode='replace' 에선 무시. */
+      charOffset?: number;
+      /** 셀의 expectedFormat (getEmptyFormFields 결과에서 echo). */
+      expectedFormat?: ExpectedFormat;
+    }[];
+  };
   // Phase 3 chunk 51 — read-only Agent tools
   getDocumentOutline: Record<string, never>;
   getDocumentSummary: Record<string, never>;
@@ -622,6 +644,9 @@ export type AhwpToolResult =
 /** Hard ceilings — anything bigger is rejected before dispatch. */
 export const AHWP_TOOL_LIMITS = {
   maxOpsPerBlock: 50,
+  /** 0.7.13 — fillFormCells 한 호출당 셀 수 상한. getEmptyFormFields 의
+   *  default maxResults(200) 와 맞춰 큰 표도 한 read→한 fill 로 처리. */
+  maxFormCellsPerCall: 200,
   maxHtmlBytes: 64 * 1024,
   maxTextBytes: 4 * 1024,
   maxNameBytes: 256,

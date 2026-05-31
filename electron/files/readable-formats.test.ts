@@ -145,3 +145,24 @@ describe('readable-formats — unknown extension', () => {
     await expect(extractText(fp)).rejects.toThrow(/unsupported format/);
   });
 });
+
+// 0.7.16 — 포맷 계약: .xls (legacy BIFF8) 는 READABLE_EXTENSIONS 에서 빠졌고
+// detectFamily 가 'unknown' 으로 보내므로 extractText 가 "unsupported format"
+// 으로 throw 해야 한다 (exceljs 의 모호한 "not a zip" 이 아니라). 이것이
+// "검증 못 하는 포맷은 선언하지 않는다" 계약의 회귀 가드.
+describe('readable-formats — legacy .xls is unsupported (format contract)', () => {
+  it('detectFamily(.xls) is not spreadsheet', () => {
+    expect(detectFamily('a.xls')).not.toBe('spreadsheet');
+    expect(detectFamily('a.xls')).toBe('unknown');
+    // .xlsx 는 그대로 spreadsheet (회귀 가드)
+    expect(detectFamily('a.xlsx')).toBe('spreadsheet');
+  });
+
+  it('extractText(.xls) throws a clear unsupported-format error (not a jszip error)', async () => {
+    const fp = await writeTemp('budget.xls', 'not really a spreadsheet');
+    // unsupported-format 경로 — exceljs 의 "Can't find end of central directory"
+    // 같은 모호한 에러가 아니라 명확한 거부.
+    await expect(extractText(fp)).rejects.toThrow(/unsupported format/);
+    await expect(extractText(fp)).rejects.not.toThrow(/zip|central directory/i);
+  });
+});

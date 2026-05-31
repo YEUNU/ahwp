@@ -26,7 +26,11 @@ export default defineConfig({
               // dependencies into the packed app).
               // better-sqlite3 ships native bindings (.node) — must run
               // from node_modules unbundled, same reasoning as @rhwp/core
-              external: ['@rhwp/core', 'better-sqlite3'],
+              // kordoc is ESM-only and dynamically imported (electron/files/
+              // readable-formats.ts); its .cjs build contains `import.meta` so
+              // bundling/requiring it breaks — keep external so Node resolves
+              // the ESM entry from node_modules at runtime, same as @rhwp/core
+              external: ['@rhwp/core', 'better-sqlite3', 'kordoc'],
               output: {
                 entryFileNames: 'main.js',
               },

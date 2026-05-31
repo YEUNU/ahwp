@@ -18,7 +18,12 @@
  */
 import type { RhwpBridge } from '@/lib/rhwp-bridge';
 import type { RhwpCaretPosition, RhwpSearchHit } from '@shared/rhwp-bridge';
-import { inferExpectedFormat, type ExpectedFormat } from '@shared/form-format';
+import {
+  inferExpectedFormat,
+  normalizeLabelText,
+  CHECKBOX_GLYPH_RE,
+  type ExpectedFormat,
+} from '@shared/form-format';
 
 /** wasm-bridge 의 write op 들이 돌려주는 status JSON 의 공통 모양. */
 interface IrOpResult {
@@ -1351,7 +1356,10 @@ export class BridgeIrHelper {
     ): Promise<{ text: string; cellIdx: number } | null> => {
       try {
         const t = await this.getTextInCell(s, p, ctrl, cellIdx, 0, 0, 200);
-        const trimmed = t.replace(/\s+/g, ' ').trim();
+        // 0.7.16 — 꼬리 콜론 / 각주 위첨자 strip (kordoc 차용). "성명:" →
+        // "성명", "등록기준지²" → "등록기준지". labelHint / rowLabel /
+        // columnHeader 가 모두 이 경로를 타므로 한 곳에서 정규화.
+        const trimmed = normalizeLabelText(t);
         if (!trimmed) return null;
         return { text: trimmed.slice(0, LABEL_MAX), cellIdx };
       } catch {
@@ -1374,11 +1382,38 @@ export class BridgeIrHelper {
     // 이전: parentParaIdx=0 / 5 처럼 표가 없는 단락으로 좁히면 inventory
     // 까지 [] 가 되어 AI 가 "양식 빈 셀 없네" 오판 → body insertText
     // fallback (양식 표에 안 들어가고 본문에 들어감) 회귀가 있었음.
+
+    // 0.7.15 — `filterParentPara` 가 표를 anchor 하지 않으면 (e.g. AI 가
+    // heading / non-table 단락을 잘못 넘김) cellFields 가 [] 로 나와 AI 가
+    // "양식 빈 셀 없네" 오판하던 버그. 잘못된 scope 면 effectiveScope 를
+    // undefined 로 낮춰 cellFields 를 unscoped 로 self-heal — 한 번의 호출
+    // 로 진짜 셀이 나온다. 실제 표를 anchor 하면 (빈 셀이 0개여도) scope
+    // 유지 → 그 표의 cellFields (가득 찬 표면 정확히 []). anchor 판정은
+    // getTableDimensions 만 도는 싼 pre-pass (per-cell read 없음).
+    let effectiveScope = filterParentPara;
+    if (filterParentPara !== undefined) {
+      let anchorsTable = false;
+      for (
+        let s = sectionStart;
+        s < sectionEnd && s < sectionCount && !anchorsTable;
+        s++
+      ) {
+        for (let ctrl = 0; ctrl < MAX_CTRLS_PER_PARA && !anchorsTable; ctrl++) {
+          const probe = await this.invokeRead<string | object>(
+            'getTableDimensions',
+            [s, filterParentPara, ctrl],
+          );
+          if (parseTableDims(probe)) anchorsTable = true;
+        }
+      }
+      if (!anchorsTable) effectiveScope = undefined;
+    }
+
     for (let s = sectionStart; s < sectionEnd && s < sectionCount; s++) {
       const paraCount = await this.getParagraphCount(s);
       for (let p = 0; p < paraCount; p++) {
         const inCellScope =
-          filterParentPara === undefined || filterParentPara === p;
+          effectiveScope === undefined || effectiveScope === p;
         for (let ctrl = 0; ctrl < MAX_CTRLS_PER_PARA; ctrl++) {
           const raw = await this.invokeRead<string | object>(
             'getTableDimensions',
@@ -1408,21 +1443,29 @@ export class BridgeIrHelper {
             tableInventory.push(tableEntry);
           }
 
-          // Cell-level work (grid map + per-cell scan) 는 scope 제한.
-          // 비싼 work 라 out-of-scope 표는 건너뛴다 — inventory 만 채워서
-          // AI 가 "scope 잘못됐다" self-correct 가능.
-          if (!inCellScope) continue;
+          // 0.7.15 — emptyCells 카운트 (아래 per-cell 루프) 는 scope 와 무관
+          // 하게 항상 돌려 tableInventory 를 truthful 하게 유지한다 (out-of-
+          // scope 표도 진짜 빈 셀 수가 보임 → AI / form-guard 가 self-correct).
+          // 비싼 라벨/charShape 일감 (grid map 빌드 + 셀별 push) 만 scope 로
+          // 제한. full 셀 스캔 자체는 싸다 (headless: 64-table / 6752-cell
+          // 템플릿 전체 ~13ms). inventory 는 여전히 TABLE_INVENTORY_MAX 개
+          // 표까지만 (emptyCells 카운트도 tableEntry 있을 때만 누적).
 
           // (row,col) → cellIdx grid map. 병합된 표에서 진짜 인접 셀을
           // 찾기 위함. cellCount 가 크면 (>MAX_CELLS_FOR_GRID_MAP) 비용
           // 회피를 위해 빌드를 건너뛴다 — 결과적으로 labelHint 가 비고,
-          // AI 는 currentText / 주변 paragraph 텍스트로 판단.
+          // AI 는 currentText / 주변 paragraph 텍스트로 판단. out-of-scope
+          // 표는 라벨이 필요 없으니 grid map 도 건너뛴다.
           let cellInfoByIdx: Map<
             number,
             { row: number; col: number; rowSpan: number; colSpan: number }
           > | null = null;
           let gridMap: Map<string, number> | null = null;
-          if (cellCount > 0 && cellCount <= MAX_CELLS_FOR_GRID_MAP) {
+          if (
+            inCellScope &&
+            cellCount > 0 &&
+            cellCount <= MAX_CELLS_FOR_GRID_MAP
+          ) {
             cellInfoByIdx = new Map();
             gridMap = new Map();
             for (let c = 0; c < cellCount; c++) {
@@ -1519,6 +1562,10 @@ export class BridgeIrHelper {
             // emptyCells 카운트는 inventory 정확도 위해 항상 누적.
             if (empty && tableEntry) tableEntry.emptyCells++;
 
+            // 0.7.15 — out-of-scope 표는 여기서 끝 (카운트만). cellFields /
+            // 라벨 / charShape 같은 비싼 enrich 는 in-scope 표만.
+            if (!inCellScope) continue;
+
             // includeFilled 가 false 면 채워진 셀은 결과 / 라벨 처리 모두 skip.
             if (!empty && !includeFilled) continue;
 
@@ -1581,6 +1628,12 @@ export class BridgeIrHelper {
               }
               if (columnHeader || rowLabel) {
                 expectedFormat = inferExpectedFormat(columnHeader, rowLabel);
+              }
+              // 0.7.16 — 헤더에 마커 신호가 없어도 셀 자체 텍스트에 체크박스
+              // 글리프 (□ ☐ ☑ ...) 가 있으면 marker 로 승격 (kordoc 차용).
+              // 헤더 없는 체크박스 행 ("□ 해당  □ 비해당") 대응.
+              if (expectedFormat === 'text' && CHECKBOX_GLYPH_RE.test(txt)) {
+                expectedFormat = 'marker';
               }
             }
 

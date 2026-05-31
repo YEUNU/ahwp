@@ -38,6 +38,52 @@ export const VALID_EXPECTED_FORMATS: ReadonlySet<ExpectedFormat> =
   new Set<ExpectedFormat>(['marker', 'number', 'currency', 'date', 'text']);
 
 /**
+ * 0.7.16 — 라벨 텍스트 정규화. 표 헤더 / 행 라벨 셀의 raw 텍스트에서 의미
+ * 없는 꼬리 기호를 제거해 labelHint / rowLabel / columnHeader 품질을 높임.
+ * (모델이 읽는 _데이터_ 정규화이지 LLM-facing prompt 가 아님 — form-format
+ * 모듈 docstring 의 prompt 분리 원칙 참조.)
+ *
+ * 차용: kordoc (MIT) https://github.com/chrisryugj/kordoc
+ *   - src/form/recognize.ts `isLabelCell` — 각주 위첨자 strip
+ *     (예: "등록기준지²" → "등록기준지")
+ *   - src/form/recognize.ts `extractFromTable` — 꼬리 콜론 strip
+ *     (예: "성명:" → "성명")
+ *
+ * 보수적: 꼬리(끝)에 붙은 것만 제거 — 문장 중간 콜론/기호는 보존.
+ */
+// 위첨자 글리프를 리터럴로 enumerate 하면 복붙/인코딩에 취약 (¹²³ 는
+// Latin-1 U+00B9/B2/B3, ⁰⁴⁻⁹ 는 별도 블록 U+2070-2079 라 코드포인트가
+// 흩어져 있음). 명시적 \u escape 로 모호성 제거.
+const FOOTNOTE_SUFFIX_RE = /[¹²³⁰-⁹*※]+$/;
+const TRAILING_COLON_RE = /\s*[:：]\s*$/;
+
+export function normalizeLabelText(raw: string): string {
+  // 꼬리 기호는 콜론 → 위첨자 순서가 섞여 나올 수 있어 ("금액¹:" 처럼
+  // 콜론이 더 바깥) 한 번의 단방향 strip 으론 안쪽 기호를 놓친다. 더 이상
+  // 줄지 않을 때까지 (콜론 / 위첨자 / 공백) 반복 제거 — 어떤 순서든 수렴.
+  let s = raw.replace(/\s+/g, ' ').trim();
+  for (;;) {
+    const next = s
+      .replace(TRAILING_COLON_RE, '')
+      .replace(FOOTNOTE_SUFFIX_RE, '')
+      .trim();
+    if (next === s) return next;
+    s = next;
+  }
+}
+
+/**
+ * 0.7.16 — 체크박스 / 마커 글리프 집합. 한국 공공 양식의 "□ 해당 ☐ 비해당"
+ * 류 체크박스 셀을 marker 로 인식하기 위함. ahwp 기존 marker 감지는 명시적
+ * "(O/X)" 표기만 봤어서 박스 글리프를 놓쳤다.
+ *
+ * 차용: kordoc (MIT) src/form/match.ts `fillInCellPatterns` 의 체크박스
+ * 글리프 처리. (kordoc 의 truthy 치환 로직은 caller 가 값을 주는 fillForm
+ * 용이라 N/A — 글리프 _집합_ 만 차용.)
+ */
+export const CHECKBOX_GLYPH_RE = /[□☐☑■✔✅]/;
+
+/**
  * Column header (+ optional row label) 텍스트로부터 expectedFormat 추론.
  *
  * 우선순위: marker > date > currency > number > text. 한 헤더가 여러
@@ -53,12 +99,13 @@ export function inferExpectedFormat(
   const ch = columnHeader ?? '';
   const rl = rowLabel ?? '';
 
-  // marker: 명시적 (O/X) / (O,X) / (○/X) / O/X 표기.
-  // 단순 "여부" / "유무" 만으로는 marker 단정 안 함 — 너무 광범위.
+  // marker: 명시적 (O/X) / (O,X) / (○/X) / O/X 표기, 또는 헤더에 체크박스
+  // 글리프 (□ ☐ ☑ ...). 단순 "여부" / "유무" 만으로는 marker 단정 안 함.
   if (
     /\(\s*[Oo○●]\s*[/,]\s*[Xx✗]\s*\)/.test(ch) ||
     /\(\s*[Xx✗]\s*[/,]\s*[Oo○●]\s*\)/.test(ch) ||
-    /\b[Oo]\s*\/\s*[Xx]\b/.test(ch)
+    /\b[Oo]\s*\/\s*[Xx]\b/.test(ch) ||
+    CHECKBOX_GLYPH_RE.test(ch) // 0.7.16 — 체크박스 글리프 헤더 (kordoc 차용)
   )
     return 'marker';
 
@@ -100,7 +147,9 @@ export function validateTextForFormat(
 
   if (format === 'marker') {
     if (trimmed.length > 2) return { ok: false, reason: 'marker-too-long' };
-    if (!/^[OXox○●✓✗V√ㅇㅁ\-/\s]+$/.test(trimmed))
+    // 0.7.16 — 체크박스 글리프 (□ ☐ ☑ ■ ✔ ✅) + ✔(U+2714) 를 marker char
+    // class 에 추가 (kordoc 차용). 기존엔 ✓(U+2713) 만 있어 ☑/✔ 등이 거부됐음.
+    if (!/^[OXox○●✓✗✔✅□☐☑■V√ㅇㅁ\-/\s]+$/.test(trimmed))
       return { ok: false, reason: 'marker-invalid-char' };
     return { ok: true };
   }
