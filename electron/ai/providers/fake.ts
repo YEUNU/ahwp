@@ -18,6 +18,13 @@ import { getProviderMeta } from '../../../shared/ai';
  *                          Example: TOOL:applyAlignment:{"align":"center"}
  *   "TOOL_DONE:text"    → echo `text` and finishReason='stop' (used as the
  *                          "agent done" terminal turn after tool results).
+ *   "FORMFILL:<token>"  → multi-step driver: turn 1 emits getEmptyFormFields,
+ *                          turn 2 parses its result and emits fillFormCells
+ *                          writing <token> into the first empty cell (real
+ *                          fixture coords, no hardcoding), turn 3 stops. Drives
+ *                          the real getEmptyFormFields → fillFormCells agent
+ *                          loop deterministically. Branches on how many
+ *                          role='tool' messages are already in the history.
  *
  * The fake never calls fetch — no network involvement, no API key actually
  * required. We still pretend to be 'openai' so the IPC layer's
@@ -53,6 +60,114 @@ export const fakeProvider: Provider = {
     opts: ProviderRuntimeOptions,
   ): AsyncIterable<ChatStreamEvent> {
     const last = req.messages[req.messages.length - 1]?.content ?? '';
+
+    // FORMFILL:<token> — deterministic multi-step form-fill driver. Keyed off
+    // the original user message (not `last`, which becomes a tool result on
+    // later turns) + the count of role='tool' messages so far, so the same
+    // marker advances the getEmptyFormFields → fillFormCells → done chain
+    // across the agent loop's re-invocations.
+    const formFillMsg = req.messages.find(
+      (m) => typeof m.content === 'string' && m.content.includes('FORMFILL:'),
+    );
+    if (formFillMsg && typeof formFillMsg.content === 'string') {
+      const token = formFillMsg.content
+        .split('FORMFILL:')[1]
+        .trim()
+        .split(/\s/)[0];
+      const toolTurns = req.messages.filter((m) => m.role === 'tool').length;
+      if (toolTurns === 0) {
+        // Step 1 — locate empty cells.
+        yield {
+          type: 'tool-use',
+          id: `call_${Date.now().toString(36)}`,
+          name: 'getEmptyFormFields',
+          args: { maxResults: 10 },
+        };
+        yield {
+          type: 'done',
+          usage: { inputTokens: last.length, outputTokens: 0 },
+          finishReason: 'tool_calls',
+        };
+        return;
+      }
+      if (toolTurns === 1) {
+        // Step 2 — parse the getEmptyFormFields result (== `last`) and fill the
+        // first empty cell with the token.
+        let cell:
+          | {
+              sectionIdx: number;
+              parentParaIdx: number;
+              controlIdx: number;
+              cellIdx: number;
+              cellParaIdx: number;
+            }
+          | undefined;
+        try {
+          type CellRow = {
+            sectionIdx: number;
+            parentParaIdx: number;
+            controlIdx: number;
+            cellIdx: number;
+            cellParaIdx: number;
+            isEmpty?: boolean;
+          };
+          // The tool-result content may be the helper payload directly
+          // (`{cellFields}`) or wrapped (`{ok,data:{cellFields}}`) — handle both.
+          const data = JSON.parse(last) as {
+            cellFields?: CellRow[];
+            data?: { cellFields?: CellRow[] };
+          };
+          const fields = data.cellFields ?? data.data?.cellFields ?? [];
+          cell = fields.find((f) => f.isEmpty) ?? fields[0];
+        } catch {
+          cell = undefined;
+        }
+        if (cell) {
+          yield {
+            type: 'tool-use',
+            id: `call_${Date.now().toString(36)}`,
+            name: 'fillFormCells',
+            args: {
+              cells: [
+                {
+                  sectionIdx: cell.sectionIdx,
+                  parentParaIdx: cell.parentParaIdx,
+                  controlIdx: cell.controlIdx,
+                  cellIdx: cell.cellIdx,
+                  cellParaIdx: cell.cellParaIdx,
+                  text: token,
+                  mode: 'insert',
+                },
+              ],
+            },
+          };
+          yield {
+            type: 'done',
+            usage: { inputTokens: last.length, outputTokens: 0 },
+            finishReason: 'tool_calls',
+          };
+          return;
+        }
+        // No cell found — fall through to the terminal turn so the test's
+        // searchAllText assertion fails loudly instead of looping.
+      }
+      // Step 3 (toolTurns >= 2, or no cell) — terminal turn.
+      const doneText = 'form filled';
+      for (const ch of doneText) {
+        if (opts.signal?.aborted) {
+          yield { type: 'error', message: 'aborted' };
+          return;
+        }
+        yield { type: 'text-delta', text: ch };
+      }
+      yield {
+        type: 'done',
+        usage: { inputTokens: last.length, outputTokens: doneText.length },
+        finishReason: 'stop',
+      };
+      return;
+    }
+
     const { mode, payload } = decodeScript(last);
 
     if (mode === 'error') {

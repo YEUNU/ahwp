@@ -392,3 +392,118 @@ test.describe('Phase 7 — live OpenAI tool dispatch verification', () => {
     expect(afterOp.length).toBeGreaterThanOrEqual(1);
   });
 });
+
+/**
+ * Phase 7 form-fill live verify — 양식(.hwp) 의 빈 표 칸을 자연어로 채우는
+ * end-to-end. getEmptyFormFields (scope self-heal, 0.7.15) → fillFormCells
+ * (bulk, 0.7.13) 경로가 실제 GPT 판단으로 동작하는지 검증.
+ *
+ * 어설션 정책 (live 비결정성 흡수): 사용자가 제공한 unique sentinel 값이
+ * 문서에 실제로 기입됐는지만 본다 — 어느 셀인지 / 어떤 tool 순서인지가
+ * 아니라 IR 의 관찰가능 변경. sentinel 은 매 실행 고유 → 사전 매치 0 보장.
+ */
+const FORM_FIXTURE = path.resolve(
+  __dirname,
+  '..',
+  '..',
+  'examples',
+  "(참고)(양식) ★'25년 제조AI특화 중간보고서, 완료보고서 서식자료_260127_01.hwp",
+);
+
+test.describe('Phase 7 — live OpenAI form-fill verification', () => {
+  test.skip(
+    !OPENAI_KEY,
+    'AHWP_TEST_OPENAI_KEY env not set — .env 에 키 저장 후 재실행',
+  );
+  test.skip(!existsSync(STUDIO_DIST), 'rhwp-studio dist missing');
+  test.skip(!existsSync(FORM_FIXTURE), 'form fixture missing');
+
+  let launched: LaunchedApp;
+
+  test.beforeEach(async () => {
+    launched = await launchApp();
+    const { page } = launched;
+    await page.waitForLoadState('domcontentloaded');
+    const keyChecked = OPENAI_KEY!;
+    await page.evaluate(
+      async ({ key, fixture }) => {
+        window.localStorage.setItem('ahwp:chat:provider', 'openai');
+        window.localStorage.setItem(
+          'ahwp:chat:models',
+          JSON.stringify({ openai: 'gpt-5.4-mini-2026-03-17' }),
+        );
+        window.localStorage.setItem('ahwp:chat:plan-mode-default', '0');
+        await window.api.secrets.set('openai', key);
+        await window.api.session.set({ lastActivePath: fixture });
+      },
+      { key: keyChecked, fixture: FORM_FIXTURE },
+    );
+    await page.reload();
+    await page.waitForLoadState('domcontentloaded');
+    await expect(page.getByTestId('rhwp-editor-iframe').first()).toBeAttached({
+      timeout: 30_000,
+    });
+    await expect
+      .poll(
+        async () => {
+          try {
+            return await readWasm<number>(launched.page, 'getSectionCount', []);
+          } catch {
+            return 0;
+          }
+        },
+        { timeout: 30_000 },
+      )
+      .toBeGreaterThan(0);
+  });
+
+  test.afterEach(async () => {
+    await launched.close();
+  });
+
+  test('form-fill — "이 양식 채워줘" → 빈 표 칸에 sentinel 기입', async () => {
+    const { page } = launched;
+    const sentinel = 'AHWPFORM-' + Date.now().toString(36).toUpperCase();
+    // 사전 존재 매치 0 확인 (sentinel 은 매 실행 고유).
+    const before = await readWasm<unknown[]>(page, 'searchAllText', [
+      sentinel,
+      true,
+      false,
+    ]);
+    expect(before.length).toBe(0);
+
+    // 사용자 자연어 — 도구 / 좌표 언급 X. 구체 값(sentinel 포함)을 제공해
+    // 모델이 빈 표 칸을 찾아(getEmptyFormFields) 채우도록(fillFormCells) 유도.
+    await sendChatPrompt(
+      page,
+      `이 보고서 양식의 빈 칸 중 사업명(과제명) 같은 제목 칸에 "${sentinel}" 라고 채워줘. 값을 모르는 다른 칸은 그대로 비워둬.`,
+      240_000,
+    );
+
+    // 양식 write 는 patches/diff 로 제안될 수 있음 — context 테스트와 동일하게
+    // pending accept 버튼이 있으면 누른다 (auto-accept fired 면 disabled = 정상).
+    await page.waitForTimeout(1000);
+    const acceptAll = page.getByTestId('diff-accept-all');
+    const acceptSingle = page.getByTestId('diff-accept-1');
+    if (
+      (await acceptAll.count()) > 0 &&
+      (await acceptAll.first().isEnabled())
+    ) {
+      await acceptAll.first().click();
+    } else if (
+      (await acceptSingle.count()) > 0 &&
+      (await acceptSingle.first().isEnabled())
+    ) {
+      await acceptSingle.first().click();
+    }
+    await page.waitForTimeout(3000);
+
+    // 효과 검증 — sentinel 이 문서 어딘가(표 칸)에 실제로 들어갔다.
+    const after = await readWasm<unknown[]>(page, 'searchAllText', [
+      sentinel,
+      true,
+      false,
+    ]);
+    expect(after.length).toBeGreaterThanOrEqual(1);
+  });
+});
