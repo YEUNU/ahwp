@@ -6,6 +6,30 @@
 
 ## [Unreleased]
 
+## [0.7.17] - 2026-05-31
+
+### Changed — kordoc 기반 DOCX/XLSX 추출 (mammoth/exceljs fallback)
+
+비-HWP 읽기 경로의 DOCX/XLSX 텍스트 추출을 kordoc (exact-pin `2.9.0`) 우선으로
+교체. kordoc 은 표/colspan/병합셀 구조를 markdown 파이프 표로 보존 — 기존
+mammoth (DOCX raw text) / exceljs 가 평면화하던 표 격자를 살려 AI 컨텍스트
+품질을 높인다 (colspan 헤더는 spanned 열에 걸쳐 반복되어 열 정렬 유지).
+
+- **품질 업그레이드는 fallback 뒤에 둠** (정확성의 hard dependency 아님):
+  DOCX/XLSX 모두 kordoc 을 먼저 시도하고, throw 하거나 빈/degenerate 출력을
+  내면 `console.warn` + `meta.warning` 후 기존 mammoth/exceljs 경로로 fallback.
+  kordoc 은 9 주 / 44 버전 churn-heavy 라이브러리 — worst case 가 "오늘의 동작"
+  이라, 실 정부 양식 검증 게이트를 아직 못 돌리는 상황의 안전망이 된다.
+- **ESM-only**: kordoc 의 .cjs 빌드가 `import.meta` 를 포함해 `require` 가
+  깨짐 → @rhwp/core 와 동일하게 `await import('kordoc')` dynamic import +
+  vite.config.ts external 처리.
+- **범위 = DOCX + XLSX 만**: PDF 는 kordoc 제외 (합성 PDF 에 빈 blocks 반환) —
+  extractPdf 는 pdf-parse 유지. `.xls` (legacy BIFF8) 도 의도적 미지원 유지
+  (0.7.16). 매핑: markdown→`text`, heading block→`headings`, block list→`chunks`.
+
+단위 테스트 추가 (colspan 표 DOCX 구조 보존 / 멀티시트 XLSX heading+행 /
+kordoc 실패 시 mammoth·exceljs fallback + meta.warning). attribution: kordoc MIT.
+
 ## [0.7.16] - 2026-05-31
 
 ### Fixed — 포맷 계약: 광고했지만 깨진 .xls 제거
