@@ -93,8 +93,15 @@ export function decideFormGuardNudge(input: FormGuardInput): FormGuardDecision {
       shouldNudge: true,
       nudgeText:
         `[Auto-continue] Form still has ${emptyLeft} empty cells remaining${tail}. ` +
-        `Re-call getEmptyFormFields (use includeFilled: true if you also need to clear placeholders) ` +
-        `and write the next batch with insertTextInCell / replaceTextInCell per slotKind.${svgHint} ` +
+        `The coordinates from your last getEmptyFormFields response stay valid for every unfilled cell ` +
+        `(writing text never shifts cellIdx / parentParaIdx), so fill the ones that have a real value in one fillFormCells ` +
+        `call — its cells array takes one entry per cell, mode chosen by slotKind ('insert' for ` +
+        `value-slots, 'replace' for instruction placeholders), not a few single calls at a time. ` +
+        `Re-call getEmptyFormFields only if you exhausted ` +
+        `that list (use includeFilled: true to also clear ` +
+        `placeholders) or for the final verification pass.${svgHint} ` +
+        `Leave a cell blank when the document's target has no real value for it — do NOT invent ` +
+        `filler (O/X, 0, '-', 'N/A', '미운영') to look complete; intentionally-blank cells are fine. ` +
         `Then announce completion only when the form is actually done.`,
       reason: 'empty-cells-remain',
     };

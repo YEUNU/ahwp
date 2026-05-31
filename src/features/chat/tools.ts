@@ -1641,6 +1641,85 @@ async function runOne(
           };
         }
       }
+      // === 0.7.13 — bulk cell fill (form-fill turn 예산 보호) ===
+      // 단일 insert/replace 를 N회 도는 대신 한 call 로 다수 셀 처리. 좌표는
+      // 셀별 보유. 셀당 before/after snapshot 생략 (대량 처리 round-trip 비용↑;
+      // 요약 diff + per-cell failures 로 충분). 외곽 runTools 가 batch 전체를
+      // 한 undo group + notifyDocumentChanged 1회로 감싼다.
+      case 'fillFormCells': {
+        const a = call.args;
+        let filled = 0;
+        const failures: { cellIdx: number; reason: string }[] = [];
+        for (const c of a.cells) {
+          const mode = c.mode ?? 'insert';
+          if (mode === 'replace') {
+            if (!helper) {
+              failures.push({ cellIdx: c.cellIdx, reason: 'no-helper' });
+              continue;
+            }
+            const ok = await helper.replaceTextInCell(
+              c.sectionIdx,
+              c.parentParaIdx,
+              c.controlIdx,
+              c.cellIdx,
+              c.cellParaIdx,
+              c.text,
+            );
+            if (ok) filled += 1;
+            else
+              failures.push({ cellIdx: c.cellIdx, reason: 'replace-failed' });
+          } else {
+            const off = c.charOffset ?? 0;
+            const ok = helper
+              ? await helper.insertTextInCell(
+                  c.sectionIdx,
+                  c.parentParaIdx,
+                  c.controlIdx,
+                  c.cellIdx,
+                  c.cellParaIdx,
+                  off,
+                  c.text,
+                )
+              : viewer.irInsertTextInCell(
+                  c.sectionIdx,
+                  c.parentParaIdx,
+                  c.controlIdx,
+                  c.cellIdx,
+                  c.cellParaIdx,
+                  off,
+                  c.text,
+                );
+            if (ok) filled += 1;
+            else failures.push({ cellIdx: c.cellIdx, reason: 'insert-failed' });
+          }
+        }
+        const total = a.cells.length;
+        const failed = failures.length;
+        // 전부 실패면 ok:false (UI 빨강 + 모델이 reason 인지). 부분/전체
+        // 성공은 ok:true + data.failures (모델이 실패분만 재시도).
+        if (filled === 0 && failed > 0) {
+          const head = failures
+            .slice(0, 3)
+            .map((f) => `#${f.cellIdx}:${f.reason}`)
+            .join(', ');
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: `fillFormCells: all ${failed} cells failed (${head}${failed > 3 ? '…' : ''})`,
+          };
+        }
+        return {
+          ok: true,
+          tool: call.tool,
+          data: { filled, failed, failures },
+          diff: {
+            paragraphIdx: a.cells[0].parentParaIdx,
+            before: '',
+            after: `${filled} cells filled${failed ? `, ${failed} failed` : ''}`,
+            label: `fillFormCells (${filled}/${total})`,
+          },
+        };
+      }
       default: {
         // The pre-flight validator narrows AhwpToolCall to the union, so
         // this is unreachable without a registry/type drift.
@@ -1795,6 +1874,8 @@ export function previewArgs(call: AhwpToolCall): string {
         t.length === 0 ? '(clear)' : t.length > 30 ? t.slice(0, 30) + '…' : t;
       return `cell=${call.args.cellIdx} ⇒ "${preview}"`;
     }
+    case 'fillFormCells':
+      return `${call.args.cells.length} cells`;
     case 'deleteRange':
       return `(${call.args.startParagraphIdx},${call.args.startOffset})~(${call.args.endParagraphIdx},${call.args.endOffset})`;
     case 'insertParagraph':

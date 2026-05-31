@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest';
 import {
   inferExpectedFormat,
   validateTextForFormat,
+  normalizeLabelText,
   type ExpectedFormat,
 } from './form-format';
 
@@ -185,5 +186,71 @@ describe('validateTextForFormat', () => {
       expect(r.ok).toBe(false);
       if (!r.ok) expect(r.reason).toBe('date-invalid-char');
     });
+  });
+});
+
+// 0.7.16 — P1: 라벨 정규화 (kordoc 차용). 꼬리 콜론 / 각주 위첨자 strip.
+describe('normalizeLabelText (P1 — kordoc)', () => {
+  it('꼬리 콜론 제거 (반각/전각)', () => {
+    expect(normalizeLabelText('성명:')).toBe('성명');
+    expect(normalizeLabelText('성명：')).toBe('성명');
+    expect(normalizeLabelText('주소 :')).toBe('주소');
+  });
+
+  it('각주 위첨자 제거', () => {
+    expect(normalizeLabelText('등록기준지²')).toBe('등록기준지');
+    expect(normalizeLabelText('비고※')).toBe('비고');
+    expect(normalizeLabelText('항목*')).toBe('항목');
+  });
+
+  it('위첨자 + 콜론 동시', () => {
+    expect(normalizeLabelText('금액¹:')).toBe('금액');
+  });
+
+  it('공백 정규화 + trim', () => {
+    expect(normalizeLabelText('  사  업   명  ')).toBe('사 업 명');
+  });
+
+  it('문장 중간 콜론은 보존 (꼬리만 제거)', () => {
+    expect(normalizeLabelText('구분: A')).toBe('구분: A');
+  });
+
+  it('빈 / 기호-only → 빈 문자열', () => {
+    expect(normalizeLabelText('   ')).toBe('');
+    expect(normalizeLabelText('：')).toBe('');
+  });
+});
+
+// 0.7.16 — P2: 체크박스 글리프 marker 인식 (kordoc 차용).
+describe('inferExpectedFormat — 체크박스 글리프 (P2)', () => {
+  it.each(['해당 □', '□ 동의', '☐ 비해당', '☑ 확인', '점검 ■', '완료 ✔'])(
+    '%s → marker',
+    (header) => {
+      expect(inferExpectedFormat(header)).toBe('marker');
+    },
+  );
+
+  it('체크박스 글리프 없는 평범한 헤더는 그대로 text', () => {
+    expect(inferExpectedFormat('내용')).toBe('text');
+    expect(inferExpectedFormat('추진 계획')).toBe('text');
+  });
+});
+
+describe('validateTextForFormat — marker 체크박스 글리프 (P2)', () => {
+  it.each(['☑', '□', '☐', '■', '✔', '✅', 'O', 'X', '✓'])(
+    '%s 는 marker 통과',
+    (s) => {
+      expect(validateTextForFormat(s, 'marker').ok).toBe(true);
+    },
+  );
+
+  it('이전엔 거부되던 ☑ / ✔ 가 이제 통과 (회귀 가드)', () => {
+    expect(validateTextForFormat('☑', 'marker').ok).toBe(true);
+    expect(validateTextForFormat('✔', 'marker').ok).toBe(true);
+  });
+
+  it('marker 에 자유 텍스트는 여전히 reject', () => {
+    const r = validateTextForFormat('해당없음', 'marker');
+    expect(r.ok).toBe(false);
   });
 });

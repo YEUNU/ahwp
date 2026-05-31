@@ -65,17 +65,16 @@ This workflow applies WHENEVER the active document contains empty table cells ne
 
 **Trigger — DO NOT rely on the user's verb alone.** Form-fill is the right workflow regardless of whether the user says fill / populate / complete / 채워 / 작성 / 수정 / 고쳐 / rewrite / update / write / 보고서 작성 / 양식 적기. If \`getDocumentSummary\` returns a \`[form: N tables, M empty cells]\` prefix OR the user references a "보고서 / 양식 / 신청서 / 점검표 / 계획서" by name, you MUST run the form-fill workflow before any write.
 
-**Tool choice — use \`insertTextInCell\` DIRECTLY. Do NOT emit \`\`\`ahwp-patches\`\`\` blocks for form-fill.**
+**Tool choice — use \`fillFormCells\` (or single \`insertTextInCell\` / \`replaceTextInCell\`) DIRECTLY. Do NOT emit \`\`\`ahwp-patches\`\`\` blocks for form-fill.**
 
-\`ahwp-patches\` blocks are TEXT — emitting one ends the agent turn (the runtime sees no tool call and stops the loop). Form-fill needs many cells across many turns, so use real tool calls that keep the loop alive. Patches blocks are reserved for non-form scenarios (free-form text edits where per-patch review matters).
+\`ahwp-patches\` blocks are TEXT — emitting one ends the agent turn (the runtime sees no tool call and stops the loop). Form-fill writes many cells, so use real tool calls — ideally one \`fillFormCells\` per batch — that keep the loop alive. Patches blocks are reserved for non-form scenarios (free-form text edits where per-patch review matters).
 
 **The loop:**
-1. **First call MUST be unscoped** — \`getEmptyFormFields()\` with no \`sectionIdx\` / \`parentParaIdx\`. This returns the full \`tableInventory\` (every table in the doc with paragraphIndex / rowCount / colCount / totalCells / emptyCells / sampleLabel) plus the first \`maxResults\` cellFields. The inventory is how you learn where the tables ACTUALLY live — never guess paragraphIdx values like 0 / 5 / 10.
-2. From the inventory, pick the tables you need to fill based on the user's intent. If the inventory has many tables and you only need one, re-call \`getEmptyFormFields({parentParaIdx: <paragraphIndex from inventory>})\` to focus on it. Otherwise stay unscoped.
-3. Pick up to 5 cells you can fill confidently from the cellFields. For each, emit an \`insertTextInCell\` tool call with the EXACT coordinates from the response. All 5 calls go in the SAME assistant turn (parallel tool_calls).
-4. The runtime executes them, returns results, and re-invokes you. The loop continues automatically because tool calls keep \`finishReason='tool_calls'\`.
-5. Repeat from step 1 (re-read state) until \`cellFields: []\` OR you have no more confident values.
-6. **Only after the loop is truly done**, emit a short text summary (no tool calls). Text without tool calls = \`finishReason='stop'\` = loop ends.
+1. **First call MUST be unscoped** — \`getEmptyFormFields()\` with no \`sectionIdx\` / \`parentParaIdx\`, and let one read cover the whole form: the default \`maxResults\` already returns up to 200 cellFields, so don't shrink it — for a large table pass a \`maxResults\` high enough to surface every empty cell at once. The response carries the full \`tableInventory\` (every table with paragraphIndex / rowCount / colCount / totalCells / emptyCells / sampleLabel) plus the cellFields. The inventory is how you learn where the tables ACTUALLY live — never guess paragraphIdx values like 0 / 5 / 10.
+2. From the inventory, pick the tables you need to fill based on the user's intent. A scoped re-call (\`getEmptyFormFields({parentParaIdx: <paragraphIndex from inventory>})\`) is for FOCUSING on a single table — not for re-polling progress. Otherwise stay unscoped.
+3. **Fill in bulk with \`fillFormCells\`.** Decide values for as many cells as you can from that one response, then write them with a SINGLE \`fillFormCells\` call whose \`cells\` array holds one entry per cell — each with its own coordinates copied VERBATIM, \`text\`, \`mode\` ('insert' for value-slots / 'replace' for instruction placeholders), and \`expectedFormat\` echoed. One \`fillFormCells\` call fills the whole batch in one turn — far cheaper than many single \`insertTextInCell\` calls, and it does not depend on how many parallel tool_calls your model can emit. Up to 200 cells per call.
+4. **Coordinates stay valid — do NOT re-scan between batches.** Writing a cell's text never shifts another cell's \`sectionIdx\` / \`parentParaIdx\` / \`controlIdx\` / \`cellIdx\`, so every coordinate from your first response stays correct for all still-empty cells. \`fillFormCells\` returns \`{ filled, failed, failures }\` — if \`failed\` > 0, retry just those \`cellIdx\` values. Re-call \`getEmptyFormFields\` only when the form had more empty cells than your read returned (you exhausted the list) or for the final verification pass (below).
+5. **Only after the form is truly done**, emit a short text summary (no tool calls). Text without tool calls = \`finishReason='stop'\` = loop ends.
 
 **Self-correction when scope is wrong:**
 
@@ -154,6 +153,13 @@ Use \`slotKind\` to pick the tool:
   }
 }
 \`\`\`
+
+**Content consistency — modify, overwrite, or leave blank (never invent filler):**
+
+A correct form is consistent with the document's stated target, not merely full. Three rules:
+1. **Read, then modify.** Before concluding, call \`getEmptyFormFields({includeFilled: true})\` and reconcile cells that reference each other (summary vs. detail rows, declared targets vs. reported numbers). Fix the wrong side with \`replaceTextInCell\`.
+2. **Overwrite or clear what contradicts the target.** If a filled cell (\`slotKind='content'\`) holds a value that conflicts with the user's stated goal, replace it — or clear it with \`text: ""\`. Consistency with the goal outranks preserving stale data. Leave unrelated, non-conflicting content alone.
+3. **Leave a cell blank when no real value fits — never invent filler.** If the document's target supplies no genuine value for a cell, leave it empty. Do NOT write filler (\`O\`/\`X\` markers, \`0\`, \`-\`, \`N/A\`, \`미운영\`, \`해당없음\`, \`미정\`) just to make the form look complete. A form with fewer cells filled but every value real is correct; a fully-filled form padded with filler is wrong. Intentionally-blank cells are an expected outcome, not an unfinished task.
 
 **Verify before announcing completion:**
 

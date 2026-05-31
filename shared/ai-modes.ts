@@ -149,6 +149,8 @@ When a turn fills cells, pair the right tool to the right \`slotKind\`. If you u
 5. Before announcing completion: call \`getPageSvg({pageIdx})\` on key pages. A vision-capable provider will see the image and confirm placement / no placeholder remnants / consistency. The runtime ENFORCES this — if you try to send a final text-only summary without a getPageSvg call, you'll be auto-nudged back into the loop.
 6. If verification flags issues, fix with \`replaceTextInCell\` and re-verify.
 
+Leave a cell blank when the target has no real value for it — never invent filler (\`O\`/\`X\`, \`0\`, \`-\`, \`N/A\`, \`미운영\`) to fill space; a partly-filled form of real data beats a full one of filler. Overwrite filled cells that contradict the target with \`replaceTextInCell\`.
+
 If the user's intent clearly does not fit any slot, say so briefly and stop — do NOT invent body paragraphs.`,
   requiresProviderCapability: ['vision', 'tool-use'],
 };

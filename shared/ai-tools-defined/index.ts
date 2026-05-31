@@ -1,7 +1,7 @@
 /**
  * Defined tools registry — 0.7.4 full migration.
  *
- * 모든 55 도구가 본 dir 안의 카테고리별 파일에 defineTool 로 정의됨.
+ * 모든 56 도구가 본 dir 안의 카테고리별 파일에 defineTool 로 정의됨.
  * 이전 분산 구조 (TOOL_DESCRIPTORS array + validateArgs switch + per-tool
  * AhwpToolArgs entries) 는 본 chunk 에서 단일 source 로 통합되었다.
  *
@@ -12,8 +12,9 @@
  *   applyTextColor, toggleCharFormat, insertText, deleteRange,
  *   insertParagraph, deleteParagraph, mergeParagraph, applyCharFormat,
  *   applyParaProps, applyStyle).
- * - `cell.ts` (5) — 셀-level read / write (insertTextInCell,
- *   replaceTextInCell, applyCellStyle, getCellInfo, getEmptyFormFields).
+ * - `cell.ts` (6) — 셀-level read / write (insertTextInCell,
+ *   replaceTextInCell, fillFormCells, applyCellStyle, getCellInfo,
+ *   getEmptyFormFields).
  * - `table.ts` (12) — 표 구조 변경 / properties / 수식 (createTable,
  *   insertTableRow / Column, deleteTableRow / Column, mergeTableCells,
  *   splitTableCellInto, unmergeCell, setTableProperties,
