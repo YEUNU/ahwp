@@ -203,6 +203,62 @@ for (const [kpiCell, name, unit, base, target, weight, note] of kpi) {
   replace(32, 0, kpiCell + 5, note); // c7 비고
 }
 
+// TABLE #7 — 1.5 주요설비(SW/HW) 구축현황 (p=42). Tests marker (O/X, √) +
+// currency cells. Per row: c3 도입여부(구축전 O/X) · c4 운영방식(독립/클라우드)
+// · c5 제조사 · c6 신규 · c7 기능개선 · c8 미도입 · c9 추정금액(백만원).
+// Mark exactly one of 신규/기능개선/미도입 with √. New systems: 구축전 X.
+// [baseCell(=label),도입여부,운영방식,제조사,신규,기능개선,미도입,추정금액]
+const equip = [
+  // MES — 신규 도입 (설비 데이터 수집·집계 기반)
+  [43, 'X', '클라우드', '이즈파크', '√', '', '', '80'],
+  // 피지컬AI — 예지보전 모델 (신규)
+  [76, 'X', '클라우드', '이즈파크', '√', '', '', '120'],
+  // 제어시스템 — 기존 보유, 예지보전 연계로 기능개선
+  [101, 'O', '독립', '기존 PLC', '', '√', '', ''],
+  // 센서류 — 진동·전류·온도 센서 신규
+  [109, 'X', '독립', '이즈파크', '√', '', '', '60'],
+];
+for (const [base, intro, mode, maker, neu, improve, none, amount] of equip) {
+  if (intro) fill(42, 0, base + 1, intro); // c3 도입여부
+  if (mode) fill(42, 0, base + 2, mode); // c4 운영방식
+  if (maker) fill(42, 0, base + 3, maker); // c5 제조사
+  if (neu) fill(42, 0, base + 4, neu); // c6 신규
+  if (improve) fill(42, 0, base + 5, improve); // c7 기능개선
+  if (none) fill(42, 0, base + 6, none); // c8 미도입
+  if (amount) fill(42, 0, base + 7, amount); // c9 추정금액
+}
+
+// TABLE #9 — 2.2 AI 기능요지 (p=59). The template ships an example FILLED with
+// a DIFFERENT topic (불량품 자동 검출 / YOLOv8) — italic dark-blue 'instruction'
+// cells that CONFLICT with our 예지보전 target, so they must be REPLACED, not
+// kept. Tests "filled example that contradicts the goal → replace".
+const aiFn = [
+  [3, 'AI 기반 설비 예지보전 시스템'],
+  [5, '사출성형·연마·코팅 등 핵심 설비 공정'],
+  [7, '진동·전류·온도 데이터로 설비 고장을 사전 예측하여 비계획 정지 최소화'],
+  [9, '머신러닝 이상탐지(Anomaly Detection) · 잔여수명예측(RUL) 모델'],
+  [11, '설비 진동·전류·온도 센서 시계열, 설비 가동·고장 이력 데이터'],
+  [13, '설비별 고장 위험도 점수, 이상 징후 알람, 예상 잔여수명'],
+  [
+    15,
+    '① 센서가 설비 상태 실시간 수집 → ② 모델이 이상 점수 산출 → ③ 임계 초과 시 정비 알람',
+  ],
+  [17, '비계획 정지시간 60% 감소, 설비 종합효율(OEE) 향상'],
+];
+for (const [cell, text] of aiFn) replace(59, 0, cell, text);
+
+// TABLE #10 — AI 성능수준 목표 및 검증 (p=63). "(예시)" italic-gray rows.
+// 항목(c1) / 단위(c2, keep '%') / 목표수준(c3) / 검증방법(c4).
+replace(63, 0, 6, '설비 고장 예측 정확도');
+replace(63, 0, 8, '90% 이상');
+replace(63, 0, 9, '3개월 실제 고장 이력과 예측값 비교');
+replace(63, 0, 11, '이상 징후 탐지율');
+replace(63, 0, 13, '85% 이상');
+replace(63, 0, 14, '3개월 실제 이상 이벤트와 탐지 결과 비교');
+replace(63, 0, 16, '잔여수명 예측 오차');
+replace(63, 0, 18, '15% 이하');
+replace(63, 0, 19, '3개월 실제 고장 시점과 예측 시점 비교');
+
 // --- finalize: reflow line segments so inserted text is visible (0.7.21) ----
 try {
   doc.reflowLinesegs();
