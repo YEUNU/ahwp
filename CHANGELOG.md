@@ -6,6 +6,31 @@
 
 ## [Unreleased]
 
+## [0.7.24] - 2026-06-01
+
+### Fixed — form-fill 완료 기준 "빈 셀 0" → "grounded 소진 시 질문하며 종료"
+
+런타임 완료 가드(`form-guard`)가 grounding 원칙(0.7.23)과 충돌하던 것 해소.
+이전엔 빈 셀이 남아 있기만 하면 "아직 N개 남음, 계속 채워" nudge(cap 2)를
+쏴서, 사용자가 정보를 조금만 줬을 때 모델을 **날조 쪽으로 떠밀었다**. 완료
+정의가 _정보 소진_ 이 아니라 _셀 소진_ 이었던 게 근본 원인.
+
+- **모델이 양식을 파악한 뒤 사용자에게 부족 정보를 물으며 멈추면**(text-only
+  응답에 질문 포함) 빈 셀이 남아도 nudge 안 함 — 질문 = 유효한 종료 상태
+  (`reason: 'awaiting-user-input'`). discovery 전 질문은 존중 안 함(양식 먼저
+  파악 강제).
+- **침묵 조기종료(질문 없이 멈춤)** 는 여전히 nudge — cover-sheet 만 채우고
+  멈추던 원래 회귀 가드 유지. 단 nudge 문구에 "정보 다 썼으면 채우지/추측하지
+  말고 사용자에게 부족분을 물어라" 경로 추가.
+- 질문 판정은 물음표(`?`/`？`) 신호 — cross-language, 회귀 가드 5 cases.
+
+### Limitations 분석 + 라이브 e2e (이전 작업 연계)
+
+ahwp 에이전틱 파이프라인 한계를 Claude Code 패턴 기준 정리(컨텍스트 압축
+부재 / 완료기준-grounding 충돌[본 fix] / self-verification·vision 부재 /
+tool 라우터 / 서브에이전트 depth=1). 라이브 e2e(`tests/e2e/chat-form-fill-
+live.spec.ts`)로 실제 OpenAI 구동 검증.
+
 ## [0.7.23] - 2026-06-01
 
 ### Changed — form-fill 근거 원칙 (날조 금지 + 부족 시 사용자에게 질문)

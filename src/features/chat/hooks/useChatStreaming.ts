@@ -893,6 +893,10 @@ export function useChatStreaming(
           nudgeCount: formGuardNudgeCountRef.current,
           maxNudges: FORM_GUARD_MAX_NUDGES,
           agentStopped: agentStoppedRef.current,
+          // 0.7.24 — 모델이 양식을 파악한 뒤 부족 정보를 물으며 멈췄으면
+          // (text-only 응답에 질문 포함) 빈 셀이 남아도 nudge 안 함. 완료
+          // 기준 "빈 셀 0" 이 grounding/ask 원칙과 충돌하던 것 해소.
+          assistantText: assistantBufferRef.current,
         });
         if (decision.shouldNudge && decision.nudgeText) {
           formGuardNudgeCountRef.current += 1;

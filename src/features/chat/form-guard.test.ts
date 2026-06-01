@@ -15,7 +15,7 @@
  *   3. emptyCellsRemaining === 0 → **nudge 안 함** (svg 단독 nudge 폐기)
  */
 import { describe, expect, it } from 'vitest';
-import { decideFormGuardNudge } from './form-guard';
+import { decideFormGuardNudge, assistantRequestsInput } from './form-guard';
 
 const BASE = {
   modePrimary: 'form-fill',
@@ -147,5 +147,58 @@ describe('decideFormGuardNudge — Form-Fill 완료 guard (0.7.6 tightened)', ()
     expect(r.reason).toBe('empty-cells-remain');
     expect(r.nudgeText).toContain('blank');
     expect(r.nudgeText).toContain('filler');
+  });
+
+  // 0.7.24 — 완료 기준 "빈 셀 0" → "grounded 소진 시 질문하며 종료".
+  // 모델이 양식 파악 후 사용자에게 부족 정보를 물으며 멈추면 빈 셀이 남아도
+  // 존중(nudge 안 함). grounding + ask-when-insufficient 원칙과 런타임 정합.
+  it('discovery 후 모델이 질문하며 멈춤 → nudge 안 함 (grounded 소진 종료 존중)', () => {
+    const r = decideFormGuardNudge({
+      ...BASE,
+      formState: { emptyCellsRemaining: 180, tableSummary: 'p=42 (180 empty)' },
+      getPageSvgCalled: true,
+      assistantText:
+        '제공해주신 정보로 도입기업명·공급기업명·구축 목적을 채웠습니다. 나머지 설비 금액과 KPI 목표치는 정보가 없어 비워뒀어요. 추정금액과 KPI 목표 수치를 알려주실 수 있을까요?',
+    });
+    expect(r.shouldNudge).toBe(false);
+    expect(r.reason).toBe('awaiting-user-input');
+  });
+
+  // 침묵 조기 종료(질문 없음)는 여전히 nudge — 원래 회귀(cover-sheet 만
+  // 채우고 멈춤) 가드 유지. nudge 텍스트엔 ask-user 경로도 포함.
+  it('빈 셀 남고 질문 없이 멈춤 → 여전히 nudge (조기종료 가드 유지)', () => {
+    const r = decideFormGuardNudge({
+      ...BASE,
+      formState: { emptyCellsRemaining: 180, tableSummary: 'p=42 (180 empty)' },
+      getPageSvgCalled: true,
+      assistantText: '양식 작성을 완료했습니다.',
+    });
+    expect(r.shouldNudge).toBe(true);
+    expect(r.reason).toBe('empty-cells-remain');
+    // reworded nudge 는 "정보 부족 시 사용자에게 질문" 경로를 담아야.
+    expect(r.nudgeText).toContain('ASK the user');
+  });
+
+  // discovery 전(formState null) 질문은 존중 안 함 — 먼저 양식 파악 강제.
+  it('discovery 전 질문 → 존중 안 하고 discovery nudge (양식 먼저 파악)', () => {
+    const r = decideFormGuardNudge({
+      ...BASE,
+      formState: null,
+      assistantText: '어떤 항목부터 채울까요?',
+    });
+    expect(r.shouldNudge).toBe(true);
+    expect(r.reason).toBe('no-form-discovery');
+  });
+
+  describe('assistantRequestsInput — 질문/요청 판정', () => {
+    it('물음표(?, ？) 포함 → true', () => {
+      expect(assistantRequestsInput('금액을 알려주실 수 있나요?')).toBe(true);
+      expect(assistantRequestsInput('KPI 목표치는 무엇인가요？')).toBe(true);
+    });
+    it('물음표 없음 / 빈 텍스트 → false', () => {
+      expect(assistantRequestsInput('양식을 모두 채웠습니다.')).toBe(false);
+      expect(assistantRequestsInput('')).toBe(false);
+      expect(assistantRequestsInput(undefined)).toBe(false);
+    });
   });
 });

@@ -25,14 +25,35 @@ export interface FormGuardInput {
   maxNudges: number;
   /** 사용자가 stop 버튼 누른 경우. true 면 guard 비활성. */
   agentStopped: boolean;
+  /** 0.7.24 — 모델의 이번 turn 최종 텍스트 (text-only 'done' 시점의
+   *  assistantBuffer). 양식을 파악한 뒤 모델이 사용자에게 부족 정보를
+   *  물으며 멈췄으면, 빈 셀이 남아도 그 종료를 존중한다. 미지정 = '' =
+   *  질문 아님 (기존 동작 보존). */
+  assistantText?: string;
+}
+
+/**
+ * 모델 텍스트가 사용자에게 정보를 요청/질문하며 멈춘 것인지 판정. form-fill
+ * 완료 맥락에서 물음표(`?` / `？`)는 "더 줄 정보가 있나요?" 식 요청의
+ * 신뢰할 만한 cross-language 신호다 — 모델이 grounded 정보를 다 쓰고
+ * 부족분을 물을 때 거의 항상 질문형으로 끝난다. 빈 텍스트는 질문 아님.
+ *
+ * 오탐(요약문 속 수사적 물음표)의 비용은 낮다 — nudge 한 번 생략될 뿐,
+ * 사용자가 "계속" 하면 됨. 미탐(물음표 없이 질문)이어도 reworded nudge 가
+ * "정보 부족하면 사용자에게 물어라"를 담아 모델이 다시 물을 수 있다.
+ */
+export function assistantRequestsInput(text: string | undefined): boolean {
+  return /[?？]/.test(text ?? '');
 }
 
 export interface FormGuardDecision {
   shouldNudge: boolean;
   /** shouldNudge=true 일 때 사용자 메시지로 inject 할 텍스트. */
   nudgeText?: string;
-  /** 디버그 / 텔레메트리. nudge 트리거 이유 — UI / log 에 표시 가능. */
-  reason?: 'no-form-discovery' | 'empty-cells-remain';
+  /** 디버그 / 텔레메트리. nudge 트리거 이유 — UI / log 에 표시 가능.
+   *  'awaiting-user-input' 은 shouldNudge=false 와 함께 (모델이 사용자
+   *  질문으로 정상 종료). */
+  reason?: 'no-form-discovery' | 'empty-cells-remain' | 'awaiting-user-input';
 }
 
 /**
@@ -66,6 +87,22 @@ export function decideFormGuardNudge(input: FormGuardInput): FormGuardDecision {
 
   const formStateKnown = input.formState !== null;
   const emptyLeft = input.formState?.emptyCellsRemaining ?? 0;
+
+  // Case 0 (0.7.24): 모델이 양식을 파악(discovery 완료)한 뒤 사용자에게
+  // 부족 정보를 물으며 멈췄다면, 빈 셀이 남아도 그 종료를 존중한다.
+  //
+  // 완료 기준이 "빈 셀 0" 이면 grounding (제공 정보만 채움, 빈칸>날조) +
+  // ask-when-insufficient 원칙과 런타임이 충돌한다 — 사용자가 정보를 조금만
+  // 줬을 때 옳은 결과는 "채울 수 있는 것만 채우고 나머지는 질문하며 멈춤"
+  // 인데, "아직 N개 남았으니 계속 채워" nudge 가 모델을 날조 쪽으로 떠민다.
+  // 모델이 (양식을 안 뒤) 질문하는 것 = 유효한 종료 상태이므로 nudge 안 함.
+  //
+  // discovery 전(formState null) 의 질문은 존중하지 않는다 — 양식을 먼저
+  // 파악해야 무엇을 물을지 구체적으로 알 수 있으므로 Case 1 로 넘어가
+  // discovery 를 강제한다.
+  if (formStateKnown && assistantRequestsInput(input.assistantText)) {
+    return { shouldNudge: false, reason: 'awaiting-user-input' };
+  }
 
   // Case 1: AI 가 아직 getEmptyFormFields 한 번도 호출 안 함 → discovery
   // 강제. AI 가 prefix 만 보고 임의로 응답하는 회귀 방지.
@@ -102,7 +139,11 @@ export function decideFormGuardNudge(input: FormGuardInput): FormGuardDecision {
         `placeholders) or for the final verification pass.${svgHint} ` +
         `Leave a cell blank when the document's target has no real value for it — do NOT invent ` +
         `filler (O/X, 0, '-', 'N/A', '미운영') to look complete; intentionally-blank cells are fine. ` +
-        `Then announce completion only when the form is actually done.`,
+        `If you have already used every fact the user gave you and the cells that are still empty ` +
+        `need information you do NOT have, do NOT keep filling or guess — instead ASK the user for ` +
+        `those specific missing facts (grouped by form section) and stop. An intentionally-incomplete ` +
+        `form plus one clear question is the correct outcome; only announce completion when the form ` +
+        `is genuinely done with the information available.`,
       reason: 'empty-cells-remain',
     };
   }
