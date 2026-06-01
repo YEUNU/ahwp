@@ -36,6 +36,10 @@ export interface FormGuardInput {
    *  0.7.6 회귀(양식 아닌데 빈셀0 → svg nudge 반복)를 정확히 회피한다.
    *  미지정 = false (기존 동작 보존). */
   formWritesDone?: boolean;
+  /** 0.7.29 — 모델이 updatePlan 으로 선언한 계획에 미완료(pending /
+   *  in_progress) 항목이 남아있는지. true 면 완료 선언 전에 마저 끝내거나
+   *  명시적으로 skipped 처리하도록 nudge. 미지정 = false. */
+  planPending?: boolean;
 }
 
 /**
@@ -63,7 +67,8 @@ export interface FormGuardDecision {
     | 'no-form-discovery'
     | 'empty-cells-remain'
     | 'awaiting-user-input'
-    | 'no-visual-verify';
+    | 'no-visual-verify'
+    | 'plan-incomplete';
 }
 
 /**
@@ -150,6 +155,26 @@ export function decideFormGuardNudge(input: FormGuardInput): FormGuardDecision {
   // 질문 = 유효한 종료 상태.
   if (assistantRequestsInput(input.assistantText)) {
     return { shouldNudge: false, reason: 'awaiting-user-input' };
+  }
+
+  // Case P (0.7.29): 모델이 updatePlan 으로 선언한 계획에 미완료
+  // (pending/in_progress) 항목이 남아있는데 완료를 선언하면 → 마저 끝내거나
+  // 명시적으로 skipped 처리하도록 nudge. 모델이 자기 계획을 스스로 어기고
+  // 조기 종료하는 것을 막아 대형 양식의 섹션 누락을 방지. (질문 종료는 위
+  // Case 0 에서 이미 존중 — 사용자 입력 대기 중이면 plan 미완료여도 OK.)
+  if (input.planPending) {
+    return {
+      shouldNudge: true,
+      nudgeText:
+        `[Auto-continue] Your task plan still has unfinished items (status ` +
+        `pending or in_progress). Do not announce completion while the plan is ` +
+        `incomplete: work through each remaining item, or — if you are ` +
+        `intentionally leaving one for the user to provide info or for a ` +
+        `reviewer — mark it "skipped" via updatePlan with a one-line reason in ` +
+        `your final summary. Keep exactly one item in_progress at a time and ` +
+        `flip it to completed once its grounded cells are written.`,
+      reason: 'plan-incomplete',
+    };
   }
 
   // Case 2: 실제 빈 셀 남아 있음 → 채우기 계속.

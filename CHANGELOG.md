@@ -6,6 +6,26 @@
 
 ## [Unreleased]
 
+## [0.7.29] - 2026-06-01
+
+### Added — 작업 계획(updatePlan) — TodoWrite analog (한계 #6)
+
+대형 양식(64표·여러 섹션)에서 모델이 진행을 머릿속에만 두다 섹션을 빠뜨리거나
+중복하던 문제. Claude Code 의 TodoWrite 처럼 모델이 작업 계획을 명시 추적.
+
+- **`updatePlan` 도구** — `items: [{title, status}]`(pending/in_progress/
+  completed/skipped) 전체를 매번 replace. 대형 form-fill 은 첫 getEmptyFormFields
+  직후 섹션별 1항목씩 깔고, 채우며 상태 갱신(한 번에 1개만 in_progress). doc
+  IR 미변경(read-only 분류).
+- **진행 체크리스트 UI** — ChatPanel 입력란 위 상시 표시. 최신 updatePlan 에서
+  파생, 사용자가 어느 섹션 끝났고 무엇 남았는지 실시간 확인(✓/▸/○/⊘).
+- **완료 게이트** — form-guard 가 plan 에 pending/in_progress 남으면 완료 선언
+  차단(reason='plan-incomplete'): 마저 끝내거나 명시적 skipped 처리 요구. 질문
+  종료(awaiting-user-input)는 우선. 모델이 자기 계획을 어기고 조기 종료하는 것
+  방지.
+- 라우터 form-fill essentials + 도구 catalog + prompt(섹션 분해 원칙) 정합.
+- 회귀 가드: updatePlan validate 6 cases + form-guard plan 3 cases.
+
 ## [0.7.28] - 2026-06-01
 
 ### Fixed — tool 라우터가 form-fill 핵심 도구를 빠뜨리던 문제 (한계 #4)

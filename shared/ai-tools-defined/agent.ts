@@ -17,9 +17,17 @@
  *    반복 호출 + 카테고리화. parent 는 분류 결과 받아 작업 결정.
  *  - "git log 분석해서 changelog 초안" → sub-agent 가 runCommand + 정리.
  */
-import type { AhwpToolArgs } from '../ai-tools';
+import type { AhwpToolArgs, PlanItem, PlanItemStatus } from '../ai-tools';
 import { defineTool } from '../ai-tool-def';
 import { byteLen, coerceNonNegInt } from '../ai-tool-validate';
+
+const PLAN_STATUSES = new Set<PlanItemStatus>([
+  'pending',
+  'in_progress',
+  'completed',
+  'skipped',
+]);
+const MAX_PLAN_ITEMS = 40;
 
 const VALID_MODES = new Set<string>([
   'cross-doc-research',
@@ -98,5 +106,64 @@ export const runAgent = defineTool<'runAgent', AhwpToolArgs['runAgent']>({
       out.maxTurns = n;
     }
     return { ok: true, args: out };
+  },
+});
+
+export const updatePlan = defineTool<'updatePlan', AhwpToolArgs['updatePlan']>({
+  name: 'updatePlan',
+  description:
+    'Maintain a checklist of the work for the current task, like a TODO list. Pass the COMPLETE plan every call (it replaces the previous one): `items` is an ordered array of { title, status } where status is "pending" | "in_progress" | "completed" | "skipped". Use it for any multi-step task, and ESPECIALLY for a large form-fill: right after your first getEmptyFormFields, lay out one item per form section/table you intend to fill (derive titles from the form\'s own structure / tableInventory, do not invent generic ones), then update statuses as you go — mark the section you are filling "in_progress", flip it to "completed" once its grounded cells are written, and "skipped" if you are intentionally leaving it for the user to provide info or for a reviewer. Keep exactly one item "in_progress" at a time. This gives the user live progress and prevents you from forgetting a section or redoing one. The runtime will not let you announce completion while items are still pending/in_progress, so finish or explicitly skip each. Read-only with respect to the document (no IR change). Skip it for trivial single-cell or single-paragraph edits.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      items: {
+        type: 'array',
+        maxItems: MAX_PLAN_ITEMS,
+        items: {
+          type: 'object',
+          properties: {
+            title: { type: 'string', minLength: 1, maxLength: 200 },
+            status: {
+              type: 'string',
+              enum: ['pending', 'in_progress', 'completed', 'skipped'],
+            },
+          },
+          required: ['title', 'status'],
+        },
+      },
+    },
+    required: ['items'],
+  },
+  readonly: true,
+  modes: [
+    'free-authoring',
+    'body-edit',
+    'form-fill',
+    'cross-doc-research',
+    'table-manipulation',
+    'formatting',
+  ],
+  validate(raw) {
+    if (!Array.isArray(raw.items))
+      return { ok: false, reason: 'items-not-array' };
+    if (raw.items.length > MAX_PLAN_ITEMS)
+      return { ok: false, reason: 'items-too-many' };
+    const items: PlanItem[] = [];
+    for (const it of raw.items) {
+      if (!it || typeof it !== 'object')
+        return { ok: false, reason: 'item-not-object' };
+      const rec = it as Record<string, unknown>;
+      const title = typeof rec.title === 'string' ? rec.title.trim() : '';
+      if (title.length === 0) return { ok: false, reason: 'item-title-empty' };
+      if (byteLen(title) > 400)
+        return { ok: false, reason: 'item-title-too-large' };
+      if (
+        typeof rec.status !== 'string' ||
+        !PLAN_STATUSES.has(rec.status as PlanItemStatus)
+      )
+        return { ok: false, reason: 'item-status-invalid' };
+      items.push({ title, status: rec.status as PlanItemStatus });
+    }
+    return { ok: true, args: { items } };
   },
 });

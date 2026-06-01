@@ -350,6 +350,10 @@ export function useChatStreaming(
     tableSummary: string;
   } | null>(null);
   const getPageSvgCalledRef = useRef(false);
+  // 0.7.29 — 모델이 updatePlan 으로 선언한 최신 작업 계획. 매 성공한
+  // updatePlan dispatch 마다 갱신. form-guard 완료 게이트가 pending/
+  // in_progress 잔여를 보고 완료 차단에 사용. send/regenerate 시 reset.
+  const planItemsRef = useRef<import('@shared/ai-tools').PlanItem[]>([]);
   // chunk 99 follow-up — plan mode 1회 우회 ref. ChatPanel 의 "이 계획
   // 대로 실행" / "건너뛰기" 액션이 set, fireChat 가 1회 소비 후 false.
   const planSkipNextRef = useRef(false);
@@ -813,6 +817,13 @@ export function useChatStreaming(
           if (r.ok && r.name === 'getPageSvg') {
             getPageSvgCalledRef.current = true;
           }
+          // 0.7.29 — updatePlan 결과에서 최신 plan items 추출(완료 게이트용).
+          if (r.ok && r.name === 'updatePlan' && r.data) {
+            const d = r.data as {
+              items?: import('@shared/ai-tools').PlanItem[];
+            };
+            if (Array.isArray(d.items)) planItemsRef.current = d.items;
+          }
         }
 
         // UI 갱신 — 즉시 처리된 entries 는 ok/failed 로, write pending 은
@@ -907,6 +918,11 @@ export function useChatStreaming(
                 e.name === 'insertTextInCell' ||
                 e.name === 'replaceTextInCell'),
           ),
+          // 0.7.29 — 모델이 updatePlan 으로 선언한 계획에 미완료
+          // (pending/in_progress) 항목이 남아있으면 완료 차단.
+          planPending: planItemsRef.current.some(
+            (i) => i.status === 'pending' || i.status === 'in_progress',
+          ),
         });
         if (decision.shouldNudge && decision.nudgeText) {
           formGuardNudgeCountRef.current += 1;
@@ -971,6 +987,7 @@ export function useChatStreaming(
       formGuardNudgeCountRef.current = 0;
       formStateRef.current = null;
       getPageSvgCalledRef.current = false;
+      planItemsRef.current = [];
       // chunk 99 follow-up — Plan mode auto-disengage. plan 응답 1턴은
       // 의도상 "다음 turn dry-run"; 응답 완료 후 자동으로 토글 off.
       // 사용자가 다음 메시지를 보내면 한 번은 정상 모드로 (검토 결과
@@ -1179,6 +1196,7 @@ export function useChatStreaming(
     formGuardNudgeCountRef.current = 0;
     formStateRef.current = null;
     getPageSvgCalledRef.current = false;
+    planItemsRef.current = [];
 
     // Per-chip stale verification — chunk 20. Each chip's anchor is
     // re-read from the IR. Fresh = pass through. Relocated = update
@@ -1278,6 +1296,7 @@ export function useChatStreaming(
       formGuardNudgeCountRef.current = 0;
       formStateRef.current = null;
       getPageSvgCalledRef.current = false;
+      planItemsRef.current = [];
       const userMsg: UiMessage = {
         id: newId(),
         role: 'user',
@@ -1323,6 +1342,7 @@ export function useChatStreaming(
       formGuardNudgeCountRef.current = 0;
       formStateRef.current = null;
       getPageSvgCalledRef.current = false;
+      planItemsRef.current = [];
       const idx = messages.findIndex((m: any) => m.id === assistantId);
       if (idx === -1) return;
       const history = messages.slice(0, idx);
@@ -1393,6 +1413,7 @@ export function useChatStreaming(
     formGuardNudgeCountRef.current = 0;
     formStateRef.current = null;
     getPageSvgCalledRef.current = false;
+    planItemsRef.current = [];
   }, []);
 
   // chunk 97 — turn finalization helper. 모든 tool 결과가 모이면 호출되어

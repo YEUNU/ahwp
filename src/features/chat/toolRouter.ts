@@ -53,6 +53,9 @@ const FORM_FILL_ESSENTIAL: readonly AhwpToolName[] = [
   'replaceTextInCell',
   'getPageSvg',
   'getTextRange',
+  // 0.7.29 — 대형 양식 진행 추적(TodoWrite analog). 라우터가 빠뜨리면
+  // 모델이 계획을 못 세우고 form-guard 의 plan 완료 게이트도 무의미.
+  'updatePlan',
 ];
 
 export interface ToolSelectionResult {

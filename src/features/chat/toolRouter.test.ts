@@ -55,6 +55,7 @@ describe('selectToolsViaLlm — mode-aware essentials (0.7.28)', () => {
     expect(r.tools).toContain('replaceTextInCell');
     expect(r.tools).toContain('getPageSvg');
     expect(r.tools).toContain('getTextRange');
+    expect(r.tools).toContain('updatePlan');
     // 글로벌 ALWAYS_INCLUDE 도 그대로.
     expect(r.tools).toContain('getEmptyFormFields');
     expect(r.tools).toContain('fillFormCells');

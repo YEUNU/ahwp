@@ -1641,6 +1641,28 @@ async function runOne(
           };
         }
       }
+      // === 0.7.29 — TodoWrite analog. plan 갱신. doc IR 미변경 — 검증된
+      // items 를 그대로 data 로 echo 한다. 실제 plan 상태는 useChatStreaming
+      // 이 history 의 최신 updatePlan toolUse 에서 파생 (mode 감지와 동형).
+      // UI 체크리스트 렌더 + form-guard 완료 게이트가 그 파생 상태를 사용. ===
+      case 'updatePlan': {
+        const items = call.args.items;
+        const done = items.filter((i) => i.status === 'completed').length;
+        const skipped = items.filter((i) => i.status === 'skipped').length;
+        const active = items.filter((i) => i.status === 'in_progress').length;
+        return {
+          ok: true,
+          tool: call.tool,
+          data: {
+            items,
+            total: items.length,
+            completed: done,
+            skipped,
+            inProgress: active,
+            pending: items.length - done - skipped - active,
+          },
+        };
+      }
       // === 0.7.13 — bulk cell fill (form-fill turn 예산 보호) ===
       // 단일 insert/replace 를 N회 도는 대신 한 call 로 다수 셀 처리. 좌표는
       // 셀별 보유. 셀당 before/after snapshot 생략 (대량 처리 round-trip 비용↑;
@@ -2057,6 +2079,12 @@ export function previewArgs(call: AhwpToolCall): string {
       const mode = call.args.mode ?? 'inherit';
       const head = p.length > 40 ? p.slice(0, 40) + '…' : p;
       return `[${mode}] ${head}`;
+    }
+    // 0.7.29 — Plan checklist.
+    case 'updatePlan': {
+      const items = call.args.items;
+      const done = items.filter((i) => i.status === 'completed').length;
+      return `${done}/${items.length} done`;
     }
   }
 }

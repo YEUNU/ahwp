@@ -270,6 +270,45 @@ describe('decideFormGuardNudge — Form-Fill 완료 guard (0.7.6 tightened)', ()
     expect(r.reason).toBe('no-visual-verify');
   });
 
+  // 0.7.29 — plan(updatePlan) 미완료 항목 남으면 완료 차단 (한계 #6).
+  it('plan 미완료(pending/in_progress) + 완료 선언 → plan-incomplete nudge', () => {
+    const r = decideFormGuardNudge({
+      ...BASE,
+      formState: { emptyCellsRemaining: 0, tableSummary: '' },
+      getPageSvgCalled: true,
+      formWritesDone: true,
+      planPending: true,
+    });
+    expect(r.shouldNudge).toBe(true);
+    expect(r.reason).toBe('plan-incomplete');
+    expect(r.nudgeText).toContain('updatePlan');
+    expect(r.nudgeText).toContain('skipped');
+  });
+
+  it('plan 전부 완료/skipped(planPending=false) → plan nudge 안 함', () => {
+    const r = decideFormGuardNudge({
+      ...BASE,
+      formState: { emptyCellsRemaining: 0, tableSummary: '' },
+      getPageSvgCalled: true,
+      formWritesDone: true,
+      planPending: false,
+    });
+    expect(r.shouldNudge).toBe(false);
+  });
+
+  it('plan 미완료여도 모델이 질문하며 멈추면 질문 우선(사용자 입력 대기)', () => {
+    const r = decideFormGuardNudge({
+      ...BASE,
+      formState: { emptyCellsRemaining: 0, tableSummary: '' },
+      getPageSvgCalled: true,
+      formWritesDone: true,
+      planPending: true,
+      assistantText: '이 항목 값을 알려주실 수 있나요?',
+    });
+    expect(r.shouldNudge).toBe(false);
+    expect(r.reason).toBe('awaiting-user-input');
+  });
+
   describe('assistantRequestsInput — 질문/요청 판정', () => {
     it('물음표(?, ？) 포함 → true', () => {
       expect(assistantRequestsInput('금액을 알려주실 수 있나요?')).toBe(true);

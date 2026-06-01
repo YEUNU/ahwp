@@ -29,6 +29,7 @@ import {
   parseToolBlock,
   type AhwpPreflightItem,
   type AhwpToolResult,
+  type PlanItem,
 } from '@shared/ai-tools';
 import { createPortal } from 'react-dom';
 import { parsePatchBlock, type AhwpPatch } from '@shared/ai-patches';
@@ -369,6 +370,21 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [messages, setMessages] = useState<UiMessage[]>([]);
     const [input, setInput] = useState('');
     const [streaming, setStreaming] = useState(false);
+    // 0.7.29 — 모델이 updatePlan 으로 선언한 최신 작업 계획(TodoWrite analog).
+    // 가장 최근 assistant turn 의 updatePlan toolUse args.items 에서 파생 →
+    // 입력란 위에 진행 체크리스트로 surface. 새 user 메시지로 시작하면 그
+    // turn 의 updatePlan 이 나오기 전까지 직전 계획이 유지된다(연속 task).
+    const latestPlan = useMemo<PlanItem[]>(() => {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const tu = messages[i].toolUses;
+        if (!tu) continue;
+        const call = tu.find((u) => u.name === 'updatePlan');
+        if (!call) continue;
+        const items = (call.args as { items?: unknown } | undefined)?.items;
+        if (Array.isArray(items)) return items as PlanItem[];
+      }
+      return [];
+    }, [messages]);
     // chunk 99 follow-up — agent turn step counter for "Turn N/M" UI.
     // Hook bumps via setAgentTurn callback on each turn entry.
     const [agentTurn, setAgentTurn] = useState(0);
@@ -1135,6 +1151,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           className="shrink-0 border-t border-border bg-card p-3"
           data-testid="chat-input-form"
         >
+          {/* 0.7.29 — 모델 작업 계획(updatePlan) 진행 체크리스트. */}
+          <PlanChecklist items={latestPlan} />
           {/* chunk 99 follow-up — 멀티 문서 자동 chip 폐기 (사용자
             요청, 매뉴얼만). MultiDocChips 컴포넌트는 keep — 향후 사용자
             매뉴얼 토글 / cmd-K 같은 곳에서 재활용 가능. */}
@@ -1488,6 +1506,47 @@ function ModelRefreshButton({
         <RefreshCw className="size-3.5" />
       )}
     </IconButton>
+  );
+}
+
+/** 0.7.29 — 모델의 작업 계획(updatePlan) 진행 체크리스트. 입력란 위에
+ *  상시 표시 — 사용자가 어느 섹션이 끝났고 무엇이 남았는지 실시간으로 본다. */
+function PlanChecklist({ items }: { items: PlanItem[] }): ReactNode {
+  if (items.length === 0) return null;
+  const done = items.filter((i) => i.status === 'completed').length;
+  const skipped = items.filter((i) => i.status === 'skipped').length;
+  const glyph: Record<PlanItem['status'], string> = {
+    completed: '✓',
+    in_progress: '▸',
+    skipped: '⊘',
+    pending: '○',
+  };
+  const cls: Record<PlanItem['status'], string> = {
+    completed: 'text-emerald-600 dark:text-emerald-400',
+    in_progress: 'text-sky-600 dark:text-sky-400 font-medium',
+    skipped: 'text-muted-foreground line-through',
+    pending: 'text-muted-foreground',
+  };
+  return (
+    <div
+      className="mb-2 rounded-md border border-border bg-muted/40 px-2 py-1.5 text-[10px]"
+      data-testid="chat-plan-checklist"
+    >
+      <div className="mb-1 flex items-center gap-1 text-muted-foreground">
+        <span>📋 작업 계획</span>
+        <span className="tabular-nums">
+          {done + skipped}/{items.length}
+        </span>
+      </div>
+      <ul className="space-y-0.5">
+        {items.map((it, idx) => (
+          <li key={idx} className={`flex items-start gap-1 ${cls[it.status]}`}>
+            <span className="w-3 shrink-0 text-center">{glyph[it.status]}</span>
+            <span className="break-words">{it.title}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

@@ -118,9 +118,25 @@ export const AHWP_TOOL_NAMES = [
   // text 만 parent 에 반환. context window 보존 + 복잡한 다단계 작업
   // 위임. 재귀 차단 (sub-agent 의 catalog 에서 runAgent 제외).
   'runAgent',
+  // 0.7.29 — Claude Code TodoWrite analog. 다단계 작업(특히 대형 양식)의
+  // 진행을 모델이 명시 추적 → 섹션 누락/중복 방지 + 사용자 진행 가시성.
+  // doc IR 미변경 (read-only 분류) — 즉시 실행, 승인 게이트 없음.
+  'updatePlan',
 ] as const;
 
 export type AhwpToolName = (typeof AHWP_TOOL_NAMES)[number];
+
+/** 0.7.29 — `updatePlan` 의 작업 항목. Claude Code TodoWrite 와 동형. */
+export type PlanItemStatus =
+  | 'pending'
+  | 'in_progress'
+  | 'completed'
+  | 'skipped';
+export interface PlanItem {
+  /** 한 줄 작업 설명 (대형 양식이면 보통 섹션/표 단위). */
+  title: string;
+  status: PlanItemStatus;
+}
 
 /**
  * Phase 5 chunk 97 — Manual/Agent 통합. 읽기 전용 도구 set. 활성 doc /
@@ -151,6 +167,9 @@ export const READONLY_TOOL_NAMES = new Set<AhwpToolName>([
   // 0.7.7 — external world read-only.
   'webFetch',
   'webSearch',
+  // 0.7.29 — plan 갱신은 doc IR 미변경 (app 상태만). read-only 게이트로
+  // 즉시 실행 + write 배치의 reflow 트리거 안 함.
+  'updatePlan',
 ]);
 
 export function isReadOnlyTool(name: string): boolean {
@@ -552,6 +571,8 @@ export interface AhwpToolArgs {
   };
   // 0.6.17 — Phase B 시각 검증. 한 페이지 SVG 캡처.
   getPageSvg: { pageIdx: number };
+  // 0.7.29 — TodoWrite analog. 작업 계획 전체를 매번 통째로 전달(replace).
+  updatePlan: { items: PlanItem[] };
   // Phase 5 chunk 96 — outline-as-router workspace search
   searchWorkspaceOutlines: { maxDocs?: number };
   readParagraphByPath: {

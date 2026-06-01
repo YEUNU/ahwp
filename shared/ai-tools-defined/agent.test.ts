@@ -84,6 +84,66 @@ describe('runAgent validator', () => {
   });
 });
 
+describe('updatePlan — 0.7.29 defineTool (TodoWrite analog)', () => {
+  const v = DEFINED_TOOL_REGISTRY.validators.get('updatePlan')!;
+
+  it('registry 등록 + readonly (doc IR 미변경)', () => {
+    expect(DEFINED_TOOL_REGISTRY.validators.has('updatePlan')).toBe(true);
+    expect(DEFINED_TOOL_REGISTRY.readonlyNames.has('updatePlan')).toBe(true);
+  });
+
+  it('정상 items 통과 + trim', () => {
+    const r = v({
+      items: [
+        { title: '  1. 표지  ', status: 'completed' },
+        { title: '2. 진행상황', status: 'in_progress' },
+        { title: '3. 사업비', status: 'pending' },
+      ],
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      const args = r.args as { items: { title: string; status: string }[] };
+      expect(args.items).toHaveLength(3);
+      expect(args.items[0].title).toBe('1. 표지'); // trimmed
+      expect(args.items[1].status).toBe('in_progress');
+    }
+  });
+
+  it('items 배열 아님 → 거부', () => {
+    const r = v({ items: 'nope' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe('items-not-array');
+  });
+
+  it('빈 title → 거부', () => {
+    const r = v({ items: [{ title: '   ', status: 'pending' }] });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe('item-title-empty');
+  });
+
+  it('잘못된 status → 거부', () => {
+    const r = v({ items: [{ title: 'x', status: 'done' }] });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe('item-status-invalid');
+  });
+
+  it('빈 items 배열 → 통과 (계획 비우기 허용)', () => {
+    expect(v({ items: [] }).ok).toBe(true);
+  });
+
+  it('4 status 모두 허용', () => {
+    const r = v({
+      items: [
+        { title: 'a', status: 'pending' },
+        { title: 'b', status: 'in_progress' },
+        { title: 'c', status: 'completed' },
+        { title: 'd', status: 'skipped' },
+      ],
+    });
+    expect(r.ok).toBe(true);
+  });
+});
+
 describe('runAgent — 6 mode 모두 지원', () => {
   const v = DEFINED_TOOL_REGISTRY.validators.get('runAgent')!;
   const modes = [
