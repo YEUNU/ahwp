@@ -6,6 +6,21 @@
 
 ## [Unreleased]
 
+## [0.7.19] - 2026-06-01
+
+### Added — 참고자료 reference chip 부활 (멀티 문서 컨텍스트)
+
+Inserty 데모 참고: 채팅 입력란 위에 **참고자료 토글 칩** 추가. 활성 탭을 제외한
+열린 문서를 클릭 한 번으로 read-only 참고자료로 첨부 → useChatStreaming 이
+`collectReferenceOutlines` → `buildReferenceSystemBlock` 으로 시스템 프롬프트에
+`[Reference docs]` 블록 주입. 양식(활성 탭)을 채우면서 다른 자료를 근거로 쓰는
+"참고자료 → 양식 작성" 흐름의 첫 조각.
+
+- chunk 99 에서 폐기됐던 `referencePaths` 를 state 로 부활 (소비 파이프라인은
+  그대로 살아있어 state·UI 만 복원). 닫힌/active 경로는 소비 측이 자동 필터링.
+- 순수 함수 회귀 가드 `prompts.test.ts` 신규 (active/닫힌 경로 필터, 빈 outline
+  skip, read-only 블록 생성 — 6 cases).
+
 ## [0.7.18] - 2026-06-01
 
 ### Added — 양식 작성 완료 요약 (그룹별·근거 기반)

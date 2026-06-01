@@ -458,9 +458,17 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // chunk 21 — paths the user opted in as references. Active tab is
     // implicit target (always included) and never appears in this set.
     // Stored as an array (not Set) so React equality is straightforward.
-    // chunk 99 follow-up — 멀티 문서 chip UI 폐기 (사용자 요청). 빈
-    // 배열 고정 — useChatStreaming 의 reference outline 자동 주입 차단.
-    const referencePaths: string[] = [];
+    // 0.7.19 — Inserty 데모 참고: 멀티 문서 reference chip UI 부활. 사용자가
+    // 다른 열린 탭을 read-only 참고자료로 토글 → useChatStreaming 이
+    // collectReferenceOutlines → buildReferenceSystemBlock 으로 시스템
+    // 프롬프트에 [Reference docs] 블록 주입. 소비 측은 닫힌/active 경로를
+    // 자동 필터링하므로 stale entry 는 무해.
+    const [referencePaths, setReferencePaths] = useState<string[]>([]);
+    const toggleReferencePath = useCallback((path: string) => {
+      setReferencePaths((prev) =>
+        prev.includes(path) ? prev.filter((p) => p !== path) : [...prev, path],
+      );
+    }, []);
     const handleRef = useRef<AiChatHandle | null>(null);
     const scrollerRef = useRef<HTMLDivElement>(null);
     const assistantIdRef = useRef<string | null>(null);
@@ -1147,6 +1155,52 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               </button>
             </div>
           ) : null}
+          {/* 0.7.19 — Inserty 데모 참고: 참고자료 토글 칩. 활성 탭을
+            제외한 열린 문서를 read-only 참고자료로 첨부 → 시스템 프롬프트의
+            [Reference docs] 블록. 닫히면 후보에서 사라지고 소비 측이
+            자동 필터링. */}
+          {(() => {
+            const refCandidates = (getOpenDocs?.() ?? []).filter(
+              (d) => !d.isActive,
+            );
+            if (refCandidates.length === 0) return null;
+            return (
+              <div
+                className="mb-2 flex flex-wrap items-center gap-1.5 text-[10px]"
+                data-testid="chat-reference-strip"
+              >
+                <span className="text-muted-foreground">📎 참고자료</span>
+                {refCandidates.map((d) => {
+                  const on = referencePaths.includes(d.path);
+                  return (
+                    <button
+                      key={d.path}
+                      type="button"
+                      onClick={() => toggleReferencePath(d.path)}
+                      disabled={streaming}
+                      data-testid="chat-reference-chip"
+                      data-selected={on ? 'true' : 'false'}
+                      aria-pressed={on}
+                      title={
+                        on
+                          ? `${d.label} — 참고자료로 첨부됨 (read-only). 클릭하면 해제`
+                          : `${d.label} — 클릭하면 read-only 참고자료로 첨부`
+                      }
+                      className={cn(
+                        'max-w-44 truncate rounded-full border px-2 py-0.5 disabled:opacity-50',
+                        on
+                          ? 'border-sky-500/50 bg-sky-500/10 text-sky-700 dark:text-sky-400'
+                          : 'border-input text-muted-foreground hover:bg-muted',
+                      )}
+                    >
+                      {on ? '✓ ' : ''}
+                      {d.label}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })()}
           {excerpts.length > 0 ? (
             <ul
               className="mb-2 flex flex-wrap gap-1.5"
