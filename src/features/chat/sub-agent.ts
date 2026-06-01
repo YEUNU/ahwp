@@ -29,7 +29,11 @@ import type {
   AhwpPreflightItem,
   AhwpToolCall,
 } from '@shared/ai-tools';
-import { getAhwpToolCatalog, validateToolCall } from '@shared/ai-tools';
+import {
+  getAhwpToolCatalog,
+  validateToolCall,
+  isReadOnlyTool,
+} from '@shared/ai-tools';
 import type { ModeContext, TaskMode } from '@shared/ai-modes';
 import { appendModePrompt } from './prompts';
 
@@ -228,35 +232,50 @@ export async function runSubAgent(
       })),
     });
 
-    // 매 tool call 마다 validate → dispatch
-    for (const call of response.toolCalls) {
+    // 0.7.31 — dispatch: parent 의 advanceAgentLoop 패턴 미러. read-only 도구
+    // 는 병렬(Promise.all, IR 무변경이라 안전), write/invalid 는 순차(IR race
+    // + undo 그룹 보존). 결과는 call.id 로 모은 뒤 원래 순서로 메시지 조립.
+    const dispatchOne = async (
+      call: (typeof response.toolCalls)[number],
+    ): Promise<AhwpToolResult> => {
       const v = validateToolCall({ tool: call.name, args: call.args });
-      let result: AhwpToolResult;
-      if (!v.ok) {
-        result = {
+      if (!v.ok) return { ok: false, tool: call.name, reason: v.reason };
+      try {
+        const out = await opts.dispatcher(
+          [{ ok: true, call: v.value as AhwpToolCall }],
+          opts.targetPath ?? null,
+        );
+        return (
+          out[0] ?? { ok: false, tool: call.name, reason: 'dispatcher-empty' }
+        );
+      } catch (err) {
+        return {
           ok: false,
           tool: call.name,
-          reason: v.reason,
+          reason: `dispatch-threw:${(err as Error).message ?? String(err)}`,
         };
-      } else {
-        try {
-          const out = await opts.dispatcher(
-            [{ ok: true, call: v.value as AhwpToolCall }],
-            opts.targetPath ?? null,
-          );
-          result = out[0] ?? {
-            ok: false,
-            tool: call.name,
-            reason: 'dispatcher-empty',
-          };
-        } catch (err) {
-          result = {
-            ok: false,
-            tool: call.name,
-            reason: `dispatch-threw:${(err as Error).message ?? String(err)}`,
-          };
-        }
       }
+    };
+
+    const resultById = new Map<string, AhwpToolResult>();
+    // read-only → 병렬.
+    const reads = response.toolCalls.filter((c) => isReadOnlyTool(c.name));
+    await Promise.all(
+      reads.map(async (call) => {
+        resultById.set(call.id, await dispatchOne(call));
+      }),
+    );
+    // write / 기타 → 순차 (원래 순서 보존).
+    for (const call of response.toolCalls) {
+      if (resultById.has(call.id)) continue;
+      resultById.set(call.id, await dispatchOne(call));
+    }
+
+    // 원래 순서로 toolHistory + tool result 메시지 조립.
+    for (const call of response.toolCalls) {
+      const result =
+        resultById.get(call.id) ??
+        ({ ok: false, tool: call.name, reason: 'no-result' } as AhwpToolResult);
       toolHistory.push({ name: call.name, ok: result.ok });
 
       // Tool result message — parent 의 advanceAgentLoop 와 동일 형식.

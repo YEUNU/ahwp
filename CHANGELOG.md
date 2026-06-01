@@ -6,6 +6,22 @@
 
 ## [Unreleased]
 
+## [0.7.31] - 2026-06-01
+
+### Changed — 서브에이전트 내부 read 도구 병렬 dispatch (한계 #5 1차)
+
+서브에이전트(`runAgent`)가 한 turn 의 도구 호출을 1개씩 순차 dispatch 하던
+것을, parent 의 advanceAgentLoop 패턴대로 **read-only 도구는 병렬(Promise.all),
+write/invalid 는 순차**로 재구성. 결과는 call.id 로 모아 원래 순서로 메시지
+조립(병렬이어도 toolHistory·tool_result 순서 보존). read-heavy 분석 sub-agent
+(예: "이 양식 모든 표 구조 분석")의 latency 개선.
+
+- IR race 회피: write 는 순차 유지(같은 문서 IR 동시 변경 금지). read 는 IR
+  무변경이라 병렬 안전.
+- 잔여(미해결): parent 가 여러 runAgent 를 병렬 fan-out 하는 것은 sub-agent
+  가 같은 문서에 write 할 수 있어 위험 — research(읽기 전용 mode) 한정 병렬화는
+  향후. 회귀 가드: 다중 read 병렬 + 순서 보존 1 case.
+
 ## [0.7.30] - 2026-06-01
 
 ### Fixed — auto-continue 가 의도적 빈칸에도 돌던 문제 + 사용자에게 비표시

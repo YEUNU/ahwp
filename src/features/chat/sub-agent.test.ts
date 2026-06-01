@@ -124,6 +124,52 @@ describe('runSubAgent — tool calls', () => {
     expect(dispatcher).toHaveBeenCalledTimes(1);
   });
 
+  // 0.7.31 — 한 turn 의 다중 read 도구는 병렬 dispatch + 순서 보존.
+  it('다중 read 도구 → 병렬 dispatch + toolHistory 원래 순서 보존', async () => {
+    mockAiChat([
+      [
+        { type: 'tool-use', id: 'r1', name: 'getDocumentOutline', args: {} },
+        { type: 'tool-use', id: 'r2', name: 'getDocumentSummary', args: {} },
+        { type: 'tool-use', id: 'r3', name: 'getCaretPosition', args: {} },
+        { type: 'done', finishReason: 'tool_calls' },
+      ],
+      [
+        { type: 'text-delta', text: 'done' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+
+    // dispatcher 는 read 별로 1회씩 호출됨(병렬). 동시 진입을 확인하기 위해
+    // 첫 호출은 늦게, 나머지는 빨리 resolve — 병렬이면 셋 다 거의 동시 진입.
+    let active = 0;
+    let maxActive = 0;
+    const dispatcher = vi.fn(async (items: { call: { tool: string } }[]) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((res) => queueMicrotask(() => res(null)));
+      active -= 1;
+      const tool = items[0].call.tool;
+      return [{ ok: true, tool, data: { tool } }] as AhwpToolResult[];
+    });
+
+    const r = await runSubAgent({
+      ...baseOpts,
+      prompt: 'analyze',
+      dispatcher: dispatcher as never,
+    });
+
+    expect(r.ok).toBe(true);
+    expect(dispatcher).toHaveBeenCalledTimes(3);
+    // 병렬: 3개가 동시에 active 였던 적이 있어야(>1).
+    expect(maxActive).toBeGreaterThan(1);
+    // toolHistory 는 원래 호출 순서 보존(병렬이어도).
+    expect(r.toolHistory.map((h) => h.name)).toEqual([
+      'getDocumentOutline',
+      'getDocumentSummary',
+      'getCaretPosition',
+    ]);
+  });
+
   it('failed tool call → toolHistory ok:false → next turn 진행', async () => {
     mockAiChat([
       [
