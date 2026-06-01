@@ -6,6 +6,23 @@
 
 ## [Unreleased]
 
+## [0.7.27] - 2026-06-01
+
+### Fixed — agent 루프 context 압축: 오래된 페이지 렌더 이미지 prune (한계 #1 1차)
+
+Agent 루프는 매 턴 history 전체를 provider 에 재전송하는데 압축이 없어, 0.7.25
+시각 self-verification 으로 getPageSvg(=base64 PNG, 수십~수백 KB) 호출이
+쌓이면 턴 N 이 이미지 N장을 매번 재인코딩·재전송 → 비용/latency 가 verify-heavy
+턴에서 제곱으로 증가.
+
+- `compactVisionImages` (순수 함수) — 가장 최근 페이지 렌더 이미지 1장만 남기고
+  오래된 것은 imageBase64 + 이제 무용한 SVG 텍스트(최대 ~16KB) 까지 제거,
+  content 를 compact 마커로 교체(call/result pairing 보존). 오래된 렌더는 최신
+  렌더가 대체하는 시점-스냅샷이라 무손실, 필요하면 모델이 재렌더 가능.
+- fireChat 의 request 조립 직전 적용. 이미지 없는 메시지·텍스트 결과는 무변경.
+  Mode 감지는 원본 history 를 스캔하므로 무영향.
+- 회귀 가드 6 cases. 텍스트 결과 aging 은 향후(lossy·pairing 위험으로 보류).
+
 ## [0.7.26] - 2026-06-01
 
 ### Fixed — 시각 검증 enforcement gating 수정 (0.7.25 follow-up)

@@ -22,6 +22,7 @@ import {
   type MutableRefObject,
 } from 'react';
 import type { ChatMessage, ChatRequest, ChatStreamEvent } from '@shared/ai';
+import { compactVisionImages } from '../compact-history';
 import {
   getAhwpToolCatalog,
   isReadOnlyTool,
@@ -1032,12 +1033,17 @@ export function useChatStreaming(
       // active viewer's IR.
       // Phase 3 — Agent 모드는 toolUses / toolResult 도 같이 직렬화.
       // OpenAI 어댑터가 native (tool_calls / role='tool') 로 변환한다.
-      const messages: ChatMessage[] = history.map((m) => ({
+      const rawMessages: ChatMessage[] = history.map((m) => ({
         role: m.role,
         content: m.content,
         toolUses: m.toolUses,
         toolResult: m.toolResult,
       }));
+      // 0.7.27 — context 압축. 매 턴 history 전체를 재전송하므로 0.7.25
+      // 시각 검증으로 누적된 getPageSvg PNG 들이 매번 재인코딩/재전송돼 토큰
+      // 폭증. 오래된 페이지 렌더 이미지는 최신 1장만 남기고 strip (텍스트·
+      // call/result pairing 보존). 이미지 없는 메시지는 무변경.
+      const messages = compactVisionImages(rawMessages);
 
       const refOutlines = collectReferenceOutlines(
         referencePaths,
