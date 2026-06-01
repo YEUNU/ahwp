@@ -7,7 +7,11 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { ChatMessage } from '@shared/ai';
-import { compactVisionImages } from './compact-history';
+import {
+  compactVisionImages,
+  compactOldLargeReads,
+  compactAgentHistory,
+} from './compact-history';
 
 const toolImg = (id: string, b64: string): ChatMessage => ({
   role: 'tool',
@@ -82,5 +86,103 @@ describe('compactVisionImages', () => {
     const out = compactVisionImages(msgs, 0);
     expect(out[0].toolResult?.imageBase64).toBeUndefined();
     expect(out[1].toolResult?.imageBase64).toBeUndefined();
+  });
+});
+
+describe('compactOldLargeReads (0.7.33 — text aging)', () => {
+  const bigRead = (id: string): ChatMessage => ({
+    role: 'tool',
+    content: 'X'.repeat(5000), // > 4096 threshold
+    toolResult: { id, content: 'X'.repeat(5000) },
+  });
+  const smallRead = (id: string): ChatMessage => ({
+    role: 'tool',
+    content: 'small',
+    toolResult: { id, content: 'small' },
+  });
+  const errRead = (id: string): ChatMessage => ({
+    role: 'tool',
+    content: 'E'.repeat(5000),
+    toolResult: { id, content: 'E'.repeat(5000), isError: true },
+  });
+
+  it('최근 N개 외 오래된 대형 read 만 trim', () => {
+    // 8 big reads, keepRecent=6 → 앞 2개만 trim 대상.
+    const msgs = Array.from({ length: 8 }, (_, i) => bigRead(`r${i}`));
+    const out = compactOldLargeReads(msgs, 6);
+    expect(out[0].toolResult?.content).toContain('trimmed');
+    expect(out[1].toolResult?.content).toContain('trimmed');
+    // 최근 6개는 full.
+    for (let i = 2; i < 8; i++) {
+      expect(out[i].toolResult?.content).toBe('X'.repeat(5000));
+    }
+  });
+
+  it('작은 결과는 trim 안 함', () => {
+    const msgs = [
+      smallRead('a'),
+      ...Array.from({ length: 6 }, (_, i) => bigRead(`b${i}`)),
+    ];
+    const out = compactOldLargeReads(msgs, 6);
+    expect(out[0].toolResult?.content).toBe('small'); // 작아서 보존
+  });
+
+  it('에러 결과는 보존 (재시도 판단용)', () => {
+    const msgs = [
+      errRead('e'),
+      ...Array.from({ length: 6 }, (_, i) => bigRead(`b${i}`)),
+    ];
+    const out = compactOldLargeReads(msgs, 6);
+    expect(out[0].toolResult?.content).toBe('E'.repeat(5000)); // 에러 full 보존
+  });
+
+  it('tool-result 수 ≤ keep 이면 no-op (동일 참조)', () => {
+    const msgs = [bigRead('a'), bigRead('b')];
+    expect(compactOldLargeReads(msgs, 6)).toBe(msgs);
+  });
+
+  it('입력 불변', () => {
+    const msgs = Array.from({ length: 8 }, (_, i) => bigRead(`r${i}`));
+    compactOldLargeReads(msgs, 6);
+    expect(msgs[0].toolResult?.content).toBe('X'.repeat(5000));
+  });
+
+  it('trim 시 prefix + 마커 (pairing id 보존)', () => {
+    const msgs = Array.from({ length: 7 }, (_, i) => bigRead(`r${i}`));
+    const out = compactOldLargeReads(msgs, 6);
+    expect(out[0].toolResult?.id).toBe('r0');
+    expect(out[0].toolResult?.content.length).toBeLessThan(600);
+    expect(out[0].toolResult?.content).toContain('trimmed');
+  });
+});
+
+describe('compactAgentHistory (0.7.33 — 통합)', () => {
+  it('이미지 prune + 오래된 대형 read trim 동시 적용', () => {
+    const img = (id: string, b: string): ChatMessage => ({
+      role: 'tool',
+      content: 'svg',
+      toolResult: {
+        id,
+        content: 'svg',
+        imageBase64: b,
+        imageMediaType: 'image/png',
+      },
+    });
+    const big = (id: string): ChatMessage => ({
+      role: 'tool',
+      content: 'X'.repeat(5000),
+      toolResult: { id, content: 'X'.repeat(5000) },
+    });
+    const msgs = [
+      img('i1', 'OLD'),
+      ...Array.from({ length: 7 }, (_, i) => big(`b${i}`)),
+      img('i2', 'NEW'),
+    ];
+    const out = compactAgentHistory(msgs);
+    // 오래된 이미지 strip, 최신 이미지 유지.
+    expect(out[0].toolResult?.imageBase64).toBeUndefined();
+    expect(out[out.length - 1].toolResult?.imageBase64).toBe('NEW');
+    // 오래된 대형 read 일부 trim (전체 9 tool-result, keep 6 → 앞 3 trim 대상).
+    expect(out[1].toolResult?.content).toContain('trimmed');
   });
 });

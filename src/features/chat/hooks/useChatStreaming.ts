@@ -22,7 +22,7 @@ import {
   type MutableRefObject,
 } from 'react';
 import type { ChatMessage, ChatRequest, ChatStreamEvent } from '@shared/ai';
-import { compactVisionImages } from '../compact-history';
+import { compactAgentHistory } from '../compact-history';
 import {
   getAhwpToolCatalog,
   isReadOnlyTool,
@@ -1053,11 +1053,11 @@ export function useChatStreaming(
         toolUses: m.toolUses,
         toolResult: m.toolResult,
       }));
-      // 0.7.27 — context 압축. 매 턴 history 전체를 재전송하므로 0.7.25
-      // 시각 검증으로 누적된 getPageSvg PNG 들이 매번 재인코딩/재전송돼 토큰
-      // 폭증. 오래된 페이지 렌더 이미지는 최신 1장만 남기고 strip (텍스트·
-      // call/result pairing 보존). 이미지 없는 메시지는 무변경.
-      const messages = compactVisionImages(rawMessages);
+      // 0.7.27/0.7.33 — context 압축. 매 턴 history 전체 재전송이라 누적
+      // 비용↑. 오래된 페이지 렌더 이미지는 최신 1장만 + 오래된 대형 read
+      // 결과(getEmptyFormFields 등)는 최근 N개 외 trim. call/result pairing
+      // 보존, 최근/작은/에러 결과는 무변경. (mode 감지는 원본 history 사용.)
+      const messages = compactAgentHistory(rawMessages);
 
       const refOutlines = collectReferenceOutlines(
         referencePaths,
