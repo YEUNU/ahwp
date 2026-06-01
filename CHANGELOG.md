@@ -6,6 +6,23 @@
 
 ## [Unreleased]
 
+## [0.7.20] - 2026-06-01
+
+### Added — AI form-fill 실시간 편집 위치 표시 (follow-along scroll)
+
+Inserty 데모 참고: AI 가 양식을 채우는 동안 편집 영역이 **채워지는 표/문단을
+화면에 따라오게** 스크롤. write op 마다 해당 문단으로 reveal — 사용자가 어디가
+수정되고 있는지 실시간으로 본다.
+
+- fork(`vendor/rhwp` ahwp-bridge): `InputHandler.revealParagraph` +
+  `scrollToParagraph` bridge case. caret/포커스를 옮기지 않아 채팅 입력
+  포커스를 유지 (moveCursorTo 의 focusTextarea 회피).
+- ahwp `runTools`: 성공한 write op 마다 `onWriteParagraph(0, paragraphIdx)`
+  콜백 (write 결과의 합성 diff.paragraphIdx 재사용, 연속 동일 문단 dedup).
+  AppShell 이 iframe `scrollToParagraph` bridge 로 연결. 구버전 vendor
+  build 면 case 부재로 무해하게 skip.
+- 회귀 가드 4 cases (호출/문단별 분리/dedup/실패 시 skip).
+
 ## [0.7.19] - 2026-06-01
 
 ### Added — 참고자료 reference chip 부활 (멀티 문서 컨텍스트)

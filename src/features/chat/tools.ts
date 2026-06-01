@@ -1767,8 +1767,18 @@ export async function runTools(
   items: AhwpPreflightItem[],
   helper: BridgeIrHelper | null = null,
   subAgentContext?: SubAgentContext,
+  /**
+   * 0.7.20 — Inserty 데모 참고: AI form-fill 실시간 편집 위치 표시. 성공한
+   * write op 마다 영향 문단 좌표로 호출 → caller(AppShell) 가 iframe 의
+   * `scrollToParagraph` bridge 로 편집 영역을 그곳에 스크롤. write 결과의
+   * 합성 diff 가 이미 `paragraphIdx` 를 실어 보내므로 그것을 재사용한다.
+   * 연속 동일 문단은 dedup (한 표를 채울 땐 한 번만 스크롤). section 은
+   * diff 에 없어 0 으로 가정 (대부분 양식이 단일 구역).
+   */
+  onWriteParagraph?: (sectionIdx: number, paraIdx: number) => void,
 ): Promise<AhwpToolResult[]> {
   const out: AhwpToolResult[] = [];
+  let lastRevealedPara = -1;
   // Phase 7 E2c — rhwp-mode 에선 viewer 가 null 일 수 있음 (StudioViewer
   // 미마운트). helper 가 있어야 의미 있는 동작 — undo group / snapshot 은
   // rhwp-studio 가 iframe 안에서 자체 관리하므로 skip.
@@ -1779,7 +1789,21 @@ export async function runTools(
         out.push({ ok: false, tool: item.tool, reason: item.reason });
         continue;
       }
-      out.push(await runOne(viewer, item.call, helper, subAgentContext));
+      const result = await runOne(viewer, item.call, helper, subAgentContext);
+      out.push(result);
+      if (
+        onWriteParagraph &&
+        result.ok &&
+        result.diff &&
+        result.diff.paragraphIdx !== lastRevealedPara
+      ) {
+        lastRevealedPara = result.diff.paragraphIdx;
+        try {
+          onWriteParagraph(0, result.diff.paragraphIdx);
+        } catch {
+          /* reveal 실패는 무해 — 편집 결과엔 영향 없음 */
+        }
+      }
     }
   } finally {
     viewer?.endUndoGroup();

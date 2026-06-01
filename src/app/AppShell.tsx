@@ -856,6 +856,22 @@ export default function AppShell() {
                       items,
                       helper,
                       subAgentContext,
+                      // 0.7.20 — Inserty 데모 참고: AI form-fill 실시간 편집
+                      // 위치 표시. write op 마다 채워지는 문단으로 iframe
+                      // 편집 영역을 스크롤 (caret/포커스는 그대로 — 채팅
+                      // 입력 포커스 유지). bridge 미마운트 시 skip.
+                      bridge
+                        ? (sec, para) => {
+                            void bridge!
+                              .invoke('scrollToParagraph', {
+                                sectionIdx: sec,
+                                paraIdx: para,
+                              })
+                              .catch(() => {
+                                /* 구버전 vendor build — case 미존재 시 무해 */
+                              });
+                          }
+                        : undefined,
                     );
                     if (v && before) v.markChangedParagraphsSince(before);
                     return results;
