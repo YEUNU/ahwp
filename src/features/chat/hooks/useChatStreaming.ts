@@ -1120,6 +1120,9 @@ export function useChatStreaming(
         model,
         hasKey: !!opts.hasKey,
         recentToolCalls: agentToolHistoryRef.current,
+        // 0.7.28 — form-fill 모드면 핵심 form 도구(replaceTextInCell /
+        // getPageSvg / getTextRange)를 router 선택과 무관하게 보장.
+        mode: modeContext.primary,
       });
       const allowed = new Set(selection.tools);
       request.tools = getAhwpToolCatalog(modeContext)

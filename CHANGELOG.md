@@ -6,6 +6,23 @@
 
 ## [Unreleased]
 
+## [0.7.28] - 2026-06-01
+
+### Fixed — tool 라우터가 form-fill 핵심 도구를 빠뜨리던 문제 (한계 #4)
+
+매 턴 도구를 LLM 라우터로 5~15개 선별하는데, form-fill 핵심 도구 일부가
+라우터에 의해 dropped 되면 호출 불가가 됐다. 특히 `getPageSvg`(0.7.25 시각
+self-verification)와 `replaceTextInCell`(placeholder 교체·오기입 수정)이
+라우터 글로벌 ALWAYS_INCLUDE 에 없어, 라우터가 안 고르면 **방금 만든 검증·
+수정 loop 자체가 unreachable** 이 되는 self-defeating 구조였다.
+
+- 라우터를 **mode-aware** 로: `mode==='form-fill'` 이면 `FORM_FILL_ESSENTIAL`
+  (replaceTextInCell / getPageSvg / getTextRange[주변 텍스트 어휘·척도 제약
+  읽기])을 라우터 선택과 무관하게 보장. 다른 모드엔 강제 안 해 bloat 없음.
+- cache key 에 mode 포함(form-fill ↔ 기타 전환 시 stale 선택 방지).
+- 신규 `toolRouter.test.ts` 7 cases(essentials 보장 / 비-form 미강제 / dedup /
+  fallback 3종 / mode cache 분리) — 라우터 첫 단위 테스트.
+
 ## [0.7.27] - 2026-06-01
 
 ### Fixed — agent 루프 context 압축: 오래된 페이지 렌더 이미지 prune (한계 #1 1차)
