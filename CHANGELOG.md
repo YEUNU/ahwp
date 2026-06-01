@@ -6,6 +6,28 @@
 
 ## [Unreleased]
 
+## [0.7.32] - 2026-06-01
+
+### Fixed — 척도 어휘 surface: 모델이 규정 척도 대신 서술 적던 문제 보강
+
+라이브 관찰: 모델이 "구축수준" 칸에 규정 척도(ICT미적용/기초/중간1/중간2/고도)
+대신 서술을 적음. 그 척도는 셀 바깥 **각주**("\* …구축 수준 : ICT미적용 →
+기초 → …")에 정의돼 있어 `getEmptyFormFields`(셀만 봄)가 못 싣고, 모델은
+주변 텍스트를 읽으라는 원칙(0.7.21)을 안 지킴.
+
+- **`extractValueOptionSets`**(shared/form-format.ts, 순수): 본문 문단에서
+  열거형 값 어휘를 verbatim 추출 — 화살표 척도(→ 2회+, 짧은 토큰)와 "라벨 :
+  a / b / c" 콜론-열거(공식 =×÷ 배제). false positive 보수적.
+- **`getDocumentSummary`** 가 최대 160문단을 스캔(body 는 기존 cap 유지)해
+  추출 결과를 `[Value vocabularies …]` 블록으로 surface — 모델이 보는 _데이터_
+  (LLM-facing prompt 아님 → No-heuristic-prompts 규칙 무관). 실제 양식에서
+  "구축 수준 : ICT미적용 → 기초 → 중간1 → 중간2 → 고도" 정확히 추출 확인.
+- prompt 의 value-vocabulary 섹션에 "getDocumentSummary 의 [Value vocabularies]
+  블록을 읽으라" 안내 추가.
+
+회귀 가드: extractValueOptionSets 8 cases(척도/열거 추출 + prose/공식/긴토큰
+배제 + 중복제거).
+
 ## [0.7.31] - 2026-06-01
 
 ### Changed — 서브에이전트 내부 read 도구 병렬 dispatch (한계 #5 1차)

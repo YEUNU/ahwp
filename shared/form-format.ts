@@ -170,3 +170,86 @@ export function validateTextForFormat(
   }
   return { ok: true };
 }
+
+/**
+ * 0.7.32 — 문서 본문에서 "열거형 값 어휘"(척도/옵션셋)를 verbatim 추출.
+ *
+ * 양식은 셀이 가질 수 있는 값을 셀 바깥 텍스트로 규정한다 — 표 아래 각주
+ * (예: "* 스마트공장 구축 수준 : ICT미적용 → 기초 → 중간1 → 중간2 → 고도"),
+ * "구분 : 독립 / 클라우드" 같은 범례. `getEmptyFormFields` 는 셀만 보므로
+ * 이를 못 싣고, 모델은 규정된 척도 대신 서술을 적는 실패를 한다 (라이브
+ * 관찰: 구축수준 칸에 문장). 이 헬퍼는 본문 문단들에서 그런 enumerated
+ * option-set 을 찾아 양식 자신의 표현 그대로 반환 → 모델이 보는 데이터
+ * (getDocumentsummary)에 surface. (LLM-facing prompt 가 아니라 _데이터_ 라
+ * [[No heuristic prompts]] 와 무관 — 모듈 docstring 의 분리 원칙 참조.)
+ *
+ * 보수적: false positive(prose 의 단일 화살표 등)를 피하려 강한 신호만:
+ *   A) 화살표 ≥2개로 분할되는 ordered scale (→ ⟶ ▶ › ⇒ ⟹ -> 중 2회+).
+ *   B) "라벨 : a / b / c" — 콜론 뒤 슬래시/쉼표 구분 ≥2, 토큰이 모두 짧음
+ *      (≤20자, prose 배제).
+ */
+const SCALE_ARROW_RE = /→|⟶|▶|›|⇒|⟹|->/g;
+const LEADING_MARKER_RE = /^\s*(?:[*※·•\-–]|주\)|주[0-9]*\)|[0-9]+[.)])\s*/;
+
+export function extractValueOptionSets(paragraphTexts: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (s: string): void => {
+    const v = s.replace(/\s+/g, ' ').trim();
+    if (v.length === 0 || v.length > 200) return;
+    const key = v.replace(/\s/g, '');
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(v);
+  };
+  for (const raw of paragraphTexts) {
+    if (typeof raw !== 'string') continue;
+    // 한 문단에 여러 줄/항목이 섞일 수 있어 줄 단위로도 본다.
+    const lines = raw.split(/\r?\n/);
+    for (const lineRaw of lines) {
+      const line = lineRaw.replace(LEADING_MARKER_RE, '').trim();
+      if (line.length === 0) continue;
+
+      // A) 화살표 척도 — 화살표가 2회 이상 (= 3+ 단계의 순서 척도).
+      const arrows = line.match(SCALE_ARROW_RE);
+      if (arrows && arrows.length >= 2) {
+        // 토큰이 비정상적으로 길면(prose) 배제.
+        const tokens = line
+          .split(/:|：/)
+          .pop()!
+          .split(SCALE_ARROW_RE)
+          .map((t) => t.trim())
+          .filter(Boolean);
+        // 척도 레벨은 짧은 코드/명사(기초/중간2/ICT미적용 등). 토큰이 길면
+        // (한 토막이 문장인) prose 화살표라 배제.
+        if (tokens.length >= 3 && tokens.every((t) => t.length <= 12)) {
+          push(line);
+          continue;
+        }
+      }
+
+      // B) "라벨 : a / b / c" — 콜론 뒤 슬래시/쉼표 구분 ≥2, 짧은 토큰.
+      const colonIdx = line.search(/[:：]/);
+      if (colonIdx > 0 && colonIdx < 30) {
+        const label = line.slice(0, colonIdx).trim();
+        const rhs = line.slice(colonIdx + 1).trim();
+        // 공식(진도율 = a×b + c×d) 은 옵션셋이 아님 — 연산자 있으면 배제.
+        if (!/[=×÷]/.test(rhs)) {
+          const parts = rhs
+            .split(/\s*[/／,，]\s*/)
+            .map((t) => t.trim())
+            .filter(Boolean);
+          if (
+            label.length > 0 &&
+            label.length <= 24 &&
+            parts.length >= 2 &&
+            parts.every((t) => t.length > 0 && t.length <= 20)
+          ) {
+            push(line);
+          }
+        }
+      }
+    }
+  }
+  return out;
+}

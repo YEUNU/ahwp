@@ -14,8 +14,78 @@ import {
   inferExpectedFormat,
   validateTextForFormat,
   normalizeLabelText,
+  extractValueOptionSets,
   type ExpectedFormat,
 } from './form-format';
+
+describe('extractValueOptionSets (0.7.32 — 척도 어휘 surface)', () => {
+  it('화살표 척도(footnote) 추출 — 관찰된 실패 케이스', () => {
+    const r = extractValueOptionSets([
+      '* 스마트공장 구축 수준 : ICT미적용 → 기초 → 중간1 → 중간2 → 고도',
+    ]);
+    expect(r).toHaveLength(1);
+    expect(r[0]).toContain('ICT미적용');
+    expect(r[0]).toContain('중간2');
+    expect(r[0]).toContain('고도');
+    // leading marker(*) 제거됨.
+    expect(r[0].startsWith('*')).toBe(false);
+  });
+
+  it('콜론-슬래시 열거 추출', () => {
+    const r = extractValueOptionSets(['운영방식 : 독립 / 클라우드']);
+    expect(r).toHaveLength(1);
+    expect(r[0]).toContain('독립');
+    expect(r[0]).toContain('클라우드');
+  });
+
+  it('단일 화살표 prose 는 배제 (false positive 회피)', () => {
+    expect(
+      extractValueOptionSets(['기존 수동 작업을 자동화 → 효율 개선']),
+    ).toEqual([]);
+  });
+
+  it('긴 토큰(prose) 척도는 배제', () => {
+    expect(
+      extractValueOptionSets([
+        '센서 데이터를 수집한다 → 모델이 이상치를 탐지하고 알람을 보낸다 → 정비를 수행한다',
+      ]),
+    ).toEqual([]);
+  });
+
+  it('중복 제거 (공백 무시)', () => {
+    const r = extractValueOptionSets([
+      'A → B → C',
+      'A → B → C',
+      'A  →  B  →  C',
+    ]);
+    expect(r).toHaveLength(1);
+  });
+
+  it('일반 문단/빈 문자열은 무시', () => {
+    expect(
+      extractValueOptionSets([
+        '1. 스마트공장 구축 개요',
+        '',
+        '본문 내용입니다.',
+      ]),
+    ).toEqual([]);
+  });
+
+  it('공식(진도율=a×b+c×d) 은 배제 (옵션셋 아님)', () => {
+    expect(
+      extractValueOptionSets([
+        '성형공정 진도율 : 50% × 0.6(S/W) + 60% × 0.4(H/W) = 54%',
+      ]),
+    ).toEqual([]);
+  });
+
+  it('여러 줄 문단에서 줄 단위 추출', () => {
+    const r = extractValueOptionSets([
+      '구축 수준 : 기초 → 중간1 → 중간2 → 고도\n도입여부 : O / X',
+    ]);
+    expect(r).toHaveLength(2);
+  });
+});
 
 describe('inferExpectedFormat', () => {
   // 우리가 실제로 잡으려는 코어 케이스 — 사용자 transcript 에서 본

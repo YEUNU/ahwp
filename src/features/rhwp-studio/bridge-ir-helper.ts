@@ -21,6 +21,7 @@ import type { RhwpCaretPosition, RhwpSearchHit } from '@shared/rhwp-bridge';
 import {
   inferExpectedFormat,
   normalizeLabelText,
+  extractValueOptionSets,
   CHECKBOX_GLYPH_RE,
   type ExpectedFormat,
 } from '@shared/form-format';
@@ -1148,12 +1149,17 @@ export class BridgeIrHelper {
     }
 
     // ── text content (existing logic) ──
+    // 0.7.32 — body 는 maxParas 로 cap 하되, value-vocabulary 추출용으로는
+    // 더 많은 문단(OPTSCAN_PARAS)을 스캔한다. 양식의 척도/옵션 각주는 body
+    // cap 너머에 있을 수 있어서 (표 아래 footnote). 한 번의 루프로 둘 다 수집.
+    const OPTSCAN_PARAS = 160;
     const parts: string[] = [];
+    const scanTexts: string[] = [];
     let count = 0;
     outer: for (let s = 0; s < sectionCount; s++) {
       const paraCount = await this.getParagraphCount(s);
       for (let p = 0; p < paraCount; p++) {
-        if (count >= maxParas) break outer;
+        if (scanTexts.length >= OPTSCAN_PARAS) break outer;
         const lenN = await this.getParagraphLength(s, p);
         if (lenN === 0) continue;
         const text = await this.bridge.invokeWasm<string>('getTextRange', [
@@ -1164,8 +1170,11 @@ export class BridgeIrHelper {
         ]);
         const t = text.trim();
         if (t.length === 0) continue;
-        parts.push(t);
-        count++;
+        scanTexts.push(t);
+        if (count < maxParas) {
+          parts.push(t);
+          count++;
+        }
       }
     }
     let body = parts.join('\n');
@@ -1173,14 +1182,25 @@ export class BridgeIrHelper {
     if (enc.length > maxBytes) {
       body = new TextDecoder().decode(enc.slice(0, maxBytes)) + '…[trimmed]';
     }
+
+    // 0.7.32 — 양식이 셀 바깥(각주/범례)에 규정한 enumerated 값 어휘(척도/
+    // 옵션셋)를 verbatim 추출해 surface. 모델이 규정 척도 대신 서술을 적던
+    // 실패(라이브: 구축수준 칸에 문장)의 직접 대응 — getEmptyFormFields 는
+    // 셀만 보므로 이걸 못 싣는다. tool 결과 _데이터_ 라 No-heuristic-prompts
+    // 규칙과 무관.
+    const vocabs = extractValueOptionSets(scanTexts);
+    const vocabBlock =
+      vocabs.length > 0
+        ? `\n[Value vocabularies — the form's own enumerated scales/options found outside the cells. When a cell maps to one of these (its column/row label matches the vocabulary's subject), the value MUST be one of the listed terms, copied verbatim — not a paraphrase or a sentence]:\n${vocabs.map((v) => `- ${v}`).join('\n')}`
+        : '';
     // Prefix with form signal so models route to getEmptyFormFields even
     // when the user's verb (e.g. "수정해줘") doesn't literally say "fill".
     if (tableCount > 0 && emptyCellCount > 0) {
       const tableLabel =
         emptyCellCount > 5000 ? '5000+' : String(emptyCellCount);
-      return `[form: ${tableCount} tables, ${tableLabel} empty cells — call getEmptyFormFields before any write]\n${body}`;
+      return `[form: ${tableCount} tables, ${tableLabel} empty cells — call getEmptyFormFields before any write]\n${body}${vocabBlock}`;
     }
-    return body;
+    return body + vocabBlock;
   }
 
   /**
