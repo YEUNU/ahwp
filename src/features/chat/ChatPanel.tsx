@@ -116,6 +116,10 @@ interface UiMessage extends ChatMessage {
   /** chunk 99 follow-up — plan mode 에서 생성된 어시스턴트 메시지.
    *  UI 가 "이 계획대로 실행" 버튼 surface. */
   planMode?: boolean;
+  /** 0.7.30 — runtime 합성 메시지(form-guard auto-continue nudge). LLM 엔
+   *  보내되 UI 렌더에서 제외 — 사용자는 어시스턴트가 자연스럽게 이어가는
+   *  것만 본다. */
+  hidden?: boolean;
 }
 
 interface UiToolEntry {
@@ -1113,7 +1117,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             </div>
           ) : (
             messages
-              .filter((m) => m.role !== 'tool')
+              // 0.7.30 — hidden(auto-continue nudge 등 runtime 합성)은 렌더 제외.
+              .filter((m) => m.role !== 'tool' && !m.hidden)
               .map((m) => (
                 <Message
                   key={m.id}

@@ -6,6 +6,26 @@
 
 ## [Unreleased]
 
+## [0.7.30] - 2026-06-01
+
+### Fixed — auto-continue 가 의도적 빈칸에도 돌던 문제 + 사용자에게 비표시
+
+사용자 리포트 2건.
+
+- **의도적으로 비운 셀에도 "계속 채워" auto-continue 가 돌던 문제**: form-guard
+  Case 2(빈 셀 남음 → 채우기 nudge)가 빈 셀 수만 보고 발동해, 모델이 grounding
+  원칙대로 **제공 정보 없는 셀을 일부러 비웠는데도** "아직 N개 남음" nudge 로
+  계속 떠밀었다. 이제 Case 2 는 **아직 아무것도 안 채웠을 때(!formWritesDone)만**
+  발동. 모델이 form-fill 쓰기를 했으면 남은 빈 셀은 의도적 빈칸으로 보고 완료를
+  존중한다. 완전성은 빈셀 수가 아니라 updatePlan(0.7.29) 의 미완료 항목으로
+  강제(Case P) — 계획에 남기면 그게 잡고, 계획 없이 채우고 시각 검증 후 완료를
+  선언하면 빈 셀 잔여 무관하게 존중.
+- **auto-continue 를 사용자가 보지 않도록**: form-guard nudge 는 LLM 에는 user
+  turn 으로 보내되 `hidden: true` 로 표시 — UI 렌더 제외 + chatHistory 저장 안
+  함. 사용자는 어시스턴트가 자연스럽게 이어가는 것만 본다(내부 steering 비표시).
+
+회귀 가드: 채움+검증 후 빈칸 존중 / 미채움 give-up nudge 유지 (form-guard).
+
 ## [0.7.29] - 2026-06-01
 
 ### Added — 작업 계획(updatePlan) — TodoWrite analog (한계 #6)

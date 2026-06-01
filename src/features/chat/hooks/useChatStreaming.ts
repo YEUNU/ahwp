@@ -75,6 +75,10 @@ interface UiMessage extends ChatMessage {
   /** chunk 99 follow-up — true 이면 plan mode 에서 생성된 어시스턴트
    *  메시지. UI 가 "이 계획대로 실행" 버튼 surface. */
   planMode?: boolean;
+  /** 0.7.30 — runtime 합성 메시지 (form-guard auto-continue nudge 등).
+   *  LLM 에는 보내되 UI 에는 렌더하지 않는다 — auto-continue 는 내부
+   *  steering 이라 사용자가 볼 필요 없음. */
+  hidden?: boolean;
 }
 
 function newId(): string {
@@ -926,22 +930,15 @@ export function useChatStreaming(
         });
         if (decision.shouldNudge && decision.nudgeText) {
           formGuardNudgeCountRef.current += 1;
+          // 0.7.30 — auto-continue nudge 는 hidden: LLM 에는 user turn 으로
+          // 보내되 UI 엔 렌더 안 함 + chatHistory 에도 저장 안 함. 사용자는
+          // 어시스턴트가 자연스럽게 이어가는 것만 본다 (내부 steering 비표시).
           const userMsg: UiMessage = {
             id: newId(),
             role: 'user',
             content: decision.nudgeText,
+            hidden: true,
           };
-          const convId = conversationIdRef.current;
-          if (convId !== null) {
-            void window.api.chatHistory
-              .append(convId, 'user', decision.nudgeText)
-              .catch((err: unknown) =>
-                console.warn(
-                  '[chat] history.append (form-guard nudge) failed',
-                  err,
-                ),
-              );
-          }
           assistantBufferRef.current = '';
           handleRef.current = null;
           assistantIdRef.current = null;

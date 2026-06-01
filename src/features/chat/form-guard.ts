@@ -177,8 +177,16 @@ export function decideFormGuardNudge(input: FormGuardInput): FormGuardDecision {
     };
   }
 
-  // Case 2: 실제 빈 셀 남아 있음 → 채우기 계속.
-  if (emptyLeft > 0) {
+  // Case 2 (0.7.30 — 좁힘): 빈 셀이 남아있고 **아직 아무것도 안 채웠을 때만**
+  // 채우기 nudge. 모델이 이미 form-fill 쓰기를 했으면(formWritesDone) 남은
+  // 빈 셀은 grounding 상 의도적(제공 정보 없어 비움)이므로 "계속 채워" nudge
+  // 는 모델을 날조로 떠밀고 auto-continue 를 돌게 한다 — 실제 사용자 리포트
+  // ("일부러 비웠는데도 auto-continue 돈다"). 완전성은 이제 빈셀 수가 아니라
+  // updatePlan(#6, Case P)로 강제한다: 모델이 계획에 섹션을 pending 으로
+  // 남기면 그게 잡고, 계획 없이 채우고 (Case V 로 한 번 보고) 완료를 선언하면
+  // 빈 셀이 남아도 존중. !formWritesDone 케이스(=쓴 게 없는데 빈 셀 + 완료
+  // 선언)는 조기 give-up 일 수 있어 1회 nudge 유지.
+  if (emptyLeft > 0 && !input.formWritesDone) {
     const tail = input.formState?.tableSummary
       ? ` — tables: ${input.formState.tableSummary}`
       : '';

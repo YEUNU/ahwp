@@ -270,6 +270,32 @@ describe('decideFormGuardNudge — Form-Fill 완료 guard (0.7.6 tightened)', ()
     expect(r.reason).toBe('no-visual-verify');
   });
 
+  // 0.7.30 — 핵심 사용자 리포트: "일부러 비웠는데도 auto-continue 돈다".
+  // 모델이 쓰기를 했고(formWritesDone) 시각 검증도 했고 질문/미완료 plan 도
+  // 없으면, 빈 셀이 남아도(의도적 빈칸=grounding) 완료를 존중 — Case 2 가
+  // 더 이상 "계속 채워" nudge 를 안 쏜다.
+  it('채움 + 검증 + 빈셀 많음 + 질문/plan 없음 → 완료 존중 (의도적 빈칸)', () => {
+    const r = decideFormGuardNudge({
+      ...BASE,
+      formState: { emptyCellsRemaining: 180, tableSummary: 'p=42 (180 empty)' },
+      getPageSvgCalled: true,
+      formWritesDone: true,
+    });
+    expect(r.shouldNudge).toBe(false);
+  });
+
+  // 반면 쓴 게 전혀 없는데(=조기 give-up) 빈 셀 + 완료 선언이면 1회 nudge 유지.
+  it('미채움 + 빈셀 많음 → empty-cells nudge 유지 (조기 give-up)', () => {
+    const r = decideFormGuardNudge({
+      ...BASE,
+      formState: { emptyCellsRemaining: 180, tableSummary: 'p=42 (180 empty)' },
+      getPageSvgCalled: true,
+      formWritesDone: false,
+    });
+    expect(r.shouldNudge).toBe(true);
+    expect(r.reason).toBe('empty-cells-remain');
+  });
+
   // 0.7.29 — plan(updatePlan) 미완료 항목 남으면 완료 차단 (한계 #6).
   it('plan 미완료(pending/in_progress) + 완료 선언 → plan-incomplete nudge', () => {
     const r = decideFormGuardNudge({
