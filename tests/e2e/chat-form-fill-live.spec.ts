@@ -169,6 +169,18 @@ test.describe('LIVE form-fill — 이즈파크/다빈치렌스 예지보전 중�
       '도입기업명 다빈치렌스가 양식에 기입됨',
     ).toBeGreaterThanOrEqual(1);
 
+    // 0.7.29 — 모델이 updatePlan 을 썼으면 진행 체크리스트 UI 가 렌더됨.
+    // 비결정적이라 hard assert 아님 — 존재하면 스크린샷으로 가시성 확인.
+    const planVisible = await page
+      .getByTestId('chat-plan-checklist')
+      .isVisible()
+      .catch(() => false);
+    if (planVisible && process.env.AHWP_PLAN_SHOT) {
+      await page
+        .getByTestId('chat-plan-checklist')
+        .screenshot({ path: process.env.AHWP_PLAN_SHOT });
+    }
+
     // 라이브 결과물을 export → /tmp 에 저장 → 외부에서 render-hwp-pages-cjk 로
     // 시각 검증. AHWP_DUMP_FILLED=path 로 저장 경로 지정.
     const dumpPath = process.env.AHWP_DUMP_FILLED;
