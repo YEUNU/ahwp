@@ -335,6 +335,45 @@ describe('decideFormGuardNudge — Form-Fill 완료 guard (0.7.6 tightened)', ()
     expect(r.reason).toBe('awaiting-user-input');
   });
 
+  // 0.7.35 — 본문 편집 하이재킹 방지. 표-문서에서 form-fill mode 자동진입해도
+  // 모델이 본문 쓰기만 했으면(셀 쓰기 없음) form-fill nudge suppress.
+  it('본문 쓰기 + 셀 쓰기 없음 → nudge 안 함 (form-fill 아님)', () => {
+    const r = decideFormGuardNudge({
+      ...BASE,
+      formState: { emptyCellsRemaining: 6, tableSummary: 'p=3 (6 empty)' },
+      bodyWriteDone: true,
+      formWritesDone: false,
+    });
+    expect(r.shouldNudge).toBe(false);
+    expect(r.reason).toBe('body-edit-not-form-fill');
+  });
+
+  it('본문 쓰기 + 셀 쓰기 둘 다 → suppression 풀림 (실제 form-fill 진행 중)', () => {
+    const r = decideFormGuardNudge({
+      ...BASE,
+      formState: { emptyCellsRemaining: 6, tableSummary: 'p=3 (6 empty)' },
+      getPageSvgCalled: true,
+      bodyWriteDone: true,
+      formWritesDone: true,
+    });
+    // body+cell 둘 다 했고 검증도 했으니 빈칸 존중(완료) — 핵심은 'body-edit'
+    // 으로 무조건 suppress 되지 않는다는 것.
+    expect(r.reason).not.toBe('body-edit-not-form-fill');
+  });
+
+  // 감사 발견 — plan 미완료는 formWritesDone 와 무관하게 완료 차단.
+  it('plan 미완료 + 채움 + 검증 → plan-incomplete (formWritesDone 무관)', () => {
+    const r = decideFormGuardNudge({
+      ...BASE,
+      formState: { emptyCellsRemaining: 50, tableSummary: '...' },
+      getPageSvgCalled: true,
+      formWritesDone: true,
+      planPending: true,
+    });
+    expect(r.shouldNudge).toBe(true);
+    expect(r.reason).toBe('plan-incomplete');
+  });
+
   describe('assistantRequestsInput — 질문/요청 판정', () => {
     it('물음표(?, ？) 포함 → true', () => {
       expect(assistantRequestsInput('금액을 알려주실 수 있나요?')).toBe(true);

@@ -36,6 +36,10 @@ describe('Task-Mode integration (form-fill chain)', () => {
     expect(names).toContain('replaceTextInCell');
     expect(names).toContain('getEmptyFormFields');
     expect(names).toContain('getPageSvg');
+    // 0.7.35 — updatePlan(0.7.29) 이 form-fill 카탈로그에 실제 노출돼야.
+    // FORM_FILL.tools 에서 빠지면 fireChat 의 mode∩router 교집합에서 제거돼
+    // form-fill 에서 updatePlan 이 작동 안 하던 버그(감사 발견)의 회귀 가드.
+    expect(names).toContain('updatePlan');
 
     // Step 4: prompt 가 Form Fill Mode fragment 포함.
     const prompt = appendModePrompt('BASE PROMPT', ctx);

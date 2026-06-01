@@ -6,6 +6,36 @@
 
 ## [Unreleased]
 
+## [0.7.35] - 2026-06-02
+
+### Fixed — 테스트 감사로 발견한 실제 버그 2건 + 라이브 테스트 재보정
+
+전체 e2e 풀 회귀(122 passed, 4 live-openai 실패)를 계기로 테스트 전수 감사(병렬
+에이전트). 통과하던 테스트가 가린 **실제 버그 2건** 발견·수정 + 실패한 라이브
+테스트 재보정.
+
+- **updatePlan 이 form-fill 모드에서 실제로 작동 안 했음** (감사 발견): 0.7.29
+  의 updatePlan 을 라우터 FORM_FILL_ESSENTIAL 에 넣었지만 `ai-modes.ts` 의
+  FORM_FILL.tools 배열엔 안 넣어, fireChat 의 `catalog(mode) ∩ router` 교집합
+  에서 제거됐다. 가장 필요한 form-fill 에서 누락. FORM_FILL + CROSS_DOC_RESEARCH
+  카탈로그에 updatePlan 추가. mode-integration.test 에 회귀 가드.
+- **본문 편집을 form-fill 로 하이재킹**: 표 있는 문서는 form-fill mode 로 자동
+  진입하는데, 사용자가 "맨 앞에 X 넣어줘" 같은 **본문 편집**을 요청해도 form-
+  guard 가 "getEmptyFormFields 불러 / 셀 채워" nudge 로 끌고 갔다(라이브 insert
+  Text 실패 원인). 본문 쓰기를 했고 셀 쓰기는 안 했으면(`bodyWriteDone &&
+!formWritesDone`) form-fill 아님 → nudge suppress(reason='body-edit-not-form-
+  fill'). 셀 쓰기 시작하면 자연 해제.
+
+### 라이브 e2e 재보정 (chat-rhwp-mode-live.spec.ts)
+
+- **per-test timeout**: playwright 기본 60s 가 sendChatPrompt 90~240s 보다 짧아
+  먼저 죽던 misconfig → describe 단위 `configure({timeout})` 220s/300s 상향.
+- **form-fill 테스트**: 존재하지 않는 "사업명 칸" 요구 → grounding 이 정당하게
+  미작성하던 것을, 실제 존재하는 "도입기업명" 칸으로 교정.
+
+검증: typecheck(2)+lint(0)+전체 579 tests(form-guard body-edit 3 + mode-
+integration updatePlan + plan/formWritesDone). 결정론 e2e 무손상.
+
 ## [0.7.34] - 2026-06-02
 
 ### Changed — 파이프라인 한계 #5/#7 마무리

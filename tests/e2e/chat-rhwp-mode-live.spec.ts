@@ -115,6 +115,10 @@ async function sendChatPrompt(
 }
 
 test.describe('Phase 7 — live OpenAI tool dispatch verification', () => {
+  // 라이브 에이전트 루프는 playwright 기본 per-test timeout(60s, config)보다
+  // 오래 걸린다 — sendChatPrompt 가 90~180s 를 기다려도 60s 에 먼저 죽던
+  // 문제(감사 발견). describe 단위로 충분히 올린다.
+  test.describe.configure({ timeout: 220_000 });
   test.skip(
     !OPENAI_KEY,
     'AHWP_TEST_OPENAI_KEY env not set — .env 에 키 저장 후 재실행',
@@ -411,6 +415,9 @@ const FORM_FIXTURE = path.resolve(
 );
 
 test.describe('Phase 7 — live OpenAI form-fill verification', () => {
+  // form-fill 은 multi-turn(discovery→grounding→fill→visual-verify) 이라 더
+  // 오래 걸린다. sendChatPrompt 240s 를 수용하도록 per-test timeout 상향.
+  test.describe.configure({ timeout: 300_000 });
   test.skip(
     !OPENAI_KEY,
     'AHWP_TEST_OPENAI_KEY env not set — .env 에 키 저장 후 재실행',
@@ -472,11 +479,14 @@ test.describe('Phase 7 — live OpenAI form-fill verification', () => {
     ]);
     expect(before.length).toBe(0);
 
-    // 사용자 자연어 — 도구 / 좌표 언급 X. 구체 값(sentinel 포함)을 제공해
-    // 모델이 빈 표 칸을 찾아(getEmptyFormFields) 채우도록(fillFormCells) 유도.
+    // 사용자 자연어 — 도구 / 좌표 언급 X. **양식에 실제 존재하는 칸**
+    // (도입기업명)에 grounded 값(sentinel)을 주고, 나머지는 비워두라 명시.
+    // (0.7.23 grounding: 정보 없는 칸은 날조 말고 비움 — 그래서 존재하지
+    //  않는 "사업명 칸" 을 요구하면 모델이 정당하게 미작성한다. 감사 발견 →
+    //  존재하는 칸으로 교정.)
     await sendChatPrompt(
       page,
-      `이 보고서 양식의 빈 칸 중 사업명(과제명) 같은 제목 칸에 "${sentinel}" 라고 채워줘. 값을 모르는 다른 칸은 그대로 비워둬.`,
+      `이 양식의 "도입기업명" 칸에 "${sentinel}" 라고 채워줘. 값을 모르는 다른 칸은 그대로 비워둬.`,
       240_000,
     );
 

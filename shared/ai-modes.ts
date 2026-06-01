@@ -123,6 +123,10 @@ const FORM_FILL: ModeDefinition = {
     'switchTargetDoc',
     // 0.7.11 — sub-agent (외부 정보 조사 위임 등)
     'runAgent',
+    // 0.7.35 — 대형 양식 진행 추적(TodoWrite analog). FORM_FILL 은 명시
+    // tools 배열이라, 누락 시 catalog 필터(fireChat 의 mode∩router 교집합)
+    // 에서 제거돼 0.7.29 의 updatePlan 이 form-fill 에서 실제로 노출 안 됐음.
+    'updatePlan',
   ],
   promptFragment: `You are in **Form Fill Mode**. The document is a template (양식 / 보고서 / 신청서 / 점검표) with predefined cell slots. Your job is to fill those slots — NOT to author body text.
 
@@ -219,6 +223,8 @@ const CROSS_DOC_RESEARCH: ModeDefinition = {
     'runAgent',
     // 다른 doc 으로 라우팅 (write 는 mode 전환 후)
     'switchTargetDoc',
+    // 0.7.35 — 다단계 research 진행 추적(read-only meta tool).
+    'updatePlan',
   ],
   promptFragment: `You are in **Cross-Doc Research Mode**. Read-only investigation across workspace files and the open web. IR mutation tools are NOT in your catalog — to actually edit the active document, the user needs to switch out of this mode (or you can suggest doing so).
 

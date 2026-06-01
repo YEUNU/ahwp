@@ -40,6 +40,11 @@ export interface FormGuardInput {
    *  in_progress) 항목이 남아있는지. true 면 완료 선언 전에 마저 끝내거나
    *  명시적으로 skipped 처리하도록 nudge. 미지정 = false. */
   planPending?: boolean;
+  /** 0.7.35 — 이번 user-task 에서 본문 쓰기(insertText / applyHtml /
+   *  deleteRange 등 셀이 아닌 IR 변경)를 했는지. form-fill mode 가 표-문서
+   *  에서 자동 진입해도, 본문 편집을 한 경우(+셀 쓰기 없음)는 form-fill 이
+   *  아니므로 nudge 를 suppress. 미지정 = false. */
+  bodyWriteDone?: boolean;
 }
 
 /**
@@ -68,7 +73,8 @@ export interface FormGuardDecision {
     | 'empty-cells-remain'
     | 'awaiting-user-input'
     | 'no-visual-verify'
-    | 'plan-incomplete';
+    | 'plan-incomplete'
+    | 'body-edit-not-form-fill';
 }
 
 /**
@@ -99,6 +105,17 @@ export function decideFormGuardNudge(input: FormGuardInput): FormGuardDecision {
   if (input.modePrimary !== 'form-fill') return { shouldNudge: false };
   if (input.agentStopped) return { shouldNudge: false };
   if (input.nudgeCount >= input.maxNudges) return { shouldNudge: false };
+
+  // 0.7.35 — form-fill mode 는 문서가 표를 포함하기만 하면 자동 진입한다
+  // (getDocumentSummary 의 `[form: …]` prefix). 그래서 사용자가 "맨 앞에 X
+  // 넣어줘" 같은 **본문 편집**을 요청해도 mode 는 form-fill 일 수 있다. 이때
+  // 모델이 본문 쓰기(insertText / applyHtml / deleteRange)를 했고 셀 쓰기는
+  // 안 했다면, 사용자의 의도는 form-fill 이 아니라 본문 편집 → form-fill
+  // 워크플로(discovery / 채우기) nudge 로 하이재킹하지 않는다. 셀 쓰기를
+  // 시작하면(formWritesDone) 이 suppression 은 자연히 풀린다.
+  if (input.bodyWriteDone && !input.formWritesDone) {
+    return { shouldNudge: false, reason: 'body-edit-not-form-fill' };
+  }
 
   const formStateKnown = input.formState !== null;
   const emptyLeft = input.formState?.emptyCellsRemaining ?? 0;

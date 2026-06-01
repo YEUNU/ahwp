@@ -935,6 +935,18 @@ export function useChatStreaming(
           planPending: planItemsRef.current.some(
             (i) => i.status === 'pending' || i.status === 'in_progress',
           ),
+          // 0.7.35 — 본문 쓰기를 했는지 (셀 아닌 IR 변경). 표-문서에서
+          // form-fill mode 자동진입 시 본문 편집을 form-fill 로 하이재킹
+          // 하지 않게 — bodyWriteDone && !formWritesDone 이면 nudge suppress.
+          bodyWriteDone: agentToolHistoryRef.current.some(
+            (e) =>
+              e.ok &&
+              (e.name === 'insertText' ||
+                e.name === 'applyHtml' ||
+                e.name === 'deleteRange' ||
+                e.name === 'insertParagraph' ||
+                e.name === 'deleteParagraph'),
+          ),
         });
         if (decision.shouldNudge && decision.nudgeText) {
           formGuardNudgeCountRef.current += 1;
