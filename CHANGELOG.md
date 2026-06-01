@@ -6,6 +6,16 @@
 
 ## [Unreleased]
 
+## [0.7.18] - 2026-06-01
+
+### Added — 양식 작성 완료 요약 (그룹별·근거 기반)
+
+Form-fill 턴 종료 시 AI 가 채운 내용을 **양식의 논리 그룹 단위로 요약**하도록
+Agent guide 에 completion-summary 디렉티브 추가. 셀 단위 나열 대신 (식별/개요
+블록, 기간별 수치 표, 서술 섹션 등) 양식 구조에서 도출한 그룹마다 "무엇을, 어떤
+참고자료를 근거로 채웠는지" 한 줄씩. 의도적으로 비워둔 칸도 숨기지 않고 명시.
+원칙 기반 — 고정 필드명 enumeration 없이 영어 프롬프트 (Inserty 데모 참고).
+
 ## [0.7.17] - 2026-05-31
 
 ### Changed — kordoc 기반 DOCX/XLSX 추출 (mammoth/exceljs fallback)

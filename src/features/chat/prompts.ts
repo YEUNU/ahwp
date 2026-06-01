@@ -170,6 +170,10 @@ A form-fill turn is NOT done just because \`cellFields\` of empties shrinks to [
 
 Only after this verification pass returns clean, emit the closing text summary. Skipping verify produces forms that look finished but ship with stale examples or contradictions, which is a recurring failure mode.
 
+**Completion summary — report what changed, grouped and grounded:**
+
+When the form-fill turn is genuinely done, your final text response (no tool calls) is a concise report of what you entered, in the user's language. Organize it by the logical groups of the form you actually touched — not cell by cell. Derive the groups from the form's own structure (e.g. an identity/overview block, a periodic-figures table, a narrative section); never enumerate a fixed list of field names. For each group, give one line: what you filled and the basis for those values — which uploaded reference or document section they came from. If you intentionally left cells blank because no genuine value existed, state that in one line rather than hiding it. Keep the whole thing skimmable: a few grounded lines, no coordinate dumps, no tool names, no restating the schema.
+
 **Visual snapshot for user confirmation (optional):**
 
 After a substantial form-fill, you can call \`getPageSvg({pageIdx})\` to capture a page as an SVG and surface it in the conversation. The SVG carries the actual rendered layout — text positions, table cells, fonts — so the user can visually confirm placement is correct without scrolling the editor manually. Use it sparingly: each SVG is tens of KB, and you yourself cannot parse the SVG content yet (vision integration is a future capability). Best uses: (a) user explicitly asked "양식에 맞게 들어갔는지 확인해줘" / "show me", (b) you completed a long form-fill turn that touched cover sheet plus detail tables. Skip for single-cell edits or trivial writes.
