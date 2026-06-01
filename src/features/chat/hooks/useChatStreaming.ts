@@ -897,6 +897,15 @@ export function useChatStreaming(
           // (text-only 응답에 질문 포함) 빈 셀이 남아도 nudge 안 함. 완료
           // 기준 "빈 셀 0" 이 grounding/ask 원칙과 충돌하던 것 해소.
           assistantText: assistantBufferRef.current,
+          // 0.7.24 — 실제 form-fill 쓰기가 있었는지 (시각 검증 enforcement
+          // 를 채운 경우에만 발동 → 0.7.6 회귀 회피).
+          formWritesDone: agentToolHistoryRef.current.some(
+            (e) =>
+              e.ok &&
+              (e.name === 'fillFormCells' ||
+                e.name === 'insertTextInCell' ||
+                e.name === 'replaceTextInCell'),
+          ),
         });
         if (decision.shouldNudge && decision.nudgeText) {
           formGuardNudgeCountRef.current += 1;

@@ -6,6 +6,29 @@
 
 ## [Unreleased]
 
+## [0.7.25] - 2026-06-01
+
+### Fixed — form-fill 모델 시각 self-verification (한계 #3)
+
+모델이 자기가 채운 결과를 "보고" 의미 오류(식별번호 칸에 주제, 척도 칸에
+서술, 셀 overflow 클리핑)를 스스로 잡게 하는 루프 정합. vision 인프라
+(getPageSvg → svgToPngBase64 → image_url/input_image, 0.6.20)는 이미
+작동했으나, 코드베이스에 **모순된 stale 안내**가 흩어져 모델이 안 썼다:
+
+- prompts.ts 가 "넌 SVG 못 본다(vision 은 future capability)" 라고 **거짓
+  안내** → "getPageSvg 는 렌더 이미지를 돌려주고 vision 모델은 실제로 본다.
+  완료 전 채운 페이지를 보고 값이 옳은 셀에 들어갔는지 확인하라" 로 재작성.
+  최종 검증 패스에 시각 검증을 4번째 체크로 추가.
+- ai-modes.ts / 도구 설명이 약속하던 "완료 전 getPageSvg 강제(auto-nudge)"
+  를 form-guard 에 **실제 구현**: form-fill 쓰기를 했고(formWritesDone) 빈 셀
+  0인데 getPageSvg 미호출이면 완료 선언 전 1회 nudge(reason='no-visual-
+  verify'). 0.7.6 무한루프(양식 아닌데 빈셀0 → svg nudge 반복)는 formWritesDone
+  =false 면 발동 안 해 정확히 회피 + nudgeCap(2) 상한.
+- 질문 종료(awaiting-user-input)가 시각 검증 nudge 보다 우선.
+
+회귀 가드 5 cases(visual-verify nudge / svg 호출 후 미발동 / 미채움 회귀 차단
+/ 질문 우선 / prompt vision contract).
+
 ## [0.7.24] - 2026-06-01
 
 ### Fixed — form-fill 완료 기준 "빈 셀 0" → "grounded 소진 시 질문하며 종료"

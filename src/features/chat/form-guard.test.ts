@@ -190,6 +190,59 @@ describe('decideFormGuardNudge — Form-Fill 완료 guard (0.7.6 tightened)', ()
     expect(r.reason).toBe('no-form-discovery');
   });
 
+  // 0.7.24 — 한계 #3: 시각 self-verification enforcement. 채웠는데
+  // getPageSvg 미호출이면 완료 전 1회 nudge (모델이 렌더를 보고 의미오류
+  // — 식별번호 칸에 주제, 척도 칸에 서술 — 잡게). formWritesDone 으로
+  // 0.7.6 회귀(양식 아닌데 빈셀0) 정확히 회피.
+  it('채움 + 빈셀0 + getPageSvg 미호출 → visual-verify nudge', () => {
+    const r = decideFormGuardNudge({
+      ...BASE,
+      formState: { emptyCellsRemaining: 0, tableSummary: '' },
+      getPageSvgCalled: false,
+      formWritesDone: true,
+    });
+    expect(r.shouldNudge).toBe(true);
+    expect(r.reason).toBe('no-visual-verify');
+    expect(r.nudgeText).toContain('getPageSvg');
+    expect(r.nudgeText).toContain('replaceTextInCell');
+  });
+
+  it('채움 + 빈셀0 + getPageSvg 호출됨 → nudge 안 함 (이미 검증)', () => {
+    const r = decideFormGuardNudge({
+      ...BASE,
+      formState: { emptyCellsRemaining: 0, tableSummary: '' },
+      getPageSvgCalled: true,
+      formWritesDone: true,
+    });
+    expect(r.shouldNudge).toBe(false);
+  });
+
+  // 0.7.6 회귀 가드: 실제로 채운 적 없으면(양식 아님/채울 것 없음) 빈셀0 +
+  // svg 미호출이어도 visual-verify nudge 안 함 (무한루프 차단).
+  it('미채움 + 빈셀0 + getPageSvg 미호출 → nudge 안 함 (0.7.6 회귀 차단)', () => {
+    const r = decideFormGuardNudge({
+      ...BASE,
+      formState: { emptyCellsRemaining: 0, tableSummary: '' },
+      getPageSvgCalled: false,
+      formWritesDone: false,
+    });
+    expect(r.shouldNudge).toBe(false);
+  });
+
+  // 질문(awaiting-user-input)이 visual-verify 보다 우선 — 모델이 물으며
+  // 멈추면 svg 강제하지 않는다.
+  it('채움 + 빈셀0 + svg 미호출이지만 모델이 질문 → nudge 안 함 (질문 우선)', () => {
+    const r = decideFormGuardNudge({
+      ...BASE,
+      formState: { emptyCellsRemaining: 0, tableSummary: '' },
+      getPageSvgCalled: false,
+      formWritesDone: true,
+      assistantText: '나머지 항목은 어떤 값을 넣을까요?',
+    });
+    expect(r.shouldNudge).toBe(false);
+    expect(r.reason).toBe('awaiting-user-input');
+  });
+
   describe('assistantRequestsInput — 질문/요청 판정', () => {
     it('물음표(?, ？) 포함 → true', () => {
       expect(assistantRequestsInput('금액을 알려주실 수 있나요?')).toBe(true);

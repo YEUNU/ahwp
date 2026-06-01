@@ -147,4 +147,17 @@ describe('SYSTEM_PROMPT_AGENT_GUIDE — form-fill behavior contracts', () => {
   it('encodes value-vocabulary adherence with leave-blank-when-unknown', () => {
     expect(lower).toContain('leave the cell blank rather than guessing');
   });
+
+  // 니즈 N5 — vision self-verification (0.7.24, 한계 #3). getPageSvg 가
+  // 렌더 이미지를 모델에 돌려주므로 "넌 SVG 못 본다(future)" 식 stale 안내가
+  // 다시 끼어들지 않게 가드. 완료 전 시각 검증으로 의미 오류를 잡게.
+  it('encodes vision self-verification via getPageSvg (model CAN see the page)', () => {
+    expect(guide).toContain('getPageSvg');
+    // 모델이 이미지를 본다는 점이 명시돼야 (못 본다는 stale 안내 금지).
+    expect(lower).toMatch(
+      /rendered image|see the (filled )?form|as an actual image|see the page/,
+    );
+    // outdated "you cannot parse the SVG" 문구가 다시 끼어들면 안 됨.
+    expect(lower).not.toContain('cannot parse the svg');
+  });
 });

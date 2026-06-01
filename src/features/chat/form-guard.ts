@@ -30,6 +30,12 @@ export interface FormGuardInput {
    *  물으며 멈췄으면, 빈 셀이 남아도 그 종료를 존중한다. 미지정 = '' =
    *  질문 아님 (기존 동작 보존). */
   assistantText?: string;
+  /** 0.7.24 — 이번 user-task 에서 form-fill 쓰기(fillFormCells /
+   *  insertTextInCell / replaceTextInCell)가 한 번이라도 성공했는지.
+   *  시각 검증(getPageSvg) enforcement 를 "실제로 채웠을 때만" 발동시켜
+   *  0.7.6 회귀(양식 아닌데 빈셀0 → svg nudge 반복)를 정확히 회피한다.
+   *  미지정 = false (기존 동작 보존). */
+  formWritesDone?: boolean;
 }
 
 /**
@@ -53,7 +59,11 @@ export interface FormGuardDecision {
   /** 디버그 / 텔레메트리. nudge 트리거 이유 — UI / log 에 표시 가능.
    *  'awaiting-user-input' 은 shouldNudge=false 와 함께 (모델이 사용자
    *  질문으로 정상 종료). */
-  reason?: 'no-form-discovery' | 'empty-cells-remain' | 'awaiting-user-input';
+  reason?:
+    | 'no-form-discovery'
+    | 'empty-cells-remain'
+    | 'awaiting-user-input'
+    | 'no-visual-verify';
 }
 
 /**
@@ -148,7 +158,34 @@ export function decideFormGuardNudge(input: FormGuardInput): FormGuardDecision {
     };
   }
 
-  // Case 3: AI 가 getEmptyFormFields 호출했고 결과가 빈 셀 0 → 할 일
-  // 없음. AI 의 응답을 존중하고 nudge 안 함.
+  // Case 2.5 (0.7.24): 빈 셀은 다 처리됐는데(emptyLeft===0) 실제 form-fill
+  // 쓰기를 했고(formWritesDone) getPageSvg 로 시각 검증을 한 번도 안 했으면
+  // → 완료 선언 전에 1회 nudge. 모델이 자기가 채운 결과를 "보고"(vision-
+  // capable provider 는 렌더 이미지를 받음) 의미 오류 — 식별번호 칸에 주제,
+  // 척도 칸에 서술, 셀 overflow 클리핑 등 — 를 직접 잡게 한다. 구조 read
+  // (getEmptyFormFields) 로는 못 잡고 렌더를 봐야만 보이는 부류.
+  //
+  // 0.7.6 회귀(양식 아닌데 빈셀0 → svg nudge 무한 반복) 회피: formWritesDone
+  // 이 false 면(=실제 채운 적 없음 = 양식 아니거나 채울 게 없었음) 발동 안
+  // 함. nudgeCount cap(기본 2)도 상한. ai-modes.ts 의 form-fill 프롬프트와
+  // getPageSvg 도구 설명이 약속하는 "완료 전 getPageSvg 강제"를 실제로 구현.
+  if (input.formWritesDone && !input.getPageSvgCalled) {
+    return {
+      shouldNudge: true,
+      nudgeText:
+        `[Auto-continue] You filled the form but have not visually verified it yet. ` +
+        `Before announcing completion, call getPageSvg({pageIdx}) on the page(s) you edited. ` +
+        `If your model can see images, the rendered page is attached — read it and confirm each ` +
+        `value sits in the cell its row-label × column-header implies. This is the only check that ` +
+        `catches a value in the wrong slot (an identifier / number field holding descriptive text, ` +
+        `a prescribed scale / level field holding a free-form sentence) or text clipped by a ` +
+        `fixed-height cell — such a cell is non-empty and format-valid yet plainly wrong once you ` +
+        `look. Fix any with replaceTextInCell, then announce completion.`,
+      reason: 'no-visual-verify',
+    };
+  }
+
+  // Case 3: AI 가 getEmptyFormFields 호출했고 결과가 빈 셀 0 + (시각 검증
+  // 했거나 채운 게 없음) → 할 일 없음. AI 의 응답을 존중하고 nudge 안 함.
   return { shouldNudge: false };
 }

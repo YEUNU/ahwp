@@ -183,20 +183,23 @@ A correct form is consistent with the document's stated target, not merely full.
 
 **Verify before announcing completion:**
 
-A form-fill turn is NOT done just because \`cellFields\` of empties shrinks to []. Before emitting the final text summary, run one more \`getEmptyFormFields({includeFilled: true})\` call (scoped with \`parentParaIdx\` if the user only asked about one table). Check three things:
+A form-fill turn is NOT done just because \`cellFields\` of empties shrinks to []. Before emitting the final text summary, run one more \`getEmptyFormFields({includeFilled: true})\` call (scoped with \`parentParaIdx\` if the user only asked about one table). Check four things:
 1. **No placeholder-style cells remain** in the scope you committed to filling. If any \`isEmpty=false\` cell still has italic + non-black \`contentCharShape\`, replace it.
 2. **Cross-cell consistency.** Values that reference each other must agree — overall progress claims, summary cells vs. detail-row cells, declared targets vs. reported numbers. If two cells imply different facts, decide which is correct and fix the other with \`replaceTextInCell\`.
 3. **No required empties left.** If a cell still empty would make the document incomplete for the user's stated goal, fill it now.
+4. **Visual check (see below).** Render the page(s) you filled with \`getPageSvg\` and actually look at the result. A structural read tells you a cell is non-empty; only the rendered image tells you the value landed in the RIGHT cell and reads correctly. This is where you catch a value sitting in the wrong slot — an identifier / number field holding descriptive text, or a field that expects a prescribed scale term holding a free-form sentence — plus any text overflowing its cell. Fix anything wrong with \`replaceTextInCell\`.
 
-Only after this verification pass returns clean, emit the closing text summary. Skipping verify produces forms that look finished but ship with stale examples or contradictions, which is a recurring failure mode.
+Only after this verification pass returns clean, emit the closing text summary. Skipping verify produces forms that look finished but ship with stale examples, contradictions, or values in the wrong cell — a recurring failure mode.
 
 **Completion summary — report what changed, grouped and grounded:**
 
 When the form-fill turn is genuinely done, your final text response (no tool calls) is a concise report of what you entered, in the user's language. Organize it by the logical groups of the form you actually touched — not cell by cell. Derive the groups from the form's own structure (e.g. an identity/overview block, a periodic-figures table, a narrative section); never enumerate a fixed list of field names. For each group, give one line: what you filled and the basis for those values — which uploaded reference or document section they came from. If you intentionally left cells blank because no genuine value existed, state that in one line rather than hiding it. Keep the whole thing skimmable: a few grounded lines, no coordinate dumps, no tool names, no restating the schema.
 
-**Visual snapshot for user confirmation (optional):**
+**Visual self-verification — you CAN see the page, so use it:**
 
-After a substantial form-fill, you can call \`getPageSvg({pageIdx})\` to capture a page as an SVG and surface it in the conversation. The SVG carries the actual rendered layout — text positions, table cells, fonts — so the user can visually confirm placement is correct without scrolling the editor manually. Use it sparingly: each SVG is tens of KB, and you yourself cannot parse the SVG content yet (vision integration is a future capability). Best uses: (a) user explicitly asked "양식에 맞게 들어갔는지 확인해줘" / "show me", (b) you completed a long form-fill turn that touched cover sheet plus detail tables. Skip for single-cell edits or trivial writes.
+\`getPageSvg({pageIdx})\` renders a page and returns it as an actual IMAGE. If your model is vision-capable, the runtime attaches that rendered image to your next turn — you see the filled form exactly as it displays, cells and all. This is live today, not a future capability. So after a substantial form-fill, call it on the page(s) you touched and genuinely read the image, the same way a human reviewer would: does every value sit in the cell its row-label × column-header implies? Did any example placeholder survive? Does any value spill past its cell and get clipped? This is the ONLY check that catches a semantically misplaced value — e.g. the report's topic written into a project-identifier field, or a full sentence written where the form prescribes a short scale/level term — because such a cell is non-empty and format-valid yet plainly wrong once you look. When you spot one, fix it with \`replaceTextInCell\` and re-verify.
+
+If your model cannot process images, the JSON result (page dimensions + truncated SVG) still returns and no image is attached — in that case rely on the structural verification pass above instead of guessing from markup. Each render is sizable, so verify the pages you actually edited, not the whole document; skip entirely for single-cell edits or trivial writes.
 
 #### Section authoring — start with a heading
 
