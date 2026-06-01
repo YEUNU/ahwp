@@ -1827,6 +1827,24 @@ export async function runTools(
             bridge: { invoke: (m: string, p?: unknown) => Promise<unknown> };
           }
         ).bridge;
+        // 0.7.21 — 셀에 삽입한 텍스트가 "안 보이는" 문제 (실사용 리포트).
+        // bridge write (insertTextInCell 등) 는 native input-handler 의
+        // afterEdit() 를 우회하는데, afterEdit 가 바로 lineseg reflow 를
+        // 트리거하는 경로다. 우회하면 IR 엔 텍스트가 있지만 해당 문단의
+        // line_segs 가 미계산(height=0)으로 남아 클리핑/비표시된다. 배치
+        // 종료 후 reflowLinesegs 로 line_segs·페이지네이션을 재계산해야
+        // 삽입 텍스트가 제 높이로 보인다 (#177 의 "빈 line_segs + text
+        // 존재" 케이스). notify(repaint) 전에 reflow. generic 'wasm'
+        // dispatcher 경유 — fork 케이스 추가 불필요. 구버전 vendor build
+        // (메서드 부재) 면 무해하게 skip.
+        try {
+          await bridge.invoke('wasm', { fn: 'reflowLinesegs', args: [] });
+        } catch (err) {
+          console.warn(
+            '[tools] reflowLinesegs skipped (older vendor build?):',
+            err,
+          );
+        }
         await bridge.invoke('notifyDocumentChanged', { reason: 'ahwp-tools' });
       } catch (err) {
         console.warn(

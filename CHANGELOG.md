@@ -6,6 +6,24 @@
 
 ## [Unreleased]
 
+## [0.7.21] - 2026-06-01
+
+### Fixed — form-fill 실사용 리포트 2건 (글자 비표시 + 양식 어휘 무시)
+
+- **셀에 채운 글자가 안 보이는 문제**: bridge write(insertTextInCell 등)는
+  native input-handler 의 `afterEdit()` 를 우회하는데, 그 경로가 lineseg
+  reflow 를 트리거한다. 우회하면 IR 엔 텍스트가 있어도 해당 문단 line_segs
+  가 미계산(height=0)으로 남아 클리핑된다. write 배치 종료 후 generic
+  `wasm` dispatcher 로 `reflowLinesegs` 를 호출해 line_segs·페이지네이션을
+  재계산 → 삽입 텍스트가 제 높이로 표시 (notify repaint 전에 reflow).
+  fork 변경 불필요 (기존 WasmBridge 메서드). 구버전 build 면 무해 skip.
+- **표 밖 범례/기준을 무시하고 임의값 작성**: 양식은 셀 바깥 텍스트(각주·
+  범례·화살표/슬래시 열거 척도·헤더 괄호 옵션)로 값 어휘를 제약하는데
+  `getEmptyFormFields` 는 셀만 반환해 이를 못 싣는다. Agent guide 에 "값
+  결정 전 표 주변 텍스트(getDocumentSummary / 인접 문단)를 읽어 제약을
+  추출하고, 규정된 척도가 있으면 문서 표현 그대로 사용, 모르면 비워둔다"
+  원칙 디렉티브 추가 (expectedFormat 통과 ≠ 어휘 준수). 무휴리스틱·영어.
+
 ## [0.7.20] - 2026-06-01
 
 ### Added — AI form-fill 실시간 편집 위치 표시 (follow-along scroll)

@@ -105,6 +105,12 @@ Each cellField now carries \`rowLabel\` (text of the (row, 0) cell — the row h
 
 Always echo \`expectedFormat\` into your \`insertTextInCell\` / \`replaceTextInCell\` args. The check is opt-in: if you omit it, no format validation runs and you stay responsible for matching the column. If you include it, format mismatches return \`reason: <format>-...\` and you should retry with a correct value or pick a different cell.
 
+**Respect value vocabularies the form defines OUTSIDE the cells:**
+
+A form often constrains what a cell may contain through text that is NOT inside the cell: a legend or footnote near the table (often a line led by \`*\`, \`※\`, \`주)\`, or "범례/기준/수준:"), an enumerated scale written as arrow- or slash-separated options, a parenthetical option list in a header cell, or an instruction paragraph above the table. \`getEmptyFormFields\` returns only the cells — it does NOT carry these. So before deciding values, read the form's surrounding text (\`getDocumentSummary\`, or \`getTextRange\` / \`searchAllText\` on the paragraphs just before/after the table from \`tableInventory\`) and extract any such constraint.
+
+When a cell maps to a prescribed scale or option set, its value MUST be one of those options, copied verbatim from the document's own wording — do not paraphrase it, translate it, or substitute a different representation (e.g. writing a raw number or percentage where the form prescribes a named level, or vice versa). Matching \`expectedFormat\` is necessary but not sufficient: a value can pass the format check and still violate the form's stated vocabulary. If the source material doesn't tell you which option applies, leave the cell blank rather than guessing — an unfilled constrained cell is correct; a plausible-looking wrong option is not.
+
 **Hard rules:**
 - NEVER invent \`parentParaIdx\` / \`cellIdx\` / \`controlIdx\`. They must come from the most recent \`getEmptyFormFields\` response. A form has paragraphs like p=1, p=10, p=23 (NOT 2, 3, 4...) — assuming consecutive paragraph numbers is the #1 source of failed writes.
 - If you want to fill a cell that isn't in the response, it doesn't currently exist as an empty cell. Either it's already filled, or it's not a fillable cell at all. Pick a different one.
