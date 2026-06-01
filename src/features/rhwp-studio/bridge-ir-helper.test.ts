@@ -797,6 +797,9 @@ describe('BridgeIrHelper — Phase D2a', () => {
       invokeWasm: vi.fn(async (fn: string, args: unknown[]) => {
         calls.push({ fn, args });
         if (fn === 'getTextInCell') return '예시 텍스트'; // 길이 6 (한글)
+        // 0.7.22 — black/upright run → not a placeholder, no normalization.
+        if (fn === 'getCellCharPropertiesAt')
+          return JSON.stringify({ italic: false, textColor: '#000000' });
         if (fn === 'deleteTextInCell') return JSON.stringify({ ok: true });
         if (fn === 'insertTextInCell') return JSON.stringify({ ok: true });
         throw new Error(`unmocked: ${fn}`);
@@ -808,8 +811,10 @@ describe('BridgeIrHelper — Phase D2a', () => {
     expect(ok).toBe(true);
 
     const fns = calls.map((c) => c.fn);
+    // getCellCharPropertiesAt captured before delete; black run → no applyCharFormatInCell.
     expect(fns).toEqual([
       'getTextInCell',
+      'getCellCharPropertiesAt',
       'deleteTextInCell',
       'insertTextInCell',
     ]);
@@ -848,6 +853,8 @@ describe('BridgeIrHelper — Phase D2a', () => {
       invokeWasm: vi.fn(async (fn: string, args: unknown[]) => {
         calls.push({ fn, args });
         if (fn === 'getTextInCell') return '지울 텍스트';
+        if (fn === 'getCellCharPropertiesAt')
+          return JSON.stringify({ italic: false, textColor: '#000000' });
         if (fn === 'deleteTextInCell') return JSON.stringify({ ok: true });
         throw new Error(`unmocked: ${fn}`);
       }),
@@ -858,7 +865,11 @@ describe('BridgeIrHelper — Phase D2a', () => {
     expect(ok).toBe(true);
 
     const fns = calls.map((c) => c.fn);
-    expect(fns).toEqual(['getTextInCell', 'deleteTextInCell']);
+    expect(fns).toEqual([
+      'getTextInCell',
+      'getCellCharPropertiesAt',
+      'deleteTextInCell',
+    ]);
     expect(fns).not.toContain('insertTextInCell');
   });
 
@@ -869,6 +880,8 @@ describe('BridgeIrHelper — Phase D2a', () => {
       invokeWasm: vi.fn(async (fn: string, args: unknown[]) => {
         calls.push({ fn, args });
         if (fn === 'getTextInCell') return '기존';
+        if (fn === 'getCellCharPropertiesAt')
+          return JSON.stringify({ italic: false, textColor: '#000000' });
         if (fn === 'deleteTextInCell')
           return JSON.stringify({ ok: false, reason: 'oob' });
         throw new Error(`unmocked: ${fn}`);
@@ -880,8 +893,85 @@ describe('BridgeIrHelper — Phase D2a', () => {
     expect(ok).toBe(false);
 
     const fns = calls.map((c) => c.fn);
-    expect(fns).toEqual(['getTextInCell', 'deleteTextInCell']);
+    expect(fns).toEqual([
+      'getTextInCell',
+      'getCellCharPropertiesAt',
+      'deleteTextInCell',
+    ]);
     expect(fns).not.toContain('insertTextInCell');
+  });
+
+  // 0.7.22 — placeholder (italic + non-black) 셀 교체 시 삽입 후 그 run 의
+  // char shape 를 italic=false + 검정으로 정규화 (applyCharFormatInCell).
+  // 양식의 예시/안내 placeholder (파란 italic "예) …") 를 본 값으로 바꿀 때
+  // 새 값이 placeholder 스타일을 물려받아 파란 italic 으로 보이던 문제 해결.
+  it('replaceTextInCell normalizes placeholder typography after insert', async () => {
+    const calls: { fn: string; args: unknown[] }[] = [];
+    const bridge = {
+      invokeWasm: vi.fn(async (fn: string, args: unknown[]) => {
+        calls.push({ fn, args });
+        if (fn === 'getTextInCell') return '예) 회사명을 입력';
+        if (fn === 'getCellCharPropertiesAt')
+          return JSON.stringify({
+            fontFamily: 'HY중고딕',
+            fontSize: 1100,
+            italic: true,
+            textColor: '#0000ff',
+          });
+        if (fn === 'deleteTextInCell') return JSON.stringify({ ok: true });
+        if (fn === 'insertTextInCell') return JSON.stringify({ ok: true });
+        if (fn === 'applyCharFormatInCell') return JSON.stringify({ ok: true });
+        throw new Error(`unmocked: ${fn}`);
+      }),
+    } as unknown as import('@/lib/rhwp-bridge').RhwpBridge;
+
+    const h = new BridgeIrHelper(bridge);
+    const ok = await h.replaceTextInCell(0, 1, 0, 3, 0, '다빈치렌스');
+    expect(ok).toBe(true);
+
+    const fns = calls.map((c) => c.fn);
+    expect(fns).toEqual([
+      'getTextInCell',
+      'getCellCharPropertiesAt',
+      'deleteTextInCell',
+      'insertTextInCell',
+      'applyCharFormatInCell',
+    ]);
+    const fmt = calls.find((c) => c.fn === 'applyCharFormatInCell');
+    // args: (sec, parentPara, ctrl, cellIdx, cellParaIdx, start=0, end=len, json)
+    expect(fmt?.args.slice(0, 7)).toEqual([
+      0,
+      1,
+      0,
+      3,
+      0,
+      0,
+      '다빈치렌스'.length,
+    ]);
+    const shape = JSON.parse(fmt?.args[7] as string);
+    expect(shape.italic).toBe(false);
+    expect(shape.textColor).toBe('#000000');
+    expect(shape.fontSize).toBe(1100); // family/size preserved → no collapse
+  });
+
+  // 0.7.22 — applyCharFormatInCell 부재(구버전 vendor build)면 정규화 skip 하되
+  // replace 자체는 성공 반환.
+  it('replaceTextInCell still succeeds when normalization is unsupported', async () => {
+    const bridge = {
+      invokeWasm: vi.fn(async (fn: string) => {
+        if (fn === 'getTextInCell') return '예) 안내문';
+        if (fn === 'getCellCharPropertiesAt')
+          return JSON.stringify({ italic: true, textColor: '#0000ff' });
+        if (fn === 'deleteTextInCell') return JSON.stringify({ ok: true });
+        if (fn === 'insertTextInCell') return JSON.stringify({ ok: true });
+        if (fn === 'applyCharFormatInCell') throw new Error('unsupported');
+        throw new Error(`unmocked: ${fn}`);
+      }),
+    } as unknown as import('@/lib/rhwp-bridge').RhwpBridge;
+
+    const h = new BridgeIrHelper(bridge);
+    const ok = await h.replaceTextInCell(0, 1, 0, 3, 0, '값');
+    expect(ok).toBe(true);
   });
 
   // 0.6.17 — getPageSvg: passthrough to wasm.renderPageSvg(pageNum).

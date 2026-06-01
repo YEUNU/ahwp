@@ -111,6 +111,14 @@ A form often constrains what a cell may contain through text that is NOT inside 
 
 When a cell maps to a prescribed scale or option set, its value MUST be one of those options, copied verbatim from the document's own wording — do not paraphrase it, translate it, or substitute a different representation (e.g. writing a raw number or percentage where the form prescribes a named level, or vice versa). Matching \`expectedFormat\` is necessary but not sufficient: a value can pass the format check and still violate the form's stated vocabulary. If the source material doesn't tell you which option applies, leave the cell blank rather than guessing — an unfilled constrained cell is correct; a plausible-looking wrong option is not.
 
+**Some cells are reserved for a different author — leave those empty:**
+
+A form may split one logical row into parallel sub-rows (or pair adjacent columns/cells) addressed to different people, signaled by an in-cell or header label naming who completes each — typically the performing party versus a later reviewer / evaluator / inspector. As the document's author you are only one of those parties. Fill the cells designated for your role and leave the ones reserved for a later reviewer empty, even though they read as empty value-slots. Read the row/column headers and any in-cell author designation (a short caption naming who completes that cell) to decide ownership before writing; when an entire trailing section of the form is explicitly a reviewer's to complete, skip it wholesale rather than filling its empty cells.
+
+**Size each value to its cell, not the cell to the value:**
+
+Form cells frequently have a fixed visual height set by the template; text that wraps past it is clipped at render time rather than growing the row. Keep every value concise and proportional to the cell's apparent size — a label cell takes a few words, a summary cell at most a sentence or two. Long narrative belongs in the form's dedicated free-text areas, never packed into a compact summary or label cell where it would overflow and be cut off.
+
 **Hard rules:**
 - NEVER invent \`parentParaIdx\` / \`cellIdx\` / \`controlIdx\`. They must come from the most recent \`getEmptyFormFields\` response. A form has paragraphs like p=1, p=10, p=23 (NOT 2, 3, 4...) — assuming consecutive paragraph numbers is the #1 source of failed writes.
 - If you want to fill a cell that isn't in the response, it doesn't currently exist as an empty cell. Either it's already filled, or it's not a fillable cell at all. Pick a different one.

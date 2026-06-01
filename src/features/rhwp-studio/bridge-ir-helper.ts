@@ -259,6 +259,25 @@ export class BridgeIrHelper {
       0,
       65536,
     );
+    // 0.7.22 — capture the existing run's char shape BEFORE deleting so we can
+    // strip placeholder typography off the replacement. HWP form templates
+    // mark example/instruction text with italic + non-black color (e.g. blue
+    // "예) …"); a plain delete+insert makes the NEW value inherit that styling,
+    // so the filled answer renders italic-blue instead of normal data. We
+    // re-apply the SAME shape (preserving font family/size — a partial shape
+    // resets unspecified props and collapses line height) with italic off +
+    // black text. Only when there is existing text to strip; captured before
+    // the delete because the run vanishes with it.
+    const placeholderShape =
+      current.length > 0
+        ? await this.captureCellPlaceholderShape(
+            sec,
+            parentPara,
+            controlIdx,
+            cellIdx,
+            cellParaIdx,
+          )
+        : null;
     if (current.length > 0) {
       const delRaw = await this.bridge.invokeWasm<string>('deleteTextInCell', [
         sec,
@@ -281,7 +300,66 @@ export class BridgeIrHelper {
       0,
       text,
     ]);
-    return isOk(insRaw);
+    if (!isOk(insRaw)) return false;
+    if (placeholderShape) {
+      // Best-effort typography normalization — never fail the replace over it.
+      try {
+        await this.bridge.invokeWasm<string>('applyCharFormatInCell', [
+          sec,
+          parentPara,
+          controlIdx,
+          cellIdx,
+          cellParaIdx,
+          0,
+          text.length,
+          JSON.stringify({
+            ...placeholderShape,
+            italic: false,
+            textColor: '#000000',
+          }),
+        ]);
+      } catch {
+        /* older bridge / unsupported — leave styling as-is */
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Read a cell run's char shape and return it ONLY when it looks like a
+   * template placeholder marker (italic, or a non-black text color). Returns
+   * null for normal upright-black content so a plain content edit keeps its
+   * styling untouched. Best-effort: any read failure → null.
+   */
+  private async captureCellPlaceholderShape(
+    sec: number,
+    parentPara: number,
+    controlIdx: number,
+    cellIdx: number,
+    cellParaIdx: number,
+  ): Promise<Record<string, unknown> | null> {
+    try {
+      const raw = await this.bridge.invokeWasm<unknown>(
+        'getCellCharPropertiesAt',
+        [sec, parentPara, controlIdx, cellIdx, cellParaIdx, 0],
+      );
+      const shape =
+        typeof raw === 'string'
+          ? (JSON.parse(raw) as Record<string, unknown>)
+          : raw && typeof raw === 'object'
+            ? (raw as Record<string, unknown>)
+            : null;
+      if (!shape) return null;
+      const italic = shape.italic === true;
+      const color =
+        typeof shape.textColor === 'string'
+          ? shape.textColor.replace(/\s/g, '').toLowerCase()
+          : '';
+      const nonBlack = color !== '' && color !== '#000000' && color !== '#000';
+      return italic || nonBlack ? shape : null;
+    } catch {
+      return null;
+    }
   }
 
   // ── Phase D2c-1 — 추가 paragraph / format / read ─────────────────

@@ -6,6 +6,37 @@
 
 ## [Unreleased]
 
+## [0.7.22] - 2026-06-01
+
+### Fixed — form-fill 시각 검증 라운드 (placeholder 타이포그래피 + 한국 공문서 규칙)
+
+실제 중간보고서 양식(제조AI특화 스마트공장, 26p·64표)을 노드에서
+SVG→PNG 로 렌더해 이즈파크(공급)/다빈치렌스(도입) AI 예지보전 시나리오로
+폼-필을 시뮬레이션·시각 검증하며 발견한 2건.
+
+- **placeholder 셀 교체 시 파란 italic 스타일 상속**: `replaceTextInCell` 은
+  delete-all 후 offset 0 insert 라, 양식의 예시/안내문(파란 italic "예) …")
+  을 교체하면 새 값이 그 스타일을 물려받아 파란 italic 으로 렌더됐다. 이제
+  delete 전 그 run 의 **전체** char shape 를 캡처해, 삽입 후 placeholder
+  (italic 또는 비검정) 였던 경우에 한해 italic=false + 검정으로 재적용한다.
+  전체 shape 라 글꼴·크기가 보존되어 줄높이가 붕괴하지 않는다(부분 shape 는
+  미지정 속성을 리셋해 셀이 무너짐). 단일 도구와 `fillFormCells` 의 'replace'
+  모드 둘 다 헬퍼 한 곳을 거치므로 동시 수정. 구버전 vendor build 면 무해 skip.
+- **에이전트 가이드 2원칙 추가(원칙 기반·영어·무열거)**: ① 일부 셀은 다른
+  작성자(점검위원·평가자 등) 몫 — 빈 value-slot 으로 보여도 역할 라벨을 읽고
+  비워둔다. ② 양식 셀은 고정 높이라 넘치면 잘림 — 값은 셀 크기에 비례해
+  간결하게.
+
+### Added — 폼-필 시각 검증 스크립트
+
+- `scripts/render-hwp-pages-cjk.mjs` — 한글 폭 인식 measureTextWidth 로
+  실제 Canvas 앱과 유사하게 줄바꿈해 SVG→PNG 렌더(기존 flat heuristic 은
+  CJK 폭 과소측정 → 가짜 클리핑).
+- `scripts/dump-form-tables.mjs` — 표를 (셀인덱스, row/col, span, text)
+  그리드로 덤프(폼-필 좌표 매핑용).
+- `scripts/sim-formfill.mjs` — AI 셀 도구와 동일한 IR 쓰기 경로로 양식을
+  채우는 golden 시뮬레이터(메모리 내 직접 렌더 = 라이브 앱 경로 충실 재현).
+
 ## [0.7.21] - 2026-06-01
 
 ### Fixed — form-fill 실사용 리포트 2건 (글자 비표시 + 양식 어휘 무시)
