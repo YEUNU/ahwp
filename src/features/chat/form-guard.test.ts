@@ -229,9 +229,9 @@ describe('decideFormGuardNudge — Form-Fill 완료 guard (0.7.6 tightened)', ()
     expect(r.shouldNudge).toBe(false);
   });
 
-  // 질문(awaiting-user-input)이 visual-verify 보다 우선 — 모델이 물으며
-  // 멈추면 svg 강제하지 않는다.
-  it('채움 + 빈셀0 + svg 미호출이지만 모델이 질문 → nudge 안 함 (질문 우선)', () => {
+  // 0.7.25 — visual-verify 가 질문보다 우선 (검증 전엔 묻기 전에 자기 작업
+  // 부터 본다). 채웠는데 svg 미호출이면 질문 중이어도 verify nudge.
+  it('채움 + svg 미호출 + 질문 → visual-verify 먼저 (묻기 전에 검증)', () => {
     const r = decideFormGuardNudge({
       ...BASE,
       formState: { emptyCellsRemaining: 0, tableSummary: '' },
@@ -239,8 +239,35 @@ describe('decideFormGuardNudge — Form-Fill 완료 guard (0.7.6 tightened)', ()
       formWritesDone: true,
       assistantText: '나머지 항목은 어떤 값을 넣을까요?',
     });
+    expect(r.shouldNudge).toBe(true);
+    expect(r.reason).toBe('no-visual-verify');
+  });
+
+  // 검증(svg 호출)을 마친 뒤 질문하며 멈추면 그 종료를 존중.
+  it('채움 + svg 호출됨 + 질문 → awaiting-user-input (검증 후엔 질문 존중)', () => {
+    const r = decideFormGuardNudge({
+      ...BASE,
+      formState: { emptyCellsRemaining: 0, tableSummary: '' },
+      getPageSvgCalled: true,
+      formWritesDone: true,
+      assistantText: '나머지 항목은 어떤 값을 넣을까요?',
+    });
     expect(r.shouldNudge).toBe(false);
     expect(r.reason).toBe('awaiting-user-input');
+  });
+
+  // 0.7.25 핵심 — grounded sparse fill: 빈 셀이 많이 남아도(emptyLeft>0)
+  // 채웠고 svg 미호출이면 visual-verify 가 먼저 (Case 2 보다 우선). 빈셀0
+  // gating 으로는 시각 검증이 영영 안 일어나던 0.7.24 실수 수정.
+  it('채움 + 빈셀 많음 + svg 미호출 → visual-verify (빈셀 잔여 무관)', () => {
+    const r = decideFormGuardNudge({
+      ...BASE,
+      formState: { emptyCellsRemaining: 180, tableSummary: 'p=42 (180 empty)' },
+      getPageSvgCalled: false,
+      formWritesDone: true,
+    });
+    expect(r.shouldNudge).toBe(true);
+    expect(r.reason).toBe('no-visual-verify');
   });
 
   describe('assistantRequestsInput — 질문/요청 판정', () => {

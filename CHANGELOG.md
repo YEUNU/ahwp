@@ -6,6 +6,25 @@
 
 ## [Unreleased]
 
+## [0.7.26] - 2026-06-01
+
+### Fixed — 시각 검증 enforcement gating 수정 (0.7.25 follow-up)
+
+0.7.25 의 visual-verify nudge 가 `emptyLeft === 0` 뒤에 gating 돼 있어 **실제로
+거의 발동 안 됐다**: grounded sparse fill 은 빈 셀이 항상 남아(emptyLeft>0)
+그 지점에 절대 도달하지 못하므로 시각 검증이 영영 안 일어남(라이브에서 모델이
+과제번호 칸에 주제를 넣고도 verify 안 하던 직접 원인).
+
+- visual-verify 를 **빈 셀 잔여와 무관하게** 발동하도록 재정렬: 쓰기를 했고
+  (formWritesDone) getPageSvg 미호출이면, 완료/질문 선언 전에 먼저 검증
+  (discovery 다음, 질문·채우기보다 앞). getPageSvg 1회 호출 시 재발동 안 함.
+- **verify-before-ask**: 모델이 물으며 멈춰도 아직 시각검증 안 했으면 verify
+  먼저 — 묻기 전에 자기 작업부터 본다. 검증 후의 질문은 존중.
+- nudge 문구를 stage-agnostic 으로(빈 셀 잔여 시 "검증 → 남은 grounded 채우기
+  or 질문" 모두 안내).
+
+회귀 가드 갱신(verify-before-ask / 검증 후 질문 존중 / 빈셀 많아도 verify 우선).
+
 ## [0.7.25] - 2026-06-01
 
 ### Fixed — form-fill 모델 시각 self-verification (한계 #3)

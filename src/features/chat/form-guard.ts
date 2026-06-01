@@ -98,24 +98,9 @@ export function decideFormGuardNudge(input: FormGuardInput): FormGuardDecision {
   const formStateKnown = input.formState !== null;
   const emptyLeft = input.formState?.emptyCellsRemaining ?? 0;
 
-  // Case 0 (0.7.24): 모델이 양식을 파악(discovery 완료)한 뒤 사용자에게
-  // 부족 정보를 물으며 멈췄다면, 빈 셀이 남아도 그 종료를 존중한다.
-  //
-  // 완료 기준이 "빈 셀 0" 이면 grounding (제공 정보만 채움, 빈칸>날조) +
-  // ask-when-insufficient 원칙과 런타임이 충돌한다 — 사용자가 정보를 조금만
-  // 줬을 때 옳은 결과는 "채울 수 있는 것만 채우고 나머지는 질문하며 멈춤"
-  // 인데, "아직 N개 남았으니 계속 채워" nudge 가 모델을 날조 쪽으로 떠민다.
-  // 모델이 (양식을 안 뒤) 질문하는 것 = 유효한 종료 상태이므로 nudge 안 함.
-  //
-  // discovery 전(formState null) 의 질문은 존중하지 않는다 — 양식을 먼저
-  // 파악해야 무엇을 물을지 구체적으로 알 수 있으므로 Case 1 로 넘어가
-  // discovery 를 강제한다.
-  if (formStateKnown && assistantRequestsInput(input.assistantText)) {
-    return { shouldNudge: false, reason: 'awaiting-user-input' };
-  }
-
   // Case 1: AI 가 아직 getEmptyFormFields 한 번도 호출 안 함 → discovery
-  // 강제. AI 가 prefix 만 보고 임의로 응답하는 회귀 방지.
+  // 강제. AI 가 prefix 만 보고 임의로 응답하는 회귀 방지. (discovery 전
+  // 질문도 존중 안 함 — 양식을 먼저 알아야 무엇을 물을지 구체화 가능.)
   if (!formStateKnown) {
     return {
       shouldNudge: true,
@@ -126,6 +111,45 @@ export function decideFormGuardNudge(input: FormGuardInput): FormGuardDecision {
         `respond explaining that to the user and stop.`,
       reason: 'no-form-discovery',
     };
+  }
+
+  // Case V (0.7.25): 실제 form-fill 쓰기를 했는데(formWritesDone) getPageSvg 로
+  // 시각 검증을 한 번도 안 했으면 → 완료/질문 선언 전에 1회 verify 강제. 빈
+  // 셀 잔여와 무관하게 발동하는 게 핵심: grounded sparse fill 은 빈 셀이 항상
+  // 남아 emptyLeft===0 에 절대 도달하지 못하므로, "0 empties 후 검증" 으로
+  // gating 하면 시각 검증이 영영 안 일어난다 (0.7.24 의 실수). 모델이 자기가
+  // 채운 결과를 "보고"(vision provider 는 렌더 이미지 수신) 의미 오류 — 식별
+  // 번호 칸에 주제, 척도 칸에 서술, 셀 overflow 클리핑 등 구조 read 로는 안
+  // 보이고 렌더를 봐야 보이는 부류 — 를 직접 잡게 한다. 질문(Case 0)보다
+  // 먼저: 묻기 전에 자기 작업부터 검증. getPageSvg 1회 호출하면
+  // getPageSvgCalled=true 라 재발동 안 함 + nudgeCap(2) 상한.
+  //
+  // 0.7.6 회귀(양식 아닌데 빈셀0 → svg nudge 무한 반복) 회피: formWritesDone
+  // 이 false 면(실제 채운 적 없음 = 양식 아니거나 채울 게 없었음) 발동 안 함.
+  if (input.formWritesDone && !input.getPageSvgCalled) {
+    return {
+      shouldNudge: true,
+      nudgeText:
+        `[Auto-continue] You have written to the form but have not visually verified it yet. ` +
+        `Call getPageSvg({pageIdx}) on the page(s) you edited and read the rendered image: confirm ` +
+        `each value you wrote sits in the cell its row-label × column-header implies — this catches ` +
+        `a value in the wrong slot (an identifier / number field holding descriptive text, a ` +
+        `prescribed scale / level field holding a free-form sentence) or text clipped by a ` +
+        `fixed-height cell, none of which a structural read reveals. Fix any with replaceTextInCell. ` +
+        `Then continue with any remaining cells you have grounded values for, or — if you have used ` +
+        `every fact the user gave you — ask the user for the specific missing facts. Announce ` +
+        `completion only when the form is genuinely done with the information available.`,
+      reason: 'no-visual-verify',
+    };
+  }
+
+  // Case 0 (0.7.24): 모델이 양식을 파악하고 (이제 시각 검증도 했고) 사용자
+  // 에게 부족 정보를 물으며 멈췄다면, 빈 셀이 남아도 그 종료를 존중한다.
+  // 완료 기준 "빈 셀 0" 은 grounding(빈칸>날조)+ask-when-insufficient 원칙과
+  // 충돌 — "아직 N개 남았으니 계속 채워" nudge 가 모델을 날조로 떠밀기 때문.
+  // 질문 = 유효한 종료 상태.
+  if (assistantRequestsInput(input.assistantText)) {
+    return { shouldNudge: false, reason: 'awaiting-user-input' };
   }
 
   // Case 2: 실제 빈 셀 남아 있음 → 채우기 계속.
@@ -158,34 +182,7 @@ export function decideFormGuardNudge(input: FormGuardInput): FormGuardDecision {
     };
   }
 
-  // Case 2.5 (0.7.24): 빈 셀은 다 처리됐는데(emptyLeft===0) 실제 form-fill
-  // 쓰기를 했고(formWritesDone) getPageSvg 로 시각 검증을 한 번도 안 했으면
-  // → 완료 선언 전에 1회 nudge. 모델이 자기가 채운 결과를 "보고"(vision-
-  // capable provider 는 렌더 이미지를 받음) 의미 오류 — 식별번호 칸에 주제,
-  // 척도 칸에 서술, 셀 overflow 클리핑 등 — 를 직접 잡게 한다. 구조 read
-  // (getEmptyFormFields) 로는 못 잡고 렌더를 봐야만 보이는 부류.
-  //
-  // 0.7.6 회귀(양식 아닌데 빈셀0 → svg nudge 무한 반복) 회피: formWritesDone
-  // 이 false 면(=실제 채운 적 없음 = 양식 아니거나 채울 게 없었음) 발동 안
-  // 함. nudgeCount cap(기본 2)도 상한. ai-modes.ts 의 form-fill 프롬프트와
-  // getPageSvg 도구 설명이 약속하는 "완료 전 getPageSvg 강제"를 실제로 구현.
-  if (input.formWritesDone && !input.getPageSvgCalled) {
-    return {
-      shouldNudge: true,
-      nudgeText:
-        `[Auto-continue] You filled the form but have not visually verified it yet. ` +
-        `Before announcing completion, call getPageSvg({pageIdx}) on the page(s) you edited. ` +
-        `If your model can see images, the rendered page is attached — read it and confirm each ` +
-        `value sits in the cell its row-label × column-header implies. This is the only check that ` +
-        `catches a value in the wrong slot (an identifier / number field holding descriptive text, ` +
-        `a prescribed scale / level field holding a free-form sentence) or text clipped by a ` +
-        `fixed-height cell — such a cell is non-empty and format-valid yet plainly wrong once you ` +
-        `look. Fix any with replaceTextInCell, then announce completion.`,
-      reason: 'no-visual-verify',
-    };
-  }
-
-  // Case 3: AI 가 getEmptyFormFields 호출했고 결과가 빈 셀 0 + (시각 검증
-  // 했거나 채운 게 없음) → 할 일 없음. AI 의 응답을 존중하고 nudge 안 함.
+  // Case 3: 빈 셀 0 + (시각 검증 했거나 채운 게 없음) + 질문 아님 → 할 일
+  // 없음. AI 의 응답을 존중하고 nudge 안 함.
   return { shouldNudge: false };
 }
