@@ -696,10 +696,18 @@ export function useChatStreaming(
             baseSystemPrompt: SYSTEM_PROMPT_AGENT_GUIDE,
             targetPath: turnTargetPathRef.current,
           };
-          const reads = parallelBatch.filter((b) => isReadOnlyTool(b.tu.name));
-          const writes = parallelBatch.filter(
-            (b) => !isReadOnlyTool(b.tu.name),
-          );
+          // 0.7.34 — 병렬-안전 분류. read-only 도구에 더해, mode 가
+          // 'cross-doc-research' 인 runAgent (research sub-agent) 도 병렬.
+          // cross-doc-research 카탈로그는 read+web 만이라 활성 문서 IR 을
+          // 변경하지 못하므로 동시 실행해도 race 없음 (Claude Code Task 식
+          // 독립 research fan-out). 그 외 runAgent (write 가능 mode 상속)
+          // 는 직렬 유지.
+          const isParallelSafe = (b: (typeof parallelBatch)[number]): boolean =>
+            isReadOnlyTool(b.tu.name) ||
+            (b.call.tool === 'runAgent' &&
+              (b.call.args as { mode?: string }).mode === 'cross-doc-research');
+          const reads = parallelBatch.filter(isParallelSafe);
+          const writes = parallelBatch.filter((b) => !isParallelSafe(b));
 
           // reads — 병렬
           const readResults = await Promise.allSettled(
@@ -730,7 +738,7 @@ export function useChatStreaming(
           let ri = 0;
           let wi = 0;
           for (const b of parallelBatch) {
-            if (isReadOnlyTool(b.tu.name)) {
+            if (isParallelSafe(b)) {
               ordered.push(readResults[ri++]);
             } else {
               ordered.push(writeResults[wi++]);

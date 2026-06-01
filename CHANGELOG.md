@@ -6,6 +6,33 @@
 
 ## [Unreleased]
 
+## [0.7.34] - 2026-06-02
+
+### Changed — 파이프라인 한계 #5/#7 마무리
+
+- **#5 — research 서브에이전트 병렬 fan-out**: parent 가 한 turn 에 호출한
+  여러 `runAgent` 중 mode가 `cross-doc-research` 인 것들을 병렬 dispatch
+  (Promise.allSettled). 그 mode 카탈로그는 read+web 만이라 활성 문서 IR 을
+  변경하지 못하므로 동시 실행해도 race 없음 — Claude Code Task 식 독립 research
+  fan-out. 그 외 runAgent(write 가능 mode 상속)·doc-write 도구는 직렬 유지.
+  (0.7.31 의 sub-agent _내부_ read 병렬과 합쳐 #5 마무리.)
+- **#7 — 결정적 제어흐름: 의도적 미진행 결정**. 모델 주도 turn 루프를
+  결정적 파이프라인으로 대체하는 것은 대규모 변경이고 Claude Code 자체가
+  모델 주도다. 이번 세션에 구축한 가드(grounding·visual-verify·plan·완료
+  게이트·라우터 보장)를 갖춘 모델 루프가 올바른 패턴이라 판단 → reactive
+  하게 진행하지 않음.
+
+## [0.7.33] - 2026-06-02
+
+### Changed — context 압축 #1 마무리: 오래된 대형 read 결과 text aging
+
+0.7.27 이미지 prune 에 더해, 오래된 대형 read 결과(getEmptyFormFields 등 JSON)
+도 매 턴 재전송돼 누적되던 것 압축. `compactOldLargeReads` — 최근 N(6)개
+tool-result 는 full, 그보다 오래되고 4KB 초과하는 read 결과만 prefix+마커로
+trim. 에러·작은 결과·이미지 결과는 보존. form-fill 좌표는 최신 getEmptyForm
+Fields 가 authoritative(prompt 보장)라 오래된 read 는 superseded. `compact
+AgentHistory`(이미지+read aging 통합)를 fireChat request 직전 적용.
+
 ## [0.7.32] - 2026-06-01
 
 ### Fixed — 척도 어휘 surface: 모델이 규정 척도 대신 서술 적던 문제 보강
