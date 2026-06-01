@@ -4,10 +4,16 @@
  * (insertTextInCell / delete+insert replace / reflowLinesegs) against the
  * real 중간보고서 form, then exports HWP so we can render + visually verify.
  *
- * This is NOT the agent; it's a hand-authored "golden" fill encoding what a
- * correct 이즈파크/다빈치렌스 예지보전 mid-term report should contain, so we
- * can check the mechanics (cell targeting, placeholder replacement, 보고/점검
- * row scoping, reflow visibility) end-to-end.
+ * This is NOT the agent; it's a hand-authored fill that intentionally
+ * OVER-fills every distinct cell type (markers, currency, narrative, KPI
+ * numbers, …) to exercise the write/render mechanics end-to-end — cell
+ * targeting, placeholder replacement, 보고/점검 row scoping, reflow visibility.
+ *
+ * NOTE: most figures here (금액·진척도·정확도·KPI 목표치 등) are FABRICATED for
+ * coverage. A real agent fill must stay grounded — fill only what the user's
+ * provided info covers and leave the rest blank (see prompts.ts "Fill only what
+ * the user's information grounds"). From just "이즈파크/다빈치렌스/예지보전" a
+ * faithful fill would be far sparser (mostly the two names + the topic narrative).
  *
  * Usage: node scripts/sim-formfill.mjs <form.hwp> <out.hwp>
  */
