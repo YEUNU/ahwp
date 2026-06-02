@@ -136,8 +136,9 @@ export const RhwpEditor = forwardRef<RhwpEditorHandle, RhwpEditorProps>(
       // 0.7.5 — iframe 안의 keydown 을 parent 로 forward. iframe 의 main.ts
       // 가 capture 단계에서 모디파이어 / F-key 만 골라 postMessage 로 전송.
       // 본 effect 가 그 event 를 받아 KeyboardEvent 합성 후 window 에 dispatch
-      // → AppShell 의 글로벌 onKey 핸들러 (⌘K / ⌘W / ⌘⇧F / ⌘⇧O / F6 /
-      // Alt+L/T/P) 가 iframe 포커스 상태에서도 정상 동작.
+      // → AppShell 의 글로벌 onKey 핸들러 (⌘K / ⌘W / ⌘⇧F / Alt+P) 가 iframe
+      // 포커스 상태에서도 정상 동작. (F6 스타일 / Alt+L 글자모양 / Alt+T
+      // 문단모양 등 편집 다이얼로그는 iframe 내부 studio 가 직접 처리.)
       let unsubKeydown: (() => void) | null = null;
 
       const handleLoad = (): void => {

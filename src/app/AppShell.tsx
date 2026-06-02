@@ -57,7 +57,7 @@ import { WelcomePane } from './WelcomePane';
 /**
  * chunk 66 — true when focus is inside an editable element (chat
  * input / rename input / dialog text fields). Used to suppress global
- * ⌘W / ⌘K / ⌘/ / ⌘⇧F / ⌘⇧O / F6 / Alt+L|T|P bindings so they don't
+ * ⌘W / ⌘K / ⌘/ / ⌘⇧F / Alt+P bindings so they don't
  * hijack keystrokes the user actually wants delivered to the field
  * (e.g. ⌘W = "delete word backward" in macOS text inputs).
  *
@@ -93,14 +93,6 @@ export default function AppShell() {
   const [, setBookmarkOpen] = useState(false);
   const [, setFootnoteOpen] = useState(false);
   const [, setStyleManagerOpen] = useState(false);
-  const [, setCharFormatOpen] = useState(false);
-  const [, setCharFormatInitial] = useState<{
-    bold: boolean;
-    italic: boolean;
-    underline: boolean;
-    instance: number;
-  }>({ bold: false, italic: false, underline: false, instance: 0 });
-  const [, setParaFormatOpen] = useState(false);
   const [, setEquationOpen] = useState(false);
   const [, setShapeOpen] = useState(false);
   const [, setPicturePropsOpen] = useState(false);
@@ -127,11 +119,10 @@ export default function AppShell() {
   // replaces the folder tree view; clicking a snippet opens the file
   // (existing tab if open) and scrolls to the matched paragraph.
   const [searchMode, setSearchMode] = useState(false);
-  // chunk 58 — outline sidebar (TOC). ⌘⇧O toggles the right-edge
-  // sidebar that lists "제목 1/2/3" headings extracted from the active
-  // doc. `outlineKey` bumps when any tab's dirty flips so the sidebar
-  // refreshes without polling.
-  const [, setOutlineOpen] = useState(false);
+  // chunk 58 — `outlineKey` bumps when any tab's dirty flips. (The legacy
+  // parent-side outline sidebar + ⌘⇧O toggle were removed in 0.7.43 — the
+  // dialog/outline UI lives in the rhwp-studio iframe now; the parent
+  // toggle set discarded state and did nothing.)
   const [, setOutlineKey] = useState(0);
   // showRuler 는 StudioViewer 전용이었음 — 폐기. setter stub.
   const [, setShowRuler] = useState(false);
@@ -341,9 +332,11 @@ export default function AppShell() {
   // inputs / dialog form fields all sit inside the same window event
   // bubble, and a global ⌘W there used to close the active tab while
   // the user was typing (browser native ⌘W = close tab). Same for
-  // ⌘K, ⌘/, ⌘⇧F, ⌘⇧O, F6, Alt+L/T/P. Studio shortcuts (⌘B/I/U/A/F/H/Z)
-  // already short-circuit inside StudioViewer's own onKeyDown — those
-  // never bubbled to window. The viewer textarea/input is **not**
+  // ⌘K, ⌘/, ⌘⇧F, Alt+P. Editor shortcuts (⌘B/I/U/A/F/H/Z, F6 스타일,
+  // Alt+L 글자모양, Alt+T 문단모양) are handled INSIDE the rhwp-studio
+  // iframe — the parent no longer binds them (their old parent handlers
+  // set discarded state after the dialogs moved into the iframe; removed
+  // in 0.7.43). The viewer textarea/input is **not**
   // guarded out of bounds here because the user always wants ⌘W to
   // close the tab from the toolbar / page background; only editable
   // focus zones are excluded.
@@ -373,54 +366,6 @@ export default function AppShell() {
       ) {
         // chunk 60 — ⌘⇧F opens cross-folder search.
         setSearchMode(true);
-        e.preventDefault();
-      } else if (
-        primaryModifier(e) &&
-        e.shiftKey &&
-        !e.altKey &&
-        e.key.toLowerCase() === 'o'
-      ) {
-        // chunk 58 — ⌘⇧O toggles the outline (TOC) sidebar.
-        setOutlineOpen((v) => !v);
-        e.preventDefault();
-      } else if (
-        // Phase B-5 — 한글 호환 본문 도움 단축키.
-        e.key === 'F6' &&
-        !e.metaKey &&
-        !e.ctrlKey &&
-        !e.altKey &&
-        !e.shiftKey
-      ) {
-        // F6 = 스타일 관리 다이얼로그 (한글 reflex).
-        setStyleManagerOpen(true);
-        e.preventDefault();
-      } else if (
-        e.altKey &&
-        !e.metaKey &&
-        !e.ctrlKey &&
-        !e.shiftKey &&
-        e.key.toLowerCase() === 'l'
-      ) {
-        // Alt+L = 글자 모양 다이얼로그 (Hancom reflex)
-        const v = activeViewerRef();
-        const af = v?.getActiveFormat() ?? {};
-        setCharFormatInitial((prev) => ({
-          bold: !!af.bold,
-          italic: !!af.italic,
-          underline: !!af.underline,
-          instance: prev.instance + 1,
-        }));
-        setCharFormatOpen(true);
-        e.preventDefault();
-      } else if (
-        e.altKey &&
-        !e.metaKey &&
-        !e.ctrlKey &&
-        !e.shiftKey &&
-        e.key.toLowerCase() === 't'
-      ) {
-        // Alt+T = 문단 모양 다이얼로그 (Hancom reflex)
-        setParaFormatOpen(true);
         e.preventDefault();
       } else if (
         e.altKey &&

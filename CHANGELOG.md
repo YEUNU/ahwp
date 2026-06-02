@@ -6,6 +6,22 @@
 
 ## [Unreleased]
 
+## [0.7.43] - 2026-06-02
+
+### Removed — 죽은 단축키 핸들러 정리 (vestigial)
+
+기능 검증 중 발견: AppShell 의 F6(스타일)/Alt+L(글자모양)/Alt+T(문단모양)/
+⌘⇧O(아웃라인) 단축키 parent 핸들러가 **읽히지 않는 state(`const [, setX]`)**
+를 세팅하고 있었음 — 다이얼로그가 rhwp-studio iframe 으로 이관된 뒤(0.6.x)
+남은 잔재. F6/Alt+L/Alt+T 는 iframe 내부 studio 가 자체 처리하므로(편집 중
+정상 동작 — 스크린샷 검증) parent 핸들러는 무의미했고, ⌘⇧O 는 치트시트에
+없는 죽은 토글이었다.
+
+- 4개 단축키 핸들러 + 격리된 discarded state(setCharFormatOpen /
+  setCharFormatInitial / setParaFormatOpen / setOutlineOpen) 제거. 동작 변화
+  없음(편집 단축키는 iframe 이 처리). 단축키 기능 검증 스펙 추가
+  (`shortcuts-verify.spec.ts`).
+
 ## [0.7.42] - 2026-06-02
 
 ### Fixed — 정보(About) 화면의 앱 "버전" 오표시
