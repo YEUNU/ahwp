@@ -13,6 +13,8 @@
  * - eval 절대 금지 — 핸들러는 명시적 switch 분기로만 등록 (chat/tools.ts)
  */
 
+import type { ExpectedFormat } from './form-format';
+
 export const AHWP_TOOL_NAMES = [
   // chunk 19 — manual mode dispatcher (Phase 2)
   'applyHtml',
@@ -69,6 +71,10 @@ export const AHWP_TOOL_NAMES = [
   'deleteBookmark',
   // 0.4.16 — cell-level write (양식 표지 cell 채우기)
   'insertTextInCell',
+  // 0.6.15 — atomic replace (placeholder/예시문 제거 + 새 값) + modify workflow
+  'replaceTextInCell',
+  // 0.7.13 — bulk cell fill (다수 셀 1 call = 1 turn)
+  'fillFormCells',
   // Phase 3 chunk 51 — read-only Agent tools (양식 매칭 / 위치 결정)
   'getDocumentOutline',
   'getDocumentSummary',
@@ -88,6 +94,8 @@ export const AHWP_TOOL_NAMES = [
   'getFootnoteAtCursor',
   // 0.4.21 — empty form-field discovery (양식 채우기 baseline)
   'getEmptyFormFields',
+  // 0.6.17 — Phase B 시각 검증 MVP. 한 페이지를 SVG 로 캡처.
+  'getPageSvg',
   // Phase 5 chunk 96 — outline-as-router workspace search
   'searchWorkspaceOutlines',
   'readParagraphByPath',
@@ -95,9 +103,40 @@ export const AHWP_TOOL_NAMES = [
   // turn 의 활성 write target 을 절대 경로로 변경. read-only 분류 (실제
   // IR 변경 없음 — 그냥 라우팅 ref 갱신).
   'switchTargetDoc',
+  // 0.7.7 — external world access (cross-doc-research mode 의 핵심).
+  // 워크스페이스 외 정보 (URL / 검색결과) 조회. 모두 read-only — IR 변경
+  // 없음. 사용자 confirm 게이트 없이 즉시 실행.
+  'webFetch',
+  'webSearch',
+  // 0.7.9 — Bash 명령 실행. Default OFF (사용자 명시 enable 필요).
+  // Allowlist 기반 (사용자 등록 prefix 만 허용) + workspace cwd 강제 +
+  // 60s timeout + 32KB output cap + hardcoded blocklist (rm -rf, sudo 등).
+  // catalog 노출은 enable 토글 ON + allowlist 비어있지 않을 때만.
+  'runCommand',
+  // 0.7.11 — Sub-agent dispatch. AI 가 자기 turn 안에서 별도 sub-agent
+  // 호출. sub-agent 는 다른 mode / 도구 set 으로 자유롭게 작업 후 final
+  // text 만 parent 에 반환. context window 보존 + 복잡한 다단계 작업
+  // 위임. 재귀 차단 (sub-agent 의 catalog 에서 runAgent 제외).
+  'runAgent',
+  // 0.7.29 — Claude Code TodoWrite analog. 다단계 작업(특히 대형 양식)의
+  // 진행을 모델이 명시 추적 → 섹션 누락/중복 방지 + 사용자 진행 가시성.
+  // doc IR 미변경 (read-only 분류) — 즉시 실행, 승인 게이트 없음.
+  'updatePlan',
 ] as const;
 
 export type AhwpToolName = (typeof AHWP_TOOL_NAMES)[number];
+
+/** 0.7.29 — `updatePlan` 의 작업 항목. Claude Code TodoWrite 와 동형. */
+export type PlanItemStatus =
+  | 'pending'
+  | 'in_progress'
+  | 'completed'
+  | 'skipped';
+export interface PlanItem {
+  /** 한 줄 작업 설명 (대형 양식이면 보통 섹션/표 단위). */
+  title: string;
+  status: PlanItemStatus;
+}
 
 /**
  * Phase 5 chunk 97 — Manual/Agent 통합. 읽기 전용 도구 set. 활성 doc /
@@ -119,11 +158,18 @@ export const READONLY_TOOL_NAMES = new Set<AhwpToolName>([
   'getColumnDef',
   'getFootnoteAtCursor',
   'getEmptyFormFields',
+  'getPageSvg',
   'searchWorkspaceOutlines',
   'readParagraphByPath',
   // chunk 99 follow-up — switchTargetDoc 는 IR 을 변경하지 않으므로
   // read-only 게이트로 분류 (즉시 실행, 사용자 승인 불필요).
   'switchTargetDoc',
+  // 0.7.7 — external world read-only.
+  'webFetch',
+  'webSearch',
+  // 0.7.29 — plan 갱신은 doc IR 미변경 (app 상태만). read-only 게이트로
+  // 즉시 실행 + write 배치의 reflow 트리거 안 함.
+  'updatePlan',
 ]);
 
 export function isReadOnlyTool(name: string): boolean {
@@ -412,7 +458,8 @@ export interface AhwpToolArgs {
     paragraphIdx: number;
     controlIdx: number;
   };
-  // 0.4.16 — cell-level write
+  // 0.4.16 — cell-level write.
+  // 0.7.12 — optional expectedFormat 로 컬럼 의미 미준수 reject.
   insertTextInCell: {
     sectionIdx: number;
     parentParaIdx: number;
@@ -421,6 +468,43 @@ export interface AhwpToolArgs {
     cellParaIdx: number;
     charOffset: number;
     text: string;
+    /** 셀의 expectedFormat (getEmptyFormFields 결과에서 그대로 echo).
+     *  지정 시 text 가 포맷을 위반하면 dispatch 전 reject. */
+    expectedFormat?: ExpectedFormat;
+  };
+  // 0.6.15 — atomic replace. 기존 셀 내용을 모두 지우고 text 로 교체.
+  // text='' 는 effectively clear. charOffset 인자가 없는 이유:
+  // replace 의미상 "셀 전체" 가 대상이라 offset 이 무의미.
+  // 0.7.12 — optional expectedFormat (insertTextInCell 과 동일 의미).
+  replaceTextInCell: {
+    sectionIdx: number;
+    parentParaIdx: number;
+    controlIdx: number;
+    cellIdx: number;
+    cellParaIdx: number;
+    text: string;
+    /** 셀의 expectedFormat (getEmptyFormFields 결과에서 그대로 echo). */
+    expectedFormat?: ExpectedFormat;
+  };
+  // 0.7.13 — bulk cell fill. form-fill turn 예산 보호: 다수 셀을 한 tool
+  // call 로 채워 단일 insert/replace N회(= N turn)를 1회로 압축. 각 cell 이
+  // 자기 좌표를 모두 보유 (한 form 이 여러 표/control 에 걸쳐 hoist 불가).
+  fillFormCells: {
+    cells: {
+      sectionIdx: number;
+      parentParaIdx: number;
+      controlIdx: number;
+      cellIdx: number;
+      cellParaIdx: number;
+      text: string;
+      /** 'insert' (default; value-slot 채우기) | 'replace' (instruction
+       *  placeholder 교체 / 기존값 수정; atomic delete+insert). */
+      mode?: 'insert' | 'replace';
+      /** insert 시 삽입 위치. default 0. mode='replace' 에선 무시. */
+      charOffset?: number;
+      /** 셀의 expectedFormat (getEmptyFormFields 결과에서 echo). */
+      expectedFormat?: ExpectedFormat;
+    }[];
   };
   // Phase 3 chunk 51 — read-only Agent tools
   getDocumentOutline: Record<string, never>;
@@ -474,11 +558,21 @@ export interface AhwpToolArgs {
     charOffset: number;
     direction: 'forward' | 'backward';
   };
-  // 0.4.21 — empty form-field enumeration
+  // 0.4.21 — empty form-field enumeration.
+  // parentParaIdx scopes to a single table (composable with sectionIdx).
+  // Use the tableInventory entries returned from the first call to pick.
+  // 0.6.15 — includeFilled 옵션: true 면 채워진 셀도 반환 (각 셀에
+  // isEmpty + contentCharShape 포함). 수정 / placeholder 제거 workflow 용.
   getEmptyFormFields: {
     sectionIdx?: number;
+    parentParaIdx?: number;
     maxResults?: number;
+    includeFilled?: boolean;
   };
+  // 0.6.17 — Phase B 시각 검증. 한 페이지 SVG 캡처.
+  getPageSvg: { pageIdx: number };
+  // 0.7.29 — TodoWrite analog. 작업 계획 전체를 매번 통째로 전달(replace).
+  updatePlan: { items: PlanItem[] };
   // Phase 5 chunk 96 — outline-as-router workspace search
   searchWorkspaceOutlines: { maxDocs?: number };
   readParagraphByPath: {
@@ -489,6 +583,51 @@ export interface AhwpToolArgs {
   };
   // chunk 99 follow-up — switchTargetDoc args.
   switchTargetDoc: { path: string };
+  // 0.7.7 — external world access.
+  webFetch: {
+    /** http:// or https:// URL. 그 외 scheme 거부. */
+    url: string;
+    /** 선택. AI 가 받은 본문에서 요약 / 추출하고 싶은 의도 hint
+     *  (응답에 그대로 echo — 모델이 자기 prompt 에서 활용). */
+    prompt?: string;
+    /** 응답 본문의 최대 byte 수. 기본 32768 (32 KB). 큰 페이지는 trim. */
+    maxBytes?: number;
+  };
+  webSearch: {
+    /** 검색어. 1024 bytes 이하. */
+    query: string;
+    /** 결과 최대 개수. 1-20, 기본 10. */
+    maxResults?: number;
+  };
+  // 0.7.9 — Bash 명령 실행 (allowlist 기반).
+  runCommand: {
+    /** 실행할 명령 문자열. allowlist 의 prefix 와 매치해야 함. */
+    command: string;
+    /** 작업 디렉토리 (workspace root 기준 상대 경로). 절대 경로 거부. */
+    cwd?: string;
+    /** Timeout (ms). 기본 60000, 최대 300000. */
+    timeoutMs?: number;
+  };
+  // 0.7.11 — Sub-agent dispatch.
+  runAgent: {
+    /** Sub-agent 가 받는 task instruction. parent 가 명확한 목표 명시. */
+    prompt: string;
+    /** Sub-agent 의 mode. 없으면 parent mode 사용.
+     *  - 'cross-doc-research': 외부 검색 / 워크스페이스 read-only
+     *  - 'free-authoring': 모든 도구 사용 가능 (write 포함)
+     *  - 'form-fill': 셀 write 만 (양식 전용)
+     *  - 'body-edit': body text 편집 도구
+     */
+    mode?:
+      | 'cross-doc-research'
+      | 'free-authoring'
+      | 'form-fill'
+      | 'body-edit'
+      | 'table-manipulation'
+      | 'formatting';
+    /** Max turns (1-30, 기본 10). parent 의 agentMaxTurns 와 독립. */
+    maxTurns?: number;
+  };
 }
 
 /** A single op as it appears inside the model-authored block. */
@@ -526,6 +665,9 @@ export type AhwpToolResult =
 /** Hard ceilings — anything bigger is rejected before dispatch. */
 export const AHWP_TOOL_LIMITS = {
   maxOpsPerBlock: 50,
+  /** 0.7.13 — fillFormCells 한 호출당 셀 수 상한. getEmptyFormFields 의
+   *  default maxResults(200) 와 맞춰 큰 표도 한 read→한 fill 로 처리. */
+  maxFormCellsPerCall: 200,
   maxHtmlBytes: 64 * 1024,
   maxTextBytes: 4 * 1024,
   maxNameBytes: 256,

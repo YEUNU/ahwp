@@ -27,7 +27,7 @@ test.describe('settings dialog — flow', () => {
     await expect(page.getByTestId('settings-dialog')).toBeVisible();
     // Both implemented providers are listed.
     await expect(page.getByTestId('settings-row-openai')).toBeVisible();
-    await expect(page.getByTestId('settings-row-nvidia')).toBeVisible();
+    await expect(page.getByTestId('settings-row-google')).toBeVisible();
   });
 
   test('opens via the view:settings menu IPC', async () => {
@@ -57,7 +57,7 @@ test.describe('settings dialog — flow', () => {
 
     // Close via Esc → ChatPanel re-checks key on next provider effect.
     await page.keyboard.press('Escape');
-    await page.getByTestId('chat-provider-select').selectOption('nvidia');
+    await page.getByTestId('chat-provider-select').selectOption('google');
     await page.getByTestId('chat-provider-select').selectOption('openai');
     await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
       'data-state',
@@ -121,9 +121,9 @@ test.describe('settings dialog — flow', () => {
     const { page } = launched;
     await page.getByTestId('chat-open-settings').click();
 
-    await page.getByTestId('settings-input-nvidia').fill('nvapi-fake');
-    await page.getByTestId('settings-save-nvidia').click();
-    await expect(page.getByTestId('settings-indicator-nvidia')).toContainText(
+    await page.getByTestId('settings-input-google').fill('gg-fake');
+    await page.getByTestId('settings-save-google').click();
+    await expect(page.getByTestId('settings-indicator-google')).toContainText(
       '연결됨',
     );
     // openai untouched.

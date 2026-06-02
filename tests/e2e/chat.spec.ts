@@ -1,7 +1,7 @@
 /**
  * ChatPanel + secrets + ai:chat IPC end-to-end coverage.
  *
- * The OpenAI/NVIDIA adapters are swapped for a deterministic fake when the
+ * All provider adapters are swapped for a deterministic fake when the
  * Electron main process is launched with `AHWP_E2E_FAKE_AI=1` (see
  * electron/ai/registry.ts → providers/fake.ts). The fake reads scripted
  * behavior from the *last user message content*:
@@ -26,8 +26,8 @@ test.afterEach(async () => {
   await launched.close();
 });
 
-async function setKey(page: Page, providerId: 'openai' | 'nvidia') {
-  await page.evaluate(async (id: 'openai' | 'nvidia') => {
+async function setKey(page: Page, providerId: 'openai' | 'google') {
+  await page.evaluate(async (id: 'openai' | 'google') => {
     await window.api.secrets.set(id, 'test-key');
   }, providerId);
   await page.reload();
@@ -64,21 +64,21 @@ test.describe('chat panel — secrets gate + provider/model selectors', () => {
       'ok',
     );
 
-    // Switch to nvidia → indicator goes back to ○ (no key for nvidia).
-    await page.getByTestId('chat-provider-select').selectOption('nvidia');
+    // Switch to google → indicator goes back to ○ (no key for google).
+    await page.getByTestId('chat-provider-select').selectOption('google');
     await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
       'data-state',
       'missing',
     );
     await expect(page.getByTestId('chat-input')).toBeDisabled();
 
-    // Set nvidia key → indicator flips to ● again.
+    // Set google key → indicator flips to ● again.
     await page.evaluate(async () => {
-      await window.api.secrets.set('nvidia', 'test-nvidia-key');
+      await window.api.secrets.set('google', 'test-google-key');
     });
     // The has-check listens on provider change — switch back and forth to refresh.
     await page.getByTestId('chat-provider-select').selectOption('openai');
-    await page.getByTestId('chat-provider-select').selectOption('nvidia');
+    await page.getByTestId('chat-provider-select').selectOption('google');
     await expect(page.getByTestId('chat-key-indicator')).toHaveAttribute(
       'data-state',
       'ok',
@@ -88,12 +88,12 @@ test.describe('chat panel — secrets gate + provider/model selectors', () => {
   test('provider + model picks survive reload via localStorage', async () => {
     const { page } = launched;
     await setKey(page, 'openai');
-    await setKey(page, 'nvidia');
+    await setKey(page, 'google');
     // chunk 65 — model is now a <select>. The fake provider's catalog
     // includes 'fake/echo-2' on every provider, so we pick that and
     // verify it persists across reload. Auto-fetch is gated on
-    // hasKey === true, so we set the nvidia key too.
-    await page.getByTestId('chat-provider-select').selectOption('nvidia');
+    // hasKey === true, so we set the google key too.
+    await page.getByTestId('chat-provider-select').selectOption('google');
     // Wait for the auto-fetched catalog to populate the select.
     await expect
       .poll(async () =>
@@ -111,7 +111,7 @@ test.describe('chat panel — secrets gate + provider/model selectors', () => {
     await page.reload();
     await page.waitForLoadState('domcontentloaded');
     await expect(page.getByTestId('chat-provider-select')).toHaveValue(
-      'nvidia',
+      'google',
     );
     await expect(page.getByTestId('chat-model-input')).toHaveValue(
       'fake/echo-2',
@@ -230,5 +230,21 @@ test.describe('secrets IPC — direct round-trip', () => {
     expect(errors).toHaveLength(2);
     expect(errors[0]).toMatch(/non-empty|empty/i);
     expect(errors[1]).toMatch(/string/i);
+  });
+});
+
+// 0.7.0 / 0.7.1 — Task-Mode UI smoke. ModeBadge 가 provider bar 에 마운트
+// 되고 default state (free-authoring / "편집") 로 렌더링되는지 확인.
+// dynamic switching (form-fill 자동 진입) 은 useChatStreaming 가 chat
+// turn 마다 detectMode 호출 시 발동 — unit/integration 테스트가 검증.
+// e2e 는 mount 검증 + 사용자 가시성 만 다룸.
+test.describe('Task-Mode UI badge (0.7.1)', () => {
+  test('ModeBadge default 마운트 — free-authoring / "편집" / source=default', async () => {
+    const { page } = launched;
+    const badge = page.getByTestId('chat-mode-badge');
+    await expect(badge).toBeVisible();
+    await expect(badge).toHaveAttribute('data-mode', 'free-authoring');
+    await expect(badge).toHaveAttribute('data-source', 'default');
+    await expect(badge).toHaveText('편집');
   });
 });

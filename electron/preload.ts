@@ -188,6 +188,30 @@ const api: AhwpApi = {
     getPrefs: () => ipcRenderer.invoke('updater:get-prefs'),
     setPrefs: (patch) => ipcRenderer.invoke('updater:set-prefs', patch),
   },
+  // 0.7.7 — external world access (web fetch / search) for AI tools.
+  // 0.7.8 — search backend key 관리 추가 (Brave / SerpAPI).
+  web: {
+    fetch: (req) => ipcRenderer.invoke('web:fetch', req),
+    search: (req) => ipcRenderer.invoke('web:search', req),
+    setSearchKey: (backend, key) =>
+      ipcRenderer.invoke('web:set-search-key', backend, key),
+    hasSearchKey: (backend) =>
+      ipcRenderer.invoke('web:has-search-key', backend),
+    deleteSearchKey: (backend) =>
+      ipcRenderer.invoke('web:delete-search-key', backend),
+    getActiveSearchBackend: () => ipcRenderer.invoke('web:get-active-backend'),
+  },
+  // 0.7.9 — Bash 명령 실행. UI 가 read/write, AI dispatcher 가 별도
+  // 'bash:run' IPC 로 실행. BashApi 에 run 노출 안 함 (UI 에서 직접
+  // 명령 실행하면 사용자 의도와 무관한 입력 발사 가능 — 의도적 분리).
+  bash: {
+    isEnabled: () => ipcRenderer.invoke('bash:is-enabled'),
+    setEnabled: (on) => ipcRenderer.invoke('bash:set-enabled', on),
+    getAllowlist: () => ipcRenderer.invoke('bash:get-allowlist'),
+    setAllowlist: (patterns) =>
+      ipcRenderer.invoke('bash:set-allowlist', patterns),
+    run: (req) => ipcRenderer.invoke('bash:run', req),
+  },
 };
 
 contextBridge.exposeInMainWorld('api', api);

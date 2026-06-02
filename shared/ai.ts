@@ -10,12 +10,7 @@
  * `ChatStreamEvent` back to the renderer.
  */
 
-export type ProviderId =
-  | 'openai'
-  | 'anthropic'
-  | 'google'
-  | 'nvidia'
-  | 'custom';
+export type ProviderId = 'openai' | 'anthropic' | 'google' | 'custom';
 
 export interface ProviderMeta {
   id: ProviderId;
@@ -44,12 +39,6 @@ export const PROVIDERS: readonly ProviderMeta[] = [
   {
     id: 'google',
     label: 'Google (Gemini)',
-    requiresApiKey: true,
-    requiresBaseUrl: false,
-  },
-  {
-    id: 'nvidia',
-    label: 'NVIDIA NIM',
     requiresApiKey: true,
     requiresBaseUrl: false,
   },
@@ -118,6 +107,20 @@ export interface ToolResultRecord {
    * machine-readable reason 코드. provider에 다시 들려보냄. */
   content: string;
   isError?: boolean;
+  /**
+   * 0.6.20 — visual verification. tool 이 image 를 반환했을 때 base64
+   * 인코딩된 raster (PNG 권장). vision-capable provider 가 모델에 image
+   * 도 함께 전달. provider 별 처리:
+   * - OpenAI: tool message 다음에 user 메시지 inject (image_url 형태).
+   * - Google (Gemini): functionResponse 다음에 user 메시지 inject
+   *   (inlineData 형태).
+   * - Anthropic (미구현): tool_result content 안에 image block 추가
+   *   가능 (native multimodal tool_result 표준).
+   * vision 미지원 provider 는 imageBase64 무시하고 content text 만
+   * 사용 — graceful degrade.
+   */
+  imageBase64?: string;
+  imageMediaType?: 'image/png' | 'image/svg+xml' | 'image/jpeg';
 }
 
 /**
@@ -148,6 +151,13 @@ export interface ChatRequest {
    *  reasoning_tokens 최소 (router 등 빠른 응답이 중요한 호출에서 사용).
    *  non-reasoning 모델은 무시. */
   reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high';
+  /**
+   * 0.7.0 — Task-Mode 컨텍스트. 어느 mode 로 이 turn 을 수행하는지.
+   * provider 어댑터는 직접 사용하지 않고 (transparent passthrough), 호출
+   * 측 (useChatStreaming) 이 tools / prompt 를 mode 에 맞춰 미리 좁힘.
+   * 누락 시 default = free-authoring (현재 동작).
+   */
+  modeContext?: import('./ai-modes').ModeContext;
 }
 
 /**

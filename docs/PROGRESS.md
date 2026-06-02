@@ -379,6 +379,31 @@ UX 회귀 3건 fix (caret 동기화 / 페이지 경계 드래그 / ⌘A 스코�
 | 106   | Phase 6.6 — e2e SVG-specific selector 12 sites → mode-agnostic `'svg, canvas'`                                                                                                               | ✅   |
 | 107   | Phase 6.7 — SVG 경로 일괄 제거. renderPageInto / DOMParser / `<svg>` mount / L-004 `<text><title>` / `__studioPageDiag` / `render-mode` flag 삭제. page-dims = getPageInfo. minor 0.4.0 bump | ✅   |
 
+## Inserty UX 라운드 (0.7.18~0.7.21, 2026-06-01)
+
+외부 데모(Threads `@agent.ko` "Inserty AI" — HWP 양식 AI 자동작성)를 레퍼런스로,
+ahwp 의 form-fill 사용성을 그 수준으로 끌어올리는 라운드. 사용자가 고른 5개
+사용성 중 **Phase A** (참고자료 원샷 / 실시간 편집 위치 / 작성 요약) 완료 + 실사용
+리포트 버그 2건 수정. Phase B(첨부 페이지 범위) / Phase C(폴더=프로젝트)는 후속.
+
+| 버전   | 청크               | 내용                                                                                                                                                                                                                                                                    |
+| ------ | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.7.18 | ③ 작성 내역 요약   | form-fill 완료 시 채운 내용을 양식의 논리 그룹 단위·근거 기반으로 요약하는 completion-summary 디렉티브 (Agent guide). 무휴리스틱·영어                                                                                                                                   |
+| 0.7.19 | ① 참고자료 칩      | chunk 99 에서 빈 배열 고정됐던 `referencePaths` 를 state 로 부활 + 참고자료 토글 칩 UI. 소비 파이프라인(collectReferenceOutlines→buildReferenceSystemBlock)은 이미 생존. `prompts.test.ts` +6                                                                           |
+| 0.7.20 | ⑤ 실시간 편집 위치 | AI 가 양식을 채우는 동안 편집 영역이 채워지는 문단으로 follow-along 스크롤. fork(`vendor/rhwp` ahwp-bridge) `InputHandler.revealParagraph` + `scrollToParagraph` bridge case (caret/포커스 불변) + runTools `onWriteParagraph` 콜백 (dedup). `fillFormCells.test.ts` +4 |
+| 0.7.21 | form-fill 버그 2건 | (1) 셀 삽입 텍스트 비표시 — bridge write 가 native afterEdit() 의 lineseg reflow 우회 → write 배치 후 `reflowLinesegs` 호출. (2) 표 밖 범례/척도 무시 — "값 결정 전 표 주변 텍스트 읽어 규정 어휘 준수, 불명확하면 비워라" 원칙 디렉티브                                |
+
+**알려진 한계 / 후속 관찰** (실사용 리포트 기준):
+
+- 대형 정부 양식(빈 셀 수천 개)은 classifier 가 모든 빈 셀을 value-slot 으로
+  분류(`getEmptyFormFields` line 1288) → auto-continue 의 "N empty remaining"
+  카운트가 원시 빈 셀 기준이라 과대. 입력 정보가 적으면 대부분 칸은 비워두는 게
+  정답이라 동작은 합리적이나, 카운트 표현이 오해를 부름. 후속에서 "채울 수 있는
+  칸" 신호 정교화 검토.
+- bulk `fillFormCells` 대신 단일 `insertTextInCell` 반복하는 모델 의존 패턴 관찰
+  (turn 당 ~20셀, cap 내). 프롬프트로는 bulk 우선 지시 중.
+- 시각 검증 워크플로우(`getPageSvg`/PDF 렌더로 표·양식 정합 자동 확인) 도입 예정.
+
 ## 향후 작업
 
 | 영역             | 항목                                                                                         | 상태             |

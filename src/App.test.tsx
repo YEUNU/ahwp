@@ -117,6 +117,23 @@ describe('App', () => {
         getPrefs: vi.fn().mockResolvedValue({ autoDownload: true }),
         setPrefs: vi.fn().mockResolvedValue({ autoDownload: true }),
       },
+      // 0.7.7 — external world access. 0.7.8 — search backend keys.
+      web: {
+        fetch: vi.fn().mockResolvedValue({ ok: true, text: '' }),
+        search: vi.fn().mockResolvedValue({ ok: true, query: '', results: [] }),
+        setSearchKey: vi.fn().mockResolvedValue(undefined),
+        hasSearchKey: vi.fn().mockResolvedValue(false),
+        deleteSearchKey: vi.fn().mockResolvedValue(undefined),
+        getActiveSearchBackend: vi.fn().mockResolvedValue('ddg'),
+      },
+      // 0.7.9 — Bash 명령 실행 (default OFF + allowlist).
+      bash: {
+        isEnabled: vi.fn().mockResolvedValue(false),
+        setEnabled: vi.fn().mockResolvedValue(undefined),
+        getAllowlist: vi.fn().mockResolvedValue([]),
+        setAllowlist: vi.fn().mockResolvedValue(undefined),
+        run: vi.fn().mockResolvedValue({ ok: false, reason: 'bash-disabled' }),
+      },
     };
     Object.defineProperty(window, 'api', {
       value: mockApi,

@@ -25,9 +25,9 @@ const ROUTER_TIMEOUT_MS = 30_000;
 
 /** 매 turn 항상 포함되는 도구 — 위치 / 구조 / 양식 파악과 가장 기본적인
  *  본문 편집은 어떤 작업에서도 흔히 필요. router LLM 이 빠뜨려도 이 set
- *  은 보장. getEmptyFormFields 는 form-fill workflow 진입을 항상 가능하게
- *  해 "양식 채워줘" 류 query 가 router 의 깜빡임으로 silent 응답이 되는
- *  회귀 방지 (0.4.14 회귀 가드). */
+ *  은 보장. getEmptyFormFields + fillFormCells (+ insertTextInCell) 는
+ *  form-fill workflow 의 축 — 빠지면 모델이 patches block (text) 으로
+ *  우회하면서 agent loop 가 한 turn 만에 종료되는 회귀가 생김 (0.6.14 가드). */
 const ALWAYS_INCLUDE: readonly AhwpToolName[] = [
   'getCaretPosition',
   'getDocumentOutline',
@@ -35,7 +35,27 @@ const ALWAYS_INCLUDE: readonly AhwpToolName[] = [
   'getEmptyFormFields',
   'findInDocument',
   'insertText',
+  'insertTextInCell',
+  'fillFormCells',
   'applyHtml',
+];
+
+/** Form-fill 모드에서 라우터가 빠뜨리면 안 되는 추가 핵심 도구. 글로벌
+ *  ALWAYS_INCLUDE 의 getEmptyFormFields / fillFormCells / insertTextInCell
+ *  에 더해, 양식 작성의 나머지 축을 보장한다:
+ *  - replaceTextInCell — instruction placeholder 교체 / 오기입 수정
+ *  - getPageSvg — 0.7.25 시각 self-verification (모델이 렌더를 보고 검증)
+ *  - getTextRange — 표 주변 footnote / legend 의 값 어휘·척도 제약 읽기
+ *  이게 라우터에 의해 빠지면 self-verification loop 와 수정 자체가 호출
+ *  불가가 되어 form-fill 품질 가드가 무력화된다. form-fill 모드에서만
+ *  추가 (다른 작업엔 router subset 그대로 — bloat 없음). */
+const FORM_FILL_ESSENTIAL: readonly AhwpToolName[] = [
+  'replaceTextInCell',
+  'getPageSvg',
+  'getTextRange',
+  // 0.7.29 — 대형 양식 진행 추적(TodoWrite analog). 라우터가 빠뜨리면
+  // 모델이 계획을 못 세우고 form-guard 의 plan 완료 게이트도 무의미.
+  'updatePlan',
 ];
 
 export interface ToolSelectionResult {
@@ -182,10 +202,14 @@ function parseRouterResponse(raw: string): string[] | null {
 }
 
 /** Filter raw names down to known AhwpToolName values + always-include
- *  set. Discards unknowns silently. */
-function normalizeSelection(raw: string[]): AhwpToolName[] {
+ *  set (+ form-fill essentials when in form-fill mode). Discards unknowns
+ *  silently. */
+function normalizeSelection(raw: string[], mode?: string): AhwpToolName[] {
   const known = new Set<string>(AHWP_TOOL_NAMES);
   const out = new Set<AhwpToolName>(ALWAYS_INCLUDE);
+  if (mode === 'form-fill') {
+    for (const n of FORM_FILL_ESSENTIAL) out.add(n);
+  }
   for (const name of raw) {
     if (known.has(name)) out.add(name as AhwpToolName);
   }
@@ -241,8 +265,11 @@ let cachedResult: ToolSelectionResult | null = null;
 function cacheKey(
   userText: string,
   history: readonly RouterToolHistoryEntry[],
+  mode?: string,
 ): string {
-  return `${userText}\n${history.map((e) => `${e.name}:${e.ok ? '1' : '0'}`).join(',')}`;
+  // mode 포함 — 같은 query/history 라도 mode 가 다르면(form-fill ↔ 기타)
+  // 보장 도구 set 이 달라지므로 cache 를 분리.
+  return `${mode ?? ''}\n${userText}\n${history.map((e) => `${e.name}:${e.ok ? '1' : '0'}`).join(',')}`;
 }
 
 /** 외부에서 turn 종료 시 호출 가능 — 다음 user message 시작 시 stale cache 제거. */
@@ -265,6 +292,10 @@ export async function selectToolsViaLlm(opts: {
   hasKey: boolean;
   /** 0.4.19 — Agent loop 가 누적한 도구 호출 이력. 비어있으면 turn 1 신호. */
   recentToolCalls?: readonly RouterToolHistoryEntry[];
+  /** 0.7.28 — 현재 ModeContext.primary. 'form-fill' 이면 핵심 form 도구
+   *  (replaceTextInCell / getPageSvg / getTextRange) 를 router 선택과
+   *  무관하게 보장. */
+  mode?: string;
 }): Promise<ToolSelectionResult> {
   const t0 = performance.now();
   const userText = lastUserText(opts.history);
@@ -285,7 +316,7 @@ export async function selectToolsViaLlm(opts: {
     };
   }
   const recent = opts.recentToolCalls ?? [];
-  const key = cacheKey(userText, recent);
+  const key = cacheKey(userText, recent, opts.mode);
   if (cachedKey === key && cachedResult) {
     return {
       ...cachedResult,
@@ -334,7 +365,7 @@ export async function selectToolsViaLlm(opts: {
       latencyMs: Math.round(performance.now() - t0),
     };
   }
-  const normalized = normalizeSelection(parsed);
+  const normalized = normalizeSelection(parsed, opts.mode);
   const result: ToolSelectionResult = {
     tools: normalized,
     isFullCatalog: false,

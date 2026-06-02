@@ -40,6 +40,8 @@ const FIXTURE = path.resolve(
 );
 
 const OPENAI_KEY = process.env.AHWP_TEST_OPENAI_KEY;
+// 0.7.36 — 라이브 모델명 외부화(.env 의 AHWP_TEST_OPENAI_MODEL override 가능).
+const OPENAI_MODEL = process.env.AHWP_TEST_OPENAI_MODEL ?? 'gpt-5.5';
 
 /**
  * 활성 탭의 RhwpEditor iframe 에 postMessage 로 직접 호출. AppShell 의
@@ -115,6 +117,10 @@ async function sendChatPrompt(
 }
 
 test.describe('Phase 7 — live OpenAI tool dispatch verification', () => {
+  // 라이브 에이전트 루프는 playwright 기본 per-test timeout(60s, config)보다
+  // 오래 걸린다 — sendChatPrompt 가 90~180s 를 기다려도 60s 에 먼저 죽던
+  // 문제(감사 발견). describe 단위로 충분히 올린다.
+  test.describe.configure({ timeout: 220_000 });
   test.skip(
     !OPENAI_KEY,
     'AHWP_TEST_OPENAI_KEY env not set — .env 에 키 저장 후 재실행',
@@ -130,20 +136,20 @@ test.describe('Phase 7 — live OpenAI tool dispatch verification', () => {
     await page.waitForLoadState('domcontentloaded');
     // OPENAI_KEY 는 위 test.skip 가드를 통과한 시점에 string 보장.
     const keyChecked = OPENAI_KEY!;
-    // Provider = openai, model = gpt-5.4-mini-2026-03-17 (사용자 지정),
+    // Provider = openai, model = OPENAI_MODEL (기본 gpt-5.5, env override 가능),
     // plan-mode OFF (auto execute), key 등록.
     await page.evaluate(
-      async ({ key, fixture }) => {
+      async ({ key, fixture, model }) => {
         window.localStorage.setItem('ahwp:chat:provider', 'openai');
         window.localStorage.setItem(
           'ahwp:chat:models',
-          JSON.stringify({ openai: 'gpt-5.4-mini-2026-03-17' }),
+          JSON.stringify({ openai: model }),
         );
         window.localStorage.setItem('ahwp:chat:plan-mode-default', '0');
         await window.api.secrets.set('openai', key);
         await window.api.session.set({ lastActivePath: fixture });
       },
-      { key: keyChecked, fixture: FIXTURE },
+      { key: keyChecked, fixture: FIXTURE, model: OPENAI_MODEL },
     );
     await page.reload();
     await page.waitForLoadState('domcontentloaded');
@@ -390,5 +396,133 @@ test.describe('Phase 7 — live OpenAI tool dispatch verification', () => {
     // 다른 두 항목은 그대로 (selectivity — AI 가 사업비 만 손댔어야).
     expect(afterEdu.length).toBeGreaterThanOrEqual(1);
     expect(afterOp.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+/**
+ * Phase 7 form-fill live verify — 양식(.hwp) 의 빈 표 칸을 자연어로 채우는
+ * end-to-end. getEmptyFormFields (scope self-heal, 0.7.15) → fillFormCells
+ * (bulk, 0.7.13) 경로가 실제 GPT 판단으로 동작하는지 검증.
+ *
+ * 어설션 정책 (live 비결정성 흡수): 사용자가 제공한 unique sentinel 값이
+ * 문서에 실제로 기입됐는지만 본다 — 어느 셀인지 / 어떤 tool 순서인지가
+ * 아니라 IR 의 관찰가능 변경. sentinel 은 매 실행 고유 → 사전 매치 0 보장.
+ */
+const FORM_FIXTURE = path.resolve(
+  __dirname,
+  '..',
+  '..',
+  'examples',
+  "(참고)(양식) ★'25년 제조AI특화 중간보고서, 완료보고서 서식자료_260127_01.hwp",
+);
+
+test.describe('Phase 7 — live OpenAI form-fill verification', () => {
+  // form-fill 은 multi-turn(discovery→grounding→fill→visual-verify) 이라 더
+  // 오래 걸린다. sendChatPrompt 240s 를 수용하도록 per-test timeout 상향.
+  test.describe.configure({ timeout: 300_000 });
+  test.skip(
+    !OPENAI_KEY,
+    'AHWP_TEST_OPENAI_KEY env not set — .env 에 키 저장 후 재실행',
+  );
+  test.skip(!existsSync(STUDIO_DIST), 'rhwp-studio dist missing');
+  test.skip(!existsSync(FORM_FIXTURE), 'form fixture missing');
+
+  let launched: LaunchedApp;
+
+  test.beforeEach(async () => {
+    launched = await launchApp();
+    const { page } = launched;
+    await page.waitForLoadState('domcontentloaded');
+    const keyChecked = OPENAI_KEY!;
+    await page.evaluate(
+      async ({ key, fixture, model }) => {
+        window.localStorage.setItem('ahwp:chat:provider', 'openai');
+        window.localStorage.setItem(
+          'ahwp:chat:models',
+          JSON.stringify({ openai: model }),
+        );
+        window.localStorage.setItem('ahwp:chat:plan-mode-default', '0');
+        await window.api.secrets.set('openai', key);
+        await window.api.session.set({ lastActivePath: fixture });
+      },
+      { key: keyChecked, fixture: FORM_FIXTURE, model: OPENAI_MODEL },
+    );
+    await page.reload();
+    await page.waitForLoadState('domcontentloaded');
+    await expect(page.getByTestId('rhwp-editor-iframe').first()).toBeAttached({
+      timeout: 30_000,
+    });
+    await expect
+      .poll(
+        async () => {
+          try {
+            return await readWasm<number>(launched.page, 'getSectionCount', []);
+          } catch {
+            return 0;
+          }
+        },
+        { timeout: 30_000 },
+      )
+      .toBeGreaterThan(0);
+  });
+
+  test.afterEach(async () => {
+    await launched.close();
+  });
+
+  // 0.7.35 — test.fixme. (1) afterEach 의 diff-card / app close 가 "Page.handle
+  // JavaScriptDialog: No dialog is showing" + worker teardown timeout 으로
+  // 트립 (chat-rhwp-form-fill.spec.ts:156 과 동일한 알려진 harness race). (2)
+  // 라이브 모델 비결정성으로 단일-셀 sentinel 기입이 run 마다 불안정. 라이브
+  // form-fill 의 end-to-end 검증은 chat-form-fill-live.spec.ts 가 더 견고하게
+  // 커버(export+render, diff-accept 미사용 → teardown race 없음)하므로 본
+  // 중복 케이스는 harness race 해소 시까지 fixme.
+  test.fixme('form-fill — "이 양식 채워줘" → 빈 표 칸에 sentinel 기입', async () => {
+    const { page } = launched;
+    const sentinel = 'AHWPFORM-' + Date.now().toString(36).toUpperCase();
+    // 사전 존재 매치 0 확인 (sentinel 은 매 실행 고유).
+    const before = await readWasm<unknown[]>(page, 'searchAllText', [
+      sentinel,
+      true,
+      false,
+    ]);
+    expect(before.length).toBe(0);
+
+    // 사용자 자연어 — 도구 / 좌표 언급 X. **양식에 실제 존재하는 칸**
+    // (도입기업명)에 grounded 값(sentinel)을 주고, 나머지는 비워두라 명시.
+    // (0.7.23 grounding: 정보 없는 칸은 날조 말고 비움 — 그래서 존재하지
+    //  않는 "사업명 칸" 을 요구하면 모델이 정당하게 미작성한다. 감사 발견 →
+    //  존재하는 칸으로 교정.)
+    await sendChatPrompt(
+      page,
+      `이 양식의 "도입기업명" 칸에 "${sentinel}" 라고 채워줘. 값을 모르는 다른 칸은 그대로 비워둬.`,
+      240_000,
+    );
+
+    // 양식 write 는 patches/diff 로 제안될 수 있음 — context 테스트와 동일하게
+    // pending accept 버튼이 있으면 누른다 (auto-accept fired 면 disabled = 정상).
+    await page.waitForTimeout(1000);
+    const acceptAll = page.getByTestId('diff-accept-all');
+    const acceptSingle = page.getByTestId('diff-accept-1');
+    if (
+      (await acceptAll.count()) > 0 &&
+      (await acceptAll.first().isEnabled())
+    ) {
+      await acceptAll.first().click();
+    } else if (
+      (await acceptSingle.count()) > 0 &&
+      (await acceptSingle.first().isEnabled())
+    ) {
+      await acceptSingle.first().click();
+    }
+    await page.waitForTimeout(3000);
+
+    // 효과 검증 — sentinel 이 문서 어딘가(표 칸)에 실제로 들어갔다.
+    const after = await readWasm<unknown[]>(page, 'searchAllText', [
+      sentinel,
+      true,
+      false,
+    ]);
+    expect(after.length).toBeGreaterThanOrEqual(1);
   });
 });

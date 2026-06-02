@@ -6,6 +6,1337 @@
 
 ## [Unreleased]
 
+## [0.7.38] - 2026-06-02
+
+### Fixed — 최종 문서에 "(예시)" 안내 문구가 남던 문제
+
+사용자 지적: KPI 표 등에서 채울 값이 없는 instruction placeholder("(예시)…")
+를 모델이 **그대로 두고** 끝내, 미완성처럼 보이는 양식이 출력됨.
+
+- form-fill 시스템 프롬프트 강화: grounded 값이 없어 못 채우는 instruction
+  placeholder 는 남기지 말고 `replaceTextInCell`(`text: ""`)로 **비운다**.
+  먼저 사용자에게 값을 물어보되(ask-when-insufficient), 끝내 값이 없으면
+  깨끗한 빈 칸으로 정리 — 다른 작성자(검토자) 몫으로 예약된 칸만 예외.
+
+### Changed — 권장 기본 모델 gpt-5.5
+
+- OpenAI 기본 모델을 `gpt-5.5` 로 상향(이전 `gpt-5.4-mini`). 라이브 검증에서
+  척도 어휘 준수·grounding·날조 방지 품질이 확연히 우수. 기존 default 사용자는
+  자동 마이그레이션(의식적으로 다른 모델을 고른 경우는 유지).
+
+## [0.7.37] - 2026-06-02
+
+### Fixed — 모델이 부족 정보를 충분히 안 묻던 문제 (ask-for-missing 부활)
+
+사용자 지적: 모델이 KPI 같은 채울 수 있는 칸을 정보 없이 비우면서도 **사용자
+에게 안 물어봄**. 원인: 0.7.30 이 "일부러 비웠는데 '계속 채워' auto-continue
+도는" 문제를 고치며 Case 2 를 `!formWritesDone` 로 좁혔는데, 그 과정에서
+**"부족하면 질문하라"는 런타임 push 까지 같이 제거**됐다. ("채우기 강요"=날조
+유발=나쁨, "질문"=원하는 행동 — 둘을 한꺼번에 죽인 게 문제.)
+
+- form-guard 에 **Case A (ask-for-missing)** 신설: form-fill 쓰기를 했고
+  (formWritesDone) 빈 셀이 남았는데 모델이 안 물으면 → 완료 전 1회 "모르는
+  값은 날조 말고 **사용자에게 물어라**(섹션별 묶어 1회 질문)" nudge. 채우기를
+  강요하지 않음(날조 금지 명시). task 당 1회만(askForMissingDone flag — 반복
+  nag 방지) — 모델이 질문하면 Case 0 가 존중, "더 필요없다" 확인하면 통과.
+  hidden nudge 라 사용자는 모델의 질문만 본다. 빈셀 0 이면 발동 안 함.
+- 회귀 가드 4 cases(ask 발동/1회한정/질문 우선/빈셀0 미발동).
+
+## [0.7.36] - 2026-06-02
+
+### Added — getEmptyFormFields 에 nearbyText: 표 위·아래 문단을 셀과 함께 surface
+
+척도 어휘 보강 v2 (사용자 제안). 0.7.32 의 `extractValueOptionSets`(화살표
+척도만 휴리스틱 추출)보다 일반적이고 강력한 접근: **표 주변 문단 원문을 그
+표와 함께 모델에 준다.**
+
+- `getEmptyFormFields` 의 `tableInventory` 각 항목(빈 셀 있는 표만)에 `nearbyText`
+  추가 — 그 표 **바로 위·아래의 비어있지 않은 문단**(각주/범례/지시문/단위 노트)
+  을 verbatim 으로. 셀 바깥에 규정된 값 제약이 여기 산다: 척도("\* 구축 수준 :
+  ICT미적용 → 기초 → 중간1 → 중간2 → 고도"), 작성자 규칙("점검위원 작성 부분은
+  작성 불요"), 가중치 규칙("가중치 합이 1"), 단위. 모델이 그 표를 채울 때 제약을
+  **그 표 옆에서 직접 판단**.
+- 좌표 문제 없음 — 셀은 좌표를 그대로 유지하고 nearbyText 는 추가 정보. 비용:
+  빈 셀 있는 표만 + 방향별 최대 2~3문단 + 길이 cap(문단 160자/전체 500자).
+- 도구 설명 + prompt(value-vocabulary 섹션)를 nearbyText 가 PRIMARY 소스라고
+  갱신. 0.7.32 의 `[Value vocabularies]` 블록은 빠른 global 스캔으로 유지.
+- 실측: 1.1 표 nearbyText 에 구축수준 척도, 1.4 KPI 표에 "가중치 합 1" 규칙이
+  정확히 잡힘. 회귀 가드 2 cases(빈셀 표에 surface / 빈셀 없으면 생략).
+
+## [0.7.35] - 2026-06-02
+
+### Fixed — 테스트 감사로 발견한 실제 버그 2건 + 라이브 테스트 재보정
+
+전체 e2e 풀 회귀(122 passed, 4 live-openai 실패)를 계기로 테스트 전수 감사(병렬
+에이전트). 통과하던 테스트가 가린 **실제 버그 2건** 발견·수정 + 실패한 라이브
+테스트 재보정.
+
+- **updatePlan 이 form-fill 모드에서 실제로 작동 안 했음** (감사 발견): 0.7.29
+  의 updatePlan 을 라우터 FORM_FILL_ESSENTIAL 에 넣었지만 `ai-modes.ts` 의
+  FORM_FILL.tools 배열엔 안 넣어, fireChat 의 `catalog(mode) ∩ router` 교집합
+  에서 제거됐다. 가장 필요한 form-fill 에서 누락. FORM_FILL + CROSS_DOC_RESEARCH
+  카탈로그에 updatePlan 추가. mode-integration.test 에 회귀 가드.
+- **본문 편집을 form-fill 로 하이재킹**: 표 있는 문서는 form-fill mode 로 자동
+  진입하는데, 사용자가 "맨 앞에 X 넣어줘" 같은 **본문 편집**을 요청해도 form-
+  guard 가 "getEmptyFormFields 불러 / 셀 채워" nudge 로 끌고 갔다(라이브 insert
+  Text 실패 원인). 본문 쓰기를 했고 셀 쓰기는 안 했으면(`bodyWriteDone &&
+!formWritesDone`) form-fill 아님 → nudge suppress(reason='body-edit-not-form-
+  fill'). 셀 쓰기 시작하면 자연 해제.
+
+### 라이브 e2e 재보정 (chat-rhwp-mode-live.spec.ts)
+
+- **per-test timeout**: playwright 기본 60s 가 sendChatPrompt 90~240s 보다 짧아
+  먼저 죽던 misconfig → describe 단위 `configure({timeout})` 220s/300s 상향.
+- **form-fill 테스트**: 존재하지 않는 "사업명 칸" 요구 → grounding 이 정당하게
+  미작성하던 것을, 실제 존재하는 "도입기업명" 칸으로 교정.
+
+검증: typecheck(2)+lint(0)+전체 579 tests(form-guard body-edit 3 + mode-
+integration updatePlan + plan/formWritesDone). 결정론 e2e 무손상.
+
+## [0.7.34] - 2026-06-02
+
+### Changed — 파이프라인 한계 #5/#7 마무리
+
+- **#5 — research 서브에이전트 병렬 fan-out**: parent 가 한 turn 에 호출한
+  여러 `runAgent` 중 mode가 `cross-doc-research` 인 것들을 병렬 dispatch
+  (Promise.allSettled). 그 mode 카탈로그는 read+web 만이라 활성 문서 IR 을
+  변경하지 못하므로 동시 실행해도 race 없음 — Claude Code Task 식 독립 research
+  fan-out. 그 외 runAgent(write 가능 mode 상속)·doc-write 도구는 직렬 유지.
+  (0.7.31 의 sub-agent _내부_ read 병렬과 합쳐 #5 마무리.)
+- **#7 — 결정적 제어흐름: 의도적 미진행 결정**. 모델 주도 turn 루프를
+  결정적 파이프라인으로 대체하는 것은 대규모 변경이고 Claude Code 자체가
+  모델 주도다. 이번 세션에 구축한 가드(grounding·visual-verify·plan·완료
+  게이트·라우터 보장)를 갖춘 모델 루프가 올바른 패턴이라 판단 → reactive
+  하게 진행하지 않음.
+
+## [0.7.33] - 2026-06-02
+
+### Changed — context 압축 #1 마무리: 오래된 대형 read 결과 text aging
+
+0.7.27 이미지 prune 에 더해, 오래된 대형 read 결과(getEmptyFormFields 등 JSON)
+도 매 턴 재전송돼 누적되던 것 압축. `compactOldLargeReads` — 최근 N(6)개
+tool-result 는 full, 그보다 오래되고 4KB 초과하는 read 결과만 prefix+마커로
+trim. 에러·작은 결과·이미지 결과는 보존. form-fill 좌표는 최신 getEmptyForm
+Fields 가 authoritative(prompt 보장)라 오래된 read 는 superseded. `compact
+AgentHistory`(이미지+read aging 통합)를 fireChat request 직전 적용.
+
+## [0.7.32] - 2026-06-01
+
+### Fixed — 척도 어휘 surface: 모델이 규정 척도 대신 서술 적던 문제 보강
+
+라이브 관찰: 모델이 "구축수준" 칸에 규정 척도(ICT미적용/기초/중간1/중간2/고도)
+대신 서술을 적음. 그 척도는 셀 바깥 **각주**("\* …구축 수준 : ICT미적용 →
+기초 → …")에 정의돼 있어 `getEmptyFormFields`(셀만 봄)가 못 싣고, 모델은
+주변 텍스트를 읽으라는 원칙(0.7.21)을 안 지킴.
+
+- **`extractValueOptionSets`**(shared/form-format.ts, 순수): 본문 문단에서
+  열거형 값 어휘를 verbatim 추출 — 화살표 척도(→ 2회+, 짧은 토큰)와 "라벨 :
+  a / b / c" 콜론-열거(공식 =×÷ 배제). false positive 보수적.
+- **`getDocumentSummary`** 가 최대 160문단을 스캔(body 는 기존 cap 유지)해
+  추출 결과를 `[Value vocabularies …]` 블록으로 surface — 모델이 보는 _데이터_
+  (LLM-facing prompt 아님 → No-heuristic-prompts 규칙 무관). 실제 양식에서
+  "구축 수준 : ICT미적용 → 기초 → 중간1 → 중간2 → 고도" 정확히 추출 확인.
+- prompt 의 value-vocabulary 섹션에 "getDocumentSummary 의 [Value vocabularies]
+  블록을 읽으라" 안내 추가.
+
+회귀 가드: extractValueOptionSets 8 cases(척도/열거 추출 + prose/공식/긴토큰
+배제 + 중복제거).
+
+## [0.7.31] - 2026-06-01
+
+### Changed — 서브에이전트 내부 read 도구 병렬 dispatch (한계 #5 1차)
+
+서브에이전트(`runAgent`)가 한 turn 의 도구 호출을 1개씩 순차 dispatch 하던
+것을, parent 의 advanceAgentLoop 패턴대로 **read-only 도구는 병렬(Promise.all),
+write/invalid 는 순차**로 재구성. 결과는 call.id 로 모아 원래 순서로 메시지
+조립(병렬이어도 toolHistory·tool_result 순서 보존). read-heavy 분석 sub-agent
+(예: "이 양식 모든 표 구조 분석")의 latency 개선.
+
+- IR race 회피: write 는 순차 유지(같은 문서 IR 동시 변경 금지). read 는 IR
+  무변경이라 병렬 안전.
+- 잔여(미해결): parent 가 여러 runAgent 를 병렬 fan-out 하는 것은 sub-agent
+  가 같은 문서에 write 할 수 있어 위험 — research(읽기 전용 mode) 한정 병렬화는
+  향후. 회귀 가드: 다중 read 병렬 + 순서 보존 1 case.
+
+## [0.7.30] - 2026-06-01
+
+### Fixed — auto-continue 가 의도적 빈칸에도 돌던 문제 + 사용자에게 비표시
+
+사용자 리포트 2건.
+
+- **의도적으로 비운 셀에도 "계속 채워" auto-continue 가 돌던 문제**: form-guard
+  Case 2(빈 셀 남음 → 채우기 nudge)가 빈 셀 수만 보고 발동해, 모델이 grounding
+  원칙대로 **제공 정보 없는 셀을 일부러 비웠는데도** "아직 N개 남음" nudge 로
+  계속 떠밀었다. 이제 Case 2 는 **아직 아무것도 안 채웠을 때(!formWritesDone)만**
+  발동. 모델이 form-fill 쓰기를 했으면 남은 빈 셀은 의도적 빈칸으로 보고 완료를
+  존중한다. 완전성은 빈셀 수가 아니라 updatePlan(0.7.29) 의 미완료 항목으로
+  강제(Case P) — 계획에 남기면 그게 잡고, 계획 없이 채우고 시각 검증 후 완료를
+  선언하면 빈 셀 잔여 무관하게 존중.
+- **auto-continue 를 사용자가 보지 않도록**: form-guard nudge 는 LLM 에는 user
+  turn 으로 보내되 `hidden: true` 로 표시 — UI 렌더 제외 + chatHistory 저장 안
+  함. 사용자는 어시스턴트가 자연스럽게 이어가는 것만 본다(내부 steering 비표시).
+
+회귀 가드: 채움+검증 후 빈칸 존중 / 미채움 give-up nudge 유지 (form-guard).
+
+## [0.7.29] - 2026-06-01
+
+### Added — 작업 계획(updatePlan) — TodoWrite analog (한계 #6)
+
+대형 양식(64표·여러 섹션)에서 모델이 진행을 머릿속에만 두다 섹션을 빠뜨리거나
+중복하던 문제. Claude Code 의 TodoWrite 처럼 모델이 작업 계획을 명시 추적.
+
+- **`updatePlan` 도구** — `items: [{title, status}]`(pending/in_progress/
+  completed/skipped) 전체를 매번 replace. 대형 form-fill 은 첫 getEmptyFormFields
+  직후 섹션별 1항목씩 깔고, 채우며 상태 갱신(한 번에 1개만 in_progress). doc
+  IR 미변경(read-only 분류).
+- **진행 체크리스트 UI** — ChatPanel 입력란 위 상시 표시. 최신 updatePlan 에서
+  파생, 사용자가 어느 섹션 끝났고 무엇 남았는지 실시간 확인(✓/▸/○/⊘).
+- **완료 게이트** — form-guard 가 plan 에 pending/in_progress 남으면 완료 선언
+  차단(reason='plan-incomplete'): 마저 끝내거나 명시적 skipped 처리 요구. 질문
+  종료(awaiting-user-input)는 우선. 모델이 자기 계획을 어기고 조기 종료하는 것
+  방지.
+- 라우터 form-fill essentials + 도구 catalog + prompt(섹션 분해 원칙) 정합.
+- 회귀 가드: updatePlan validate 6 cases + form-guard plan 3 cases.
+
+## [0.7.28] - 2026-06-01
+
+### Fixed — tool 라우터가 form-fill 핵심 도구를 빠뜨리던 문제 (한계 #4)
+
+매 턴 도구를 LLM 라우터로 5~15개 선별하는데, form-fill 핵심 도구 일부가
+라우터에 의해 dropped 되면 호출 불가가 됐다. 특히 `getPageSvg`(0.7.25 시각
+self-verification)와 `replaceTextInCell`(placeholder 교체·오기입 수정)이
+라우터 글로벌 ALWAYS_INCLUDE 에 없어, 라우터가 안 고르면 **방금 만든 검증·
+수정 loop 자체가 unreachable** 이 되는 self-defeating 구조였다.
+
+- 라우터를 **mode-aware** 로: `mode==='form-fill'` 이면 `FORM_FILL_ESSENTIAL`
+  (replaceTextInCell / getPageSvg / getTextRange[주변 텍스트 어휘·척도 제약
+  읽기])을 라우터 선택과 무관하게 보장. 다른 모드엔 강제 안 해 bloat 없음.
+- cache key 에 mode 포함(form-fill ↔ 기타 전환 시 stale 선택 방지).
+- 신규 `toolRouter.test.ts` 7 cases(essentials 보장 / 비-form 미강제 / dedup /
+  fallback 3종 / mode cache 분리) — 라우터 첫 단위 테스트.
+
+## [0.7.27] - 2026-06-01
+
+### Fixed — agent 루프 context 압축: 오래된 페이지 렌더 이미지 prune (한계 #1 1차)
+
+Agent 루프는 매 턴 history 전체를 provider 에 재전송하는데 압축이 없어, 0.7.25
+시각 self-verification 으로 getPageSvg(=base64 PNG, 수십~수백 KB) 호출이
+쌓이면 턴 N 이 이미지 N장을 매번 재인코딩·재전송 → 비용/latency 가 verify-heavy
+턴에서 제곱으로 증가.
+
+- `compactVisionImages` (순수 함수) — 가장 최근 페이지 렌더 이미지 1장만 남기고
+  오래된 것은 imageBase64 + 이제 무용한 SVG 텍스트(최대 ~16KB) 까지 제거,
+  content 를 compact 마커로 교체(call/result pairing 보존). 오래된 렌더는 최신
+  렌더가 대체하는 시점-스냅샷이라 무손실, 필요하면 모델이 재렌더 가능.
+- fireChat 의 request 조립 직전 적용. 이미지 없는 메시지·텍스트 결과는 무변경.
+  Mode 감지는 원본 history 를 스캔하므로 무영향.
+- 회귀 가드 6 cases. 텍스트 결과 aging 은 향후(lossy·pairing 위험으로 보류).
+
+## [0.7.26] - 2026-06-01
+
+### Fixed — 시각 검증 enforcement gating 수정 (0.7.25 follow-up)
+
+0.7.25 의 visual-verify nudge 가 `emptyLeft === 0` 뒤에 gating 돼 있어 **실제로
+거의 발동 안 됐다**: grounded sparse fill 은 빈 셀이 항상 남아(emptyLeft>0)
+그 지점에 절대 도달하지 못하므로 시각 검증이 영영 안 일어남(라이브에서 모델이
+과제번호 칸에 주제를 넣고도 verify 안 하던 직접 원인).
+
+- visual-verify 를 **빈 셀 잔여와 무관하게** 발동하도록 재정렬: 쓰기를 했고
+  (formWritesDone) getPageSvg 미호출이면, 완료/질문 선언 전에 먼저 검증
+  (discovery 다음, 질문·채우기보다 앞). getPageSvg 1회 호출 시 재발동 안 함.
+- **verify-before-ask**: 모델이 물으며 멈춰도 아직 시각검증 안 했으면 verify
+  먼저 — 묻기 전에 자기 작업부터 본다. 검증 후의 질문은 존중.
+- nudge 문구를 stage-agnostic 으로(빈 셀 잔여 시 "검증 → 남은 grounded 채우기
+  or 질문" 모두 안내).
+
+회귀 가드 갱신(verify-before-ask / 검증 후 질문 존중 / 빈셀 많아도 verify 우선).
+
+## [0.7.25] - 2026-06-01
+
+### Fixed — form-fill 모델 시각 self-verification (한계 #3)
+
+모델이 자기가 채운 결과를 "보고" 의미 오류(식별번호 칸에 주제, 척도 칸에
+서술, 셀 overflow 클리핑)를 스스로 잡게 하는 루프 정합. vision 인프라
+(getPageSvg → svgToPngBase64 → image_url/input_image, 0.6.20)는 이미
+작동했으나, 코드베이스에 **모순된 stale 안내**가 흩어져 모델이 안 썼다:
+
+- prompts.ts 가 "넌 SVG 못 본다(vision 은 future capability)" 라고 **거짓
+  안내** → "getPageSvg 는 렌더 이미지를 돌려주고 vision 모델은 실제로 본다.
+  완료 전 채운 페이지를 보고 값이 옳은 셀에 들어갔는지 확인하라" 로 재작성.
+  최종 검증 패스에 시각 검증을 4번째 체크로 추가.
+- ai-modes.ts / 도구 설명이 약속하던 "완료 전 getPageSvg 강제(auto-nudge)"
+  를 form-guard 에 **실제 구현**: form-fill 쓰기를 했고(formWritesDone) 빈 셀
+  0인데 getPageSvg 미호출이면 완료 선언 전 1회 nudge(reason='no-visual-
+  verify'). 0.7.6 무한루프(양식 아닌데 빈셀0 → svg nudge 반복)는 formWritesDone
+  =false 면 발동 안 해 정확히 회피 + nudgeCap(2) 상한.
+- 질문 종료(awaiting-user-input)가 시각 검증 nudge 보다 우선.
+
+회귀 가드 5 cases(visual-verify nudge / svg 호출 후 미발동 / 미채움 회귀 차단
+/ 질문 우선 / prompt vision contract).
+
+## [0.7.24] - 2026-06-01
+
+### Fixed — form-fill 완료 기준 "빈 셀 0" → "grounded 소진 시 질문하며 종료"
+
+런타임 완료 가드(`form-guard`)가 grounding 원칙(0.7.23)과 충돌하던 것 해소.
+이전엔 빈 셀이 남아 있기만 하면 "아직 N개 남음, 계속 채워" nudge(cap 2)를
+쏴서, 사용자가 정보를 조금만 줬을 때 모델을 **날조 쪽으로 떠밀었다**. 완료
+정의가 _정보 소진_ 이 아니라 _셀 소진_ 이었던 게 근본 원인.
+
+- **모델이 양식을 파악한 뒤 사용자에게 부족 정보를 물으며 멈추면**(text-only
+  응답에 질문 포함) 빈 셀이 남아도 nudge 안 함 — 질문 = 유효한 종료 상태
+  (`reason: 'awaiting-user-input'`). discovery 전 질문은 존중 안 함(양식 먼저
+  파악 강제).
+- **침묵 조기종료(질문 없이 멈춤)** 는 여전히 nudge — cover-sheet 만 채우고
+  멈추던 원래 회귀 가드 유지. 단 nudge 문구에 "정보 다 썼으면 채우지/추측하지
+  말고 사용자에게 부족분을 물어라" 경로 추가.
+- 질문 판정은 물음표(`?`/`？`) 신호 — cross-language, 회귀 가드 5 cases.
+
+### Limitations 분석 + 라이브 e2e (이전 작업 연계)
+
+ahwp 에이전틱 파이프라인 한계를 Claude Code 패턴 기준 정리(컨텍스트 압축
+부재 / 완료기준-grounding 충돌[본 fix] / self-verification·vision 부재 /
+tool 라우터 / 서브에이전트 depth=1). 라이브 e2e(`tests/e2e/chat-form-fill-
+live.spec.ts`)로 실제 OpenAI 구동 검증.
+
+## [0.7.23] - 2026-06-01
+
+### Changed — form-fill 근거 원칙 (날조 금지 + 부족 시 사용자에게 질문)
+
+폼-필 에이전트 가이드(prompts.ts)에 근거 기반 원칙 추가(원칙 기반·영어·무열거):
+
+- **사용자 제공 정보를 넘지 않게** — 양식을 "완성돼 보이게" 하려고 그럴듯한
+  숫자·금액·지표·비율·날짜·일정을 생성하지 않는다. 모든 값은 사용자 메시지
+  또는 첨부 자료에 근거해야 한다. 값이 없는 칸은 비워두는 게 정답(빈칸 > 날조).
+- **부족하면 사용자에게 취득** — 근거가 떨어지면 조용히 멈추거나 날조하지
+  말고, 채울 수 있는 건 먼저 채운 뒤 부족 항목을 (섹션별로 묶어) 1회 질문으로
+  요청해 정보를 받고 이어간다.
+- **예외** — 사용자가 초안/제안/창의성을 명시 요청하면 정보를 넘어 생성 가능
+  (요약에서 작성분 vs 전사분 구분).
+
+`scripts/sim-formfill.mjs` 헤더에 "골든 sim 은 메커니즘 커버리지용으로 수치를
+의도적으로 over-fill(날조)한다 — 실제 에이전트 기준 아님" 명시.
+
+## [0.7.22] - 2026-06-01
+
+### Fixed — form-fill 시각 검증 라운드 (placeholder 타이포그래피 + 한국 공문서 규칙)
+
+실제 중간보고서 양식(제조AI특화 스마트공장, 26p·64표)을 노드에서
+SVG→PNG 로 렌더해 이즈파크(공급)/다빈치렌스(도입) AI 예지보전 시나리오로
+폼-필을 시뮬레이션·시각 검증하며 발견한 2건.
+
+- **placeholder 셀 교체 시 파란 italic 스타일 상속**: `replaceTextInCell` 은
+  delete-all 후 offset 0 insert 라, 양식의 예시/안내문(파란 italic "예) …")
+  을 교체하면 새 값이 그 스타일을 물려받아 파란 italic 으로 렌더됐다. 이제
+  delete 전 그 run 의 **전체** char shape 를 캡처해, 삽입 후 placeholder
+  (italic 또는 비검정) 였던 경우에 한해 italic=false + 검정으로 재적용한다.
+  전체 shape 라 글꼴·크기가 보존되어 줄높이가 붕괴하지 않는다(부분 shape 는
+  미지정 속성을 리셋해 셀이 무너짐). 단일 도구와 `fillFormCells` 의 'replace'
+  모드 둘 다 헬퍼 한 곳을 거치므로 동시 수정. 구버전 vendor build 면 무해 skip.
+- **에이전트 가이드 2원칙 추가(원칙 기반·영어·무열거)**: ① 일부 셀은 다른
+  작성자(점검위원·평가자 등) 몫 — 빈 value-slot 으로 보여도 역할 라벨을 읽고
+  비워둔다. ② 양식 셀은 고정 높이라 넘치면 잘림 — 값은 셀 크기에 비례해
+  간결하게.
+
+### Added — 폼-필 시각 검증 스크립트
+
+- `scripts/render-hwp-pages-cjk.mjs` — 한글 폭 인식 measureTextWidth 로
+  실제 Canvas 앱과 유사하게 줄바꿈해 SVG→PNG 렌더(기존 flat heuristic 은
+  CJK 폭 과소측정 → 가짜 클리핑).
+- `scripts/dump-form-tables.mjs` — 표를 (셀인덱스, row/col, span, text)
+  그리드로 덤프(폼-필 좌표 매핑용).
+- `scripts/sim-formfill.mjs` — AI 셀 도구와 동일한 IR 쓰기 경로로 양식을
+  채우는 golden 시뮬레이터(메모리 내 직접 렌더 = 라이브 앱 경로 충실 재현).
+
+## [0.7.21] - 2026-06-01
+
+### Fixed — form-fill 실사용 리포트 2건 (글자 비표시 + 양식 어휘 무시)
+
+- **셀에 채운 글자가 안 보이는 문제**: bridge write(insertTextInCell 등)는
+  native input-handler 의 `afterEdit()` 를 우회하는데, 그 경로가 lineseg
+  reflow 를 트리거한다. 우회하면 IR 엔 텍스트가 있어도 해당 문단 line_segs
+  가 미계산(height=0)으로 남아 클리핑된다. write 배치 종료 후 generic
+  `wasm` dispatcher 로 `reflowLinesegs` 를 호출해 line_segs·페이지네이션을
+  재계산 → 삽입 텍스트가 제 높이로 표시 (notify repaint 전에 reflow).
+  fork 변경 불필요 (기존 WasmBridge 메서드). 구버전 build 면 무해 skip.
+- **표 밖 범례/기준을 무시하고 임의값 작성**: 양식은 셀 바깥 텍스트(각주·
+  범례·화살표/슬래시 열거 척도·헤더 괄호 옵션)로 값 어휘를 제약하는데
+  `getEmptyFormFields` 는 셀만 반환해 이를 못 싣는다. Agent guide 에 "값
+  결정 전 표 주변 텍스트(getDocumentSummary / 인접 문단)를 읽어 제약을
+  추출하고, 규정된 척도가 있으면 문서 표현 그대로 사용, 모르면 비워둔다"
+  원칙 디렉티브 추가 (expectedFormat 통과 ≠ 어휘 준수). 무휴리스틱·영어.
+
+## [0.7.20] - 2026-06-01
+
+### Added — AI form-fill 실시간 편집 위치 표시 (follow-along scroll)
+
+Inserty 데모 참고: AI 가 양식을 채우는 동안 편집 영역이 **채워지는 표/문단을
+화면에 따라오게** 스크롤. write op 마다 해당 문단으로 reveal — 사용자가 어디가
+수정되고 있는지 실시간으로 본다.
+
+- fork(`vendor/rhwp` ahwp-bridge): `InputHandler.revealParagraph` +
+  `scrollToParagraph` bridge case. caret/포커스를 옮기지 않아 채팅 입력
+  포커스를 유지 (moveCursorTo 의 focusTextarea 회피).
+- ahwp `runTools`: 성공한 write op 마다 `onWriteParagraph(0, paragraphIdx)`
+  콜백 (write 결과의 합성 diff.paragraphIdx 재사용, 연속 동일 문단 dedup).
+  AppShell 이 iframe `scrollToParagraph` bridge 로 연결. 구버전 vendor
+  build 면 case 부재로 무해하게 skip.
+- 회귀 가드 4 cases (호출/문단별 분리/dedup/실패 시 skip).
+
+## [0.7.19] - 2026-06-01
+
+### Added — 참고자료 reference chip 부활 (멀티 문서 컨텍스트)
+
+Inserty 데모 참고: 채팅 입력란 위에 **참고자료 토글 칩** 추가. 활성 탭을 제외한
+열린 문서를 클릭 한 번으로 read-only 참고자료로 첨부 → useChatStreaming 이
+`collectReferenceOutlines` → `buildReferenceSystemBlock` 으로 시스템 프롬프트에
+`[Reference docs]` 블록 주입. 양식(활성 탭)을 채우면서 다른 자료를 근거로 쓰는
+"참고자료 → 양식 작성" 흐름의 첫 조각.
+
+- chunk 99 에서 폐기됐던 `referencePaths` 를 state 로 부활 (소비 파이프라인은
+  그대로 살아있어 state·UI 만 복원). 닫힌/active 경로는 소비 측이 자동 필터링.
+- 순수 함수 회귀 가드 `prompts.test.ts` 신규 (active/닫힌 경로 필터, 빈 outline
+  skip, read-only 블록 생성 — 6 cases).
+
+## [0.7.18] - 2026-06-01
+
+### Added — 양식 작성 완료 요약 (그룹별·근거 기반)
+
+Form-fill 턴 종료 시 AI 가 채운 내용을 **양식의 논리 그룹 단위로 요약**하도록
+Agent guide 에 completion-summary 디렉티브 추가. 셀 단위 나열 대신 (식별/개요
+블록, 기간별 수치 표, 서술 섹션 등) 양식 구조에서 도출한 그룹마다 "무엇을, 어떤
+참고자료를 근거로 채웠는지" 한 줄씩. 의도적으로 비워둔 칸도 숨기지 않고 명시.
+원칙 기반 — 고정 필드명 enumeration 없이 영어 프롬프트 (Inserty 데모 참고).
+
+## [0.7.17] - 2026-05-31
+
+### Changed — kordoc 기반 DOCX/XLSX 추출 (mammoth/exceljs fallback)
+
+비-HWP 읽기 경로의 DOCX/XLSX 텍스트 추출을 kordoc (exact-pin `2.9.0`) 우선으로
+교체. kordoc 은 표/colspan/병합셀 구조를 markdown 파이프 표로 보존 — 기존
+mammoth (DOCX raw text) / exceljs 가 평면화하던 표 격자를 살려 AI 컨텍스트
+품질을 높인다 (colspan 헤더는 spanned 열에 걸쳐 반복되어 열 정렬 유지).
+
+- **품질 업그레이드는 fallback 뒤에 둠** (정확성의 hard dependency 아님):
+  DOCX/XLSX 모두 kordoc 을 먼저 시도하고, throw 하거나 빈/degenerate 출력을
+  내면 `console.warn` + `meta.warning` 후 기존 mammoth/exceljs 경로로 fallback.
+  kordoc 은 9 주 / 44 버전 churn-heavy 라이브러리 — worst case 가 "오늘의 동작"
+  이라, 실 정부 양식 검증 게이트를 아직 못 돌리는 상황의 안전망이 된다.
+- **ESM-only**: kordoc 의 .cjs 빌드가 `import.meta` 를 포함해 `require` 가
+  깨짐 → @rhwp/core 와 동일하게 `await import('kordoc')` dynamic import +
+  vite.config.ts external 처리.
+- **범위 = DOCX + XLSX 만**: PDF 는 kordoc 제외 (합성 PDF 에 빈 blocks 반환) —
+  extractPdf 는 pdf-parse 유지. `.xls` (legacy BIFF8) 도 의도적 미지원 유지
+  (0.7.16). 매핑: markdown→`text`, heading block→`headings`, block list→`chunks`.
+
+단위 테스트 추가 (colspan 표 DOCX 구조 보존 / 멀티시트 XLSX heading+행 /
+kordoc 실패 시 mammoth·exceljs fallback + meta.warning). attribution: kordoc MIT.
+
+## [0.7.16] - 2026-05-31
+
+### Fixed — 포맷 계약: 광고했지만 깨진 .xls 제거
+
+`.xls` (legacy BIFF8) 가 READABLE_EXTENSIONS 에 선언돼 폴더 트리·AI 툴
+설명에 "지원"으로 노출됐지만, 추출기 (exceljs) 는 OOXML 전용이라 실제 .xls
+는 런타임에 모호한 jszip "not a zip" 에러로 throw 했음 (DOA). "검증 못 하는
+포맷은 선언하지 않는다" 원칙에 따라 `.xls` 를 READABLE_EXTENSIONS / detectFamily
+/ FolderTree 아이콘에서 제거 → 이제 명확한 "unsupported format" 으로 거부.
+extractSpreadsheet 에도 방어 가드 추가. 회귀 테스트로 계약 고정 (.xls 미지원,
+.xlsx 유지). 실제 .xls 지원은 kordoc parseXls 도입 (검증 포함) 시 복원 예정.
+
+### Changed — form-fill 라벨/마커 추출 정확도 (kordoc 차용 휴리스틱)
+
+kordoc (MIT) 의 필드 추출 휴리스틱을 코드 레벨로 차용 (라이브러리 의존성
+추가 없음):
+
+- **P1 — 라벨 정규화** (`normalizeLabelText`): 표 헤더/행 라벨의 꼬리 콜론
+  ("성명:" → "성명") 과 각주 위첨자 ("등록기준지²" → "등록기준지") 제거.
+  labelHint / rowLabel / columnHeader 가 모두 이 경로를 타므로 한 곳에서
+  정규화. 문장 중간 콜론은 보존.
+- **P2 — 체크박스 글리프 marker 인식**: `□ ☐ ☑ ■ ✔ ✅` 를 marker 컬럼
+  신호로 추가 (기존엔 명시적 "(O/X)" 표기만 감지). marker 검증 char-class
+  에도 이 글리프들 + ✔(U+2714) 추가 — 이전엔 모델이 "☑" 를 쓰면 거부됐음.
+  헤더에 신호가 없어도 셀 자체에 체크박스 글리프가 있으면 marker 로 승격.
+
+단위 테스트 추가 (form-format P1/P2 + 포맷 계약). attribution: kordoc MIT.
+
+## [0.7.15] - 2026-05-31
+
+### Fixed — getEmptyFormFields 잘못된 scope 가 "빈 칸 없음" 오판 유발
+
+양식 문서(빈 셀 수천 개)인데도 AI 가 "채울 빈 칸이 없다"며 포기하던 버그.
+원인: `getEmptyFormFields` 를 표가 없는 `parentParaIdx` 로 호출하면 scope
+게이트가 모든 셀 작업을 건너뛰어 `cellFields:[]` + 모든 `tableInventory[]
+.emptyCells:0` 반환 → form-guard 의 `emptyCellsRemaining` 도 0 → 침묵. prefix
+`[form: N tables, M empty cells]` 는 unscoped 라 계속 form 모드 신호를 줘서
+"prefix 는 form, scan 은 0" 불일치 발생. (headless @rhwp/core 재현: 실제
+템플릿 64표/6752셀/4039 빈칸인데 비-표 문단 scope → 0.)
+
+수정 (`bridge-ir-helper.ts`): (1) `emptyCells` 카운트를 scope 무관하게 항상
+누적 → inventory 가 항상 truthful. (2) `parentParaIdx` 가 어떤 표도 anchor
+하지 않으면 (cheap `getTableDimensions` 사전 검사) effectiveScope 를 undefined
+로 낮춰 cellFields 를 unscoped 로 self-heal — 잘못된 index 한 번에 실제 셀
+반환. 실재하지만 꽉 찬 표 scope 는 그대로 `cellFields:[]` (fallback 안 함).
+회귀 테스트 2개 추가. 전체 unscoped 스캔 13ms (성능 영향 무시 가능).
+
+## [0.7.14] - 2026-05-31
+
+### Changed — form-fill 내용 일관성 (의도적 빈칸 / 노-filler)
+
+빈 셀을 무조건 채워 filler(O/X·0·미운영 등)를 박던 문제. prompt + auto-continue
+nudge + form-fill mode 에 일관성 3원칙 명문화: (1) includeFilled 로 읽고 상호
+참조 셀 정합성 수정, (2) 목표와 모순되는 기존값을 replaceTextInCell 로 덮어쓰기/
+삭제, (3) 진짜 값이 없으면 빈칸 — filler 금지. guard nudge 가 "전부 채워" 강제
+대신 빈칸 허용·filler 금지를 전달. form-guard 단위 테스트에 원칙 3 케이스 추가.
+
+## [0.7.13] - 2026-05-31
+
+### Added — fillFormCells (bulk cell fill)
+
+form-fill 이 큰 표(예: ~150 빈 셀)에서 turn cap(50)을 초과하던 문제 수정.
+원인: 프롬프트가 "turn 당 5셀 + 배치마다 getEmptyFormFields 재스캔"을 지시
+→ 실효 ~2.5셀/turn. 셀 텍스트 삽입은 다른 셀 좌표를 바꾸지 않으므로 재스캔은
+순수 낭비였음.
+
+- `fillFormCells` 신규 write 도구 — `cells[]` 배열로 다수 셀을 한 tool
+  call(= 한 turn)에 채움. 셀별 `mode`('insert'/'replace') · `charOffset` ·
+  `expectedFormat`. 모델의 parallel tool_call 상한과 무관하게 batch 보장
+  (최대 200셀/call). `{ filled, failed, failures }` 반환.
+- 프롬프트 + auto-continue 넛지(`prompts.ts` / `ai-modes.ts` / `form-guard.ts`)
+  를 "한 read → fillFormCells 로 전체 batch → 끝에 1회 검증"으로 재작성.
+  "up to 5" / 배치마다 재스캔 제거. 라우터 `ALWAYS_INCLUDE` 에 추가.
+
+## [0.7.12] - 2026-05-27
+
+### Added — form-fill column semantics (rowLabel / columnHeader / expectedFormat)
+
+사용자 transcript 에서 "도입여부 (O/X)" 컬럼에 "예지보전 솔루션" / "85"
+같은 잘못된 텍스트가 박히는 패턴이 반복. 원인: 모델이 `cellIdx` 만 보고
+의미를 모름. `getEmptyFormFields` 가 컬럼 헤더 / 행 라벨 / expectedFormat
+을 추가 노출하고, `insertTextInCell` / `replaceTextInCell` 에 optional
+expectedFormat 인자 + tool-level 검증 추가.
+
+**Heuristic (`shared/form-format.ts`):**
+
+- `marker` — 컬럼 헤더에 `(O/X)` / `O/X` / `(○/X)` 패턴.
+- `currency` — 금액 / 단가 / 비용 / 예산 / 백만원 / 만원 / 매출 / 매입.
+- `date` — 일자 / 날짜 / 년월일 / 연월일.
+- `number` — 수량 / 개수 / 건수 / 횟수 / 비율 / %.
+- `text` — default (permissive).
+
+**검증 (opt-in, backward compat):**
+
+- 모델이 args 에 expectedFormat 미지정 → 기존처럼 통과.
+- 지정 시 `validateTextForFormat(text, format)` 가 reject 사유 반환:
+  `marker-too-long` / `marker-invalid-char` / `number-non-numeric` /
+  `currency-non-numeric` / `date-invalid-char`.
+
+**파일:**
+
+- `shared/form-format.ts` (신규) — `ExpectedFormat` 타입 + 두 헬퍼.
+- `shared/form-format.test.ts` (신규) — heuristic + 검증 단위 테스트.
+- `shared/ai-tools.ts` — `insertTextInCell` / `replaceTextInCell` args 에
+  `expectedFormat?` 추가 + 타입 import.
+- `shared/ai-tools-defined/cell.ts` — 두 도구 schema + validate 확장.
+  `getEmptyFormFields` description 갱신.
+- `shared/ai-tools-defined/cell.test.ts` (신규) — expectedFormat
+  validation 테스트.
+- `src/features/rhwp-studio/bridge-ir-helper.ts` — getEmptyFormFields 가
+  각 셀에 rowLabel / columnHeader / expectedFormat 채움. gridMap 활용.
+- `src/features/rhwp-studio/bridge-ir-helper.test.ts` — 3×3 mini-form
+  regression.
+- `src/features/chat/viewer-handle-types.ts` — return type 동기화.
+- `src/features/chat/prompts.ts` — form-fill 모드 prompt 에 column
+  semantics 섹션 추가 + args template 에 expectedFormat 필드 명시.
+
+**Why opt-in (왜 강제 require 가 아닌가):**
+
+엄격하게 require 로 만들면 모델이 expectedFormat 한 줄 빼먹을 때마다
+모든 cell 쓰기가 fail → 진행이 막힘. opt-in 으로 두면 잘 따르는 모델은
+보호받고 (e.g. "도입여부 (O/X)" 에 "예지보전 솔루션" 절대 못 들어감),
+무시하는 모델도 기존 동작 유지. Future tightening 은 라이브 데이터 보고
+판단.
+
+## [0.7.11] - 2026-05-27
+
+### Added — `runAgent` sub-agent dispatch (Claude Code Task 패턴)
+
+AI 가 자기 turn 안에서 별도 sub-agent 를 spawn 해서 복잡한 다단계 작업
+을 위임 가능. Claude Code 의 Task 도구와 유사. sub-agent 는 자기 mode /
+도구 set / 짧은 message history 로 self-contained 작업 후 final text 만
+parent 에 반환 — parent 의 context window 보존.
+
+**아키텍처:**
+
+- 실행 위치: **renderer-side** (`src/features/chat/sub-agent.ts`). tool
+  dispatcher 가 viewer / bridge / IPC 에 접근 필요해서 main 이 아닌 renderer.
+- `callLlmAwaitable` adapter: `window.api.ai.chat` 의 streaming events
+  를 Promise 로 wrap. sub-agent 의 매 turn 응답을 모아서 next turn 결정.
+- **재귀 차단**: sub-agent 의 catalog 에서 `runAgent` 자동 제외 (depth=1
+  강제). 무한 재귀 spawn 방지.
+- Provider: parent 의 provider/model 재사용 (다른 provider 옵션은 후속).
+- Max turns: 기본 10, 최대 30.
+
+**파일:**
+
+- `shared/ai-tools.ts` — `runAgent` tool name + args.
+- `shared/ai-tools-defined/agent.ts` (신규) — defineTool entry.
+- `src/features/chat/sub-agent.ts` (신규) — `runSubAgent` loop +
+  `callLlmAwaitable` + system prompt builder.
+- `src/features/chat/tools.ts` — `SubAgentContext` export + dispatcher
+  case (`runAgent` → `runSubAgent` 호출).
+- `src/features/chat/hooks/useChatStreaming.ts` — 매 turn dispatcher
+  호출 시 subAgentContext (provider / model / parentMode / baseSystemPrompt
+  / targetPath) inject.
+- `src/app/AppShell.tsx` — `runTools` prop wrapper 가 subAgentContext
+  forward.
+- `shared/ai-modes.ts` — cross-doc-research / form-fill mode 의 tools 에
+  `runAgent` 추가.
+
+**Use cases:**
+
+- "코렌스 회사 최근 보도자료 찾아서 정리해줘" → sub-agent (cross-doc-
+  research) 가 webSearch + webFetch + 요약 → parent 가 응축된 결과로
+  본문 작성.
+- "이 양식의 모든 표 구조 분석해서 카테고리화해줘" → sub-agent 가
+  getEmptyFormFields 반복 + 분류 → parent 가 결과로 작업 결정.
+- "git log 분석해서 changelog 초안 만들어줘" → sub-agent 가 runCommand
+  - 정리 → parent 가 받아 본문에 inject.
+
+### 검증
+
+- vitest 374/374 (351 → +23). 신규:
+  - `agent.test.ts` (15) — registry / prompt validation / 6 mode enum /
+    maxTurns 범위 / trim.
+  - `sub-agent.test.ts` (8) — text-only response / tool dispatch flow /
+    failed tool graceful / maxTurns guard / maxTurns clamp / LLM error /
+    **재귀 차단** (catalog 에 runAgent 없음).
+- typecheck + eslint 통과. 0.7.10 → 0.7.11.
+
+### "Claude Code 도구 통합" 시리즈 완료 (0.7.7 ~ 0.7.11)
+
+| Claude Code 도구     | ahwp 대응                                     | Version        |
+| -------------------- | --------------------------------------------- | -------------- |
+| Read / Glob / Grep   | searchWorkspaceOutlines + readParagraphByPath | 기존           |
+| Edit / Write (HWP)   | 55 도구 (defineTool registry)                 | 0.6.x + 0.7.4  |
+| WebFetch             | webFetch (Readability)                        | 0.7.7 + 0.7.10 |
+| WebSearch            | webSearch (DDG + Brave)                       | 0.7.7 + 0.7.8  |
+| Bash                 | runCommand (7 게이트)                         | 0.7.9          |
+| **Task (sub-agent)** | **runAgent**                                  | **0.7.11**     |
+
+이로써 ahwp 의 AI 가 워크스페이스 read + HWP edit + 외부 정보 (web /
+shell) + 작업 위임 (sub-agent) 의 agentic loop 전부 갖춤.
+
+## [0.7.10] - 2026-05-27
+
+### Improved — webFetch 콘텐츠 추출 품질 (Readability + linkedom)
+
+0.7.7 의 `webFetch` 는 HTML 을 정규식 best-effort 로 plain text 변환했음.
+nav / sidebar / footer / ad 도 같이 들어가 AI 가 받는 컨텍스트 잡음 많음.
+0.7.10 부터 Mozilla 의 **Readability** (Firefox Reader Mode 엔진) + light
+DOM 구현 **linkedom** 으로 article body 만 정확히 추출.
+
+**의존성 추가** (둘 다 production deps):
+
+- `@mozilla/readability` ^0.6.0 — Firefox Reader Mode 엔진, MIT, ~30KB.
+- `linkedom` ^0.18.12 — jsdom 의 light 대체 (jsdom 의 ~30x 작음), MIT, ~100KB.
+
+**변경:**
+
+- `electron/ipc/web.ts`:
+  - `htmlToArticle(html, url)` (신규) — linkedom 으로 DOM parse →
+    Readability 로 article 추출. metadata (title / byline / excerpt /
+    siteName) 자동 반환. parse 실패 / non-article 페이지면 `null` →
+    `legacyHtmlToText` regex fallback.
+  - `legacyHtmlToText` — 기존 정규식 path. Readability fallback +
+    `parseDuckDuckGoHtml` 의 anchor 텍스트 정리에 계속 사용.
+  - `webFetchImpl` 이 HTML content-type 일 때 Readability path 우선,
+    응답에 metadata + `extractionMethod` (`'readability'` 또는
+    `'regex'`) 포함.
+- `shared/api.ts` — `WebFetchResult` 에 `title` / `byline` / `excerpt` /
+  `siteName` / `extractionMethod` 필드 추가.
+- `shared/ai-tools-defined/web.ts` — `webFetch` description 갱신
+  (Readability 명시 + metadata 반환 안내).
+
+**효과:**
+
+- AI 의 webFetch 응답이 본문 중심으로 깔끔 — context window 절약.
+- Article 의 author / 발행일 / siteName 자동 인지 → 인용 / 출처 표기 정확.
+- Non-article (검색 결과 / SPA shell) 은 자동으로 regex fallback —
+  회귀 없음.
+
+### 검증
+
+- vitest 351/351 (349 → +2). 신규 케이스:
+  - Article 페이지 → Readability 추출 + nav/footer 제거 + title 자동.
+  - non-article (link list) → 정상 동작 (Readability or regex 어느 path 든).
+  - text/plain 은 변환 안 함 (extractionMethod undefined).
+  - script / style block 제거 (어느 path 든).
+- typecheck + eslint 통과. 0.7.9 → 0.7.10.
+
+### 다음 chunk
+
+- 0.7.11 — Agent (sub-agent dispatch).
+
+## [0.7.9] - 2026-05-27
+
+### Added — Bash 명령 실행 도구 (allowlist + 7 단계 보안 게이트)
+
+Claude Code 의 Bash 도구처럼 AI 가 shell 명령을 실행할 수 있는 도구
+추가. **위험 도구** 라 default OFF + allowlist + 다중 게이트로 안전 확보.
+
+**보안 모델 (7 단계 게이트):**
+
+1. **Enabled 토글** — 기본 OFF. 사용자가 Settings 에서 명시 ON 해야
+   catalog 에 노출.
+2. **Allowlist 매치** — 사용자 등록 prefix 와 매치해야 함. 비어 있으면
+   ON 이라도 거부 (deny-by-default).
+3. **Hardcoded blocklist** — allowlist 와 무관하게 항상 거부:
+   `sudo` / `su `, `rm -rf` 변종, fork bomb (`:(){:|:&};:`),
+   `curl|sh` / `wget|sh`, `dd if=`, `mkfs`, `shutdown` / `reboot`,
+   위험 `/dev/` redirect (단 `/dev/null`/`stderr`/`stdout` 허용).
+4. **Workspace 격리** — cwd 는 workspace root 기준 상대 경로만. 절대
+   경로 거부, `..` 으로 탈출 거부. workspace 미설정 시 거부.
+5. **Timeout** — 기본 60s, 사용자 args 로 최대 5분. 초과 시 SIGTERM.
+6. **Output cap** — stdout / stderr 각 32KB.
+7. **Env 화이트리스트** — 호스트 env 의 secrets (API keys 등) 노출 차단.
+   `PATH` / `HOME` / `USER` / `LANG` 등 안전한 변수만 전달.
+
+**구현:**
+
+- `electron/store/bash-allowlist.ts` (신규) — enabled 토글 + allowlist
+  패턴 저장. `matchesAllowlist` pure helper (prefix + word boundary).
+- `electron/ipc/bash.ts` (신규) — `validateBashRun` pure 게이트 검사 +
+  `bashRunImpl` 가 `child_process.exec` 호출. 5 IPC 등록.
+- `shared/ai-tools-defined/bash.ts` (신규) — `runCommand` defineTool entry.
+  free-authoring / body-edit mode 노출 (cross-doc-research 는 read-only
+  라 제외).
+- `shared/api.ts` — `BashApi` + `BashRunRequest` / `BashRunResult` 타입.
+- `electron/preload.ts` — `window.api.bash` 노출.
+- `src/features/chat/tools.ts` — `runCommand` dispatcher case + summary.
+- `src/features/settings/SettingsDialog.tsx` — "Bash 명령 실행" 섹션:
+  ⚠️ 위험 경고, 활성화 토글, allowlist textarea + 저장 버튼.
+
+### 검증
+
+- vitest 349/349 (325 → +24). 신규 케이스:
+  - `bash-allowlist.test.ts` (8) — prefix 매치 / word boundary / 빈
+    allowlist / case-sensitivity / 앞뒤 trim.
+  - `bash.test.ts` (16) — enabled OFF / empty / blocklist (sudo / rm
+    -rf / fork bomb / curl|sh / dd if= / dev sda) / `/dev/null` redirect
+    허용 (false-positive 가드) / allowlist empty·miss / workspace 미설정
+    / cwd 절대·탈출 / 정상 통과 + 정규화 / timeoutMs clamp.
+  - `ai-tool-def.test.ts` — registry 자동 검증 (runCommand 포함).
+- typecheck + eslint 통과. 0.7.8 → 0.7.9.
+
+### 사용 방법
+
+1. Settings → AI 공급자 → "Bash 명령 실행" 섹션
+2. 활성화 토글 ON
+3. allowlist 입력 (한 줄에 하나):
+   ```
+   git status
+   git diff
+   npm test
+   npm run build
+   ls
+   cat
+   grep
+   ```
+4. 저장 → AI catalog 에 `runCommand` 도구 노출
+5. 사용 예: "git status 결과 보여줘", "npm test 돌려서 결과 분석해줘"
+
+allowlist 없는 명령은 즉시 거부. blocklist 패턴은 allowlist 에 넣어도 차단.
+
+### 다음 chunk
+
+- 0.7.10 — Agent (sub-agent dispatch).
+
+## [0.7.8] - 2026-05-27
+
+### Added — Brave Search API 지원 + Settings UI (DDG fallback 유지)
+
+0.7.7 의 DDG HTML scraping 은 IP rate-limit / 결과 품질 문제 잠재. 사용자가
+정식 API key 등록 시 자동 우선 사용, 없으면 DDG fallback.
+
+**신규:**
+
+- `electron/store/web-keys.ts` (신규) — Brave / SerpAPI key 의 safeStorage
+  암호화 store. provider key store 와 분리 (ProviderId union 오염 회피).
+  `getWebSearchKeyPlaintext` 는 **main process only** — renderer 에 plaintext
+  노출 안 됨. `pickActiveSearchBackend` 가 brave > serpapi > null 우선순위
+  자동 선택.
+- `electron/ipc/web.ts` 확장:
+  - `searchViaBrave` — Brave Search API (`api.search.brave.com/res/v1/web/
+search`) JSON 응답 파싱. 응답 = `{web:{results:[{title,url,description}]}}`.
+  - `webSearchImpl` 이 backend 자동 선택. Brave 실패 시 (rate / network) DDG
+    로 자동 retry → 한 backend 일시 문제로 검색 전체가 막히지 않음.
+  - 새 IPC: `web:set-search-key` / `web:has-search-key` / `web:delete-search-
+key` / `web:get-active-backend`.
+  - `web:backend-changed` broadcast — UI 가 reactive 갱신.
+- `shared/api.ts` — `WebApi` 확장 + `WebSearchBackend` / `ActiveSearchBackend`
+  타입.
+- `electron/preload.ts` — 새 IPC 노출.
+- `src/features/settings/SettingsDialog.tsx` — AI 공급자 탭에 "Web 검색
+  백엔드" 섹션 추가:
+  - 현재 활성 백엔드 표시 (`brave` / `serpapi` / `ddg` chip + 설명).
+  - Brave API key 입력 + 저장 + 삭제 버튼.
+  - `api.search.brave.com/app/keys` 발급 링크.
+  - 무료 tier 정보 (2000 q/month, 1 q/s).
+
+**보안:**
+
+- API key 는 OS 키체인 (`safeStorage`) 에 암호화 저장.
+- Renderer 에 plaintext 노출 없음 (`get` IPC 미제공).
+- 키 입력 필드는 type=password.
+
+### 검증
+
+- vitest 325/325 (320 → +5). 신규 Brave backend 케이스 (electron/ipc/
+  web.test.ts):
+  - Brave key 등록 시 Brave API 우선 (X-Subscription-Token 헤더 검증).
+  - Brave 실패 (429) → DDG fallback 정상 동작.
+  - Brave key 없음 → DDG 바로 사용 (fetch 1회만).
+  - maxResults cap 적용.
+  - 응답 web.results 없음 → 빈 array.
+- typecheck + eslint 통과. 0.7.7 → 0.7.8.
+
+### 사용 방법
+
+1. Settings → AI 공급자 → "Web 검색 백엔드" 섹션
+2. Brave Search 가입 (https://api.search.brave.com/app/keys) — 무료 tier 충분
+3. 발급된 token 을 "Brave Search API key" 필드에 붙여넣고 저장
+4. 현재 활성 백엔드 chip 이 `ddg` → `brave` 로 변경됨
+5. AI 의 webSearch 호출이 자동으로 Brave 사용
+
+키 없는 사용자는 DDG fallback 그대로 사용 — 기본 동작 변화 없음.
+
+### 다음 chunk
+
+- 0.7.9 — BashExec (allowlist + confirm 게이트).
+- 0.7.10 — Agent (sub-agent dispatch).
+
+## [0.7.7] - 2026-05-27
+
+### Added — webFetch / webSearch + cross-doc-research mode 활성화
+
+AI 가 워크스페이스 외 정보 (HTTP URL / 검색 결과) 를 직접 가져올 수
+있도록 외부 세계 access 도구 2개 추가. cross-doc-research mode 의
+실질적 활용이 시작됨.
+
+**신규 도구:**
+
+- `webFetch({url, prompt?, maxBytes?})` — 단일 URL 의 본문 가져오기.
+  http / https only. HTML 은 자동으로 plain text 로 변환 (tag 제거 +
+  entity decode + whitespace 정규화). 30s timeout, 기본 32KB cap.
+- `webSearch({query, maxResults?})` — 웹 검색. DuckDuckGo HTML 인터페이스
+  사용 (API key 불필요). 결과 = {title, url, snippet}[]. maxResults
+  1-20, 기본 10.
+
+둘 다 `readonly: true` — 사용자 confirm 게이트 우회, 즉시 실행. URL
+scheme 강제 (http / https 외 거부), size cap, timeout 으로 safety.
+
+**아키텍처:**
+
+- `shared/ai-tools-defined/web.ts` (신규) — defineTool entries.
+  cross-doc-research / free-authoring / body-edit mode 노출.
+- `electron/ipc/web.ts` (신규) — main process IPC handler.
+  Node 의 global `fetch` 사용. HTML → text 는 정규식 기반 best-effort
+  (cheerio 등 외부 의존 회피). DuckDuckGo HTML 결과 페이지 파싱은
+  `<a class="result__a">` / `result__snippet>` 패턴 기반 — 비정식
+  API 라 변경에 fragile, 향후 Brave Search 등 정식 API 옵션 추가 예정.
+- `shared/api.ts` — `WebApi` namespace + `AhwpApi.web` 추가.
+- `electron/preload.ts` — `window.api.web` 노출.
+- `src/features/chat/tools.ts` — dispatcher case + summary fn.
+- `shared/ai-modes.ts` — cross-doc-research mode 의 `tools` 가 'all' →
+  실제 read-only subset (workspace read + web access + 활성 doc read,
+  본문 / 셀 write 전부 제외). promptFragment 도 실제 가이드로 채움.
+
+### 검증
+
+- vitest 320/320 (289 → +31, 신규 케이스):
+  - `shared/ai-tools-defined/web.test.ts` (12) — registry / readonly /
+    URL scheme 거부 (file:// / ftp://) / args size cap / maxBytes /
+    maxResults 범위.
+  - `electron/ipc/web.test.ts` (14) — webFetchImpl mock fetch (http /
+    https / 4xx / timeout / maxBytes truncate / HTML→text 변환 /
+    script·style 제거 / entity decode), webSearchImpl (정상 파싱 /
+    uddg redirect 디코딩 / maxResults cap / 빈 query / fetch 실패).
+  - `mode-integration.test.ts` (+1) — cross-doc-research catalog 가
+    web 도구 포함하고 본문 write 제외, prompt fragment 활성.
+  - `shared/ai-modes.test.ts` (갱신) — 활성 mode set 에
+    cross-doc-research 추가, subset assertion.
+- typecheck + eslint 통과. 0.7.6 → 0.7.7.
+
+### 다음 chunk
+
+- 0.7.8 — Settings 에서 Brave Search / SerpAPI 등 정식 API key 옵션
+  (DDG fallback).
+- 0.7.9 — BashExec (allowlist + confirm 게이트).
+- 0.7.10 — Agent (sub-agent dispatch).
+
+## [0.7.6] - 2026-05-27
+
+### Fixed — form guard 무한 nudge loop (StrictMode 이중 fire + 잘못된 no-svg trigger)
+
+사용자 보고 "auto continue 무한히 시도하는데". 양식 prefix 가 있는 문서
+지만 실제 빈 셀이 0 인 경우 (휴리스틱 prefix count 와 실제 cell scan 의
+불일치) AI 가 "빈 셀 없어요" 정직 응답할 때 form guard 가 무한 nudge 발사.
+
+**원인 두 가지:**
+
+1. **React.StrictMode 이중 fire**: 0.7.2 의 form guard 가 `setMessages`
+   updater 안에서 `queueMicrotask(fireChat)` 를 호출했는데, StrictMode 가
+   updater 를 두 번 invoke 해서 fireChat 가 두 번 schedule. 두 개의 동시
+   LLM 요청이 같은 user-task 에 interleave 되며 cap counter (max 2) 가
+   무력화. `advanceAgentLoop` 에는 이미 같은 fix 가 있었는데 form guard
+   추가 시 누락.
+2. **잘못된 `no-svg` 단독 nudge**: 0.7.5 까지의 guard 는 `getPageSvg` 미
+   호출 만으로도 nudge 발사. prefix 는 form 신호인데 실제 빈 셀 0 인
+   case 에서 AI 가 svg 호출해도 다음 turn 에 또 nudge → 무한 loop.
+
+**수정:**
+
+- `src/features/chat/hooks/useChatStreaming.ts`: form guard 의 setMessages
+  updater 에 `let fired = false` flag 추가 — `advanceAgentLoop` 의 dedup
+  패턴과 정합. StrictMode 이중 invoke 가 와도 queueMicrotask(fireChat) 는
+  딱 1회만 schedule.
+- `src/features/chat/form-guard.ts`: logic 재설계. 3 case 로 단순화:
+  1. `formState === null` → discovery nudge (getEmptyFormFields 호출 강제)
+  2. `emptyCellsRemaining > 0` → fill nudge (메시지 안에 getPageSvg 권고 포함)
+  3. `emptyCellsRemaining === 0` → **nudge 안 함**. AI 의 "이건 양식 아니에요 /
+     이미 채워져 있어요" 응답이 정답. svg 단독 nudge 폐기.
+- `reason` 타입 정리: `'no-svg' | 'both'` 제거 → `'no-form-discovery' |
+'empty-cells-remain'` 로 단순화.
+
+### 검증
+
+- vitest 289/289 (288 → +1). form-guard 테스트 갱신 (10 케이스): mode 외
+  비활성 / formState null discovery / 빈 셀 fill / svg 이미 호출 / **0.7.5
+  회귀 직접 재현** (prefix 는 form 인데 빈 셀 0 + svg 미호출 → nudge 안 함)
+  / 빈 셀 0 + svg 호출 / cap 도달 / agentStopped / 빈 tableSummary / cap
+  도달 시 discovery 도 비활성.
+- typecheck + eslint 통과. 0.7.5 → 0.7.6 patch bump.
+
+## [0.7.5] - 2026-05-27
+
+### Fixed — iframe 포커스 상태에서 글로벌 단축키 동작 안 함
+
+가운데 메인 패널이 rhwp-studio iframe 으로 전환된 이후, iframe 안에서
+발생한 keydown 이 cross-frame 경계 때문에 parent window 까지 bubble 안
+되어 ahwp 의 글로벌 단축키들이 작동 안 함:
+
+- ⌘K — 명령 팔레트
+- ⌘W — 탭 닫기
+- ⌘/ — Settings 단축키 탭
+- ⌘⇧F — cross-folder 검색
+- ⌘⇧O — outline (TOC) sidebar 토글
+- F6 — 스타일 관리 다이얼로그 (한컴 reflex)
+- Alt+L / Alt+T / Alt+P — 글자 / 문단 / PDF 내보내기 (한컴 reflex)
+
+(주의: Electron 메뉴 accelerator 로 등록된 ⌘N / ⌘O / ⌘S / ⌘Z / ⌘B /
+⌘I / ⌘U / ⌘F / ⌘H 는 window-level 에서 캡쳐되어 iframe 포커스 상태에서도
+정상 발화 — 본 회귀의 영향 받지 않음.)
+
+**해결**:
+
+- **`vendor/rhwp/rhwp-studio/src/main.ts`** — iframe document 의 capture
+  phase keydown listener 가 modifier (meta/ctrl/alt) 또는 F1~F12 만 골라
+  `window.parent.postMessage({type:'rhwp-event', name:'keydown', data})`
+  로 forward. 일반 타이핑은 send 안 함 (noise 회피).
+- **`src/features/rhwp-studio/keydown-forward.ts`** (신규) —
+  `dispatchForwardedKeydown(payload, target?)` pure helper. modifier /
+  key / code 모두 보존한 KeyboardEvent 를 bubbles + cancelable 로 합성,
+  target (기본 `window`) 에 dispatch. AppShell 의 window-level onKey 가
+  자연스럽게 받음.
+- **`src/features/rhwp-studio/RhwpEditor.tsx`** — bridge ready 후
+  `bridge.on('keydown', dispatchForwardedKeydown)` 구독. unmount 시
+  unsubscribe.
+
+### 검증
+
+- vitest 288/288 (281 → +7, keydown-forward 7 케이스: ⌘K / ⌘⇧F / F6 /
+  Alt+L / bubbles+cancelable / 기본 target=window / preventDefault).
+- typecheck + eslint 통과.
+- vendor 재빌드 (`npm run vendor:rhwp:build`) 완료.
+
+## [0.7.4] - 2026-05-27
+
+### Changed — defineTool refactor (single source of truth)
+
+이전 0.7.3 까지는 각 도구가 4 파일을 lockstep 으로 정의:
+
+- `shared/ai-tools.ts` — `AHWP_TOOL_NAMES`, `AhwpToolArgs[name]`
+- `shared/ai-tool-catalog.ts` — `TOOL_DESCRIPTORS` 의 schema + description
+- `shared/ai-tool-validate.ts` — `validateArgs` switch 의 args 검증
+- (선택) `shared/ai-tools.ts` 의 `READONLY_TOOL_NAMES` set
+
+한 파일 빼먹으면 사일런트 회귀. 0.6.17 의 `includeFilled` strip 회귀가
+정확히 이 lockstep 깨짐 — schema 에는 있고 validator 에서는 누락되어
+dispatcher 까지 도달 못 함.
+
+0.7.4 는 도구당 한 곳 정의로 통합:
+
+- **`shared/ai-tool-def.ts`** (신규) — `defineTool({...})` helper +
+  `buildToolRegistry(defs)`. 한 도구의 schema + validate + readonly +
+  modes 가 한 객체 안.
+- **`shared/ai-tools-defined/`** (신규 디렉토리, 6 카테고리 파일) —
+  55 도구 전부 migration:
+  - `format.ts` (13) — caret 서식 + 본문 텍스트 primitive + paragraph 서식
+  - `cell.ts` (5) — 셀 read/write + form-fill discovery
+  - `table.ts` (12) — 표 구조 변경 / properties / 수식
+  - `shape.ts` (7) — 도형 / 그림
+  - `page.ts` (19) — page / section / header-footer / bookmark /
+    footnote / equation / style
+  - `read.ts` (10) — read-only 조회 / 시각 캡처 / cross-doc 라우팅
+- **`shared/ai-tool-catalog.ts`** — 1100-line `TOOL_DESCRIPTORS` 배열
+  제거. registry 의 descriptors 를 mode filter 와 같이 노출하는 ~50줄
+  thin wrapper.
+- **`shared/ai-tool-validate.ts`** — 800-line `validateArgs` switch 제거.
+  registry 의 validator map 으로 dispatch 하는 thin wrapper. helper
+  함수들 (isObj, byteLen, coerceNonNegInt, nonNegInts) 만 export
+  (defineTool 의 validate 안에서 재사용).
+
+새 도구 추가 시 `shared/ai-tools-defined/<카테고리>.ts` 에 `defineTool`
+한 번만 호출 — schema + validator + readonly 메타가 한 곳에 모임.
+
+### 검증
+
+- vitest 281/281 (273 → +8). 신규 `shared/ai-tool-def.test.ts` 가
+  registry vs `AHWP_TOOL_NAMES` 완전 일치 / readonly drift / 중복
+  등록 차단 / 모든 validator 결정적 응답 / 0.6.17 회귀 재현 (includeFilled
+  boolean) 검증.
+- typecheck + eslint 통과.
+
+### 다음 chunk
+
+- 0.7.5 — Provider × Mode capability matrix + 나머지 mode 활성화
+  (BodyEdit / TableManipulation / Formatting / CrossDocResearch).
+
+## [0.7.3] - 2026-05-27
+
+### Fixed — patches dispatcher hardening + diff side panel + UI polish
+
+0.6.14 ~ 0.6.20 사이에 진행되었지만 commit 되지 않은 채 working tree
+에 남아 있던 ready 변경을 정리. `GithubDiffPane.tsx` 누락이 가장 큰
+회귀: ChatPanel.tsx 가 0.6.18 부터 이 파일을 import 하지만 파일 자체는
+git 추적 안 됨 → 이론상 dev branch 의 새 clone 이 TypeScript 빌드
+실패. 본 chunk 가 그 갭을 닫는다.
+
+- **`shared/ai-patches.ts`** — `repairLlmJson` (smart quotes / 후행 쉼표
+  / U+2028 line separator / line·block comment 제거) 와
+  `dedupeCellTargets` (한 batch 안의 동일 cell coordinate 중복 거부)
+  helper 추가. `parsePatchBlock` 가 strict JSON.parse 실패 시 repair 후
+  retry. 모델이 dense `additionFormat.lib` 를 보내며 흔히 발생하는
+  parsing 실패가 silent 회복.
+- **`src/features/chat/GithubDiffPane.tsx` + test** (신규) — 본문 patches
+  를 inline diff card 가 아니라 editor 우측 side panel (380px) 로
+  portal. AppShell 의 portal target div 가 empty:hidden 으로 빈 상태
+  에선 editor 전폭, patches 있을 땐 380px 너비로 분할. IDE 의 diff
+  viewer UX 와 정렬.
+- **`src/app/AppShell.tsx`** — diff overlay 절대 배치 → 진짜 side panel
+  layout 으로 전환 + applyPatches dispatch 가 `dedupeCellTargets` 결과를
+  사용해 중복 셀 patch 거부.
+- **`src/app/TitleBar.tsx`** — Windows / Linux native 창 컨트롤 (min /
+  max / close) 가 우상단 ~138px 점유. 이전 `paddingRight: 10` 에선 우리
+  settings / theme 버튼이 같은 좌표에 겹쳐 "X" 클릭이 settings 로 라우팅
+  되던 회귀 fix.
+- **`src/features/chat/toolRouter.ts`** — `insertTextInCell` 을
+  `ALWAYS_INCLUDE` 에 추가. router LLM 이 form-fill 작업에서 이 도구를
+  깜빡 빼면 agent 가 patches block (text) 으로 우회 → 한 turn 만에 종료
+  되는 회귀 가드.
+- **`src/features/chat/tools.test.ts`** — helper 경로의 `findInDocument`
+  가 raw `RhwpSearchHit ({sec, para})` 를 viewer-handle contract
+  `{sectionIdx, paragraphIdx}` 로 remap 하는지 검증하는 회귀 테스트.
+
+### 검증
+
+- vitest 273/273 (working tree 에 이미 있던 신규 케이스 — ai-patches
+  repair / dedup / findInDocument shape — 모두 통과).
+- typecheck + eslint 통과.
+
+## [0.7.2] - 2026-05-27
+
+### Added — slotKind classification + Form-Fill completion guard
+
+0.7.1 이 본문 dump 회귀 (channel 1) 를 차단한 뒤 다음 회귀 두 개가
+드러남:
+
+1. **Placeholder 미교체** — italic + 비검정 색의 템플릿 예시문 (e.g.
+   "예) 회사명을 입력하세요", "1.3 주요 공정별 ... 내용을 요약하여 기술")
+   이 있는 셀에 AI 가 `insertTextInCell` 을 호출해 값이 placeholder 뒤에
+   prepend → 셀 안에 예시문 + 새 값 공존, layout 깨짐.
+2. **조기 종료 + 시각 검증 skip** — 200+ 셀 form 의 ~15 셀만 채우고
+   AI 가 텍스트 메시지로 완료 선언, `getPageSvg` 한 번도 안 부름.
+
+두 가지 모두 prompt 가이드 (0.7.1) 만으로는 100% 강제 불가 — AI 가
+guideline 을 일부 무시하는 패턴이 잔존. 0.7.2 는 runtime contract 로 격상:
+
+- **`getEmptyFormFields` 의 `slotKind`** — 셀마다 4 종 분류 부착.
+  `'value-slot'` (빈 셀) / `'instruction'` (italic + 비검정 placeholder) /
+  `'sub-header'` (bold + 짧은 인-셀 라벨) / `'content'` (정상 데이터).
+  Prompt 가이드 + viewer-handle-types 컨트랙트에 명시 — AI 가 셀별로
+  도구 선택 (insertTextInCell vs replaceTextInCell) 을 정확히.
+- **Form-Fill completion guard** (`form-guard.ts`, `useChatStreaming`).
+  form-fill 모드에서 AI 가 tool 호출 없이 텍스트만 emit 하면 (= 완료
+  선언) runtime 이 (a) tableInventory 의 empty cells 합 (b) getPageSvg
+  호출 여부 검사. 미충족 시 synthetic user message 자동 inject + fireChat
+  재진입. cap (2회) 으로 무한 loop 방지. user-task 시작 / stop / regenerate
+  시 reset.
+
+### 검증
+
+- vitest 273/273 (258 → +15). 신규: slotKind 4 종 full coverage + black
+  color 정규화 (`#000` / `#000000` / 공백) + integration prompt 에
+  slotKind / getPageSvg / replaceTextInCell 가이드 / form-guard 9 케이스
+  (mode gate, 양쪽 trigger, cap 도달, agentStopped, formState null,
+  tableSummary 빈 케이스).
+- typecheck + eslint 통과.
+
+### 다음 chunk
+
+- 0.7.3 — `defineTool` refactor (단일 source of truth: 스키마 + 검증 +
+  dispatcher).
+- 0.7.4 — Provider × Mode capability matrix.
+- 0.7.5 — 나머지 mode (BodyEdit / TableManipulation / Formatting /
+  CrossDocResearch) 활성화.
+
+## [0.7.1] - 2026-05-27
+
+### Added — FormFill mode 활성화
+
+0.7.0 의 infra 위에 첫 mode 실제 동작 enable. 양식 문서 자동 진입 →
+body write tool 이 AI catalog 에서 빠짐 → 본문 dump 회귀 channel 1
+원천 차단.
+
+- `form-fill` mode 의 `tools` 가 실제 subset 으로 좁아짐: cell write
+  (`insertTextInCell`, `replaceTextInCell`) + cell read
+  (`getEmptyFormFields`, `getCellInfo`) + 시각 검증 (`getPageSvg`) +
+  일반 read (`getDocumentOutline`, `findInDocument` 등) + cell 서식
+  (`applyCharFormat`, `applyCellStyle`) + cross-doc read. **본문 write
+  (`insertText`, `applyHtml`, `deleteRange`, `insertParagraph` 등) 와
+  표 구조 변경 도구는 catalog 에서 제거** — AI 가 emit 할 방법 자체
+  없음.
+- `form-fill` mode 의 `promptFragment` 활성화 — "Form Fill Mode" 가이드
+  (workflow: unscoped getEmptyFormFields → cell writes parallel →
+  getPageSvg 시각 검증). `ahwp-patches` 블록 emit 도 자제하도록 명시
+  (catalog 차단은 0.7.2 의 patches dispatcher guard 에서 hard enforce).
+- `ModeDetector` — 최근 `getDocumentSummary` tool result 의 content 에
+  `[form: N tables, M empty cells]` 패턴 + M ≥ 3 검출하면 form-fill
+  자동 진입. userOverride 가 있으면 그 값 우선.
+- `useChatStreaming` — history 에서 form prefix 추출 후 `detectMode`
+  호출, 결정된 modeContext 를 (a) catalog filter, (b) prompt fragment
+  append, (c) ChatRequest.modeContext, (d) ChatPanel UI state 에 모두
+  전달. `opts.setModeContext` setter / `currentModeRef` ref 양쪽 노출.
+- `ChatPanel` — `ModeBadge` 가 reactive. detected (form-fill 자동
+  진입) 일 땐 emerald, user-override 일 땐 amber, default 일 땐 기본.
+  툴팁에 reason 표시 ("문서에서 9 개 표 / 212 개 빈 셀 감지").
+
+### 검증
+
+- vitest 258/258 (255 → +3). 신규: form-fill subset assertion + 본문
+  write 제외 assertion + ModeDetector form-prefix 진입 / threshold
+  미달 / override 우선 케이스.
+- 영향 e2e 14/14 통과 (chat / chat-prefetch).
+- typecheck 통과.
+
+### 다음 chunk
+
+- 0.7.2 — patches dispatcher form-context guard (현재 prompt 권고만, AI
+  가 무시하면 패치 적용까지 가는 risk 잔존 → 0.7.2 에서 runtime hard
+  reject + constructive error).
+- 0.7.3 — defineTool refactor.
+
+## [0.7.0] - 2026-05-27
+
+### Added — Task-Mode Architecture (infra only)
+
+minor 가 아닌 **architectural jump**. 0.6.x 의 mole-whacking 패턴
+(본문 dump / scope 오류 / patches 회귀 / NIM 호환 / validator strip)
+의 공통 root cause = "55 generic tool 을 모든 task 에 노출" 의 mismatch.
+0.7.x 가 각 task 의 contract 별로 tool surface 를 슬라이스.
+
+#### 0.7.0 — 인프라만 (동작 0.6.20 과 동일)
+
+- 신규 `shared/ai-modes.ts` — `TaskMode` union (`free-authoring` /
+  `form-fill` / `body-edit` / `table-manipulation` / `formatting` /
+  `cross-doc-research`) + `MODE_REGISTRY` + `resolveAllowedTools`.
+  모든 mode 의 `tools` 가 0.7.0 에서는 `'all'` (placeholder) — 0.7.1 부터
+  실제 subset.
+- 신규 `src/features/chat/mode-detector.ts` — `detectMode(input)` 가
+  user override 만 반영, 나머지는 default. 0.7.1 부터 docSummary /
+  user intent 휴리스틱 활성화.
+- `shared/ai-tool-catalog.ts` `getAhwpToolCatalog(modeContext?)` —
+  mode whitelist 로 카탈로그 slice. 0.7.0 placeholder 라 실제 효과 X.
+- `src/features/chat/prompts.ts` `appendModePrompt(base, ctx)` — base
+  prompt 뒤에 mode 의 short fragment append (현재 모두 빈 fragment).
+- `ChatRequest` 에 `modeContext?: ModeContext` 추가 — provider 어댑터는
+  transparent (renderer 가 catalog / prompt 를 미리 좁힘).
+- `useChatStreaming` 이 turn 마다 `detectMode()` 호출 → catalog +
+  prompt + ChatRequest 에 mode 전달.
+- `ChatPanel` provider bar 에 신규 `ModeBadge` (현재 항상 "편집" 표시,
+  0.7.1 부터 mode 자동 진입 + override 토글 활성화).
+
+#### 검증
+
+- vitest 255/255 (242 → +13). 신규: `ai-modes.test.ts` 6 / `ai-tool-catalog.test.ts` 3 / `mode-detector.test.ts` 4.
+- 영향 받은 e2e (chat / chat-prefetch / settings) 24/24 + 1 flaky (SLOW
+  abort, mode 와 무관 기존 race).
+- typecheck 통과.
+
+#### 다음 chunk
+
+- 0.7.1 — FormFill mode 활성화 (schema extractor + fillFormSlots batch tool + body write hard-block + mode 자동 진입).
+- 0.7.2 — BodyEdit mode + anchor schema.
+- 0.7.3 — defineTool refactor (schema / validator / dispatcher single source of truth).
+- 0.7.4 — Provider × Mode capability matrix.
+- 0.7.5 — 나머지 mode.
+
+## [0.6.20] - 2026-05-27
+
+### Added — Provider vision integration (OpenAI + Google Gemini)
+
+0.6.17 / 0.6.19 가 `getPageSvg` 도구 + chat UI inline SVG render 까지
+연결했지만 AI 자체는 SVG 를 못 봤음. 0.6.20 이 multimodal 경로를 닫음:
+
+- `shared/ai.ts` `ToolResultRecord` 에 `imageBase64` + `imageMediaType`
+  optional 필드 추가. tool 결과가 image 를 carry 할 수 있게.
+- `src/features/chat/svg-to-png.ts` 신규 — renderer-side SVG → PNG
+  변환 (Blob → Image → Canvas → toDataURL). 흰 배경 + 1280px 다운스케일.
+- `src/features/chat/hooks/useChatStreaming.ts` 의 tool 결과 build
+  코드가 `getPageSvg` 결과면 SVG 추출 → PNG 변환 → `imageBase64` /
+  `imageMediaType` 채움. 변환 실패면 graceful degrade (text content
+  만 보냄).
+- `electron/ai/providers/openai.ts` — chat-completions 와 responses
+  API 양쪽 형식 모두 tool message 다음에 image-carrying user 메시지
+  inject (chat-completions 는 `image_url` part, responses 는
+  `input_image` part). vision-capable OpenAI 모델 (gpt-4o, gpt-5.x
+  계열) 이 image 도 보고 form-fill 결과를 직접 시각 검증 가능.
+- `electron/ai/providers/google.ts` — Gemini 의 `functionResponse`
+  part 자체는 multimodal 미지원이라 따라 붙는 user 메시지에 `inlineData`
+  part 로 inject. Gemini 2.x flash / pro 가 이미지 해석.
+- Anthropic 어댑터는 현재 미구현 (CLAUDE.md "키 결정 대기") — 향후
+  추가 시 `tool_result.content` 안에 image block 으로 native multimodal
+  지원 가능.
+
+### 테스트
+
+- vitest 242/242. 신규:
+  - `openai.test.ts` — vision 4 케이스 (plain / with-image, chat-completions
+    - responses API 양쪽).
+  - `google.test.ts` — Gemini 3 케이스 (plain / with-image / system 병합).
+- 영향 받은 e2e 14/14 통과 (chat / chat-prefetch).
+- 실제 vision flow round-trip 은 live API 키 필요라 manual smoke 영역
+  (이후 사용자가 OpenAI gpt-5-mini 로 "양식 채우고 페이지 캡쳐해서
+  확인해줘" 시나리오 실행 시 검증됨).
+
+## [0.6.19] - 2026-05-27
+
+### Added — Chat UI 가 `getPageSvg` 결과를 inline 이미지로 즉시 표시
+
+0.6.17 의 `getPageSvg` AI 도구는 SVG 문자열을 반환하지만 이전엔 `▶`
+펼치기 버튼으로 raw JSON 을 봐야 시각 확인 가능했음. 0.6.19 에서
+`ToolEntryRow` 가 `entry.name === 'getPageSvg'` 일 때 result JSON 의
+`svg` field 를 base64 data-URL 로 인코딩해 `<img src="data:image/svg+xml..."/>`
+로 inline 표시. 사용자는 form-fill 완료 직후 채팅 안에서 바로 페이지
+상태를 시각 확인 가능. truncated flag 가 있으면 "잘림 · 원본 NB" hint
+도 함께. `<img>` 사용으로 SVG 내부 `<script>` 가 inert 처리되어 XSS 안전.
+
+UTF-8 한글 SVG 도 정상 인코딩 — `TextEncoder` + `String.fromCharCode`
+로직으로 multi-byte 안전 처리 (`btoa` 가 latin1 만 받는 brower 제약 회피).
+
+## [0.6.18] - 2026-05-27
+
+### Removed — NVIDIA NIM provider 전용 어댑터 (vision 부재로 form-fill 시각 검증과 비호환)
+
+0.6.17 의 `getPageSvg` 와 뒤이을 multimodal vision integration workflow
+는 provider 가 image content 를 받을 수 있어야 하는데 NIM 호스티드 모델
+대다수는 vision 미지원. NIM 슬롯을 별도 어댑터로 유지하면 사용자가
+"왜 시각 검증이 안 되지?" 혼란 + 코드 path 둘 (vision 지원 / 미지원)
+유지 비용. 셀프호스트 NIM 은 OpenAI `/v1` 호환이라 **`custom` 슬롯
+(Base URL + 키) 으로 동일하게 사용 가능** — 사용자 사용은 영향 X.
+
+삭제 범위 (14 files):
+
+- `electron/ai/providers/nvidia.ts` 어댑터, `electron/ai/registry.ts`
+  의 'nvidia' 등록 + e2e fake-swap 조건.
+- `shared/ai.ts` `ProviderId` 'nvidia' 제거 + `PROVIDERS` 엔트리.
+- `src/features/settings/SettingsDialog.tsx` `SHOWN_IDS` / ChatPanel
+  `PROVIDER_OPTIONS` / `DEFAULT_MODELS`.
+- 기존 'nvidia' localStorage 값은 자동으로 'openai' 로 마이그레이션
+  (loadProvider 분기).
+- e2e: `tests/e2e/chat-rhwp-mode-nim-live.spec.ts` 통째 삭제.
+  `chat.spec.ts` / `chat-prefetch.spec.ts` / `settings.spec.ts` 의
+  'nvidia' second-provider 시나리오는 'google' 로 교체. e2e fake
+  provider 가 모든 provider 에 swap 되도록 확장 (이전엔 openai+nvidia
+  만 swap 됐었음).
+- README / CLAUDE.md 의 provider 목록 / API 키 표 / 웹검색 매트릭스
+  에서 NIM 행 제거.
+
+검증: typecheck 통과, vitest 235/235, 영향 받은 e2e (chat / chat-prefetch
+/ settings) 25/25 통과.
+
+## [0.6.17] - 2026-05-27
+
+### Added — `getPageSvg` AI 도구 (Phase B 시각 검증 MVP)
+
+신규 read-only AI 도구 `getPageSvg({pageIdx})` — 페이지 한 장을 SVG 문
+자열로 캡처. rhwp 의 `renderPageSvg(pageNum)` 활용 (vendor 수정 없음).
+용도: form-fill 완료 후 사용자가 시각적으로 위치 / 양식 매칭 확인. SVG
+자체는 chat tool-result 에 들어가며, ~64KB 초과 시 잘라내고 `truncated:
+true` + 원본 크기 함께 반환. AI 자체는 SVG 를 아직 parse 못 함 — chat
+UI inline render + provider vision integration 은 다음 chunk.
+
+prompt 의 "Visual snapshot for user confirmation" 섹션에 사용 시기 명시
+(사용자가 "양식에 맞게 들어갔는지 확인해줘" 요청 / 긴 form-fill 완료
+시점). 작은 write 마다 호출 금지 (각 SVG 가 수십 KB).
+
+### Fixed — `getEmptyFormFields` validator 가 `includeFilled` 를 strip 하던 버그
+
+0.6.15 에서 schema 에 `includeFilled?: boolean` 을 추가했지만 validator
+(shared/ai-tool-validate.ts) 가 이 키를 out 객체에 복사 안 함 → dispatcher
+까지 전달이 안 됨 → AI 가 `includeFilled:true` 보내도 무시되어 항상
+false 동작. 0.6.17 의 e2e 에서 발견. 수정 후 includeFilled 가 실제로
+helper 까지 전파됨.
+
+## [0.6.16] - 2026-05-27
+
+### Fixed — `getEmptyFormFields` scope 잘못 잡으면 양식 무시하고 본문에 dump 되던 회귀
+
+AI 가 `parentParaIdx` 를 표가 anchor 되지 않는 paragraph (heading 등) 로
+좁히면 `cellFields:[]` + `tableInventory:[]` 가 반환됐었음 → "양식 빈
+셀이 없네" 오판 → body-level `insertText` fallback 으로 본문 한가운데에
+양식 내용 dump (실제 양식 표는 그대로 빈 채). 9개 표 / 212 빈 셀짜리
+중간보고서에서 0개 inventory 반환.
+
+`tableInventory` 는 scope 와 무관하게 항상 섹션 전체 표 목록을 반환하
+도록 수정. `cellFields` 만 `parentParaIdx` 로 좁힘. AI 는 `cellFields:[]`
+
+- non-empty `tableInventory` 보고 즉시 self-correct (올바른 paragraphIndex
+  로 재호출).
+
+system prompt 도 명시: form-fill workflow 1단계는 unscoped 호출 (전체
+inventory 확보), scope 잘못된 경우 body fallback 절대 금지.
+
+## [0.6.15] - 2026-05-27
+
+### Fixed — 병합 표에서 `getEmptyFormFields` labelHint 가 잘못된 셀을 가리키던 버그
+
+13×7=91 그리드인데 totalCells=61 처럼 병합 셀이 있는 표에서, `c-1` /
+`c-colCount` 의 flat-index 산술이 진짜 좌측/상단 이웃이 아닌 엉뚱한
+cellIdx 의 텍스트를 라벨로 가져왔음 → AI 가 잘못된 셀에 값을 채워넣음.
+`getCellInfo` 로 `(row,col)` 그리드 맵을 표 단위 1회 빌드하고 그 위에서
+이웃을 찾도록 수정.
+
+### Added — Modify / Verify form-fill workflow (`includeFilled` + `replaceTextInCell`)
+
+`getEmptyFormFields({includeFilled:true})` 옵션 — 채워진 셀까지 반환하면
+서 각 셀에 `isEmpty` + `contentCharShape` (이탤릭/색상 등). 템플릿
+예시문 (이탤릭+비검정) 을 AI 가 시각 단서로 식별 가능. 신규 `replaceTextInCell`
+도구 — 셀 내용 atomic delete+insert (그룹 undo 1회) 로 placeholder 제거 /
+기존 값 교체 / clear (text='') 1콜 처리. system prompt 에 Modify + Verify
+섹션 (완료 선언 전 재스캔으로 placeholder 잔존 / 일관성 확인) 추가.
+
 ## [0.6.13] - 2026-05-26
 
 ### Reverted — 0.6.11 의 `mac.identity: null` ("손상되었다" 설치 차단 회귀)

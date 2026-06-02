@@ -592,6 +592,10 @@ export interface AhwpApi {
   ai: AiApi;
   chatHistory: ChatHistoryApi;
   updater: UpdaterApi;
+  /** 0.7.7 — external world access (web fetch / search). */
+  web: WebApi;
+  /** 0.7.9 — Bash 명령 실행 (allowlist + default off). */
+  bash: BashApi;
 }
 
 /**
@@ -633,6 +637,150 @@ export interface UpdaterPrefs {
   /** 새 버전 발견 시 자동 다운로드 진행. default true. false 면 사용자가
    *  banner 의 "지금 받기" 클릭 시에만 다운로드. */
   autoDownload: boolean;
+}
+
+/**
+ * 0.7.7 — external world access surface. AI 의 webFetch / webSearch 도구
+ * 의 main-process 대응. 모두 read-only — IR 변경 없음, 네트워크만 사용.
+ *
+ * CSP: 본 호출은 renderer 의 fetch 가 아니라 main process 에서 실행 →
+ * 렌더러 CSP 우회 없이 임의 도메인 접근 가능. URL scheme 은 http/https
+ * 만 허용 (main 측 validator).
+ */
+export interface WebFetchRequest {
+  url: string;
+  /** AI 가 받은 본문에서 추출하고 싶은 의도 hint. 호출 결과에 echo. */
+  prompt?: string;
+  /** 응답 본문의 최대 byte 수. 기본 32768. */
+  maxBytes?: number;
+}
+export interface WebFetchResult {
+  ok: boolean;
+  /** 응답 status code (200 / 404 등). */
+  status?: number;
+  /** content-type 헤더. */
+  contentType?: string;
+  /** 응답 본문을 plain text 로 추출. HTML 은 Readability 로 article 본문
+   *  추출 후 fallback 으로 regex tag-strip. */
+  text?: string;
+  /** 본문이 maxBytes 초과로 잘림. */
+  truncated?: boolean;
+  /** 원본 byte 길이 (잘리기 전). */
+  originalBytes?: number;
+  /** 실패 시 사유 (timeout / network / 4xx / 5xx). */
+  error?: string;
+  // 0.7.10 — Readability article metadata (HTML 일 때만 채워짐).
+  /** Article 제목 (Readability 추출). non-article 페이지면 undefined. */
+  title?: string;
+  /** Author / byline. */
+  byline?: string;
+  /** Article 요약 (meta description 등). */
+  excerpt?: string;
+  /** Site 이름 (e.g. "MDN Web Docs"). */
+  siteName?: string;
+  /** 추출 방법: 'readability' (article 추출 성공) 또는 'regex' (fallback). */
+  extractionMethod?: 'readability' | 'regex';
+}
+export interface WebSearchRequest {
+  query: string;
+  /** 결과 최대 개수. 1-20, 기본 10. */
+  maxResults?: number;
+}
+export interface WebSearchResultItem {
+  title: string;
+  url: string;
+  /** 검색엔진이 제공한 짧은 snippet (없을 수 있음). */
+  snippet?: string;
+}
+export interface WebSearchResult {
+  ok: boolean;
+  query: string;
+  results: WebSearchResultItem[];
+  error?: string;
+}
+/**
+ * 0.7.8 — 검색 backend 의 API 키 등록. plaintext key 는 renderer 에
+ * 노출 안 함 (get 미제공) — main process 가 직접 사용.
+ *
+ * `'brave'` = Brave Search API (https://api.search.brave.com). 무료
+ * tier 2000 q/month. JSON 응답, 빠름.
+ * `'serpapi'` = SerpAPI. Google 결과 직접. 무료 tier 100 q/month.
+ *   (0.7.8 에서는 등록만, 실제 backend 구현은 follow-up.)
+ *
+ * 키 없으면 DDG HTML scraping fallback.
+ */
+export type WebSearchBackend = 'brave' | 'serpapi';
+export type ActiveSearchBackend = WebSearchBackend | 'ddg';
+export interface WebApi {
+  fetch: (req: WebFetchRequest) => Promise<WebFetchResult>;
+  search: (req: WebSearchRequest) => Promise<WebSearchResult>;
+  /** 0.7.8 — search backend key 관리 (Brave / SerpAPI). */
+  setSearchKey: (backend: WebSearchBackend, key: string) => Promise<void>;
+  hasSearchKey: (backend: WebSearchBackend) => Promise<boolean>;
+  deleteSearchKey: (backend: WebSearchBackend) => Promise<void>;
+  /** 현재 활성 backend ('ddg' = key 없음 / fallback). UI 가 표시. */
+  getActiveSearchBackend: () => Promise<ActiveSearchBackend>;
+}
+
+/**
+ * 0.7.9 — Bash 명령 실행 surface.
+ *
+ * **Default OFF + allowlist 기반.** AI catalog 에 노출되려면:
+ *   1. `bash.setEnabled(true)` (사용자가 Settings UI 에서 토글)
+ *   2. allowlist 가 비어있지 않음
+ *
+ * 두 조건 모두 만족하면 `runCommand` 도구가 cross-doc-research 외의
+ * mode catalog 에 포함됨. allowlist 가 비어있으면 enable 해도 모든
+ * 호출 거부 (deny-by-default).
+ *
+ * **보안 모델:**
+ * - Allowlist: 명령의 prefix 가 등록 패턴 중 하나와 매치해야 함
+ * - Hardcoded blocklist: `rm -rf /` / `sudo` / `:(){:|:&};:` / `>` etc.
+ *   (사용자가 allowlist 에 넣었더라도 거부)
+ * - cwd: workspace root 기준 상대 경로만, 절대 경로 거부
+ * - Timeout: 60s 기본, 사용자 설정 가능 (최대 5분)
+ * - Output cap: stdout / stderr 각 32KB
+ *
+ * **renderer 노출:**
+ * - enable/disable + allowlist 조회/설정 (Settings UI 가 사용)
+ * - 실행 자체는 AI tool dispatcher 만 — UI 에서 직접 호출 안 함.
+ */
+export interface BashRunRequest {
+  command: string;
+  /** workspace root 기준 상대 경로. 없으면 root 사용. */
+  cwd?: string;
+  /** ms, 기본 60_000, 최대 300_000. */
+  timeoutMs?: number;
+}
+export interface BashRunResult {
+  ok: boolean;
+  /** 거부 사유 (allowlist / blocklist / cwd / timeout / exec error). */
+  reason?: string;
+  /** child process exit code. 정상 종료 시 0. */
+  exitCode?: number;
+  /** stdout (32KB cap). */
+  stdout?: string;
+  /** stderr (32KB cap). */
+  stderr?: string;
+  /** stdout 가 cap 초과로 잘림. */
+  truncatedStdout?: boolean;
+  /** stderr 가 cap 초과로 잘림. */
+  truncatedStderr?: boolean;
+}
+export interface BashApi {
+  /** 토글: 도구 활성화 여부. 기본 false. */
+  isEnabled: () => Promise<boolean>;
+  setEnabled: (on: boolean) => Promise<void>;
+  /** Allowlist 조회 (사용자가 등록한 명령 prefix 들). */
+  getAllowlist: () => Promise<string[]>;
+  setAllowlist: (patterns: string[]) => Promise<void>;
+  /**
+   * 명령 실행. **AI tool dispatcher (`src/features/chat/tools.ts`) 만
+   * 호출.** UI 가 직접 호출하면 사용자가 의도하지 않은 입력 발사 위험 —
+   * Settings UI 에선 read/write 만 사용. 안전 게이트는 main process IPC
+   * 핸들러가 처리 (allowlist / blocklist / cwd / timeout / output cap).
+   */
+  run: (req: BashRunRequest) => Promise<BashRunResult>;
 }
 
 export interface UpdaterApi {

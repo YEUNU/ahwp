@@ -4,11 +4,15 @@
  * lookup, no `eval`, no provider tool-use bridging here. The whitelist
  * is the union in `shared/ai-tools.ts`.
  */
-import type {
-  AhwpPreflightItem,
-  AhwpToolCall,
-  AhwpToolResult,
+import {
+  isReadOnlyTool,
+  type AhwpPreflightItem,
+  type AhwpToolCall,
+  type AhwpToolResult,
 } from '@shared/ai-tools';
+import type { ProviderId } from '@shared/ai';
+import type { TaskMode } from '@shared/ai-modes';
+import { runSubAgent } from './sub-agent';
 // Phase 7 E2 — 본 file 이 사용하는 ViewerHandle 은 legacy StudioViewer 의
 // surface 였음. studio dir 폐기에 대비해 type 정의만 별도 file 로
 // 분리해 vendored (`./viewer-handle-types.ts`). rhwp-mode 가 default 라
@@ -47,6 +51,7 @@ async function runOne(
   viewerOrNull: ViewerHandle | null,
   call: AhwpToolCall,
   helper: BridgeIrHelper | null = null,
+  subAgentContext?: SubAgentContext,
 ): Promise<AhwpToolResult> {
   const viewer: ViewerHandle = viewerOrNull ?? NULL_VIEWER_STUB;
   try {
@@ -346,6 +351,59 @@ async function runOne(
             before,
             after,
             label: `cell #${a.cellIdx}`,
+          },
+        };
+      }
+      // === 0.6.15 — atomic cell replace (modify / placeholder 제거) ===
+      case 'replaceTextInCell': {
+        const a = call.args;
+        if (!helper) {
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: 'replaceTextInCell-no-helper',
+          };
+        }
+        const before = await helper.getTextInCell(
+          a.sectionIdx,
+          a.parentParaIdx,
+          a.controlIdx,
+          a.cellIdx,
+          a.cellParaIdx,
+          0,
+          4096,
+        );
+        const ok = await helper.replaceTextInCell(
+          a.sectionIdx,
+          a.parentParaIdx,
+          a.controlIdx,
+          a.cellIdx,
+          a.cellParaIdx,
+          a.text,
+        );
+        if (!ok)
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: 'replaceTextInCell-failed',
+          };
+        const after = await helper.getTextInCell(
+          a.sectionIdx,
+          a.parentParaIdx,
+          a.controlIdx,
+          a.cellIdx,
+          a.cellParaIdx,
+          0,
+          4096,
+        );
+        return {
+          ok: true,
+          tool: call.tool,
+          diff: {
+            paragraphIdx: a.parentParaIdx,
+            before,
+            after,
+            label: `cell #${a.cellIdx} (replace)`,
           },
         };
       }
@@ -1245,10 +1303,24 @@ async function runOne(
         // helper 경로: searchAllText (rhwp 0.7.12 native) 직접 호출 후
         // maxResults 자르기. viewer.irFindInDocument 는 동일 동작을
         // useViewerHandle 안에서 수행.
+        //
+        // 중요: helper.searchAllText 는 raw RhwpSearchHit
+        // ({sec, para, charOffset, length, cellContext}) 를 반환하지만,
+        // viewer-handle contract 와 AI 가 기대하는 shape 는
+        // {sectionIdx, paragraphIdx, charOffset, length?, cellContext?}.
+        // helper 경로일 때 필드명을 매핑하지 않으면 후속 insertText
+        // 호출의 sectionIdx/paragraphIdx 가 undefined 가 됨.
         if (helper) {
           const hits = await helper.searchAllText(a.query, false, false);
           const sliced = hits.slice(0, a.maxResults ?? hits.length);
-          return { ok: true, tool: call.tool, data: sliced };
+          const data = sliced.map((h) => ({
+            sectionIdx: h.sec,
+            paragraphIdx: h.para,
+            charOffset: h.charOffset,
+            length: h.length,
+            cellContext: h.cellContext,
+          }));
+          return { ok: true, tool: call.tool, data };
         }
         const data = viewer.irFindInDocument(a.query, a.maxResults);
         return { ok: true, tool: call.tool, data };
@@ -1365,10 +1437,17 @@ async function runOne(
       case 'getEmptyFormFields': {
         const a = call.args;
         const data = helper
-          ? await helper.getEmptyFormFields()
+          ? await helper.getEmptyFormFields({
+              sectionIdx: a.sectionIdx,
+              parentParaIdx: a.parentParaIdx,
+              maxResults: a.maxResults,
+              includeFilled: a.includeFilled,
+            })
           : (viewer.getEmptyFormFields({
               sectionIdx: a.sectionIdx,
+              parentParaIdx: a.parentParaIdx,
               maxResults: a.maxResults,
+              includeFilled: a.includeFilled,
             }) as unknown);
         if (data === null)
           return {
@@ -1377,6 +1456,46 @@ async function runOne(
             reason: 'getEmptyFormFields-failed',
           };
         return { ok: true, tool: call.tool, data };
+      }
+      // === 0.6.17 — Phase B 시각 검증 MVP. 한 페이지 SVG 캡처 ===
+      case 'getPageSvg': {
+        const a = call.args;
+        if (!helper) {
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: 'getPageSvg-no-helper',
+          };
+        }
+        try {
+          const svg = await helper.getPageSvg(a.pageIdx);
+          // SVG 자체가 클 수 있어 chat tool-result cap 고려. 매우 큰
+          // 경우 (~64KB+) 는 잘라낸 사실을 반환해 AI 가 인지 가능.
+          const MAX_SVG_BYTES = 64 * 1024;
+          if (svg.length > MAX_SVG_BYTES) {
+            return {
+              ok: true,
+              tool: call.tool,
+              data: {
+                pageIdx: a.pageIdx,
+                svg: svg.slice(0, MAX_SVG_BYTES),
+                truncated: true,
+                originalBytes: svg.length,
+              },
+            };
+          }
+          return {
+            ok: true,
+            tool: call.tool,
+            data: { pageIdx: a.pageIdx, svg, truncated: false },
+          };
+        } catch (err) {
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: `getPageSvg-failed: ${(err as Error).message}`,
+          };
+        }
       }
       // === Phase 5 chunk 96 — outline-as-router workspace search ===
       case 'searchWorkspaceOutlines': {
@@ -1422,6 +1541,207 @@ async function runOne(
         // 누락 — 동작은 무해.
         return { ok: true, tool: call.tool, data: { noop: true } };
       }
+      // 0.7.7 — external world access. main process IPC 로 위임 (renderer
+      // 의 CSP 우회 + Node fetch 사용). 모두 read-only, 사용자 confirm 게이트
+      // 우회 (READONLY_TOOL_NAMES 에 포함).
+      case 'webFetch': {
+        const a = call.args;
+        try {
+          const r = await window.api.web.fetch({
+            url: a.url,
+            prompt: a.prompt,
+            maxBytes: a.maxBytes,
+          });
+          return { ok: true, tool: call.tool, data: r };
+        } catch (e) {
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: `webFetch-failed:${(e as Error).message ?? String(e)}`,
+          };
+        }
+      }
+      case 'webSearch': {
+        const a = call.args;
+        try {
+          const r = await window.api.web.search({
+            query: a.query,
+            maxResults: a.maxResults,
+          });
+          return { ok: true, tool: call.tool, data: r };
+        } catch (e) {
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: `webSearch-failed:${(e as Error).message ?? String(e)}`,
+          };
+        }
+      }
+      // 0.7.9 — Bash 명령 실행. main process 가 allowlist / blocklist /
+      // cwd / timeout / output cap 모든 게이트 처리. dispatcher 는 단순
+      // IPC 위임 + 결과 forward.
+      case 'runCommand': {
+        const a = call.args;
+        try {
+          const r = await window.api.bash.run({
+            command: a.command,
+            cwd: a.cwd,
+            timeoutMs: a.timeoutMs,
+          });
+          // ok=false 인 경우도 data 로 통과 — reason 이 모델에게 의미
+          // 있는 피드백 ("not-in-allowlist" → 사용자에게 등록 요청 등).
+          return { ok: true, tool: call.tool, data: r };
+        } catch (e) {
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: `runCommand-failed:${(e as Error).message ?? String(e)}`,
+          };
+        }
+      }
+      // 0.7.11 — Sub-agent dispatch. parent context (provider / model /
+      // parentMode / baseSystemPrompt) 가 inject 되지 않으면 거부.
+      // dispatcher 는 자기 자신 (runTools) 의 closure — sub-agent 가 tool
+      // 호출 시 같은 viewer / helper / context 사용 (재귀 차단은 runSubAgent
+      // 가 catalog 에서 runAgent 제외함으로 강제).
+      case 'runAgent': {
+        if (!subAgentContext) {
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: 'sub-agent-context-unavailable',
+          };
+        }
+        const a = call.args;
+        const subDispatcher = (
+          subItems: AhwpPreflightItem[],
+          subTargetPath?: string | null,
+        ): Promise<AhwpToolResult[]> => {
+          void subTargetPath; // sub-agent 는 parent 의 targetPath 만 사용
+          return runTools(viewer, subItems, helper, subAgentContext);
+        };
+        try {
+          const r = await runSubAgent({
+            prompt: a.prompt,
+            mode: a.mode ?? null,
+            maxTurns: a.maxTurns,
+            provider: subAgentContext.provider,
+            model: subAgentContext.model,
+            parentMode: subAgentContext.parentMode,
+            baseSystemPrompt: subAgentContext.baseSystemPrompt,
+            dispatcher: subDispatcher,
+            targetPath: subAgentContext.targetPath,
+          });
+          return { ok: true, tool: call.tool, data: r };
+        } catch (e) {
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: `runAgent-failed:${(e as Error).message ?? String(e)}`,
+          };
+        }
+      }
+      // === 0.7.29 — TodoWrite analog. plan 갱신. doc IR 미변경 — 검증된
+      // items 를 그대로 data 로 echo 한다. 실제 plan 상태는 useChatStreaming
+      // 이 history 의 최신 updatePlan toolUse 에서 파생 (mode 감지와 동형).
+      // UI 체크리스트 렌더 + form-guard 완료 게이트가 그 파생 상태를 사용. ===
+      case 'updatePlan': {
+        const items = call.args.items;
+        const done = items.filter((i) => i.status === 'completed').length;
+        const skipped = items.filter((i) => i.status === 'skipped').length;
+        const active = items.filter((i) => i.status === 'in_progress').length;
+        return {
+          ok: true,
+          tool: call.tool,
+          data: {
+            items,
+            total: items.length,
+            completed: done,
+            skipped,
+            inProgress: active,
+            pending: items.length - done - skipped - active,
+          },
+        };
+      }
+      // === 0.7.13 — bulk cell fill (form-fill turn 예산 보호) ===
+      // 단일 insert/replace 를 N회 도는 대신 한 call 로 다수 셀 처리. 좌표는
+      // 셀별 보유. 셀당 before/after snapshot 생략 (대량 처리 round-trip 비용↑;
+      // 요약 diff + per-cell failures 로 충분). 외곽 runTools 가 batch 전체를
+      // 한 undo group + notifyDocumentChanged 1회로 감싼다.
+      case 'fillFormCells': {
+        const a = call.args;
+        let filled = 0;
+        const failures: { cellIdx: number; reason: string }[] = [];
+        for (const c of a.cells) {
+          const mode = c.mode ?? 'insert';
+          if (mode === 'replace') {
+            if (!helper) {
+              failures.push({ cellIdx: c.cellIdx, reason: 'no-helper' });
+              continue;
+            }
+            const ok = await helper.replaceTextInCell(
+              c.sectionIdx,
+              c.parentParaIdx,
+              c.controlIdx,
+              c.cellIdx,
+              c.cellParaIdx,
+              c.text,
+            );
+            if (ok) filled += 1;
+            else
+              failures.push({ cellIdx: c.cellIdx, reason: 'replace-failed' });
+          } else {
+            const off = c.charOffset ?? 0;
+            const ok = helper
+              ? await helper.insertTextInCell(
+                  c.sectionIdx,
+                  c.parentParaIdx,
+                  c.controlIdx,
+                  c.cellIdx,
+                  c.cellParaIdx,
+                  off,
+                  c.text,
+                )
+              : viewer.irInsertTextInCell(
+                  c.sectionIdx,
+                  c.parentParaIdx,
+                  c.controlIdx,
+                  c.cellIdx,
+                  c.cellParaIdx,
+                  off,
+                  c.text,
+                );
+            if (ok) filled += 1;
+            else failures.push({ cellIdx: c.cellIdx, reason: 'insert-failed' });
+          }
+        }
+        const total = a.cells.length;
+        const failed = failures.length;
+        // 전부 실패면 ok:false (UI 빨강 + 모델이 reason 인지). 부분/전체
+        // 성공은 ok:true + data.failures (모델이 실패분만 재시도).
+        if (filled === 0 && failed > 0) {
+          const head = failures
+            .slice(0, 3)
+            .map((f) => `#${f.cellIdx}:${f.reason}`)
+            .join(', ');
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: `fillFormCells: all ${failed} cells failed (${head}${failed > 3 ? '…' : ''})`,
+          };
+        }
+        return {
+          ok: true,
+          tool: call.tool,
+          data: { filled, failed, failures },
+          diff: {
+            paragraphIdx: a.cells[0].parentParaIdx,
+            before: '',
+            after: `${filled} cells filled${failed ? `, ${failed} failed` : ''}`,
+            label: `fillFormCells (${filled}/${total})`,
+          },
+        };
+      }
       default: {
         // The pre-flight validator narrows AhwpToolCall to the union, so
         // this is unreachable without a registry/type drift.
@@ -1450,12 +1770,37 @@ async function runOne(
  * so the user gets ONE undo entry for the whole AI-applied turn
  * (rather than N entries, one per op). The bracket holds even if some
  * ops throw — we always end the group in a finally. */
+/**
+ * Sub-agent context — `runAgent` case 가 sub-agent 를 spawn 하려면 parent
+ * 의 provider / model / mode / system prompt / dispatcher 필요. 본 매개
+ * 변수는 useChatStreaming 의 fireChat 가 매 turn 호출 시 inject. 없으면
+ * `runAgent` 호출은 reason='sub-agent-context-unavailable' 거부.
+ */
+export interface SubAgentContext {
+  provider: ProviderId;
+  model: string;
+  parentMode: TaskMode;
+  baseSystemPrompt: string;
+  targetPath: string | null;
+}
+
 export async function runTools(
   viewer: ViewerHandle | null,
   items: AhwpPreflightItem[],
   helper: BridgeIrHelper | null = null,
+  subAgentContext?: SubAgentContext,
+  /**
+   * 0.7.20 — Inserty 데모 참고: AI form-fill 실시간 편집 위치 표시. 성공한
+   * write op 마다 영향 문단 좌표로 호출 → caller(AppShell) 가 iframe 의
+   * `scrollToParagraph` bridge 로 편집 영역을 그곳에 스크롤. write 결과의
+   * 합성 diff 가 이미 `paragraphIdx` 를 실어 보내므로 그것을 재사용한다.
+   * 연속 동일 문단은 dedup (한 표를 채울 땐 한 번만 스크롤). section 은
+   * diff 에 없어 0 으로 가정 (대부분 양식이 단일 구역).
+   */
+  onWriteParagraph?: (sectionIdx: number, paraIdx: number) => void,
 ): Promise<AhwpToolResult[]> {
   const out: AhwpToolResult[] = [];
+  let lastRevealedPara = -1;
   // Phase 7 E2c — rhwp-mode 에선 viewer 가 null 일 수 있음 (StudioViewer
   // 미마운트). helper 가 있어야 의미 있는 동작 — undo group / snapshot 은
   // rhwp-studio 가 iframe 안에서 자체 관리하므로 skip.
@@ -1466,10 +1811,70 @@ export async function runTools(
         out.push({ ok: false, tool: item.tool, reason: item.reason });
         continue;
       }
-      out.push(await runOne(viewer, item.call, helper));
+      const result = await runOne(viewer, item.call, helper, subAgentContext);
+      out.push(result);
+      if (
+        onWriteParagraph &&
+        result.ok &&
+        result.diff &&
+        result.diff.paragraphIdx !== lastRevealedPara
+      ) {
+        lastRevealedPara = result.diff.paragraphIdx;
+        try {
+          onWriteParagraph(0, result.diff.paragraphIdx);
+        } catch {
+          /* reveal 실패는 무해 — 편집 결과엔 영향 없음 */
+        }
+      }
     }
   } finally {
     viewer?.endUndoGroup();
+  }
+  // 0.6.14 — canvas repaint notify. Bridge-routed write tools
+  // (insertTextInCell / insertText / applyCharFormat / ...) bypass the
+  // native input-handler's afterEdit() which is what fires
+  // `document-changed` to trigger CanvasView.refreshPages(). Without
+  // this manual notify the IR mutates correctly but the editor canvas
+  // shows stale (pre-edit) content. Fire once per batch (idempotent).
+  // Read-only batches skip the notify.
+  if (helper) {
+    const anyWrite = items.some((it) => it.ok && !isReadOnlyTool(it.call.tool));
+    const anyOk = out.some((r) => r.ok);
+    if (anyWrite && anyOk) {
+      try {
+        // Access bridge through helper (private field via cast). Cheap
+        // call — just emits an event in the iframe.
+        const bridge = (
+          helper as unknown as {
+            bridge: { invoke: (m: string, p?: unknown) => Promise<unknown> };
+          }
+        ).bridge;
+        // 0.7.21 — 셀에 삽입한 텍스트가 "안 보이는" 문제 (실사용 리포트).
+        // bridge write (insertTextInCell 등) 는 native input-handler 의
+        // afterEdit() 를 우회하는데, afterEdit 가 바로 lineseg reflow 를
+        // 트리거하는 경로다. 우회하면 IR 엔 텍스트가 있지만 해당 문단의
+        // line_segs 가 미계산(height=0)으로 남아 클리핑/비표시된다. 배치
+        // 종료 후 reflowLinesegs 로 line_segs·페이지네이션을 재계산해야
+        // 삽입 텍스트가 제 높이로 보인다 (#177 의 "빈 line_segs + text
+        // 존재" 케이스). notify(repaint) 전에 reflow. generic 'wasm'
+        // dispatcher 경유 — fork 케이스 추가 불필요. 구버전 vendor build
+        // (메서드 부재) 면 무해하게 skip.
+        try {
+          await bridge.invoke('wasm', { fn: 'reflowLinesegs', args: [] });
+        } catch (err) {
+          console.warn(
+            '[tools] reflowLinesegs skipped (older vendor build?):',
+            err,
+          );
+        }
+        await bridge.invoke('notifyDocumentChanged', { reason: 'ahwp-tools' });
+      } catch (err) {
+        console.warn(
+          '[tools] notifyDocumentChanged failed (older vendor build?):',
+          err,
+        );
+      }
+    }
   }
   return out;
 }
@@ -1527,6 +1932,14 @@ export function previewArgs(call: AhwpToolCall): string {
       const t = call.args.text.replace(/\s+/g, ' ').trim();
       return `cell=${call.args.cellIdx} "${t.length > 30 ? t.slice(0, 30) + '…' : t}"`;
     }
+    case 'replaceTextInCell': {
+      const t = call.args.text.replace(/\s+/g, ' ').trim();
+      const preview =
+        t.length === 0 ? '(clear)' : t.length > 30 ? t.slice(0, 30) + '…' : t;
+      return `cell=${call.args.cellIdx} ⇒ "${preview}"`;
+    }
+    case 'fillFormCells':
+      return `${call.args.cells.length} cells`;
     case 'deleteRange':
       return `(${call.args.startParagraphIdx},${call.args.startOffset})~(${call.args.endParagraphIdx},${call.args.endOffset})`;
     case 'insertParagraph':
@@ -1629,6 +2042,8 @@ export function previewArgs(call: AhwpToolCall): string {
       return call.args.sectionIdx !== undefined
         ? `sec=${call.args.sectionIdx}`
         : '(all)';
+    case 'getPageSvg':
+      return `page=${call.args.pageIdx}`;
     case 'searchWorkspaceOutlines':
       return call.args.maxDocs ? `max=${call.args.maxDocs}` : '';
     case 'readParagraphByPath': {
@@ -1638,6 +2053,38 @@ export function previewArgs(call: AhwpToolCall): string {
     case 'switchTargetDoc': {
       const base = call.args.path.split(/[\\/]/).pop() ?? call.args.path;
       return `→ ${base}`;
+    }
+    // 0.7.7 — external world access.
+    case 'webFetch': {
+      const u = call.args.url;
+      try {
+        const host = new URL(u).host;
+        return host;
+      } catch {
+        return u.length > 40 ? u.slice(0, 40) + '…' : u;
+      }
+    }
+    case 'webSearch': {
+      const q = call.args.query.replace(/\s+/g, ' ').trim();
+      return `"${q.length > 30 ? q.slice(0, 30) + '…' : q}"`;
+    }
+    // 0.7.9 — Bash.
+    case 'runCommand': {
+      const c = call.args.command;
+      return c.length > 40 ? c.slice(0, 40) + '…' : c;
+    }
+    // 0.7.11 — Sub-agent.
+    case 'runAgent': {
+      const p = call.args.prompt.replace(/\s+/g, ' ').trim();
+      const mode = call.args.mode ?? 'inherit';
+      const head = p.length > 40 ? p.slice(0, 40) + '…' : p;
+      return `[${mode}] ${head}`;
+    }
+    // 0.7.29 — Plan checklist.
+    case 'updatePlan': {
+      const items = call.args.items;
+      const done = items.filter((i) => i.status === 'completed').length;
+      return `${done}/${items.length} done`;
     }
   }
 }

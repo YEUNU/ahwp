@@ -60,7 +60,13 @@ export function TitleBar({
       style={
         {
           paddingLeft: isMac ? 78 : 12,
-          paddingRight: 10,
+          // 0.6.14 — non-Mac (Windows / Linux) 의 native 창 컨트롤
+          // overlay (min / max / close) 가 우상단 ~138px 점유. 이전엔
+          // paddingRight: 10 이라 우리 settings / theme 버튼이 같은
+          // 좌표에 겹쳐서 사용자가 "X" 클릭한 게 settings 로 라우팅
+          // 되어 창이 안 닫혔음. macOS 는 traffic lights 가 좌측이고
+          // 우측은 자유 → 기존 10 유지.
+          paddingRight: isMac ? 10 : 138,
           // App-region drag (Electron). Buttons override to no-drag.
           WebkitAppRegion: 'drag',
         } as React.CSSProperties

@@ -29,10 +29,12 @@ import {
   parseToolBlock,
   type AhwpPreflightItem,
   type AhwpToolResult,
+  type PlanItem,
 } from '@shared/ai-tools';
 import { createPortal } from 'react-dom';
 import { parsePatchBlock, type AhwpPatch } from '@shared/ai-patches';
 import { MultiPatchStack, type PatchStatus } from './DiffCard';
+import { GithubDiffPane } from './GithubDiffPane';
 import { markdownToHtml } from './markdownToHtml';
 import { findSectionToReplace } from './sectionMatcher';
 import {
@@ -53,22 +55,22 @@ import {
 } from './hooks/useChatStreaming';
 import { useExcerptAttachments } from './hooks/useExcerptAttachments';
 import { previewArgs } from './tools';
+import type { ModeContext } from '@shared/ai-modes';
+import { MODE_REGISTRY } from '@shared/ai-modes';
 
-type ChatProviderId = Extract<
-  ProviderId,
-  'openai' | 'nvidia' | 'google' | 'custom'
->;
+type ChatProviderId = Extract<ProviderId, 'openai' | 'google' | 'custom'>;
 
 const PROVIDER_OPTIONS: { id: ChatProviderId; label: string }[] = [
   { id: 'openai', label: 'OpenAI' },
-  { id: 'nvidia', label: 'NVIDIA NIM' },
   { id: 'google', label: 'Google (Gemini)' },
   { id: 'custom', label: 'Custom (OpenAI-호환)' },
 ];
 
 const DEFAULT_MODELS: Record<ChatProviderId, string> = {
-  openai: 'gpt-4o-mini',
-  nvidia: 'meta/llama-3.1-70b-instruct',
+  // 0.7.38 — 권장 기본을 gpt-5.5 로. 라이브 검증에서 5.4-mini 대비 form-fill
+  // 품질(척도 어휘 준수·grounding·날조 방지)이 확연히 좋음. gpt-5.5 는 mini
+  // 변형이 없는 표준 티어.
+  openai: 'gpt-5.5',
   google: 'gemini-2.0-flash',
   custom: '',
 };
@@ -117,6 +119,10 @@ interface UiMessage extends ChatMessage {
   /** chunk 99 follow-up — plan mode 에서 생성된 어시스턴트 메시지.
    *  UI 가 "이 계획대로 실행" 버튼 surface. */
   planMode?: boolean;
+  /** 0.7.30 — runtime 합성 메시지(form-guard auto-continue nudge). LLM 엔
+   *  보내되 UI 렌더에서 제외 — 사용자는 어시스턴트가 자연스럽게 이어가는
+   *  것만 본다. */
+  hidden?: boolean;
 }
 
 interface UiToolEntry {
@@ -144,33 +150,38 @@ interface UiToolEntry {
 function loadProvider(): ChatProviderId {
   try {
     const raw = localStorage.getItem(STORAGE_PROVIDER);
-    if (
-      raw === 'openai' ||
-      raw === 'nvidia' ||
-      raw === 'google' ||
-      raw === 'custom'
-    )
-      return raw;
+    if (raw === 'openai' || raw === 'google' || raw === 'custom') return raw;
+    // 0.6.18 — NIM 지원 제거. 이전에 'nvidia' 가 저장돼 있으면 openai 로
+    // 마이그레이션 (저장 자체는 다음 setItem 에서 덮어쓰임).
+    if (raw === 'nvidia') return 'openai';
   } catch {
     /* no-op */
   }
   return 'openai';
 }
 
+// 0.6.14 — 이전 openai default 였던 모델들. loadModels 가 storage 에서
+// 이 값을 발견하면 새 default 로 자동 마이그레이션 (사용자가 default 를
+// 그대로 쓰던 경우 새 default 가 즉시 적용되도록). 사용자가 의식적으로
+// 다른 모델을 선택했다면 그 선택은 유지.
+// 0.7.38 — 이전 기본값(gpt-5.4-mini)을 추가해, default 를 그대로 쓰던
+// 사용자가 새 권장 default(gpt-5.5)로 자동 이전되게 한다.
+const LEGACY_OPENAI_DEFAULTS = new Set(['gpt-4o-mini', 'gpt-5.4-mini']);
+
 function loadModels(): Record<ChatProviderId, string> {
   try {
     const raw = localStorage.getItem(STORAGE_MODELS);
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<Record<ChatProviderId, string>>;
+      const openaiStored =
+        typeof parsed.openai === 'string' && parsed.openai.length > 0
+          ? parsed.openai
+          : DEFAULT_MODELS.openai;
+      const openai = LEGACY_OPENAI_DEFAULTS.has(openaiStored)
+        ? DEFAULT_MODELS.openai
+        : openaiStored;
       return {
-        openai:
-          typeof parsed.openai === 'string' && parsed.openai.length > 0
-            ? parsed.openai
-            : DEFAULT_MODELS.openai,
-        nvidia:
-          typeof parsed.nvidia === 'string' && parsed.nvidia.length > 0
-            ? parsed.nvidia
-            : DEFAULT_MODELS.nvidia,
+        openai,
         google:
           typeof parsed.google === 'string' && parsed.google.length > 0
             ? parsed.google
@@ -368,6 +379,21 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [messages, setMessages] = useState<UiMessage[]>([]);
     const [input, setInput] = useState('');
     const [streaming, setStreaming] = useState(false);
+    // 0.7.29 — 모델이 updatePlan 으로 선언한 최신 작업 계획(TodoWrite analog).
+    // 가장 최근 assistant turn 의 updatePlan toolUse args.items 에서 파생 →
+    // 입력란 위에 진행 체크리스트로 surface. 새 user 메시지로 시작하면 그
+    // turn 의 updatePlan 이 나오기 전까지 직전 계획이 유지된다(연속 task).
+    const latestPlan = useMemo<PlanItem[]>(() => {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const tu = messages[i].toolUses;
+        if (!tu) continue;
+        const call = tu.find((u) => u.name === 'updatePlan');
+        if (!call) continue;
+        const items = (call.args as { items?: unknown } | undefined)?.items;
+        if (Array.isArray(items)) return items as PlanItem[];
+      }
+      return [];
+    }, [messages]);
     // chunk 99 follow-up — agent turn step counter for "Turn N/M" UI.
     // Hook bumps via setAgentTurn callback on each turn entry.
     const [agentTurn, setAgentTurn] = useState(0);
@@ -416,7 +442,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       Record<ChatProviderId, ModelListState>
     >({
       openai: { kind: 'idle' },
-      nvidia: { kind: 'idle' },
       google: { kind: 'idle' },
       custom: { kind: 'idle' },
     });
@@ -445,6 +470,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     useEffect(() => {
       conversationIdRef.current = conversationId;
     }, [conversationId]);
+    // 0.7.1 — Task-Mode 상태. useChatStreaming 이 매 turn 갱신.
+    const [modeContext, setModeContext] = useState<ModeContext | null>(null);
     // chunk 31 — 자동 제목 요약. assistant turn 종료 시 messages.length가
     // 4 이상이면 1회 한정 background AI 호출로 짧은 한국어 제목 생성 →
     // chatHistory.rename. 이미 처리된 conversationId는 set에 등록해
@@ -456,9 +483,17 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // chunk 21 — paths the user opted in as references. Active tab is
     // implicit target (always included) and never appears in this set.
     // Stored as an array (not Set) so React equality is straightforward.
-    // chunk 99 follow-up — 멀티 문서 chip UI 폐기 (사용자 요청). 빈
-    // 배열 고정 — useChatStreaming 의 reference outline 자동 주입 차단.
-    const referencePaths: string[] = [];
+    // 0.7.19 — Inserty 데모 참고: 멀티 문서 reference chip UI 부활. 사용자가
+    // 다른 열린 탭을 read-only 참고자료로 토글 → useChatStreaming 이
+    // collectReferenceOutlines → buildReferenceSystemBlock 으로 시스템
+    // 프롬프트에 [Reference docs] 블록 주입. 소비 측은 닫힌/active 경로를
+    // 자동 필터링하므로 stale entry 는 무해.
+    const [referencePaths, setReferencePaths] = useState<string[]>([]);
+    const toggleReferencePath = useCallback((path: string) => {
+      setReferencePaths((prev) =>
+        prev.includes(path) ? prev.filter((p) => p !== path) : [...prev, path],
+      );
+    }, []);
     const handleRef = useRef<AiChatHandle | null>(null);
     const scrollerRef = useRef<HTMLDivElement>(null);
     const assistantIdRef = useRef<string | null>(null);
@@ -724,6 +759,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       setStreaming,
       setError,
       setAgentTurn,
+      setModeContext,
       hasKey,
       provider,
       model,
@@ -824,7 +860,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             status icons + actions (always visible regardless of model
             id length). Row 2: full-width model selector + refresh.
             Earlier single-row layout collapsed history/+ buttons when
-            NVIDIA / NIM model ids stretched the model select. */}
+            long provider-prefixed model ids stretched the model select. */}
         <div
           className="flex shrink-0 flex-col gap-1.5 border-b border-border bg-card px-3 py-2"
           data-testid="chat-provider-bar"
@@ -838,7 +874,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               className="flex-1 rounded-md border border-input bg-background px-2 py-1 text-xs focus:outline-hidden focus:ring-2 focus:ring-ring"
               data-testid="chat-provider-select"
               aria-label="Provider"
-              title="AI 공급자 선택 (OpenAI / NVIDIA NIM / Google Gemini / Custom)"
+              title="AI 공급자 선택 (OpenAI / Google Gemini / Custom)"
               disabled={streaming}
             >
               {PROVIDER_OPTIONS.map((p) => (
@@ -848,6 +884,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               ))}
             </select>
             <KeyStatusIcon hasKey={hasKey} providerLabel={providerLabel} />
+            <ModeBadge modeContext={modeContext} />
             <IconButton
               onClick={() => {
                 const next = !historyOpen;
@@ -1085,7 +1122,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             </div>
           ) : (
             messages
-              .filter((m) => m.role !== 'tool')
+              // 0.7.30 — hidden(auto-continue nudge 등 runtime 합성)은 렌더 제외.
+              .filter((m) => m.role !== 'tool' && !m.hidden)
               .map((m) => (
                 <Message
                   key={m.id}
@@ -1123,6 +1161,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           className="shrink-0 border-t border-border bg-card p-3"
           data-testid="chat-input-form"
         >
+          {/* 0.7.29 — 모델 작업 계획(updatePlan) 진행 체크리스트. */}
+          <PlanChecklist items={latestPlan} />
           {/* chunk 99 follow-up — 멀티 문서 자동 chip 폐기 (사용자
             요청, 매뉴얼만). MultiDocChips 컴포넌트는 keep — 향후 사용자
             매뉴얼 토글 / cmd-K 같은 곳에서 재활용 가능. */}
@@ -1143,6 +1183,52 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               </button>
             </div>
           ) : null}
+          {/* 0.7.19 — Inserty 데모 참고: 참고자료 토글 칩. 활성 탭을
+            제외한 열린 문서를 read-only 참고자료로 첨부 → 시스템 프롬프트의
+            [Reference docs] 블록. 닫히면 후보에서 사라지고 소비 측이
+            자동 필터링. */}
+          {(() => {
+            const refCandidates = (getOpenDocs?.() ?? []).filter(
+              (d) => !d.isActive,
+            );
+            if (refCandidates.length === 0) return null;
+            return (
+              <div
+                className="mb-2 flex flex-wrap items-center gap-1.5 text-[10px]"
+                data-testid="chat-reference-strip"
+              >
+                <span className="text-muted-foreground">📎 참고자료</span>
+                {refCandidates.map((d) => {
+                  const on = referencePaths.includes(d.path);
+                  return (
+                    <button
+                      key={d.path}
+                      type="button"
+                      onClick={() => toggleReferencePath(d.path)}
+                      disabled={streaming}
+                      data-testid="chat-reference-chip"
+                      data-selected={on ? 'true' : 'false'}
+                      aria-pressed={on}
+                      title={
+                        on
+                          ? `${d.label} — 참고자료로 첨부됨 (read-only). 클릭하면 해제`
+                          : `${d.label} — 클릭하면 read-only 참고자료로 첨부`
+                      }
+                      className={cn(
+                        'max-w-44 truncate rounded-full border px-2 py-0.5 disabled:opacity-50',
+                        on
+                          ? 'border-sky-500/50 bg-sky-500/10 text-sky-700 dark:text-sky-400'
+                          : 'border-input text-muted-foreground hover:bg-muted',
+                      )}
+                    >
+                      {on ? '✓ ' : ''}
+                      {d.label}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })()}
           {excerpts.length > 0 ? (
             <ul
               className="mb-2 flex flex-wrap gap-1.5"
@@ -1314,6 +1400,46 @@ function IconButton({
 // chunk 77 — API 키 상태 아이콘. lucide Key (등록) / KeyRound 윤곽
 // (미등록) / Loader2 (확인 중). 테마의 emerald / muted-foreground 토큰
 // 사용. 텍스트 "키 ●" / "키 ○" 이모지 → SVG 교체.
+/**
+ * 0.7.0 / 0.7.1 — Task-Mode badge. 현재 모드를 provider bar 에 표시.
+ *
+ * 0.7.1 에서 dynamic: useChatStreaming 이 매 turn 갱신하는 modeContext
+ * 를 caller (ChatPanel) 가 ref 로 받아 prop 으로 주입. 0.7.2 에서
+ * 사용자가 badge 클릭 → mode override 토글 (현재는 read-only display).
+ */
+function ModeBadge({
+  modeContext,
+}: {
+  modeContext?: ModeContext | null;
+}): JSX.Element {
+  const primary = modeContext?.primary ?? 'free-authoring';
+  const def = MODE_REGISTRY[primary];
+  const isOverride = modeContext?.source === 'user-override';
+  const isDetected = modeContext?.source === 'detected';
+  return (
+    <span
+      className={cn(
+        'flex h-7 shrink-0 items-center rounded-md border px-2 text-[10px] font-medium',
+        isDetected
+          ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+          : isOverride
+            ? 'border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+            : 'border-border bg-background text-muted-foreground',
+      )}
+      data-testid="chat-mode-badge"
+      data-mode={primary}
+      data-source={modeContext?.source ?? 'default'}
+      title={
+        modeContext?.reason
+          ? `${def.label} — ${modeContext.reason}`
+          : `${def.label} — ${def.description}`
+      }
+    >
+      {def.shortLabel}
+    </span>
+  );
+}
+
 function KeyStatusIcon({
   hasKey,
   providerLabel,
@@ -1390,6 +1516,47 @@ function ModelRefreshButton({
         <RefreshCw className="size-3.5" />
       )}
     </IconButton>
+  );
+}
+
+/** 0.7.29 — 모델의 작업 계획(updatePlan) 진행 체크리스트. 입력란 위에
+ *  상시 표시 — 사용자가 어느 섹션이 끝났고 무엇이 남았는지 실시간으로 본다. */
+function PlanChecklist({ items }: { items: PlanItem[] }): ReactNode {
+  if (items.length === 0) return null;
+  const done = items.filter((i) => i.status === 'completed').length;
+  const skipped = items.filter((i) => i.status === 'skipped').length;
+  const glyph: Record<PlanItem['status'], string> = {
+    completed: '✓',
+    in_progress: '▸',
+    skipped: '⊘',
+    pending: '○',
+  };
+  const cls: Record<PlanItem['status'], string> = {
+    completed: 'text-emerald-600 dark:text-emerald-400',
+    in_progress: 'text-sky-600 dark:text-sky-400 font-medium',
+    skipped: 'text-muted-foreground line-through',
+    pending: 'text-muted-foreground',
+  };
+  return (
+    <div
+      className="mb-2 rounded-md border border-border bg-muted/40 px-2 py-1.5 text-[10px]"
+      data-testid="chat-plan-checklist"
+    >
+      <div className="mb-1 flex items-center gap-1 text-muted-foreground">
+        <span>📋 작업 계획</span>
+        <span className="tabular-nums">
+          {done + skipped}/{items.length}
+        </span>
+      </div>
+      <ul className="space-y-0.5">
+        {items.map((it, idx) => (
+          <li key={idx} className={`flex items-start gap-1 ${cls[it.status]}`}>
+            <span className="w-3 shrink-0 text-center">{glyph[it.status]}</span>
+            <span className="break-words">{it.title}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -1649,8 +1816,17 @@ function Message({
     setPatchStatusOverrides((prev) => ({ ...prev, [idx]: status }));
   };
 
+  // 0.6.14 — user-dismissable diff pane. After auto-accept patches stay
+  // applied; this just hides the visual diff so user can keep working
+  // without the side panel cluttering the editor area.
+  const [patchPaneDismissed, setPatchPaneDismissed] = useState(false);
+
   // Q5 확장 — Accept 후 ~12s 토스트 ("N개 적용됨 · 되돌리기").
-  const [patchToast, setPatchToast] = useState<{
+  // 0.6.14 — toast UI 자체는 GithubDiffPane 의 헤더로 흡수돼서 더 이상
+  // 채팅 안에서 떠다니지 않음. state 는 유지 (handlePatchAcceptAll /
+  // handlePatchUndo 가 setPatchToast 호출). 향후 chat-side toast 가 필요
+  // 해지면 그때 read; 지금은 write-only.
+  const [, setPatchToast] = useState<{
     appliedCount: number;
   } | null>(null);
   const patchToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2063,50 +2239,25 @@ function Message({
             ) : null}
           </div>
         ) : null}
-        {/* Q5 Diff Viewer — render patches block as Accept/Reject cards.
-          chunk 99 follow-up — react-dom createPortal 로 가운데 (Studio)
-          패널의 #ahwp-editor-diff-overlay 컨테이너에 떠 있도록 라우팅.
-          chat 안엔 작은 hint 만 남기고 실제 카드는 에디터 위에 sticky.
-          포털 target 이 mount 안 됐으면 (e2e 초기 / 미분기 환경) 기존
-          chat-side 인라인 fallback 으로 렌더. */}
-        {patchesParsed && patchesParsed.ok && patchCount > 0
+        {/* Diff pane — 0.6.14 replacement for the card-heavy MultiPatchStack.
+          GithubDiffPane portals to #ahwp-editor-diff-overlay (now a real
+          side panel right of rhwp-editor, not a sticky overlay). In-chat
+          shows only a compact hint chip with applied count + undo. */}
+        {patchesParsed &&
+        patchesParsed.ok &&
+        patchCount > 0 &&
+        !patchPaneDismissed
           ? (() => {
-              const cards = (
-                <div
-                  className="pointer-events-auto rounded-md border border-border bg-card px-3 py-2 shadow-lg"
-                  data-testid="chat-patches-block"
-                  data-message-id={message.id}
-                >
-                  <MultiPatchStack
-                    items={patchesParsed.items}
-                    statuses={patchStatuses}
-                    onAccept={handlePatchAcceptIdx}
-                    onReject={handlePatchRejectIdx}
-                    onAcceptAll={handlePatchAcceptAll}
-                    onPreview={onPreviewPatch}
-                  />
-                  {patchToast ? (
-                    <div
-                      className="mt-2 flex items-center gap-3 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs"
-                      data-testid="diff-applied-toast"
-                    >
-                      <Check className="size-3.5 text-emerald-600" />
-                      <span className="flex-1 font-medium text-foreground">
-                        {patchToast.appliedCount}개 적용됨
-                      </span>
-                      {onUndoApply ? (
-                        <button
-                          type="button"
-                          onClick={handlePatchUndo}
-                          className="text-[11px] font-medium text-emerald-700 hover:underline dark:text-emerald-300"
-                          data-testid="diff-applied-undo"
-                        >
-                          되돌리기
-                        </button>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
+              const pane = (
+                <GithubDiffPane
+                  items={patchesParsed.items}
+                  statuses={patchStatuses}
+                  onAccept={handlePatchAcceptIdx}
+                  onReject={handlePatchRejectIdx}
+                  onUndoAll={onUndoApply ? handlePatchUndo : undefined}
+                  onPreview={onPreviewPatch}
+                  onDismiss={() => setPatchPaneDismissed(true)}
+                />
               );
               const target =
                 typeof document !== 'undefined'
@@ -2115,19 +2266,41 @@ function Message({
               if (target) {
                 return (
                   <>
-                    {createPortal(cards, target)}
+                    {createPortal(pane, target)}
                     <div
-                      className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-[11px] text-amber-700 dark:text-amber-300"
+                      className="mt-2 flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-1.5 text-[11px] text-emerald-700 dark:text-emerald-300"
                       data-testid="chat-patches-hint"
                     >
-                      📋 {patchCount}개 변경 제안 — 에디터 우측 카드에서 검토
+                      <Check className="size-3" />
+                      <span className="font-medium">
+                        {patchCount}개 변경 적용됨
+                      </span>
+                      {onUndoApply ? (
+                        <button
+                          type="button"
+                          onClick={handlePatchUndo}
+                          className="ml-auto text-[10.5px] hover:underline"
+                          data-testid="chat-patches-undo"
+                        >
+                          되돌리기
+                        </button>
+                      ) : null}
                     </div>
                   </>
                 );
               }
-              // Fallback: target 미마운트 시 inline.
+              // Fallback (e2e initial / pre-mount): inline old MultiPatchStack.
               return (
-                <div className="mt-2 border-t border-border pt-2">{cards}</div>
+                <div className="mt-2 border-t border-border pt-2">
+                  <MultiPatchStack
+                    items={patchesParsed.items}
+                    statuses={patchStatuses}
+                    onAccept={handlePatchAcceptIdx}
+                    onReject={handlePatchRejectIdx}
+                    onAcceptAll={handlePatchAcceptAll}
+                    onPreview={onPreviewPatch}
+                  />
+                </div>
               );
             })()
           : null}
@@ -2504,6 +2677,17 @@ function ToolEntryRow({
           ) : null}
         </div>
       ) : null}
+      {/* 0.6.19 — getPageSvg 결과는 inline 이미지로 즉시 표시 (사용자 확인용).
+          tool result 가 {svg, ...} 형태 JSON 일 때만 활성. SVG 를 base64
+          data-URL 로 img src 에 박아 <script> 실행 위험 회피 (브라우저는
+          <img src="data:image/svg+xml..."> 의 SVG 내부 스크립트를 inert
+          처리). 그래도 entry.name 으로 게이트 — 다른 tool 의 임의 결과를
+          오해석해 렌더하지 않게. */}
+      {entry.name === 'getPageSvg' &&
+      entry.status === 'ok' &&
+      entry.resultPreview ? (
+        <PageSvgPreview resultJson={entry.resultPreview} />
+      ) : null}
       {expanded && hasDetail ? (
         <pre
           data-testid="chat-tool-result"
@@ -2512,6 +2696,65 @@ function ToolEntryRow({
           {entry.resultPreview}
         </pre>
       ) : null}
+    </div>
+  );
+}
+
+/** 0.6.19 — getPageSvg tool 결과를 inline 이미지로 렌더.
+ *  result 가 `{ pageIdx, svg, truncated, originalBytes? }` 형태. svg 가
+ *  truncated 면 잘렸음을 hint 표시. base64 인코딩은 unicode 안전 처리. */
+function PageSvgPreview({
+  resultJson,
+}: {
+  resultJson: string;
+}): JSX.Element | null {
+  type Result = {
+    pageIdx?: number;
+    svg?: string;
+    truncated?: boolean;
+    originalBytes?: number;
+  };
+  let parsed: Result;
+  try {
+    parsed = JSON.parse(resultJson) as Result;
+  } catch {
+    return null;
+  }
+  if (typeof parsed.svg !== 'string' || parsed.svg.length === 0) {
+    return null;
+  }
+  // base64-encode the SVG safely (handles multi-byte UTF-8 via TextEncoder).
+  let dataUrl: string;
+  try {
+    const bytes = new TextEncoder().encode(parsed.svg);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    dataUrl = `data:image/svg+xml;base64,${btoa(binary)}`;
+  } catch {
+    return null;
+  }
+  return (
+    <div
+      className="mt-1 rounded border border-border/50 bg-background/50 p-1"
+      data-testid="chat-tool-svg-preview"
+    >
+      {parsed.truncated ? (
+        <div className="mb-0.5 text-[10px] text-muted-foreground">
+          페이지 {parsed.pageIdx ?? '?'} (truncated · 원본{' '}
+          {parsed.originalBytes ?? '?'}B)
+        </div>
+      ) : (
+        <div className="mb-0.5 text-[10px] text-muted-foreground">
+          페이지 {parsed.pageIdx ?? '?'}
+        </div>
+      )}
+      <img
+        src={dataUrl}
+        alt={`Page ${parsed.pageIdx ?? '?'} preview`}
+        className="block max-h-[600px] w-full rounded border border-border/30 bg-white object-contain"
+      />
     </div>
   );
 }

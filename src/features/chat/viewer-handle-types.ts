@@ -678,7 +678,12 @@ export interface ViewerHandle {
    * step for form-fill workflows so the LLM never has to guess
    * coordinates by trial-and-error.
    */
-  getEmptyFormFields: (opts?: { sectionIdx?: number; maxResults?: number }) => {
+  getEmptyFormFields: (opts?: {
+    sectionIdx?: number;
+    parentParaIdx?: number;
+    maxResults?: number;
+    includeFilled?: boolean;
+  }) => {
     cellFields: {
       location: {
         sectionIndex: number;
@@ -689,8 +694,38 @@ export interface ViewerHandle {
       };
       labelHint: string;
       labelCharShape?: Record<string, unknown>;
+      currentText: string;
+      isEmpty: boolean;
+      contentCharShape?: Record<string, unknown>;
+      /**
+       * 0.7.2 — 도구 선택 hint:
+       * - 'value-slot' (빈 셀): `insertTextInCell` 로 값 채움
+       * - 'instruction' (italic + 비검정 placeholder): `replaceTextInCell`
+       *   로 본 값으로 교체. `insertTextInCell` 쓰면 placeholder 가 남아
+       *   layout 깨짐 — 0.7.1 의 직접 회귀 원인.
+       * - 'sub-header' (bold + 짧은 인-셀 라벨): 손대지 말 것
+       * - 'content' (정상 데이터): 사용자가 명시 수정 안 하면 보존
+       */
+      slotKind: 'value-slot' | 'instruction' | 'sub-header' | 'content';
+      /** 0.7.12 — 행의 첫 칸 텍스트 ((row,0)). 큰 표 / 미해석 시 ''. */
+      rowLabel: string;
+      /** 0.7.12 — 컬럼 헤더 텍스트 ((0,col)). 큰 표 / 미해석 시 ''. */
+      columnHeader: string;
+      /** 0.7.12 — columnHeader+rowLabel 휴리스틱으로 추론한 셀 포맷.
+       *  write 도구가 args 에 echo 하면 dispatcher 가 검증해서 reject. */
+      expectedFormat: 'marker' | 'number' | 'currency' | 'date' | 'text';
     }[];
     truncated: boolean;
+    tableInventory?: {
+      sectionIndex: number;
+      paragraphIndex: number;
+      controlIndex: number;
+      rowCount: number;
+      colCount: number;
+      totalCells: number;
+      emptyCells: number;
+      sampleLabel: string;
+    }[];
   } | null;
   /**
    * Capture the current viewer selection as a portable excerpt — chunk

@@ -38,14 +38,14 @@ test.describe('chat — chunk 70 secrets:changed pre-fetch', () => {
     // the model selector shows only the saved fallback (DEFAULT_MODELS).
     await expect(page.getByTestId('chat-model-input')).toBeVisible();
 
-    // Save a key for nvidia (NOT the active provider).
+    // Save a key for google (NOT the active provider).
     await page.evaluate(async () => {
-      await window.api.secrets.set('nvidia', 'test-key');
+      await window.api.secrets.set('google', 'test-key');
     });
 
-    // Switch to nvidia. The fake catalog should already be in
+    // Switch to google. The fake catalog should already be in
     // modelList state — the broadcast triggered a pre-fetch.
-    await page.getByTestId('chat-provider-select').selectOption('nvidia');
+    await page.getByTestId('chat-provider-select').selectOption('google');
 
     await expect.poll(() => getOptions(page)).toContain('fake/echo-2');
   });
@@ -75,22 +75,22 @@ test.describe('chat — chunk 70 secrets:changed pre-fetch', () => {
     const { page } = launched;
     // Save keys for two non-active providers in succession.
     await page.evaluate(async () => {
-      await window.api.secrets.set('nvidia', 'nv-key');
+      await window.api.secrets.set('google', 'gg-key');
     });
     await page.evaluate(async () => {
       await window.api.secrets.set('openai', 'oa-key');
     });
 
     // Each provider should now have its catalog after switching.
-    await page.getByTestId('chat-provider-select').selectOption('nvidia');
+    await page.getByTestId('chat-provider-select').selectOption('google');
     await expect.poll(() => getOptions(page)).toContain('fake/echo-2');
 
     await page.getByTestId('chat-provider-select').selectOption('openai');
     await expect.poll(() => getOptions(page)).toContain('fake/echo-2');
 
-    // Switching back to nvidia: catalog still present (cached, no
+    // Switching back to google: catalog still present (cached, no
     // refetch storm).
-    await page.getByTestId('chat-provider-select').selectOption('nvidia');
+    await page.getByTestId('chat-provider-select').selectOption('google');
     await expect.poll(() => getOptions(page)).toContain('fake/echo-2');
   });
 

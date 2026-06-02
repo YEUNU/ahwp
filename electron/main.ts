@@ -12,6 +12,8 @@ import { registerFolderIpc, shutdownFolderIpc } from './ipc/folder';
 import { registerSecretsIpc } from './ipc/secrets';
 import { registerSessionIpc } from './ipc/session';
 import { initUpdater } from './ipc/updater';
+import { registerWebIpc } from './ipc/web';
+import { registerBashIpc } from './ipc/bash';
 import { buildAppMenu } from './menu';
 import {
   registerRhwpStudioProtocol,
@@ -187,6 +189,8 @@ function registerIpcHandlers(): void {
   registerSecretsIpc();
   registerAiIpc();
   registerChatHistoryIpc();
+  registerWebIpc();
+  registerBashIpc();
 
   // 0.6.12 — Windows / Linux 메뉴 접근성. titleBarStyle: 'hidden' 이
   // 네이티브 메뉴바도 같이 숨김 → 사용자가 File / Edit / View / 설정

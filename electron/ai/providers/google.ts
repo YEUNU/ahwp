@@ -87,6 +87,8 @@ interface GeminiPart {
   text?: string;
   functionCall?: { name?: string; args?: unknown };
   functionResponse?: { name?: string; response?: unknown };
+  /** 0.6.20 — vision: 인라인 이미지 (base64). mimeType 은 image/png 등. */
+  inlineData?: { mimeType: string; data: string };
 }
 
 interface GeminiCandidate {
@@ -122,7 +124,7 @@ function mapFinishReason(s: string | undefined): ChatFinishReason {
  * - user/assistant: contents[] + role 변환 (assistant → 'model')
  * - tool result (role='tool'): user role + functionResponse part
  */
-function toGeminiBody(messages: ChatMessage[]): {
+export function toGeminiBody(messages: ChatMessage[]): {
   systemInstruction: { parts: { text: string }[] } | undefined;
   contents: { role: string; parts: GeminiPart[] }[];
 } {
@@ -160,6 +162,27 @@ function toGeminiBody(messages: ChatMessage[]): {
           },
         ],
       });
+      // 0.6.20 — vision: tool 결과에 image 가 있으면 functionResponse 다음
+      // 에 별도 user 메시지로 inlineData inject. Gemini 의 functionResponse
+      // 자체는 multimodal 미지원이지만 user content 의 inlineData 는 모든
+      // vision 모델 (gemini-2.x-flash / pro) 가 해석.
+      const tr = m.toolResult;
+      if (tr.imageBase64 && tr.imageMediaType) {
+        contents.push({
+          role: 'user',
+          parts: [
+            {
+              text: '[Tool image attachment — visual rendering of the page from the previous tool result. Inspect to verify placement.]',
+            },
+            {
+              inlineData: {
+                mimeType: tr.imageMediaType,
+                data: tr.imageBase64,
+              },
+            },
+          ],
+        });
+      }
       continue;
     }
     if (m.role === 'assistant') {

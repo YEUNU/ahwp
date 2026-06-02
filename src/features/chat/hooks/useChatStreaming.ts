@@ -22,6 +22,7 @@ import {
   type MutableRefObject,
 } from 'react';
 import type { ChatMessage, ChatRequest, ChatStreamEvent } from '@shared/ai';
+import { compactAgentHistory } from '../compact-history';
 import {
   getAhwpToolCatalog,
   isReadOnlyTool,
@@ -36,8 +37,13 @@ import {
   collectReferenceOutlines,
   buildReferenceSystemBlock,
   buildExcerptSystemPrompt,
+  appendModePrompt,
 } from '../prompts';
+import type { SubAgentContext } from '../tools';
+import { detectMode } from '../mode-detector';
 import { selectToolsViaLlm, resetRouterCache } from '../toolRouter';
+import { svgToPngBase64 } from '../svg-to-png';
+import { decideFormGuardNudge } from '../form-guard';
 
 interface UiToolEntry {
   id: string;
@@ -69,6 +75,10 @@ interface UiMessage extends ChatMessage {
   /** chunk 99 follow-up — true 이면 plan mode 에서 생성된 어시스턴트
    *  메시지. UI 가 "이 계획대로 실행" 버튼 surface. */
   planMode?: boolean;
+  /** 0.7.30 — runtime 합성 메시지 (form-guard auto-continue nudge 등).
+   *  LLM 에는 보내되 UI 에는 렌더하지 않는다 — auto-continue 는 내부
+   *  steering 이라 사용자가 볼 필요 없음. */
+  hidden?: boolean;
 }
 
 function newId(): string {
@@ -197,7 +207,11 @@ export interface UseChatStreamingOptions {
   onOpenSettings?: () => void;
   getDocHtml?: () => string;
   applyHtml?: (html: string) => void;
-  runTools?: (items: any, targetPath?: string | null) => any;
+  runTools?: (
+    items: any,
+    targetPath?: string | null,
+    subAgentContext?: SubAgentContext,
+  ) => any;
   captureExcerpt?: () => any;
   activeDocPath?: () => string | null;
   verifyExcerpt?: (anchor: any, expected: string) => any;
@@ -213,6 +227,13 @@ export interface UseChatStreamingOptions {
    *  이 React state 의 planMode 를 false 로 동기화 (localStorage 는
    *  hook 안에서 이미 갱신). */
   onPlanModeAutoDisengage?: () => void;
+  /** 0.7.1 — 사용자가 ModeBadge 에서 명시 선택한 TaskMode. detection 보다
+   *  우선. null/undefined 면 detection 결과 사용. */
+  modeOverride?: import('@shared/ai-modes').TaskMode | null;
+  /** 0.7.1 — detectMode 결과를 UI 에 반영. ChatPanel 의 React state 가
+   *  ModeBadge 를 reactive 하게 그릴 수 있게. ref 만으로는 re-render
+   *  trigger 안 됨 — setter 형태로 받음. */
+  setModeContext?: (ctx: import('@shared/ai-modes').ModeContext) => void;
 }
 
 export interface ChatStreamingHandle {
@@ -228,6 +249,11 @@ export interface ChatStreamingHandle {
   agentToolUsesRef: MutableRefObject<any>;
   agentTurnDepthRef: MutableRefObject<number>;
   agentVerifiedExcerptsRef: MutableRefObject<any>;
+  /** 0.7.1 — 직전 turn 에서 detectMode 가 결정한 ModeContext. UI badge
+   *  가 reactive 표시 위해 참조. send / fireChat 마다 갱신. */
+  currentModeRef: MutableRefObject<
+    import('@shared/ai-modes').ModeContext | null
+  >;
   /** chunk 97 — pending write tool 에 대한 사용자 결정. accept=true 면
    *  dispatch + tool_result 'ok', false 면 'user-rejected'. 모든 pending
    *  이 resolve 되면 자동으로 다음 turn 진입. */
@@ -297,11 +323,43 @@ export function useChatStreaming(
   >([]);
   const agentTurnDepthRef = useRef(0);
   const agentVerifiedExcerptsRef = useRef<ExcerptAttachment[]>([]);
+  /** 0.7.1 — 직전 turn 의 ModeContext. fireChat 가 detectMode 호출 후
+   *  여기에 stash. ChatPanel 이 ModeBadge 에 표시. */
+  const currentModeRef = useRef<import('@shared/ai-modes').ModeContext | null>(
+    null,
+  );
   // chunk 99 follow-up — stop 버튼이 turn loop 도 강제 종료. flag 가
   // true 이면 advanceAgentLoop 가 다음 turn 진입 직전 short-circuit.
   // 매 send / sendDirect / regenerate / acceptDirect 시작 시 false 로
   // reset.
   const agentStoppedRef = useRef(false);
+  // 0.7.2 — Form-Fill mode completion guard. AI 가 본문 dump 회귀 차단
+  // 이후 또 다른 회귀 패턴: cover-sheet 만 채우고 ~15 cells 후 조기 종료
+  // (200+ 셀 form 의 ~8% 만 채움) + getPageSvg 한 번도 안 부름. 이 guard
+  // 가 finishReason='stop' 시점에 (a) tableInventory 의 emptyCells 합
+  // (b) getPageSvg 호출 여부 체크해서 미달이면 synthetic user message 로
+  // 자동 nudge. cap (2회) 도달 시 멈춰서 무한 loop 방지.
+  //
+  // 상태 keying:
+  // - formStateRef: 가장 최근 getEmptyFormFields 응답에서 추출. 매 tool
+  //   dispatch 마다 갱신.
+  // - getPageSvgCalledRef: 이번 user-task 안에서 getPageSvg 호출이 한 번
+  //   이라도 ok=true 였는지.
+  // - formGuardNudgeCountRef: 이번 user-task 동안 guard 가 fire 한 횟수.
+  //   send / sendDirect / regenerate 시 reset.
+  const FORM_GUARD_MAX_NUDGES = 2;
+  const formGuardNudgeCountRef = useRef(0);
+  const formStateRef = useRef<{
+    emptyCellsRemaining: number;
+    tableSummary: string;
+  } | null>(null);
+  const getPageSvgCalledRef = useRef(false);
+  // 0.7.37 — 'ask-for-missing' nudge 가 이번 task 에서 발화했는지(1회 한정).
+  const askForMissingNudgedRef = useRef(false);
+  // 0.7.29 — 모델이 updatePlan 으로 선언한 최신 작업 계획. 매 성공한
+  // updatePlan dispatch 마다 갱신. form-guard 완료 게이트가 pending/
+  // in_progress 잔여를 보고 완료 차단에 사용. send/regenerate 시 reset.
+  const planItemsRef = useRef<import('@shared/ai-tools').PlanItem[]>([]);
   // chunk 99 follow-up — plan mode 1회 우회 ref. ChatPanel 의 "이 계획
   // 대로 실행" / "건너뛰기" 액션이 set, fireChat 가 1회 소비 후 false.
   const planSkipNextRef = useRef(false);
@@ -629,15 +687,38 @@ export function useChatStreaming(
         //  호출하거나 매 write 사이 re-read 해야 함. prompt 가이드 참조.)
         if (parallelBatch.length > 0 && dispatcher) {
           const dispatch = dispatcher;
-          const reads = parallelBatch.filter((b) => isReadOnlyTool(b.tu.name));
-          const writes = parallelBatch.filter(
-            (b) => !isReadOnlyTool(b.tu.name),
-          );
+          // 0.7.11 — Sub-agent context. dispatcher 가 runAgent case 에서
+          // 사용. provider / model / parentMode / baseSystemPrompt 를
+          // 자기 (parent) 의 현재 상태로 inject — sub-agent 가 동일 provider
+          // 로 작동.
+          const subAgentContext: SubAgentContext = {
+            provider: providerRef.current,
+            model: modelRef.current,
+            parentMode: currentModeRef.current?.primary ?? 'free-authoring',
+            baseSystemPrompt: SYSTEM_PROMPT_AGENT_GUIDE,
+            targetPath: turnTargetPathRef.current,
+          };
+          // 0.7.34 — 병렬-안전 분류. read-only 도구에 더해, mode 가
+          // 'cross-doc-research' 인 runAgent (research sub-agent) 도 병렬.
+          // cross-doc-research 카탈로그는 read+web 만이라 활성 문서 IR 을
+          // 변경하지 못하므로 동시 실행해도 race 없음 (Claude Code Task 식
+          // 독립 research fan-out). 그 외 runAgent (write 가능 mode 상속)
+          // 는 직렬 유지.
+          const isParallelSafe = (b: (typeof parallelBatch)[number]): boolean =>
+            isReadOnlyTool(b.tu.name) ||
+            (b.call.tool === 'runAgent' &&
+              (b.call.args as { mode?: string }).mode === 'cross-doc-research');
+          const reads = parallelBatch.filter(isParallelSafe);
+          const writes = parallelBatch.filter((b) => !isParallelSafe(b));
 
           // reads — 병렬
           const readResults = await Promise.allSettled(
             reads.map((b) =>
-              dispatch([{ ok: true, call: b.call }], turnTargetPathRef.current),
+              dispatch(
+                [{ ok: true, call: b.call }],
+                turnTargetPathRef.current,
+                subAgentContext,
+              ),
             ),
           );
           // writes — 직렬 (AI 가 호출한 순서 보존)
@@ -647,6 +728,7 @@ export function useChatStreaming(
               const v = await dispatch(
                 [{ ok: true, call: b.call }],
                 turnTargetPathRef.current,
+                subAgentContext,
               );
               writeResults.push({ status: 'fulfilled', value: v });
             } catch (err) {
@@ -658,7 +740,7 @@ export function useChatStreaming(
           let ri = 0;
           let wi = 0;
           for (const b of parallelBatch) {
-            if (isReadOnlyTool(b.tu.name)) {
+            if (isParallelSafe(b)) {
               ordered.push(readResults[ri++]);
             } else {
               ordered.push(writeResults[wi++]);
@@ -713,6 +795,49 @@ export function useChatStreaming(
             ok: r.ok,
             summary,
           });
+          // 0.7.2 — Form-Fill guard state tracking. 매 성공 dispatch 마다
+          // formStateRef / getPageSvgCalledRef 갱신. inventory 의
+          // emptyCells 합 + 빈 셀 있는 표의 paragraphIndex / sampleLabel
+          // 을 요약해 다음 guard nudge 의 메시지로 활용.
+          if (r.ok && r.name === 'getEmptyFormFields' && r.data) {
+            try {
+              const d = r.data as {
+                tableInventory?: {
+                  emptyCells?: number;
+                  paragraphIndex?: number;
+                  sampleLabel?: string;
+                }[];
+              };
+              const inv = Array.isArray(d.tableInventory)
+                ? d.tableInventory
+                : [];
+              const total = inv.reduce((s, t) => s + (t.emptyCells ?? 0), 0);
+              const detail = inv
+                .filter((t) => (t.emptyCells ?? 0) > 0)
+                .slice(0, 5)
+                .map(
+                  (t) =>
+                    `p=${t.paragraphIndex} (${t.emptyCells} empty${t.sampleLabel ? `, "${t.sampleLabel}"` : ''})`,
+                )
+                .join(', ');
+              formStateRef.current = {
+                emptyCellsRemaining: total,
+                tableSummary: detail,
+              };
+            } catch {
+              /* ignore — best-effort */
+            }
+          }
+          if (r.ok && r.name === 'getPageSvg') {
+            getPageSvgCalledRef.current = true;
+          }
+          // 0.7.29 — updatePlan 결과에서 최신 plan items 추출(완료 게이트용).
+          if (r.ok && r.name === 'updatePlan' && r.data) {
+            const d = r.data as {
+              items?: import('@shared/ai-tools').PlanItem[];
+            };
+            if (Array.isArray(d.items)) planItemsRef.current = d.items;
+          }
         }
 
         // UI 갱신 — 즉시 처리된 entries 는 ok/failed 로, write pending 은
@@ -782,6 +907,94 @@ export function useChatStreaming(
         return;
       }
 
+      // 0.7.2 — Form-Fill completion guard. evt.type === 'done' (text-only
+      // 완료 선언) 시 decideFormGuardNudge 가 mode / 잔여 작업 / nudge cap
+      // 보고 재진입 여부 결정. shouldNudge=true 면 synthetic user message
+      // 로 fireChat 재진입. 회귀 (cover-sheet 만 채우고 조기 종료) 차단.
+      if (evt.type === 'done') {
+        const decision = decideFormGuardNudge({
+          modePrimary: currentModeRef.current?.primary ?? 'free-authoring',
+          formState: formStateRef.current,
+          getPageSvgCalled: getPageSvgCalledRef.current,
+          nudgeCount: formGuardNudgeCountRef.current,
+          maxNudges: FORM_GUARD_MAX_NUDGES,
+          agentStopped: agentStoppedRef.current,
+          // 0.7.24 — 모델이 양식을 파악한 뒤 부족 정보를 물으며 멈췄으면
+          // (text-only 응답에 질문 포함) 빈 셀이 남아도 nudge 안 함. 완료
+          // 기준 "빈 셀 0" 이 grounding/ask 원칙과 충돌하던 것 해소.
+          assistantText: assistantBufferRef.current,
+          // 0.7.24 — 실제 form-fill 쓰기가 있었는지 (시각 검증 enforcement
+          // 를 채운 경우에만 발동 → 0.7.6 회귀 회피).
+          formWritesDone: agentToolHistoryRef.current.some(
+            (e) =>
+              e.ok &&
+              (e.name === 'fillFormCells' ||
+                e.name === 'insertTextInCell' ||
+                e.name === 'replaceTextInCell'),
+          ),
+          // 0.7.29 — 모델이 updatePlan 으로 선언한 계획에 미완료
+          // (pending/in_progress) 항목이 남아있으면 완료 차단.
+          planPending: planItemsRef.current.some(
+            (i) => i.status === 'pending' || i.status === 'in_progress',
+          ),
+          // 0.7.35 — 본문 쓰기를 했는지 (셀 아닌 IR 변경). 표-문서에서
+          // form-fill mode 자동진입 시 본문 편집을 form-fill 로 하이재킹
+          // 하지 않게 — bodyWriteDone && !formWritesDone 이면 nudge suppress.
+          bodyWriteDone: agentToolHistoryRef.current.some(
+            (e) =>
+              e.ok &&
+              (e.name === 'insertText' ||
+                e.name === 'applyHtml' ||
+                e.name === 'deleteRange' ||
+                e.name === 'insertParagraph' ||
+                e.name === 'deleteParagraph'),
+          ),
+          // 0.7.37 — ask-for-missing nudge 1회 한정 (task 당).
+          askForMissingDone: askForMissingNudgedRef.current,
+        });
+        if (decision.reason === 'ask-for-missing') {
+          askForMissingNudgedRef.current = true;
+        }
+        if (decision.shouldNudge && decision.nudgeText) {
+          formGuardNudgeCountRef.current += 1;
+          // 0.7.30 — auto-continue nudge 는 hidden: LLM 에는 user turn 으로
+          // 보내되 UI 엔 렌더 안 함 + chatHistory 에도 저장 안 함. 사용자는
+          // 어시스턴트가 자연스럽게 이어가는 것만 본다 (내부 steering 비표시).
+          const userMsg: UiMessage = {
+            id: newId(),
+            role: 'user',
+            content: decision.nudgeText,
+            hidden: true,
+          };
+          assistantBufferRef.current = '';
+          handleRef.current = null;
+          assistantIdRef.current = null;
+          // 누적된 turn depth / tool history / router cache 는 보존 — 같은
+          // user-task 의 연속이라 reasoning context 가 끊기면 안 됨.
+          //
+          // 0.7.6 — StrictMode 이중 fire 차단. React.StrictMode 가 dev 에서
+          // setMessages 의 updater 를 두 번 호출해 invariant 검사함. 이전
+          // 구현은 updater 안에서 queueMicrotask(fireChat) 를 호출해 두 개의
+          // 동시 fireChat 가 발사 → 두 개의 LLM 요청이 같은 user-task 에
+          // interleave 되며 cap counter 무력화 (사용자 보고 "auto continue
+          // 무한 시도"). advanceAgentLoop 에는 이미 같은 fix 가 있었는데
+          // 0.7.2 의 form guard 추가 시 누락. `fired` flag 로 한 번만 schedule.
+          let fired = false;
+          setMessages((prev: UiMessage[]) => {
+            const next = [...prev, userMsg];
+            if (!fired) {
+              fired = true;
+              queueMicrotask(() => {
+                if (agentStoppedRef.current) return;
+                fireChatRef.current?.(next, agentVerifiedExcerptsRef.current);
+              });
+            }
+            return next;
+          });
+          return;
+        }
+      }
+
       // 정상 종료 (manual 모드 또는 agent의 finishReason='stop').
       agentTurnDepthRef.current = 0;
       setAgentTurn?.(0);
@@ -793,6 +1006,13 @@ export function useChatStreaming(
       setStreaming(false);
       handleRef.current = null;
       assistantIdRef.current = null;
+      // 0.7.2 — 정상 종료 시 form guard 상태 reset (다음 사용자 task 가
+      // 같은 conversation 안에 와도 깨끗한 상태로 시작).
+      formGuardNudgeCountRef.current = 0;
+      askForMissingNudgedRef.current = false;
+      formStateRef.current = null;
+      getPageSvgCalledRef.current = false;
+      planItemsRef.current = [];
       // chunk 99 follow-up — Plan mode auto-disengage. plan 응답 1턴은
       // 의도상 "다음 turn dry-run"; 응답 완료 후 자동으로 토글 off.
       // 사용자가 다음 메시지를 보내면 한 번은 정상 모드로 (검토 결과
@@ -855,12 +1075,17 @@ export function useChatStreaming(
       // active viewer's IR.
       // Phase 3 — Agent 모드는 toolUses / toolResult 도 같이 직렬화.
       // OpenAI 어댑터가 native (tool_calls / role='tool') 로 변환한다.
-      const messages: ChatMessage[] = history.map((m) => ({
+      const rawMessages: ChatMessage[] = history.map((m) => ({
         role: m.role,
         content: m.content,
         toolUses: m.toolUses,
         toolResult: m.toolResult,
       }));
+      // 0.7.27/0.7.33 — context 압축. 매 턴 history 전체 재전송이라 누적
+      // 비용↑. 오래된 페이지 렌더 이미지는 최신 1장만 + 오래된 대형 read
+      // 결과(getEmptyFormFields 등)는 최근 N개 외 trim. call/result pairing
+      // 보존, 최근/작은/에러 결과는 무변경. (mode 감지는 원본 history 사용.)
+      const messages = compactAgentHistory(rawMessages);
 
       const refOutlines = collectReferenceOutlines(
         referencePaths,
@@ -894,14 +1119,38 @@ export function useChatStreaming(
       // chunk 99 follow-up — plan mode suffix. catalog 가 read-only 로
       // 필터링되므로 모델은 write 호출 자체가 불가능. suffix 로 "plan 만
       // 작성" 지시 + 사용자 검토 흐름 안내.
+      // 0.7.1 — Task-Mode detection. 가장 최근 getDocumentSummary tool
+      // result 의 content prefix 를 detector 에 전달. content 가 `[form:
+      // N tables, M empty cells ...]` 로 시작하면 form-fill 자동 진입.
+      // 사용자가 manual override 한 경우 그 값 우선 (opts.modeOverride).
+      let docSummaryPrefix = '';
+      for (let i = history.length - 1; i >= 0; i--) {
+        const m = history[i];
+        if (m.role !== 'tool' || !m.toolResult) continue;
+        const c = m.toolResult.content ?? '';
+        // getDocumentSummary 결과는 JSON-stringified string 으로 들어와서
+        // 처음에 따옴표가 있을 수 있음. 둘 다 매칭.
+        if (c.includes('[form:')) {
+          docSummaryPrefix = c.slice(0, 200);
+          break;
+        }
+      }
+      const modeContext = detectMode({
+        docSummaryPrefix,
+        lastUserMessage: '',
+        userOverride: opts.modeOverride ?? null,
+      });
+      currentModeRef.current = modeContext;
+      opts.setModeContext?.(modeContext);
+      const baseAgentPrompt = planModeNow
+        ? SYSTEM_PROMPT_AGENT_GUIDE + SYSTEM_PROMPT_PLAN_MODE_SUFFIX
+        : SYSTEM_PROMPT_AGENT_GUIDE;
       messages.unshift({
         role: 'system',
-        content: planModeNow
-          ? SYSTEM_PROMPT_AGENT_GUIDE + SYSTEM_PROMPT_PLAN_MODE_SUFFIX
-          : SYSTEM_PROMPT_AGENT_GUIDE,
+        content: appendModePrompt(baseAgentPrompt, modeContext),
       });
 
-      const request: ChatRequest = { provider, model, messages };
+      const request: ChatRequest = { provider, model, messages, modeContext };
       // chunk 99 — LLM 기반 tool 라우터. 사용자 선택 모델로 router LLM 호출
       // → JSON tool 이름 배열 응답 → 본 LLM 호출에 그 subset 만 주입. 60+
       // 의 tool catalog 전체를 본 turn 마다 노출하면 (a) NIM hosted 모델
@@ -913,9 +1162,12 @@ export function useChatStreaming(
         model,
         hasKey: !!opts.hasKey,
         recentToolCalls: agentToolHistoryRef.current,
+        // 0.7.28 — form-fill 모드면 핵심 form 도구(replaceTextInCell /
+        // getPageSvg / getTextRange)를 router 선택과 무관하게 보장.
+        mode: modeContext.primary,
       });
       const allowed = new Set(selection.tools);
-      request.tools = getAhwpToolCatalog()
+      request.tools = getAhwpToolCatalog(modeContext)
         .filter((d) => allowed.has(d.name))
         // chunk 99 follow-up — plan mode 일 땐 catalog 를 read-only 로
         // 한정. 모델이 write 도구를 호출하려고 시도해도 catalog 에 없어
@@ -965,6 +1217,12 @@ export function useChatStreaming(
     // 0.4.19 — 새 user turn 시작 시 router 이력 + cache reset.
     agentToolHistoryRef.current = [];
     resetRouterCache();
+    // 0.7.2 — 새 user-task 시작 시 form guard 상태 reset.
+    formGuardNudgeCountRef.current = 0;
+    askForMissingNudgedRef.current = false;
+    formStateRef.current = null;
+    getPageSvgCalledRef.current = false;
+    planItemsRef.current = [];
 
     // Per-chip stale verification — chunk 20. Each chip's anchor is
     // re-read from the IR. Fresh = pass through. Relocated = update
@@ -1060,6 +1318,12 @@ export function useChatStreaming(
       const trimmed = text.trim();
       if (trimmed.length === 0 || streaming) return;
       agentStoppedRef.current = false;
+      // 0.7.2 — 새 user-task 시작 시 form guard 상태 reset.
+      formGuardNudgeCountRef.current = 0;
+      askForMissingNudgedRef.current = false;
+      formStateRef.current = null;
+      getPageSvgCalledRef.current = false;
+      planItemsRef.current = [];
       const userMsg: UiMessage = {
         id: newId(),
         role: 'user',
@@ -1101,6 +1365,12 @@ export function useChatStreaming(
     (assistantId: string) => {
       if (streaming) return;
       agentStoppedRef.current = false;
+      // 0.7.2 — 재생성 시에도 form guard reset.
+      formGuardNudgeCountRef.current = 0;
+      askForMissingNudgedRef.current = false;
+      formStateRef.current = null;
+      getPageSvgCalledRef.current = false;
+      planItemsRef.current = [];
       const idx = messages.findIndex((m: any) => m.id === assistantId);
       if (idx === -1) return;
       const history = messages.slice(0, idx);
@@ -1166,6 +1436,13 @@ export function useChatStreaming(
     assistantBufferRef.current = '';
     setStreaming(false);
     assistantIdRef.current = null;
+    // 0.7.2 — stop 시에도 form guard reset (사용자가 명시 중단 했으니
+    // 자동 재진입 방지).
+    formGuardNudgeCountRef.current = 0;
+    askForMissingNudgedRef.current = false;
+    formStateRef.current = null;
+    getPageSvgCalledRef.current = false;
+    planItemsRef.current = [];
   }, []);
 
   // chunk 97 — turn finalization helper. 모든 tool 결과가 모이면 호출되어
@@ -1244,9 +1521,41 @@ export function useChatStreaming(
       assistantIdRef.current = null;
       return;
     }
-    setMessages((prev: any) => {
-      const toolMsgs: UiMessage[] = toolResults.map((r) => {
+    // 0.6.14 — root-cause fix for "No tool call found for function call
+    // output with call_id ..." 400.
+    //
+    // 이전 구현은 setMessages 의 updater 안에서 toolMsgs (각 id 가
+    // newId() 로 매번 생성됨) 를 만들고 queueMicrotask 로 fireChat 를
+    // schedule 했음. React StrictMode (src/main.tsx 의 <React.StrictMode>)
+    // 는 dev 에서 setState updater 를 두 번 호출해 invariant 검사함 —
+    // updater 안의 side effect (queueMicrotask + fireChat) 가 두 번 발화
+    // → 두 개의 동시 OpenAI 요청이 같은 turn 에 발사 → 두 응답이 같은
+    // refs (agentToolUsesRef / assistantIdRef) 에 interleave 되며 tool
+    // call/result pairing 이 깨짐. 결과적으로 어느 한 stream 의 assistant
+    // 가 toolUses 일부를 잃어 다음 turn 에 orphan function_call_output
+    // 이 생기고 OpenAI 가 400 반환.
+    //
+    // Fix:
+    //  (a) toolMsgs 를 updater 밖에서 단 한 번 생성 — newId() 가 두 번
+    //      불려 ID 가 매번 달라지는 일을 차단.
+    //  (b) queueMicrotask 는 updater 안에서 호출하되 `fired` flag 로
+    //      dedup — StrictMode 가 updater 를 두 번 호출해도 fireChat 는
+    //      정확히 한 번만 schedule.
+    //
+    // Note: queueMicrotask 를 updater 밖에 두는 변형은 React 의 commit
+    // 타이밍보다 microtask 가 먼저 실행되는 경우가 있어 (next snapshot
+    // 이 null 일 때 fireChat 가 skip) Turn 2 가 무한 대기에 빠질 수 있어
+    // 채택하지 않음. updater 안에 두면 commit 시점에 정확히 한 번만
+    // schedule 되고, queueMicrotask 의 callback 은 다음 microtask 에서
+    // 안전하게 실행됨.
+    // 0.6.20 — getPageSvg 결과는 SVG → PNG 변환해 imageBase64 로 첨부.
+    // vision-capable provider 가 model 에 image 도 함께 전달 → AI 가 직접
+    // 시각 검증 가능. 변환 실패면 text content 만으로 graceful degrade.
+    const toolMsgs: UiMessage[] = await Promise.all(
+      toolResults.map(async (r) => {
         let content: string;
+        let imageBase64: string | undefined;
+        let imageMediaType: 'image/png' | undefined;
         if (r.ok) {
           if (r.data !== undefined) {
             let json: string;
@@ -1262,6 +1571,19 @@ export function useChatStreaming(
             const cap = isReadOnlyTool(r.name) ? 16384 : 4096;
             if (json.length > cap) json = json.slice(0, cap) + '…';
             content = json;
+            // getPageSvg 결과: { pageIdx, svg, truncated, originalBytes? }.
+            // SVG 추출 후 PNG 변환. tool result content (json) 은 그대로
+            // 두고 imageBase64 만 추가 — text 기반 모델/provider 도 영향 X.
+            if (r.name === 'getPageSvg') {
+              const svg = (r.data as { svg?: unknown } | undefined)?.svg;
+              if (typeof svg === 'string' && svg.length > 0) {
+                const png = await svgToPngBase64(svg, { maxWidth: 1280 });
+                if (png) {
+                  imageBase64 = png.base64;
+                  imageMediaType = 'image/png';
+                }
+              }
+            }
           } else {
             // chunk 99 follow-up — write 성공 시 상태 hint 를 모델에
             // 알려서 retry / verification 판단 도움. e.g. "ok: insertText
@@ -1278,16 +1600,29 @@ export function useChatStreaming(
           id: newId(),
           role: 'tool' as const,
           content,
-          toolResult: { id: r.id, content, isError: !r.ok },
+          toolResult: {
+            id: r.id,
+            content,
+            isError: !r.ok,
+            ...(imageBase64 && imageMediaType
+              ? { imageBase64, imageMediaType }
+              : {}),
+          },
         };
-      });
+      }),
+    );
+    let fired = false;
+    setMessages((prev: UiMessage[]) => {
       const next = [...prev, ...toolMsgs];
-      queueMicrotask(() => {
-        // chunk 99 follow-up — stop 버튼이 mid-loop 에 눌리면 다음
-        // turn 진입을 차단. tool 결과 메시지는 그대로 history 에 남음.
-        if (agentStoppedRef.current) return;
-        fireChatRef.current?.(next, agentVerifiedExcerptsRef.current);
-      });
+      if (!fired) {
+        fired = true;
+        queueMicrotask(() => {
+          // chunk 99 follow-up — stop 버튼이 mid-loop 에 눌리면 다음
+          // turn 진입을 차단. tool 결과 메시지는 그대로 history 에 남음.
+          if (agentStoppedRef.current) return;
+          fireChatRef.current?.(next, agentVerifiedExcerptsRef.current);
+        });
+      }
       return next;
     });
     assistantBufferRef.current = '';
@@ -1332,9 +1667,18 @@ export function useChatStreaming(
             reason: 'dispatcher-unavailable',
           });
         } else {
+          // 0.7.11 — pending 승인 dispatch 에도 sub-agent context 전달.
+          const subAgentContext: SubAgentContext = {
+            provider: providerRef.current,
+            model: modelRef.current,
+            parentMode: currentModeRef.current?.primary ?? 'free-authoring',
+            baseSystemPrompt: SYSTEM_PROMPT_AGENT_GUIDE,
+            targetPath: turnTargetPathRef.current,
+          };
           const out = await dispatcher(
             [{ ok: true, call }],
             turnTargetPathRef.current,
+            subAgentContext,
           );
           const first = out[0];
           if (first && first.ok) {
@@ -1419,6 +1763,7 @@ export function useChatStreaming(
     agentToolUsesRef,
     agentTurnDepthRef,
     agentVerifiedExcerptsRef,
+    currentModeRef,
     resolveApproval,
     requestPlanSkip: () => {
       planSkipNextRef.current = true;

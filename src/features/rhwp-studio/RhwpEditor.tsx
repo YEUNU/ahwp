@@ -24,6 +24,10 @@ import {
   type JSX,
 } from 'react';
 import { RhwpBridge } from '@/lib/rhwp-bridge';
+import {
+  dispatchForwardedKeydown,
+  type ForwardedKeydown,
+} from './keydown-forward';
 
 /** ahwp-studio 프로토콜 — electron/rhwp-studio-protocol.ts 와 정합. */
 const STUDIO_URL = 'ahwp-studio://main/index.html';
@@ -129,6 +133,13 @@ export const RhwpEditor = forwardRef<RhwpEditorHandle, RhwpEditorProps>(
       let local: RhwpBridge | null = null;
       let cancelled = false;
 
+      // 0.7.5 — iframe 안의 keydown 을 parent 로 forward. iframe 의 main.ts
+      // 가 capture 단계에서 모디파이어 / F-key 만 골라 postMessage 로 전송.
+      // 본 effect 가 그 event 를 받아 KeyboardEvent 합성 후 window 에 dispatch
+      // → AppShell 의 글로벌 onKey 핸들러 (⌘K / ⌘W / ⌘⇧F / ⌘⇧O / F6 /
+      // Alt+L/T/P) 가 iframe 포커스 상태에서도 정상 동작.
+      let unsubKeydown: (() => void) | null = null;
+
       const handleLoad = (): void => {
         // iframe.load 가 여러 번 fire 될 수 있음 — 첫 번째만 받는다.
         if (local) return;
@@ -136,6 +147,13 @@ export const RhwpEditor = forwardRef<RhwpEditorHandle, RhwpEditorProps>(
         local.ready(readyTimeoutMs).then(
           () => {
             if (cancelled || !local) return;
+            // bridge ready 이후 keydown 이벤트 구독 시작. iframe 의 main.ts
+            // 가 modifier / F-key 만 골라 보내므로 noise 없음. dispatcher 는
+            // 합성 KeyboardEvent 생성 + window dispatch — testable helper.
+            unsubKeydown = local.on<ForwardedKeydown>('keydown', (data) => {
+              if (!data) return;
+              dispatchForwardedKeydown(data);
+            });
             setBridge(local);
             try {
               onReady?.(local);
@@ -160,6 +178,10 @@ export const RhwpEditor = forwardRef<RhwpEditorHandle, RhwpEditorProps>(
       return () => {
         cancelled = true;
         iframe.removeEventListener('load', handleLoad);
+        if (unsubKeydown) {
+          unsubKeydown();
+          unsubKeydown = null;
+        }
         if (local) {
           local.destroy();
           local = null;

@@ -573,6 +573,7 @@ describe('runTools — Phase E2-finalize 24 restored composites', () => {
       getEmptyFormFields: track('getEmptyFormFields', {
         cellFields: [],
         truncated: false,
+        tableInventory: [],
       }),
       evaluateTableFormula: track('evaluateTableFormula', { value: 42 }),
       // write op composites
@@ -899,5 +900,53 @@ describe('runTools — Phase E2-finalize 24 restored composites', () => {
     if (!results[0].ok) {
       expect(results[0].reason).toBe('applyAlignment-failed');
     }
+  });
+});
+
+// Regression — helper path returned raw RhwpSearchHit ({sec, para, ...})
+// while viewer-handle contract is {sectionIdx, paragraphIdx, ...}. AI
+// chained insertText on undefined fields. tools.ts now remaps in the
+// helper branch.
+describe('runTools — findInDocument shape consistency', () => {
+  it('helper path remaps RhwpSearchHit to {sectionIdx, paragraphIdx, ...}', async () => {
+    const viewer = mockViewer();
+    const helper = {
+      searchAllText: vi.fn(async () => [
+        {
+          sec: 2,
+          para: 5,
+          charOffset: 10,
+          length: 3,
+          cellContext: { parentPara: 1, ctrlIdx: 0, cellIdx: 4, cellPara: 0 },
+        },
+        { sec: 0, para: 0, charOffset: 0, length: 3 },
+      ]),
+    } as unknown as import('@/features/rhwp-studio/bridge-ir-helper').BridgeIrHelper;
+    const items: AhwpPreflightItem[] = [
+      {
+        ok: true,
+        call: { tool: 'findInDocument', args: { query: 'abc' } },
+      },
+    ];
+    const results = await runTools(viewer, items, helper);
+    expect(results[0].ok).toBe(true);
+    if (!results[0].ok) return;
+    const data = results[0].data as Array<{
+      sectionIdx: number;
+      paragraphIdx: number;
+      charOffset: number;
+      length: number;
+      cellContext?: unknown;
+    }>;
+    expect(data).toHaveLength(2);
+    expect(data[0]).toEqual({
+      sectionIdx: 2,
+      paragraphIdx: 5,
+      charOffset: 10,
+      length: 3,
+      cellContext: { parentPara: 1, ctrlIdx: 0, cellIdx: 4, cellPara: 0 },
+    });
+    expect(data[1].sectionIdx).toBe(0);
+    expect(data[1].paragraphIdx).toBe(0);
   });
 });

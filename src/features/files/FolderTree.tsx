@@ -48,7 +48,6 @@ function pickFileIcon(name: string): {
   }
   if (
     lower.endsWith('.xlsx') ||
-    lower.endsWith('.xls') ||
     lower.endsWith('.csv') ||
     lower.endsWith('.tsv')
   ) {
