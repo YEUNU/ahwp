@@ -64,6 +64,21 @@ export function assistantRequestsInput(text: string | undefined): boolean {
   return /[?？]/.test(text ?? '');
 }
 
+/**
+ * 0.7.39 — 모델이 form-fill 모드에서 **아무것도 쓰지 않고**(!formWritesDone)
+ * 충분한 분량의 답을 냈는지. 이는 "양식을 채워달라" 작업의 게으른 조기 종료가
+ * 아니라, 사용자의 audit/검토 요청("누락된 칸을 확인하고 의도적 공란인지
+ * 판단해줘")에 대한 의도적 보고다. 짧은 거짓 완료 선언("양식 작성을 완료
+ * 했습니다")은 여전히 조기 종료로 취급해야 하므로 **분량(substance)** 으로
+ * 가른다 — keyword 매칭이 아니라 길이 기반(언어 불문)이라 system prompt 의
+ * no-heuristic 제약과 무관(런타임 신호일 뿐). 질문형(`?`) 종료는
+ * assistantRequestsInput 이 이미 별도로 존중하므로 여기서 다루지 않는다.
+ */
+export const SUBSTANTIVE_REPORT_MIN_CHARS = 180;
+export function isSubstantiveReport(text: string | undefined): boolean {
+  return (text ?? '').trim().length >= SUBSTANTIVE_REPORT_MIN_CHARS;
+}
+
 export interface FormGuardDecision {
   shouldNudge: boolean;
   /** shouldNudge=true 일 때 사용자 메시지로 inject 할 텍스트. */
@@ -78,6 +93,7 @@ export interface FormGuardDecision {
     | 'no-visual-verify'
     | 'plan-incomplete'
     | 'body-edit-not-form-fill'
+    | 'deliberate-report'
     | 'ask-for-missing';
 }
 
@@ -196,6 +212,21 @@ export function decideFormGuardNudge(input: FormGuardInput): FormGuardDecision {
         `flip it to completed once its grounded cells are written.`,
       reason: 'plan-incomplete',
     };
+  }
+
+  // Case R (0.7.39): 모델이 아직 아무것도 안 썼는데(!formWritesDone) 충분한
+  // 분량의 답을 냈다면, 이는 채우기 작업의 조기 give-up 이 아니라 사용자의
+  // audit/검토 요청에 대한 **의도적 보고**다 (예: "누락된 칸 확인하고 의도적
+  // 공란인지 진짜 누락인지 판단해줘"). 이때 "N개 남았으니 채워라
+  // (empty-cells-remain)" auto-continue 를 돌리면 (a) grounding 상 채울 수 없는
+  // 칸을 날조로 떠밀거나 (b) 같은 보고를 maxNudges 만큼 반복하게 된다 (실제
+  // 사용자 리포트: audit 요청인데 "적용 중…" 반복). 질문형(`?`) 종료는 위
+  // awaiting-user-input 이, 짧은 거짓 완료 선언("완료했습니다")은 아래 Case 2
+  // 가 각각 처리 — 분량(substance)이 둘을 가른다. plan-incomplete 보다 뒤에
+  // 둬, 계획을 세워두고 실행을 안 한 채 길게 보고만 한 fill 작업은 여전히
+  // plan nudge 가 잡게 한다.
+  if (!input.formWritesDone && isSubstantiveReport(input.assistantText)) {
+    return { shouldNudge: false, reason: 'deliberate-report' };
   }
 
   // Case 2 (0.7.30 — 좁힘): 빈 셀이 남아있고 **아직 아무것도 안 채웠을 때만**

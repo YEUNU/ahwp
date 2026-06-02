@@ -159,6 +159,18 @@ describe('SYSTEM_PROMPT_AGENT_GUIDE — form-fill behavior contracts', () => {
     expect(lower).toContain('leave the cell blank rather than guessing');
   });
 
+  // 니즈 N6 (0.7.39) — "중간보고서 읽고 누락 확인/판단" = audit 요청.
+  // 채우려 들지 말고(read-only) 셀 단위로 의도적 공란 vs 진짜 누락을 단정.
+  // hedge("일부"/"확인 필요") 금지. 사용자 리포트: audit 인데 fill 루프 + 모호.
+  it('encodes a read-only audit mode distinct from filling (per-cell verdict, no writes)', () => {
+    expect(lower).toMatch(/read-only audit|audit vs\.? fill|review the form/);
+    // audit 는 셀을 쓰지 않는다는 점이 명시돼야.
+    expect(lower).toMatch(/do not write|without (filling|writing)/);
+    // 의도적 공란 vs 실제 누락 판정을 명시 (fill 과 같은 신호 재사용).
+    expect(lower).toContain('intentional blank');
+    expect(lower).toContain('real omission');
+  });
+
   // 니즈 N5 — vision self-verification (0.7.24, 한계 #3). getPageSvg 가
   // 렌더 이미지를 모델에 돌려주므로 "넌 SVG 못 본다(future)" 식 stale 안내가
   // 다시 끼어들지 않게 가드. 완료 전 시각 검증으로 의미 오류를 잡게.
