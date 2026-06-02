@@ -6,6 +6,18 @@
 
 ## [Unreleased]
 
+## [0.7.40] - 2026-06-02
+
+### Fixed — 앱이 닫히지 않던 문제 (quit hang)
+
+종료(Cmd+Q / 창 닫기) 시 `will-quit` 정리 단계가 chokidar 파일 워처의
+`.close()` 를 await 하는데, macOS fsevents 백엔드에서 이 promise 가 stall 하면
+`app.exit(0)` 가 영영 호출되지 않아 앱이 떠 있는 채로 안 닫혔음.
+
+- `will-quit` 정리를 2초 deadline 과 race — 워처 close 가 멈춰도 `app.exit(0)`
+  가 보장 발화. 정리는 best-effort, 종료는 필수. 타이머는 `unref()` 라 자체로
+  프로세스를 살려두지 않음. 재진입 가드도 추가.
+
 ## [0.7.39] - 2026-06-02
 
 ### Fixed — "양식 읽고 누락 확인/판단" 요청이 채우기 루프로 하이재킹되던 문제

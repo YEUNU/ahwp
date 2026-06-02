@@ -246,20 +246,33 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
+let quitting = false;
 app.on('will-quit', (e) => {
   // Release the chokidar watcher before exit. This is async so we
-  // gate the quit with `e.preventDefault()` and re-call `app.quit()`
+  // gate the quit with `e.preventDefault()` and re-call `app.exit()`
   // once teardown finishes. Also clear the userData/temp dir — file:new
   // creates `new-<timestamp>.hwp` files there as scratch buffers; the
   // user only persists them via Save As, after which the temp copy is
   // unreferenced.
+  if (quitting) return; // re-entrancy guard (will-quit can fire again)
+  quitting = true;
   e.preventDefault();
   const tempDir = path.join(app.getPath('userData'), 'temp');
-  void Promise.allSettled([
+  const cleanup = Promise.allSettled([
     shutdownFolderIpc(),
     teardownTabsWatcher(),
     rm(tempDir, { recursive: true, force: true }),
-  ]).finally(() => {
+  ]);
+  // Guarantee exit even if a watcher.close() never resolves — chokidar's
+  // fsevents backend can stall the close() promise on macOS, and with no
+  // ceiling the app would hang open forever ("앱이 안 닫힘"). Cleanup is
+  // best-effort; quitting is not optional. Race it against a short deadline
+  // so app.exit(0) always fires. The timer is unref'd so it never itself
+  // keeps the process alive.
+  const deadline = new Promise<void>((resolve) => {
+    setTimeout(resolve, 2000).unref();
+  });
+  void Promise.race([cleanup, deadline]).finally(() => {
     app.exit(0);
   });
 });
