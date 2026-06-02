@@ -468,7 +468,14 @@ test.describe('Phase 7 — live OpenAI form-fill verification', () => {
     await launched.close();
   });
 
-  test('form-fill — "이 양식 채워줘" → 빈 표 칸에 sentinel 기입', async () => {
+  // 0.7.35 — test.fixme. (1) afterEach 의 diff-card / app close 가 "Page.handle
+  // JavaScriptDialog: No dialog is showing" + worker teardown timeout 으로
+  // 트립 (chat-rhwp-form-fill.spec.ts:156 과 동일한 알려진 harness race). (2)
+  // 라이브 모델 비결정성으로 단일-셀 sentinel 기입이 run 마다 불안정. 라이브
+  // form-fill 의 end-to-end 검증은 chat-form-fill-live.spec.ts 가 더 견고하게
+  // 커버(export+render, diff-accept 미사용 → teardown race 없음)하므로 본
+  // 중복 케이스는 harness race 해소 시까지 fixme.
+  test.fixme('form-fill — "이 양식 채워줘" → 빈 표 칸에 sentinel 기입', async () => {
     const { page } = launched;
     const sentinel = 'AHWPFORM-' + Date.now().toString(36).toUpperCase();
     // 사전 존재 매치 0 확인 (sentinel 은 매 실행 고유).
