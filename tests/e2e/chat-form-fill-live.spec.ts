@@ -36,8 +36,7 @@ const FORM_FIXTURE = path.resolve(
 );
 const OPENAI_KEY = process.env.AHWP_TEST_OPENAI_KEY;
 // 0.7.36 — 라이브 모델명 외부화(.env 의 AHWP_TEST_OPENAI_MODEL override 가능).
-const OPENAI_MODEL =
-  process.env.AHWP_TEST_OPENAI_MODEL ?? 'gpt-5.4-mini-2026-03-17';
+const OPENAI_MODEL = process.env.AHWP_TEST_OPENAI_MODEL ?? 'gpt-5.5';
 
 async function readWasm<T>(
   page: Page,

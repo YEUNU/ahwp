@@ -6,6 +6,24 @@
 
 ## [Unreleased]
 
+## [0.7.38] - 2026-06-02
+
+### Fixed — 최종 문서에 "(예시)" 안내 문구가 남던 문제
+
+사용자 지적: KPI 표 등에서 채울 값이 없는 instruction placeholder("(예시)…")
+를 모델이 **그대로 두고** 끝내, 미완성처럼 보이는 양식이 출력됨.
+
+- form-fill 시스템 프롬프트 강화: grounded 값이 없어 못 채우는 instruction
+  placeholder 는 남기지 말고 `replaceTextInCell`(`text: ""`)로 **비운다**.
+  먼저 사용자에게 값을 물어보되(ask-when-insufficient), 끝내 값이 없으면
+  깨끗한 빈 칸으로 정리 — 다른 작성자(검토자) 몫으로 예약된 칸만 예외.
+
+### Changed — 권장 기본 모델 gpt-5.5
+
+- OpenAI 기본 모델을 `gpt-5.5` 로 상향(이전 `gpt-5.4-mini`). 라이브 검증에서
+  척도 어휘 준수·grounding·날조 방지 품질이 확연히 우수. 기존 default 사용자는
+  자동 마이그레이션(의식적으로 다른 모델을 고른 경우는 유지).
+
 ## [0.7.37] - 2026-06-02
 
 ### Fixed — 모델이 부족 정보를 충분히 안 묻던 문제 (ask-for-missing 부활)

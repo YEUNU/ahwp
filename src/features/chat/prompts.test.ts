@@ -143,6 +143,17 @@ describe('SYSTEM_PROMPT_AGENT_GUIDE — form-fill behavior contracts', () => {
     expect(lower).toContain('instruction');
   });
 
+  // 니즈 N4c' (0.7.38) — grounded 값이 없어 못 채우는 instruction placeholder
+  // 는 그대로 두지 말고 CLEAR(`text: ""`). 라이브에서 "(예시)…" 예시 문구가
+  // 최종 문서에 남던 회귀("placeholder 미제거")를 막는 가드.
+  it('encodes clearing unfillable instruction placeholders (text: "") instead of leaving example text', () => {
+    expect(guide).toContain('text: ""');
+    // 비울 때도 CLEAR 라는 의미가 명시돼야 (그냥 남겨두기 금지).
+    expect(lower).toContain('clear');
+    // 최종 문서에 "(예시)" 류 예시 문구가 남으면 안 된다는 점이 명시돼야.
+    expect(guide).toContain('(예시)');
+  });
+
   // 니즈 N4d — 규정된 어휘/척도를 모르면 추측 말고 비워둔다 (0.7.21).
   it('encodes value-vocabulary adherence with leave-blank-when-unknown', () => {
     expect(lower).toContain('leave the cell blank rather than guessing');

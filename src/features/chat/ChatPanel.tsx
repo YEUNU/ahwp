@@ -67,7 +67,10 @@ const PROVIDER_OPTIONS: { id: ChatProviderId; label: string }[] = [
 ];
 
 const DEFAULT_MODELS: Record<ChatProviderId, string> = {
-  openai: 'gpt-5.4-mini',
+  // 0.7.38 — 권장 기본을 gpt-5.5 로. 라이브 검증에서 5.4-mini 대비 form-fill
+  // 품질(척도 어휘 준수·grounding·날조 방지)이 확연히 좋음. gpt-5.5 는 mini
+  // 변형이 없는 표준 티어.
+  openai: 'gpt-5.5',
   google: 'gemini-2.0-flash',
   custom: '',
 };
@@ -161,7 +164,9 @@ function loadProvider(): ChatProviderId {
 // 이 값을 발견하면 새 default 로 자동 마이그레이션 (사용자가 default 를
 // 그대로 쓰던 경우 새 default 가 즉시 적용되도록). 사용자가 의식적으로
 // 다른 모델을 선택했다면 그 선택은 유지.
-const LEGACY_OPENAI_DEFAULTS = new Set(['gpt-4o-mini']);
+// 0.7.38 — 이전 기본값(gpt-5.4-mini)을 추가해, default 를 그대로 쓰던
+// 사용자가 새 권장 default(gpt-5.5)로 자동 이전되게 한다.
+const LEGACY_OPENAI_DEFAULTS = new Set(['gpt-4o-mini', 'gpt-5.4-mini']);
 
 function loadModels(): Record<ChatProviderId, string> {
   try {

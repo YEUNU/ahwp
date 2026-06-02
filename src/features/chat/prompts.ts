@@ -147,7 +147,7 @@ Fill BOTH. If you only fill the cover sheet's summary cells and stop, the user s
 **Modify existing cells & remove template placeholders:**
 
 The default \`getEmptyFormFields\` response shows only empty cells. Real templates carry two kinds of pre-filled content the AI must still touch:
-1. **Sample / example / instruction text** the template ships with (e.g. parenthetical examples, instruction lines, sample numbers). Visually marked in the original document — typically italic with a non-black \`textColor\`. These are NOT user data; they should be replaced with the actual value or cleared.
+1. **Sample / example / instruction text** the template ships with (e.g. parenthetical examples, instruction lines, sample numbers). Visually marked in the original document — typically italic with a non-black \`textColor\`. These are NOT user data and must NOT remain in the finished form: either replace with the real grounded value, or — if you have no grounded value for that cell — CLEAR it (\`replaceTextInCell\` with \`text: ""\`). Leaving an instruction placeholder untouched is wrong: it ships the report showing literal example text like "(예시)시간당 생산량" instead of a clean blank, which reads as unfinished. A cleared instruction cell is a proper blank; an unfilled one with its example text still showing is not.
 2. **Stale or incorrect content** that a previous turn (or the user) wrote and now needs correction.
 
 Call \`getEmptyFormFields({includeFilled: true})\` to see every cell. Each carries:
@@ -160,6 +160,8 @@ Use \`slotKind\` to pick the tool:
 - \`'instruction'\` → \`replaceTextInCell\` (NEVER \`insertTextInCell\` — that prepends your value to the placeholder, leaves example text behind, corrupts the cell)
 - \`'sub-header'\` → leave alone unless the user asked to relabel
 - \`'content'\` → leave alone unless the user asked to change that exact value
+
+For an \`'instruction'\` cell you cannot fill because the user gave no value for it: first consider whether to ask the user for that value (see the grounding / ask-when-insufficient rules above). But do NOT end the turn with the example placeholder still in the cell — if it stays unfilled, CLEAR it (\`replaceTextInCell\`, \`text: ""\`) so the form ships a clean blank rather than literal "(예시)…" text. The only instruction cells you may leave untouched are ones reserved for a different author (a reviewer's to complete).
 
 \`replaceTextInCell\` is atomic delete-then-insert under one undo. Use it for: (a) clearing template examples, (b) fixing values you wrote earlier in the same conversation, (c) clearing a cell (\`text: ""\`). The coordinates come from the same \`getEmptyFormFields\` response — never invent them.
 
@@ -188,7 +190,7 @@ A correct form is consistent with the document's stated target, not merely full.
 **Verify before announcing completion:**
 
 A form-fill turn is NOT done just because \`cellFields\` of empties shrinks to []. Before emitting the final text summary, run one more \`getEmptyFormFields({includeFilled: true})\` call (scoped with \`parentParaIdx\` if the user only asked about one table). Check four things:
-1. **No placeholder-style cells remain** in the scope you committed to filling. If any \`isEmpty=false\` cell still has italic + non-black \`contentCharShape\`, replace it.
+1. **No placeholder-style cells remain** in the scope you committed to filling. If any \`isEmpty=false\` cell still has italic + non-black \`contentCharShape\`, it's a leftover instruction placeholder — replace it with the real value, or CLEAR it (\`text: ""\`) if you have none. The form must not ship with literal "(예시)…" example text visible.
 2. **Cross-cell consistency.** Values that reference each other must agree — overall progress claims, summary cells vs. detail-row cells, declared targets vs. reported numbers. If two cells imply different facts, decide which is correct and fix the other with \`replaceTextInCell\`.
 3. **No required empties left.** If a cell still empty would make the document incomplete for the user's stated goal, fill it now.
 4. **Visual check (see below).** Render the page(s) you filled with \`getPageSvg\` and actually look at the result. A structural read tells you a cell is non-empty; only the rendered image tells you the value landed in the RIGHT cell and reads correctly. This is where you catch a value sitting in the wrong slot — an identifier / number field holding descriptive text, or a field that expects a prescribed scale term holding a free-form sentence — plus any text overflowing its cell. Fix anything wrong with \`replaceTextInCell\`.

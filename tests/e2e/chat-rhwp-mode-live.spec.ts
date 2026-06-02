@@ -41,8 +41,7 @@ const FIXTURE = path.resolve(
 
 const OPENAI_KEY = process.env.AHWP_TEST_OPENAI_KEY;
 // 0.7.36 — 라이브 모델명 외부화(.env 의 AHWP_TEST_OPENAI_MODEL override 가능).
-const OPENAI_MODEL =
-  process.env.AHWP_TEST_OPENAI_MODEL ?? 'gpt-5.4-mini-2026-03-17';
+const OPENAI_MODEL = process.env.AHWP_TEST_OPENAI_MODEL ?? 'gpt-5.5';
 
 /**
  * 활성 탭의 RhwpEditor iframe 에 postMessage 로 직접 호출. AppShell 의
@@ -137,7 +136,7 @@ test.describe('Phase 7 — live OpenAI tool dispatch verification', () => {
     await page.waitForLoadState('domcontentloaded');
     // OPENAI_KEY 는 위 test.skip 가드를 통과한 시점에 string 보장.
     const keyChecked = OPENAI_KEY!;
-    // Provider = openai, model = gpt-5.4-mini-2026-03-17 (사용자 지정),
+    // Provider = openai, model = OPENAI_MODEL (기본 gpt-5.5, env override 가능),
     // plan-mode OFF (auto execute), key 등록.
     await page.evaluate(
       async ({ key, fixture, model }) => {
