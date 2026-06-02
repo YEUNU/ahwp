@@ -6,6 +6,22 @@
 
 ## [Unreleased]
 
+## [0.7.44] - 2026-06-02
+
+### Removed — 네이티브 메뉴 + ⌘K 의 죽은 다이얼로그 항목 10개
+
+기능 검증 후속(0.7.43): 네이티브 메뉴(보기) + 명령 팔레트 둘 다에 `페이지
+설정`·`머리말/꼬리말`·`책갈피`·`각주`·`스타일 관리`·`그림 속성`·`룰러 토글`·
+`버전 히스토리`·`수식`·`도형` 항목이 있었으나, 해당 다이얼로그가 rhwp-studio
+iframe 으로 이관되며 parent state 가 죽어(discarded) **클릭해도 무동작**이었다
+(경험적 확인). 이 기능들은 편집기 iframe 자체 메뉴바로 정상 접근 가능.
+
+- 죽은 10개 항목을 네이티브 메뉴(electron/menu.ts) + 명령 팔레트
+  (cmdk/items.ts) + dispatch(useDispatchMenuAction) + MenuAction 타입
+  (shared/api.ts) + AppShell discarded state 에서 모두 제거. 동작하는
+  `캐럿 위치의 각주 삭제`(delete:footnote-at-cursor)는 유지. 596 unit green,
+  typecheck OK, 명령 팔레트 클린 렌더 확인.
+
 ## [0.7.43] - 2026-06-02
 
 ### Removed — 죽은 단축키 핸들러 정리 (vestigial)

@@ -29,16 +29,6 @@ export interface UseDispatchMenuActionOptions {
    * 해당 탭으로 라우팅. caller 가 setSettingsTab + setSettingsOpen 묶음
    * 처리 함수를 제공. */
   openSettingsTab: (tab: 'general' | 'ai' | 'shortcuts' | 'about') => void;
-  setPageSetupOpen: Dispatch<SetStateAction<boolean>>;
-  setHfOpen: Dispatch<SetStateAction<boolean>>;
-  setBookmarkOpen: Dispatch<SetStateAction<boolean>>;
-  setFootnoteOpen: Dispatch<SetStateAction<boolean>>;
-  setStyleManagerOpen: Dispatch<SetStateAction<boolean>>;
-  setEquationOpen: Dispatch<SetStateAction<boolean>>;
-  setShapeOpen: Dispatch<SetStateAction<boolean>>;
-  setPicturePropsOpen: Dispatch<SetStateAction<boolean>>;
-  setShowRuler: Dispatch<SetStateAction<boolean>>;
-  setVersionHistoryOpen: Dispatch<SetStateAction<boolean>>;
 }
 
 export function useDispatchMenuAction(
@@ -53,16 +43,6 @@ export function useDispatchMenuAction(
     saveAsCurrent,
     setSettingsOpen,
     openSettingsTab,
-    setPageSetupOpen,
-    setHfOpen,
-    setBookmarkOpen,
-    setFootnoteOpen,
-    setStyleManagerOpen,
-    setEquationOpen,
-    setShapeOpen,
-    setPicturePropsOpen,
-    setShowRuler,
-    setVersionHistoryOpen,
   } = opts;
 
   const dispatchMenuAction = useCallback(
@@ -157,14 +137,6 @@ export function useDispatchMenuAction(
         setSettingsOpen(true);
       } else if (action === 'view:about') {
         openSettingsTab('about');
-      } else if (action === 'view:page-setup') {
-        setPageSetupOpen(true);
-      } else if (action === 'insert:header-footer') {
-        setHfOpen(true);
-      } else if (action === 'insert:bookmark') {
-        setBookmarkOpen(true);
-      } else if (action === 'insert:footnote') {
-        setFootnoteOpen(true);
       } else if (action === 'delete:footnote-at-cursor') {
         // 0.4.25 — lib 0.7.11. getFootnoteAtCursor → deleteFootnote.
         const v = activeViewerRef();
@@ -184,18 +156,6 @@ export function useDispatchMenuAction(
         } | null;
         if (!info || typeof info.controlIdx !== 'number') return;
         v.irDeleteFootnote(sec, info.paragraphIdx ?? para, info.controlIdx);
-      } else if (action === 'view:style-manager') {
-        setStyleManagerOpen(true);
-      } else if (action === 'insert:equation') {
-        setEquationOpen(true);
-      } else if (action === 'insert:shape') {
-        setShapeOpen(true);
-      } else if (action === 'view:picture-props') {
-        setPicturePropsOpen(true);
-      } else if (action === 'view:toggle-ruler') {
-        setShowRuler((v) => !v);
-      } else if (action === 'view:version-history') {
-        setVersionHistoryOpen(true);
       } else if (action === 'app:new-window') {
         void window.api.newWindow();
       }
@@ -209,16 +169,6 @@ export function useDispatchMenuAction(
       saveAsCurrent,
       setSettingsOpen,
       openSettingsTab,
-      setPageSetupOpen,
-      setHfOpen,
-      setBookmarkOpen,
-      setFootnoteOpen,
-      setStyleManagerOpen,
-      setEquationOpen,
-      setShapeOpen,
-      setPicturePropsOpen,
-      setShowRuler,
-      setVersionHistoryOpen,
     ],
   );
 

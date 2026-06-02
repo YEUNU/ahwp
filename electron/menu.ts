@@ -148,48 +148,8 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
       { role: 'togglefullscreen', label: '전체 화면' },
       { type: 'separator' },
       {
-        label: '페이지 설정…',
-        click: () => send(getWindow(), 'view:page-setup'),
-      },
-      {
-        label: '머리말 / 꼬리말…',
-        click: () => send(getWindow(), 'insert:header-footer'),
-      },
-      {
-        label: '책갈피…',
-        click: () => send(getWindow(), 'insert:bookmark'),
-      },
-      {
-        label: '각주…',
-        click: () => send(getWindow(), 'insert:footnote'),
-      },
-      {
         label: '캐럿 위치의 각주 삭제',
         click: () => send(getWindow(), 'delete:footnote-at-cursor'),
-      },
-      {
-        label: '스타일 관리…',
-        click: () => send(getWindow(), 'view:style-manager'),
-      },
-      {
-        label: '수식 미리보기…',
-        click: () => send(getWindow(), 'insert:equation'),
-      },
-      {
-        label: '사각형 도형…',
-        click: () => send(getWindow(), 'insert:shape'),
-      },
-      {
-        label: '그림 속성…',
-        click: () => send(getWindow(), 'view:picture-props'),
-      },
-      {
-        label: '룰러 토글',
-        click: () => send(getWindow(), 'view:toggle-ruler'),
-      },
-      {
-        label: '버전 히스토리…',
-        click: () => send(getWindow(), 'view:version-history'),
       },
       {
         label: '설정…',

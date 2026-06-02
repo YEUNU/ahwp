@@ -84,18 +84,10 @@ export default function AppShell() {
   const [settingsTab, setSettingsTab] = useState<
     'general' | 'ai' | 'shortcuts' | 'about'
   >('ai');
-  // Phase 7 E2 — pageSetup setter 만 유지 (메뉴 액션이 menu:page-setup
-  // 을 트리거할 수 있어서 stub. dialog 본체는 rhwp-studio 내부 UI 가 처리).
-  const [, setPageSetupOpen] = useState(false);
-  // 나머지 dialog open state 들은 모두 rhwp-studio 가 자체 UI 로 제공 —
-  // setters 만 메뉴 액션 호환용으로 stub.
-  const [, setHfOpen] = useState(false);
-  const [, setBookmarkOpen] = useState(false);
-  const [, setFootnoteOpen] = useState(false);
-  const [, setStyleManagerOpen] = useState(false);
-  const [, setEquationOpen] = useState(false);
-  const [, setShapeOpen] = useState(false);
-  const [, setPicturePropsOpen] = useState(false);
+  // 0.7.43 — 페이지 설정 / 머리말꼬리말 / 책갈피 / 각주 / 스타일 / 수식 /
+  // 도형 / 그림 속성 / 룰러 / 버전 히스토리 다이얼로그는 모두 rhwp-studio
+  // iframe 자체 메뉴바가 제공한다. 이전엔 ahwp 네이티브 메뉴 + ⌘K 에도 중복
+  // 항목이 있었으나 parent state 가 죽어(discarded) 클릭해도 무동작이라 제거.
   // R3 (2차) — notice → useNotice hook.
   const { notice, showNotice, dismissNotice } = useNotice();
   // chunk 50 — command palette (⌘K). Open state lives here so any
@@ -124,10 +116,6 @@ export default function AppShell() {
   // dialog/outline UI lives in the rhwp-studio iframe now; the parent
   // toggle set discarded state and did nothing.)
   const [, setOutlineKey] = useState(0);
-  // showRuler 는 StudioViewer 전용이었음 — 폐기. setter stub.
-  const [, setShowRuler] = useState(false);
-  // versionHistoryOpen 도 폐기 — rhwp-studio 의 자체 history UI 사용.
-  const [, setVersionHistoryOpen] = useState(false);
   const sessionRestoredRef = useRef(false);
 
   // R3 (2차) — tab management → useTabManagement hook.
@@ -420,16 +408,6 @@ export default function AppShell() {
     saveAsCurrent,
     setSettingsOpen,
     openSettingsTab,
-    setPageSetupOpen,
-    setHfOpen,
-    setBookmarkOpen,
-    setFootnoteOpen,
-    setStyleManagerOpen,
-    setEquationOpen,
-    setShapeOpen,
-    setPicturePropsOpen,
-    setShowRuler,
-    setVersionHistoryOpen,
   });
 
   // Build the command-palette item list. The lint rule `react-hooks/refs`
