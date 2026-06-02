@@ -20,6 +20,11 @@ import {
   registerRhwpStudioSchemeAsPrivileged,
 } from './rhwp-studio-protocol';
 
+// Replaced at build time by Vite's `define` (see vite.config.ts) with the
+// package.json version string. `undefined` only if the define didn't apply
+// (e.g. running the un-built source) — the IPC handler falls back then.
+declare const __APP_VERSION__: string | undefined;
+
 // chunk 63 — initialize crash reporter as early as possible. Native
 // minidumps are wired before any window opens; the JS handlers catch
 // errors that fire during startup.
@@ -133,7 +138,14 @@ function registerIpcHandlers(): void {
       arch: string;
       rhwpCore: string;
     } => ({
-      app: app.getVersion(),
+      // __APP_VERSION__ is replaced at build time with package.json's
+      // version (see vite.config.ts). app.getVersion() returns Electron's
+      // version when unpackaged, so prefer the build constant; fall back to
+      // app.getVersion() only if the define somehow didn't apply.
+      app:
+        typeof __APP_VERSION__ === 'string'
+          ? __APP_VERSION__
+          : app.getVersion(),
       electron: process.versions.electron ?? '?',
       chrome: process.versions.chrome ?? '?',
       node: process.versions.node ?? '?',

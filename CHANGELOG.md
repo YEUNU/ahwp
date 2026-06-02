@@ -6,6 +6,20 @@
 
 ## [Unreleased]
 
+## [0.7.42] - 2026-06-02
+
+### Fixed — 정보(About) 화면의 앱 "버전" 오표시
+
+About pane 의 "버전" 이 앱 버전(0.7.x)이 아니라 Electron 버전(41.5.0)을
+보여줬음. 원인: `app.getVersion()` 은 앱이 unpackaged 로 실행될 때(dev / e2e
+launch — 앱 번들 매니페스트 없음) Electron 자체 버전을 반환.
+
+- 빌드 타임에 package.json 의 version 을 `__APP_VERSION__` 상수로 주입
+  (Vite `define`) → dev·packaged 모두 올바른 앱 버전 표시. define 미적용 시
+  `app.getVersion()` 으로 폴백.
+- UI 시각 점검용 스크린샷 캡처 스펙 추가(`tests/e2e/ui-audit.spec.ts`,
+  출력은 `.ui-audit/` — gitignore).
+
 ## [0.7.41] - 2026-06-02
 
 ### Changed — intent-aware 라우팅 (audit vs fill 근본 분리)
