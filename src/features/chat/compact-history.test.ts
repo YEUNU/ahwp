@@ -185,4 +185,47 @@ describe('compactAgentHistory (0.7.33 — 통합)', () => {
     // 오래된 대형 read 일부 trim (전체 9 tool-result, keep 6 → 앞 3 trim 대상).
     expect(out[1].toolResult?.content).toContain('trimmed');
   });
+
+  // 감사 제안 엣지 — 오래된 이미지 결과는 image strip(content→마커)된 뒤
+  // text-aging 에서 이중처리(trim)되지 않는다. content 가 작은 마커라 trim
+  // 대상 아님 + 이미 image strip 된 결과는 compactOldLargeReads 가 건드리지
+  // 않는다(작은 content). 즉 'page render omitted' 마커가 'trimmed' 로
+  // 덮어써지지 않는다.
+  it('오래된 이미지 결과: image strip 후 text-aging 이중처리 안 함', () => {
+    const oldImg: ChatMessage = {
+      role: 'tool',
+      content: 'X'.repeat(5000),
+      toolResult: {
+        id: 'oi',
+        content: 'X'.repeat(5000),
+        imageBase64: 'OLD',
+        imageMediaType: 'image/png',
+      },
+    };
+    const newImg: ChatMessage = {
+      role: 'tool',
+      content: 'svg',
+      toolResult: {
+        id: 'ni',
+        content: 'svg',
+        imageBase64: 'NEW',
+        imageMediaType: 'image/png',
+      },
+    };
+    // oldImg + 6 filler tool-results + newImg → oldImg 는 oldest.
+    const filler = Array.from(
+      { length: 6 },
+      (_, i): ChatMessage => ({
+        role: 'tool',
+        content: 'ok',
+        toolResult: { id: `f${i}`, content: 'ok' },
+      }),
+    );
+    const out = compactAgentHistory([oldImg, ...filler, newImg]);
+    // 이미지 strip → content 는 page-render 마커, image 제거.
+    expect(out[0].toolResult?.imageBase64).toBeUndefined();
+    expect(out[0].toolResult?.content).toContain('page render omitted');
+    // text-aging 이 그 마커를 'trimmed' 로 덮어쓰지 않았다 (이중처리 X).
+    expect(out[0].toolResult?.content).not.toContain('trimmed');
+  });
 });

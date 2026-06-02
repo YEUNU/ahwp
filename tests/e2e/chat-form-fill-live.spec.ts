@@ -35,6 +35,9 @@ const FORM_FIXTURE = path.resolve(
   "(참고)(양식) ★'25년 제조AI특화 중간보고서, 완료보고서 서식자료_260127_01.hwp",
 );
 const OPENAI_KEY = process.env.AHWP_TEST_OPENAI_KEY;
+// 0.7.36 — 라이브 모델명 외부화(.env 의 AHWP_TEST_OPENAI_MODEL override 가능).
+const OPENAI_MODEL =
+  process.env.AHWP_TEST_OPENAI_MODEL ?? 'gpt-5.4-mini-2026-03-17';
 
 async function readWasm<T>(
   page: Page,
@@ -107,17 +110,17 @@ test.describe('LIVE form-fill — 이즈파크/다빈치렌스 예지보전 중�
     await page.waitForLoadState('domcontentloaded');
     const key = OPENAI_KEY!;
     await page.evaluate(
-      async ({ key, fixture }) => {
+      async ({ key, fixture, model }) => {
         window.localStorage.setItem('ahwp:chat:provider', 'openai');
         window.localStorage.setItem(
           'ahwp:chat:models',
-          JSON.stringify({ openai: 'gpt-5.4-mini-2026-03-17' }),
+          JSON.stringify({ openai: model }),
         );
         window.localStorage.setItem('ahwp:chat:plan-mode-default', '0');
         await window.api.secrets.set('openai', key);
         await window.api.session.set({ lastActivePath: fixture });
       },
-      { key, fixture: FORM_FIXTURE },
+      { key, fixture: FORM_FIXTURE, model: OPENAI_MODEL },
     );
     await page.reload();
     await page.waitForLoadState('domcontentloaded');

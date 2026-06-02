@@ -40,6 +40,9 @@ const FIXTURE = path.resolve(
 );
 
 const OPENAI_KEY = process.env.AHWP_TEST_OPENAI_KEY;
+// 0.7.36 — 라이브 모델명 외부화(.env 의 AHWP_TEST_OPENAI_MODEL override 가능).
+const OPENAI_MODEL =
+  process.env.AHWP_TEST_OPENAI_MODEL ?? 'gpt-5.4-mini-2026-03-17';
 
 /**
  * 활성 탭의 RhwpEditor iframe 에 postMessage 로 직접 호출. AppShell 의
@@ -137,17 +140,17 @@ test.describe('Phase 7 — live OpenAI tool dispatch verification', () => {
     // Provider = openai, model = gpt-5.4-mini-2026-03-17 (사용자 지정),
     // plan-mode OFF (auto execute), key 등록.
     await page.evaluate(
-      async ({ key, fixture }) => {
+      async ({ key, fixture, model }) => {
         window.localStorage.setItem('ahwp:chat:provider', 'openai');
         window.localStorage.setItem(
           'ahwp:chat:models',
-          JSON.stringify({ openai: 'gpt-5.4-mini-2026-03-17' }),
+          JSON.stringify({ openai: model }),
         );
         window.localStorage.setItem('ahwp:chat:plan-mode-default', '0');
         await window.api.secrets.set('openai', key);
         await window.api.session.set({ lastActivePath: fixture });
       },
-      { key: keyChecked, fixture: FIXTURE },
+      { key: keyChecked, fixture: FIXTURE, model: OPENAI_MODEL },
     );
     await page.reload();
     await page.waitForLoadState('domcontentloaded');
@@ -433,17 +436,17 @@ test.describe('Phase 7 — live OpenAI form-fill verification', () => {
     await page.waitForLoadState('domcontentloaded');
     const keyChecked = OPENAI_KEY!;
     await page.evaluate(
-      async ({ key, fixture }) => {
+      async ({ key, fixture, model }) => {
         window.localStorage.setItem('ahwp:chat:provider', 'openai');
         window.localStorage.setItem(
           'ahwp:chat:models',
-          JSON.stringify({ openai: 'gpt-5.4-mini-2026-03-17' }),
+          JSON.stringify({ openai: model }),
         );
         window.localStorage.setItem('ahwp:chat:plan-mode-default', '0');
         await window.api.secrets.set('openai', key);
         await window.api.session.set({ lastActivePath: fixture });
       },
-      { key: keyChecked, fixture: FORM_FIXTURE },
+      { key: keyChecked, fixture: FORM_FIXTURE, model: OPENAI_MODEL },
     );
     await page.reload();
     await page.waitForLoadState('domcontentloaded');
