@@ -270,14 +270,54 @@ describe('decideFormGuardNudge — Form-Fill 완료 guard (0.7.6 tightened)', ()
     expect(r.reason).toBe('no-visual-verify');
   });
 
-  // 0.7.30 — 핵심 사용자 리포트: "일부러 비웠는데도 auto-continue 돈다".
-  // 모델이 쓰기를 했고(formWritesDone) 시각 검증도 했고 질문/미완료 plan 도
-  // 없으면, 빈 셀이 남아도(의도적 빈칸=grounding) 완료를 존중 — Case 2 가
-  // 더 이상 "계속 채워" nudge 를 안 쏜다.
-  it('채움 + 검증 + 빈셀 많음 + 질문/plan 없음 → 완료 존중 (의도적 빈칸)', () => {
+  // 0.7.30/0.7.37 — "일부러 비웠는데 '계속 채워' 강요"는 안 함(Case 2 좁힘).
+  // 단 0.7.37: 채웠고 빈칸 남고 아직 안 물었으면 완료 전 1회 "모르는 값은
+  // 사용자에게 물어라"(ask-for-missing) — "채우기 강요"(날조)와 "질문"(원하는
+  // 행동)은 다르므로 후자만.
+  it('채움 + 검증 + 빈셀 많음 + 안 물음 → ask-for-missing nudge (질문 유도)', () => {
     const r = decideFormGuardNudge({
       ...BASE,
       formState: { emptyCellsRemaining: 180, tableSummary: 'p=42 (180 empty)' },
+      getPageSvgCalled: true,
+      formWritesDone: true,
+    });
+    expect(r.shouldNudge).toBe(true);
+    expect(r.reason).toBe('ask-for-missing');
+    expect(r.nudgeText).toContain('ASK the user');
+    expect(r.nudgeText).toContain('Do NOT'); // 날조 금지 명시
+    expect(r.nudgeText).not.toContain('fillFormCells'); // "계속 채워" 강요 아님
+  });
+
+  // ask-for-missing 은 task 당 1회 — 이미 발화(askForMissingDone)했으면 존중.
+  it('채움 + 빈셀 많음 + ask-for-missing 이미 발화 → 완료 존중 (반복 nag 방지)', () => {
+    const r = decideFormGuardNudge({
+      ...BASE,
+      formState: { emptyCellsRemaining: 180, tableSummary: 'p=42 (180 empty)' },
+      getPageSvgCalled: true,
+      formWritesDone: true,
+      askForMissingDone: true,
+    });
+    expect(r.shouldNudge).toBe(false);
+  });
+
+  // 모델이 이미 질문하며 멈췄으면 ask-for-missing 발동 안 함(중복 방지).
+  it('채움 + 빈셀 + 모델이 이미 질문 → awaiting-user-input (ask-for-missing 아님)', () => {
+    const r = decideFormGuardNudge({
+      ...BASE,
+      formState: { emptyCellsRemaining: 180, tableSummary: 'p=42 (180 empty)' },
+      getPageSvgCalled: true,
+      formWritesDone: true,
+      assistantText: '나머지 칸 값을 알려주실 수 있나요?',
+    });
+    expect(r.shouldNudge).toBe(false);
+    expect(r.reason).toBe('awaiting-user-input');
+  });
+
+  // 빈 셀 0 이면 물을 게 없으니 ask-for-missing 발동 안 함.
+  it('채움 + 빈셀0 → ask-for-missing 발동 안 함', () => {
+    const r = decideFormGuardNudge({
+      ...BASE,
+      formState: { emptyCellsRemaining: 0, tableSummary: '' },
       getPageSvgCalled: true,
       formWritesDone: true,
     });

@@ -6,6 +6,24 @@
 
 ## [Unreleased]
 
+## [0.7.37] - 2026-06-02
+
+### Fixed — 모델이 부족 정보를 충분히 안 묻던 문제 (ask-for-missing 부활)
+
+사용자 지적: 모델이 KPI 같은 채울 수 있는 칸을 정보 없이 비우면서도 **사용자
+에게 안 물어봄**. 원인: 0.7.30 이 "일부러 비웠는데 '계속 채워' auto-continue
+도는" 문제를 고치며 Case 2 를 `!formWritesDone` 로 좁혔는데, 그 과정에서
+**"부족하면 질문하라"는 런타임 push 까지 같이 제거**됐다. ("채우기 강요"=날조
+유발=나쁨, "질문"=원하는 행동 — 둘을 한꺼번에 죽인 게 문제.)
+
+- form-guard 에 **Case A (ask-for-missing)** 신설: form-fill 쓰기를 했고
+  (formWritesDone) 빈 셀이 남았는데 모델이 안 물으면 → 완료 전 1회 "모르는
+  값은 날조 말고 **사용자에게 물어라**(섹션별 묶어 1회 질문)" nudge. 채우기를
+  강요하지 않음(날조 금지 명시). task 당 1회만(askForMissingDone flag — 반복
+  nag 방지) — 모델이 질문하면 Case 0 가 존중, "더 필요없다" 확인하면 통과.
+  hidden nudge 라 사용자는 모델의 질문만 본다. 빈셀 0 이면 발동 안 함.
+- 회귀 가드 4 cases(ask 발동/1회한정/질문 우선/빈셀0 미발동).
+
 ## [0.7.36] - 2026-06-02
 
 ### Added — getEmptyFormFields 에 nearbyText: 표 위·아래 문단을 셀과 함께 surface

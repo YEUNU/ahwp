@@ -354,6 +354,8 @@ export function useChatStreaming(
     tableSummary: string;
   } | null>(null);
   const getPageSvgCalledRef = useRef(false);
+  // 0.7.37 — 'ask-for-missing' nudge 가 이번 task 에서 발화했는지(1회 한정).
+  const askForMissingNudgedRef = useRef(false);
   // 0.7.29 — 모델이 updatePlan 으로 선언한 최신 작업 계획. 매 성공한
   // updatePlan dispatch 마다 갱신. form-guard 완료 게이트가 pending/
   // in_progress 잔여를 보고 완료 차단에 사용. send/regenerate 시 reset.
@@ -947,7 +949,12 @@ export function useChatStreaming(
                 e.name === 'insertParagraph' ||
                 e.name === 'deleteParagraph'),
           ),
+          // 0.7.37 — ask-for-missing nudge 1회 한정 (task 당).
+          askForMissingDone: askForMissingNudgedRef.current,
         });
+        if (decision.reason === 'ask-for-missing') {
+          askForMissingNudgedRef.current = true;
+        }
         if (decision.shouldNudge && decision.nudgeText) {
           formGuardNudgeCountRef.current += 1;
           // 0.7.30 — auto-continue nudge 는 hidden: LLM 에는 user turn 으로
@@ -1002,6 +1009,7 @@ export function useChatStreaming(
       // 0.7.2 — 정상 종료 시 form guard 상태 reset (다음 사용자 task 가
       // 같은 conversation 안에 와도 깨끗한 상태로 시작).
       formGuardNudgeCountRef.current = 0;
+      askForMissingNudgedRef.current = false;
       formStateRef.current = null;
       getPageSvgCalledRef.current = false;
       planItemsRef.current = [];
@@ -1211,6 +1219,7 @@ export function useChatStreaming(
     resetRouterCache();
     // 0.7.2 — 새 user-task 시작 시 form guard 상태 reset.
     formGuardNudgeCountRef.current = 0;
+    askForMissingNudgedRef.current = false;
     formStateRef.current = null;
     getPageSvgCalledRef.current = false;
     planItemsRef.current = [];
@@ -1311,6 +1320,7 @@ export function useChatStreaming(
       agentStoppedRef.current = false;
       // 0.7.2 — 새 user-task 시작 시 form guard 상태 reset.
       formGuardNudgeCountRef.current = 0;
+      askForMissingNudgedRef.current = false;
       formStateRef.current = null;
       getPageSvgCalledRef.current = false;
       planItemsRef.current = [];
@@ -1357,6 +1367,7 @@ export function useChatStreaming(
       agentStoppedRef.current = false;
       // 0.7.2 — 재생성 시에도 form guard reset.
       formGuardNudgeCountRef.current = 0;
+      askForMissingNudgedRef.current = false;
       formStateRef.current = null;
       getPageSvgCalledRef.current = false;
       planItemsRef.current = [];
@@ -1428,6 +1439,7 @@ export function useChatStreaming(
     // 0.7.2 — stop 시에도 form guard reset (사용자가 명시 중단 했으니
     // 자동 재진입 방지).
     formGuardNudgeCountRef.current = 0;
+    askForMissingNudgedRef.current = false;
     formStateRef.current = null;
     getPageSvgCalledRef.current = false;
     planItemsRef.current = [];

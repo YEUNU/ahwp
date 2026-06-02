@@ -45,6 +45,9 @@ export interface FormGuardInput {
    *  에서 자동 진입해도, 본문 편집을 한 경우(+셀 쓰기 없음)는 form-fill 이
    *  아니므로 nudge 를 suppress. 미지정 = false. */
   bodyWriteDone?: boolean;
+  /** 0.7.37 — 이번 user-task 에서 'ask-for-missing' nudge 가 이미 발화했는지.
+   *  task 당 1회만 (반복 nag 방지). 미지정 = false. */
+  askForMissingDone?: boolean;
 }
 
 /**
@@ -74,7 +77,8 @@ export interface FormGuardDecision {
     | 'awaiting-user-input'
     | 'no-visual-verify'
     | 'plan-incomplete'
-    | 'body-edit-not-form-fill';
+    | 'body-edit-not-form-fill'
+    | 'ask-for-missing';
 }
 
 /**
@@ -232,7 +236,38 @@ export function decideFormGuardNudge(input: FormGuardInput): FormGuardDecision {
     };
   }
 
-  // Case 3: 빈 셀 0 + (시각 검증 했거나 채운 게 없음) + 질문 아님 → 할 일
-  // 없음. AI 의 응답을 존중하고 nudge 안 함.
+  // Case A (0.7.37): form-fill 쓰기를 했고(formWritesDone) 빈 셀이 남았는데
+  // (emptyLeft>0) 모델이 사용자에게 묻지 않고 완료를 선언하면 → 완료 전 1회
+  // "모르는 값은 날조 말고 사용자에게 물어라" nudge.
+  //
+  // 0.7.30 이 "계속 채워" 강요를 !formWritesDone 로 좁히면서 "부족하면 질문"
+  // push 까지 같이 죽였던 것 보완(사용자 리포트: "정보를 충분히 안 물어본다").
+  // "채우기 강요"(날조 유발)와 "질문"(원하는 행동)은 다르다 — 이건 후자만
+  // 부활. fill 을 강요하지 않고(날조 금지 명시) 묻기만 권한다. askForMissing
+  // Done 으로 task 당 1회만(반복 nag 방지) — 모델이 질문하면 Case 0 가 존중,
+  // "더 필요 없다" 확인하면 다음 완료는 이 flag 로 통과. 빈 셀이 0 이면 발동
+  // 안 함(물을 게 없음). hidden nudge 라 사용자는 모델의 질문만 본다.
+  if (
+    input.formWritesDone &&
+    emptyLeft > 0 &&
+    !input.askForMissingDone &&
+    !assistantRequestsInput(input.assistantText)
+  ) {
+    return {
+      shouldNudge: true,
+      nudgeText:
+        `[Auto-continue] You filled what the user's information covered, but ${emptyLeft} ` +
+        `cell(s) are still empty. Before announcing completion: for any empty cell that needs ` +
+        `information only the user can provide (a figure, amount, date, or name you do not have), ` +
+        `ASK the user for it now — a single consolidated question grouped by form section. Do NOT ` +
+        `fabricate values to fill them. If the remaining empties are genuinely valueless (nothing ` +
+        `exists, or they are a reviewer's to complete), then just confirm completion in one line. ` +
+        `Asking for the real missing facts is better than silently leaving fillable cells blank.`,
+      reason: 'ask-for-missing',
+    };
+  }
+
+  // Case 3: 빈 셀 0 + (시각 검증 했거나 채운 게 없음) + 질문/ask-for-missing
+  // 끝 → 할 일 없음. AI 의 응답을 존중하고 nudge 안 함.
   return { shouldNudge: false };
 }
