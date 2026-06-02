@@ -347,6 +347,117 @@ describe('BridgeIrHelper — Phase D2a', () => {
     expect(fns).toContain('getCellInfo');
   });
 
+  // 0.7.36 — nearbyText: 빈 셀 있는 표에 위·아래 문단(각주/척도/지시문)을
+  // verbatim 첨부. 모델이 셀 바깥 제약(척도 어휘 등)을 그 표 옆에서 판단.
+  it('getEmptyFormFields surfaces nearbyText (표 위·아래 문단) for tables with empty cells', async () => {
+    const bridge = {
+      invokeWasm: vi.fn(async (fn: string, args: unknown[]) => {
+        if (fn === 'getSectionCount') return 1;
+        if (fn === 'getParagraphCount') return 5;
+        if (fn === 'getTableDimensions') {
+          const [, p, ctrl] = args as [number, number, number];
+          // 표는 p=2, ctrl=0 (1x2: 라벨 + 빈 셀).
+          if (p === 2 && ctrl === 0)
+            return JSON.stringify({
+              ok: true,
+              rowCount: 1,
+              colCount: 2,
+              cellCount: 2,
+            });
+          return JSON.stringify({ ok: false });
+        }
+        if (fn === 'getCellInfo') {
+          const [, , , cellIdx] = args as [number, number, number, number];
+          return JSON.stringify({
+            ok: true,
+            row: 0,
+            col: cellIdx,
+            rowSpan: 1,
+            colSpan: 1,
+          });
+        }
+        if (fn === 'getTextInCell') {
+          const [, , , cellIdx] = args as [number, number, number, number];
+          return cellIdx === 0 ? '목표수준' : ''; // cell1 빈 칸
+        }
+        if (fn === 'getCellCharPropertiesAt')
+          return JSON.stringify({ italic: false, textColor: '#000000' });
+        // nearbyText 스캔 — p=1(위), p=3(아래 각주)만 텍스트.
+        if (fn === 'getParagraphLength') {
+          const [, p] = args as [number, number];
+          if (p === 1) return 20;
+          if (p === 3) return 40;
+          return 0; // p=0, p=4 빈 문단
+        }
+        if (fn === 'getTextRange') {
+          const [, p] = args as [number, number];
+          if (p === 1) return '1.1 스마트공장 구축 목표';
+          if (p === 3)
+            return '* 구축 수준 : ICT미적용 → 기초 → 중간1 → 중간2 → 고도';
+          return '';
+        }
+        throw new Error(`unmocked: ${fn}`);
+      }),
+    } as unknown as import('@/lib/rhwp-bridge').RhwpBridge;
+
+    const h = new BridgeIrHelper(bridge);
+    const result = await h.getEmptyFormFields();
+
+    expect(result.tableInventory).toHaveLength(1);
+    const inv = result.tableInventory[0];
+    expect(inv.emptyCells).toBe(1);
+    // 위(섹션 헤더) + 아래(각주 척도) 둘 다 verbatim 포함.
+    expect(inv.nearbyText).toContain('1.1 스마트공장 구축 목표');
+    expect(inv.nearbyText).toContain(
+      '구축 수준 : ICT미적용 → 기초 → 중간1 → 중간2 → 고도',
+    );
+    // 빈 문단(p=0, p=4)은 안 들어감.
+    expect(inv.nearbyText).not.toContain('undefined');
+  });
+
+  // nearbyText 는 빈 셀 없는 표엔 안 붙음(비용 절감).
+  it('getEmptyFormFields omits nearbyText for tables with no empty cells', async () => {
+    const bridge = {
+      invokeWasm: vi.fn(async (fn: string, args: unknown[]) => {
+        if (fn === 'getSectionCount') return 1;
+        if (fn === 'getParagraphCount') return 5;
+        if (fn === 'getTableDimensions') {
+          const [, p, ctrl] = args as [number, number, number];
+          if (p === 2 && ctrl === 0)
+            return JSON.stringify({
+              ok: true,
+              rowCount: 1,
+              colCount: 2,
+              cellCount: 2,
+            });
+          return JSON.stringify({ ok: false });
+        }
+        if (fn === 'getCellInfo') {
+          const [, , , cellIdx] = args as [number, number, number, number];
+          return JSON.stringify({
+            ok: true,
+            row: 0,
+            col: cellIdx,
+            rowSpan: 1,
+            colSpan: 1,
+          });
+        }
+        // 두 셀 모두 채워짐 → emptyCells=0.
+        if (fn === 'getTextInCell') return '채워짐';
+        if (fn === 'getCellCharPropertiesAt')
+          return JSON.stringify({ italic: false, textColor: '#000000' });
+        if (fn === 'getParagraphLength') return 20;
+        if (fn === 'getTextRange') return '각주 텍스트';
+        throw new Error(`unmocked: ${fn}`);
+      }),
+    } as unknown as import('@/lib/rhwp-bridge').RhwpBridge;
+
+    const h = new BridgeIrHelper(bridge);
+    const result = await h.getEmptyFormFields({ includeFilled: true });
+    expect(result.tableInventory[0].emptyCells).toBe(0);
+    expect(result.tableInventory[0].nearbyText).toBe(''); // 안 붙음
+  });
+
   // Regression — 병합 셀이 있는 표에서 c-1 / c-colCount flat-index
   // 산술이 잘못된 셀을 라벨로 가리켜 AI 가 엉뚱한 위치에 텍스트를
   // 채우던 버그. getCellInfo 기반 (row,col) 그리드 맵으로 fix.

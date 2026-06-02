@@ -1329,6 +1329,8 @@ export class BridgeIrHelper {
       totalCells: number;
       emptyCells: number;
       sampleLabel: string;
+      /** 0.7.36 — 표 위·아래 문단(각주/범례/지시문). 빈 셀 있는 표만 채움. */
+      nearbyText: string;
     }[];
   }> {
     const DEFAULT_MAX = 200;
@@ -1412,6 +1414,10 @@ export class BridgeIrHelper {
       totalCells: number;
       emptyCells: number;
       sampleLabel: string;
+      /** 0.7.36 — 표 위·아래 문단(각주/범례/지시문) 원문. 빈 셀 있는 표만
+       *  채움. 모델이 셀 바깥 제약(척도 어휘·작성불요·단위 등)을 그 표 옆
+       *  에서 직접 읽고 판단하게 한다. */
+      nearbyText: string;
     };
     const cellFields: Field[] = [];
     const tableInventory: TableEntry[] = [];
@@ -1537,6 +1543,7 @@ export class BridgeIrHelper {
               totalCells: cellCount,
               emptyCells: 0,
               sampleLabel: '',
+              nearbyText: '',
             };
             tableInventory.push(tableEntry);
           }
@@ -1754,10 +1761,92 @@ export class BridgeIrHelper {
               expectedFormat,
             });
           }
+          // 0.7.36 — 셀 루프 종료 후 emptyCells 확정. 빈 셀 있는 표만 표
+          // 위·아래 문단(각주/범례/지시문)을 붙인다 — 모델이 셀 바깥 제약을
+          // 그 표 옆에서 직접 판단 (척도 어휘·작성불요·단위 등). 빈 셀 없는
+          // 표는 채울 일 없으니 비용 절감 위해 skip.
+          if (
+            tableEntry &&
+            tableEntry.emptyCells > 0 &&
+            !tableEntry.nearbyText
+          ) {
+            tableEntry.nearbyText = await this.collectNearbyText(s, p);
+          }
         }
       }
     }
     return { cellFields, truncated, tableInventory };
+  }
+
+  /**
+   * 0.7.36 — 표 주변(위·아래)의 비어있지 않은 문단 원문을 수집. 양식은 셀이
+   * 가질 수 있는 값을 셀 바깥 텍스트로 규정한다 — 표 아래 각주(예: "* 구축
+   * 수준 : ICT미적용 → 기초 → 중간1 → 중간2 → 고도"), 위의 섹션 안내/단위
+   * (예: "※ 점검위원 작성 부분은 작성 불요", "(단위 : 천원)"). getEmptyForm
+   * Fields 의 cellFields 는 셀만 보므로 이를 못 싣고, 모델은 규정 척도 대신
+   * 서술을 적는 실패를 한다. 이 헬퍼가 표 앵커 문단(`para`) 주변의 문단을
+   * 읽어 verbatim 으로 돌려, 모델이 그 표를 채울 때 제약을 직접 판단하게 한다.
+   *
+   * 보수적: scan 윈도우(각 방향 최대 6문단) 안에서 비어있지 않은 문단을 방향
+   * 별 maxParas 개까지만 모으고, 문단당·전체 길이를 cap. 앵커 문단(`para`)
+   * 자체는 제외(표 컨트롤이라 의미 텍스트 없음).
+   */
+  private async collectNearbyText(
+    sec: number,
+    para: number,
+    opts?: {
+      before?: number;
+      after?: number;
+      perPara?: number;
+      maxChars?: number;
+    },
+  ): Promise<string> {
+    const before = opts?.before ?? 2;
+    const after = opts?.after ?? 3;
+    const perPara = opts?.perPara ?? 160;
+    const maxChars = opts?.maxChars ?? 500;
+    const SCAN = 6; // 빈 문단 gap 을 건너뛰기 위한 방향별 최대 scan 거리.
+    let paraCount = 0;
+    try {
+      paraCount = await this.getParagraphCount(sec);
+    } catch {
+      return '';
+    }
+    const readPara = async (p: number): Promise<string> => {
+      if (p < 0 || p >= paraCount) return '';
+      try {
+        const len = await this.getParagraphLength(sec, p);
+        if (!len) return '';
+        const t = await this.bridge.invokeWasm<string>('getTextRange', [
+          sec,
+          p,
+          0,
+          Math.min(len, perPara + 40),
+        ]);
+        const trimmed =
+          typeof t === 'string' ? t.replace(/\s+/g, ' ').trim() : '';
+        return trimmed.length > perPara
+          ? trimmed.slice(0, perPara) + '…'
+          : trimmed;
+      } catch {
+        return '';
+      }
+    };
+    // 위 방향: 가까운 문단부터 위로 scan, 비어있지 않은 것 before 개까지.
+    const above: string[] = [];
+    for (let d = 1; d <= SCAN && above.length < before; d++) {
+      const t = await readPara(para - d);
+      if (t) above.unshift(t); // 문서 순서 보존 (위→아래)
+    }
+    // 아래 방향(각주가 주로 여기): after 개까지.
+    const below: string[] = [];
+    for (let d = 1; d <= SCAN && below.length < after; d++) {
+      const t = await readPara(para + d);
+      if (t) below.push(t);
+    }
+    let joined = [...above, ...below].join(' | ');
+    if (joined.length > maxChars) joined = joined.slice(0, maxChars) + '…';
+    return joined;
   }
 
   /**
