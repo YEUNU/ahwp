@@ -328,6 +328,37 @@ describe('decideFormGuardNudge — Form-Fill 완료 guard (0.7.6 tightened)', ()
     expect(r.shouldNudge).toBe(false);
   });
 
+  // 0.7.41 — 근본 수정(proactive): 라우터가 사용자 메시지를 'audit' 으로
+  // 분류하면, 빈 셀이 많고 아무것도 안 쓴 짧은 응답이어도 form-fill 완료
+  // machinery 를 통째로 끔. 0.7.39 의 분량 기반 가드는 이게 'unknown' 일 때를
+  // 받치는 reactive backup. (사용자 리포트: audit 인데 "적용 중…" 반복.)
+  it('userIntent=audit → nudge 안 함 (빈셀 많고 짧은 응답이어도, audit-intent)', () => {
+    const r = decideFormGuardNudge({
+      ...BASE,
+      formState: { emptyCellsRemaining: 180, tableSummary: 'p=42 (180 empty)' },
+      getPageSvgCalled: true,
+      formWritesDone: false,
+      userIntent: 'audit',
+      // 분량 미달 + 질문 없음 — intent 신호 없으면 empty-cells-remain 일 텍스트.
+      assistantText: '확인했습니다.',
+    });
+    expect(r.shouldNudge).toBe(false);
+    expect(r.reason).toBe('audit-intent');
+  });
+
+  it('userIntent=fill → audit 면제 없음 (기존 empty-cells nudge 유지)', () => {
+    const r = decideFormGuardNudge({
+      ...BASE,
+      formState: { emptyCellsRemaining: 180, tableSummary: 'p=42 (180 empty)' },
+      getPageSvgCalled: true,
+      formWritesDone: false,
+      userIntent: 'fill',
+      assistantText: '양식 작성을 완료했습니다.',
+    });
+    expect(r.shouldNudge).toBe(true);
+    expect(r.reason).toBe('empty-cells-remain');
+  });
+
   // 0.7.39 — audit/검토 요청: 모델이 아무것도 안 쓰고(formWritesDone=false)
   // 분량 있는 보고를 내면 "채워라" auto-continue 를 돌리지 않는다. 사용자
   // 리포트: "중간보고서 읽고 누락 확인해줘" = audit 인데 "적용 중…" 반복 +

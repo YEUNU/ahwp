@@ -349,6 +349,11 @@ export function useChatStreaming(
   //   send / sendDirect / regenerate 시 reset.
   const FORM_GUARD_MAX_NUDGES = 2;
   const formGuardNudgeCountRef = useRef(0);
+  // 0.7.41 — 라우터가 이번 turn 분류한 사용자 intent. turn-start 의 router
+  // 호출에서 set 되어 turn-end 의 form-guard 가 읽는다 (audit 이면 완료
+  // nudge 통째로 비활성). 'unknown' = 분류 실패/폴백 → 기존 동작.
+  const routerIntentRef =
+    useRef<import('../toolRouter').RouterIntent>('unknown');
   const formStateRef = useRef<{
     emptyCellsRemaining: number;
     tableSummary: string;
@@ -951,6 +956,9 @@ export function useChatStreaming(
           ),
           // 0.7.37 — ask-for-missing nudge 1회 한정 (task 당).
           askForMissingDone: askForMissingNudgedRef.current,
+          // 0.7.41 — 라우터가 분류한 사용자 intent. 'audit'(읽고 검토/누락
+          // 확인)이면 완료 nudge machinery 를 통째로 끔 (proactive).
+          userIntent: routerIntentRef.current,
         });
         if (decision.reason === 'ask-for-missing') {
           askForMissingNudgedRef.current = true;
@@ -1166,6 +1174,8 @@ export function useChatStreaming(
         // getPageSvg / getTextRange)를 router 선택과 무관하게 보장.
         mode: modeContext.primary,
       });
+      // 0.7.41 — 라우터 intent 를 ref 에 보관 → turn-end form-guard 가 읽음.
+      routerIntentRef.current = selection.intent;
       const allowed = new Set(selection.tools);
       request.tools = getAhwpToolCatalog(modeContext)
         .filter((d) => allowed.has(d.name))

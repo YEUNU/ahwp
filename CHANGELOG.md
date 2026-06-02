@@ -6,6 +6,22 @@
 
 ## [Unreleased]
 
+## [0.7.41] - 2026-06-02
+
+### Changed — intent-aware 라우팅 (audit vs fill 근본 분리)
+
+0.7.39 는 "양식 읽고 누락 확인"(audit)을 채우기 루프가 하이재킹하던 걸 분량
+신호로 **사후** 차단했음. 이번엔 **근본 수정** — 모드를 문서 모양(빈 셀 수)이
+아니라 **사용자 의도**로 게이팅.
+
+- 기존 LLM tool-router(`selectToolsViaLlm`)가 도구와 함께 **coarse intent**
+  (`fill` / `audit` / `edit` / `author`)를 분류해 반환. 추가 LLM 호출/지연 0
+  (한 줄 `intent:` 만 응답에 덧붙임 — 도구 배열 파싱·폴백은 무손상).
+- form-guard: `userIntent === 'audit'` 이면 완료 nudge machinery 를 통째로
+  비활성(`audit-intent`) — 검토 요청에 "채워라" auto-continue / ask-for-missing
+  이 끼어들지 않음. 라우터가 분류 못 하면(`unknown`) 0.7.39 의 분량 기반
+  `deliberate-report` 가드가 reactive 로 받침(defense-in-depth).
+
 ## [0.7.40] - 2026-06-02
 
 ### Fixed — 앱이 닫히지 않던 문제 (quit hang)
