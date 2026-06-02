@@ -257,12 +257,14 @@ export function decideFormGuardNudge(input: FormGuardInput): FormGuardDecision {
       shouldNudge: true,
       nudgeText:
         `[Auto-continue] You filled what the user's information covered, but ${emptyLeft} ` +
-        `cell(s) are still empty. Before announcing completion: for any empty cell that needs ` +
-        `information only the user can provide (a figure, amount, date, or name you do not have), ` +
-        `ASK the user for it now — a single consolidated question grouped by form section. Do NOT ` +
-        `fabricate values to fill them. If the remaining empties are genuinely valueless (nothing ` +
-        `exists, or they are a reviewer's to complete), then just confirm completion in one line. ` +
-        `Asking for the real missing facts is better than silently leaving fillable cells blank.`,
+        `cell(s) are still empty. End your turn by EXPLICITLY ASKING the user for the specific ` +
+        `missing values that would complete the form — name them concretely (the figures, amounts, ` +
+        `dates, identifiers, KPI targets, cost breakdowns, etc. you left blank), grouped by form ` +
+        `section, and phrase it as a request/question ("…를 알려주시면 채워서 완성하겠습니다"), ` +
+        `NOT merely a statement that you left them blank. Do NOT fabricate values. Skip asking ONLY ` +
+        `for cells that genuinely cannot have a value or are exclusively a reviewer's to complete — ` +
+        `for those, note them in one line. Proactively requesting the real missing data is the goal; ` +
+        `do not just declare completion when fillable cells are still empty for lack of information.`,
       reason: 'ask-for-missing',
     };
   }

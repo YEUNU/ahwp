@@ -283,7 +283,7 @@ describe('decideFormGuardNudge — Form-Fill 완료 guard (0.7.6 tightened)', ()
     });
     expect(r.shouldNudge).toBe(true);
     expect(r.reason).toBe('ask-for-missing');
-    expect(r.nudgeText).toContain('ASK the user');
+    expect(r.nudgeText).toMatch(/ASK(ING)? the user/); // 사용자에게 질문 유도
     expect(r.nudgeText).toContain('Do NOT'); // 날조 금지 명시
     expect(r.nudgeText).not.toContain('fillFormCells'); // "계속 채워" 강요 아님
   });
