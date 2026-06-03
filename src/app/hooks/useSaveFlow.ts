@@ -9,23 +9,22 @@
 import { useCallback, type Dispatch, type SetStateAction } from 'react';
 import { correctExtension } from '@shared/format';
 import { isEditable, isReadable } from '@shared/file-formats';
-import type { ViewerHandle } from '@/features/chat/viewer-handle-types';
 import type { TabState } from './useTabManagement';
 
 export interface UseSaveFlowOptions {
   activeTab: TabState | null;
-  activeViewerRef: () => ViewerHandle | null;
   openTab: (path: string) => void;
   replaceTabPath: (oldPath: string, newPath: string) => void;
   setFolderRoot: Dispatch<SetStateAction<string | null>>;
   showNotice: (text: string, kind?: 'info' | 'warn') => void;
+  /** 0.7.46 — 저장 성공 시 탭 dirty 해제용. */
+  setTabDirty: (key: string, dirty: boolean) => void;
   /**
-   * Phase 7 E2c — `useRhwpEditor` 모드 등에서 활성 탭의 bytes 를 viewer
-   * 대신 다른 경로로 얻고 싶을 때. non-null 반환 시 viewer.exportBytes
-   * 를 건너뜀. AppShell 의 RhwpEditorHandle.exportHwp() 가 hook 으로
-   * 들어온다.
+   * Phase 7 E2c — 활성 탭의 bytes 추출. AppShell 의
+   * RhwpEditorHandle.exportHwp() 가 hook 으로 들어온다. handle 이 아직
+   * ready 안 됐으면 null 반환 → save 흐름이 중단된다.
    */
-  exportOverride?: () => Promise<Uint8Array | null>;
+  exportOverride: () => Promise<Uint8Array | null>;
 }
 
 export interface SaveFlowHandle {
@@ -45,11 +44,11 @@ export interface SaveFlowHandle {
 export function useSaveFlow(opts: UseSaveFlowOptions): SaveFlowHandle {
   const {
     activeTab,
-    activeViewerRef,
     openTab,
     replaceTabPath,
     setFolderRoot,
     showNotice,
+    setTabDirty,
     exportOverride,
   } = opts;
 
@@ -97,27 +96,16 @@ export function useSaveFlow(opts: UseSaveFlowOptions): SaveFlowHandle {
   }, [setFolderRoot]);
 
   const exportBytes = useCallback(async (): Promise<Uint8Array | null> => {
-    // Phase E2c — override 가 non-null 반환하면 viewer 경유 X.
-    if (exportOverride) {
-      const t0 = performance.now();
-      const bytes = await exportOverride();
-      if (bytes) {
-        console.info(
-          `[ahwp] export(rhwp) ${(bytes.byteLength / 1024 / 1024).toFixed(2)}MB in ${(performance.now() - t0).toFixed(0)}ms`,
-        );
-        return bytes;
-      }
-      // override 가 null 반환 — viewer fallback.
-    }
-    const handle = activeViewerRef();
-    if (!handle) return null;
+    // Phase E2c — 활성 탭의 RhwpEditor handle 에서 직접 bytes 추출.
+    // handle 이 아직 ready 안 됐으면 null → save 흐름 중단.
     const t0 = performance.now();
-    const bytes = await handle.exportBytes();
+    const bytes = await exportOverride();
+    if (!bytes) return null;
     console.info(
-      `[ahwp] export ${(bytes.byteLength / 1024 / 1024).toFixed(2)}MB in ${(performance.now() - t0).toFixed(0)}ms`,
+      `[ahwp] export(rhwp) ${(bytes.byteLength / 1024 / 1024).toFixed(2)}MB in ${(performance.now() - t0).toFixed(0)}ms`,
     );
     return bytes;
-  }, [activeViewerRef, exportOverride]);
+  }, [exportOverride]);
 
   const saveAsCurrent = useCallback(async () => {
     const tab = activeTab;
@@ -131,6 +119,7 @@ export function useSaveFlow(opts: UseSaveFlowOptions): SaveFlowHandle {
       void window.api.file.clearDraft(result.path);
       if (tab) void window.api.file.clearDraft(tab.path);
       void window.api.file.createVersion({ path: result.path, bytes });
+      if (tab) setTabDirty(tab.key, false);
       if (result.routedFrom) {
         showNotice(
           `'.hwpx' 저장은 라이브러리 한계로 일시 비활성화되어 있어 ${result.path.split(/[\\/]/).pop()} 로 저장했습니다.`,
@@ -138,7 +127,14 @@ export function useSaveFlow(opts: UseSaveFlowOptions): SaveFlowHandle {
         );
       }
     }
-  }, [activeTab, exportBytes, replaceTabPath, openTab, showNotice]);
+  }, [
+    activeTab,
+    exportBytes,
+    replaceTabPath,
+    openTab,
+    showNotice,
+    setTabDirty,
+  ]);
 
   const saveCurrent = useCallback(async () => {
     const tab = activeTab;
@@ -166,6 +162,7 @@ export function useSaveFlow(opts: UseSaveFlowOptions): SaveFlowHandle {
     // chunk 62 — every explicit save spawns a version snapshot under
     // userData/versions/<hash>/<ISO>.hwp. FIFO trim at 50.
     void window.api.file.createVersion({ path: result.path, bytes });
+    setTabDirty(tab.key, false);
     if (result.routedFrom) {
       // The user requested .hwpx but @rhwp/core's HWPX round-trip drops
       // images (KNOWN_ISSUES L-001), so file:save auto-routes to .hwp.
@@ -175,7 +172,14 @@ export function useSaveFlow(opts: UseSaveFlowOptions): SaveFlowHandle {
         'warn',
       );
     }
-  }, [activeTab, exportBytes, replaceTabPath, saveAsCurrent, showNotice]);
+  }, [
+    activeTab,
+    exportBytes,
+    replaceTabPath,
+    saveAsCurrent,
+    showNotice,
+    setTabDirty,
+  ]);
 
   return {
     openFromDialog,

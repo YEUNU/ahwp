@@ -3,18 +3,15 @@
  * Phase 3 chunk 51. ChatPanel.tsx 와 useChatStreaming hook 양쪽에서
  * 사용. R2.3 에서 ChatPanel 으로부터 분리.
  */
-import type { ExcerptAttachment } from '@shared/ai-excerpt';
 import { MODE_REGISTRY, type ModeContext } from '@shared/ai-modes';
 
 export const SYSTEM_PROMPT_DOC_CONTEXT = `You are a Hancom HWP document assistant.
 
 #### Document context blocks
-The system message may include any of the following blocks:
-- \`[Active doc]:\` — the active .hwp/.hwpx document the user is editing, serialized to HTML. Use it for analysis, summary, citation, and edit targeting.
-- \`[Excerpts]:\` — numbered spans the user explicitly selected. Prefer these when the change target is implicit ("this part", "here").
+The system message may include the following block:
 - \`[Reference docs]:\` — read-only outlines of other open tabs. Cite and analyze; never target for modification.
 
-If any of these blocks is present, that IS the document — never reply "I did not receive a document". Response format, routing rules, and tool usage are defined in the Agent guide (separate system message); this block only describes what the context tags mean.`;
+If this block is present, that IS reference material — never reply "I did not receive a document". Response format, routing rules, and tool usage are defined in the Agent guide (separate system message); this block only describes what the context tags mean.`;
 
 /**
  * Phase 3 chunk 51 — Agent 모드 system prompt. provider tool-use API 가
@@ -364,27 +361,6 @@ export function buildReferenceSystemBlock(
   });
   lines.push(
     'Reference rules: [Reference docs] is for reading, citation, and style analysis only. Never target it for modification. All edits — tool calls and code blocks alike — must target the active doc.',
-  );
-  return lines.join('\n');
-}
-
-/** Serialize chips into the system message for chunk 20. The block
- * mirrors the spec in `docs/AI_INTEGRATION.md` §발췌 드래그 첨부 ›
- * 프롬프트 직렬화: numbered entries with role/doc/anchor metadata so
- * the model can refer to "[1]" without ambiguity. */
-export function buildExcerptSystemPrompt(
-  excerpts: ExcerptAttachment[],
-): string {
-  const lines: string[] = [SYSTEM_PROMPT_DOC_CONTEXT, '', '[Excerpts]:'];
-  excerpts.forEach((ex, i) => {
-    lines.push(
-      `[${i + 1}] doc="${(ex.docPath ?? '').split('/').pop()}" sec=${ex.anchor.sectionIndex} para=${ex.anchor.startParagraphIndex}-${ex.anchor.endParagraphIndex} off=${ex.anchor.startOffset}-${ex.anchor.endOffset}`,
-    );
-    lines.push(`Content: ${ex.text.replace(/\s+/g, ' ').trim()}`);
-    lines.push('');
-  });
-  lines.push(
-    'Excerpt rules: the user explicitly selected these spans, so the change target is unambiguous. Demonstrative references like "this part" or "here" usually point to an excerpt chip.',
   );
   return lines.join('\n');
 }
