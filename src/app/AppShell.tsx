@@ -611,7 +611,14 @@ export default function AppShell() {
                                 const buf = await window.api.file.read(
                                   tab.path,
                                 );
-                                await bridge.loadFile(buf, tab.path, true);
+                                // 0.7.46 — iframe 엔 절대경로가 아니라 파일명
+                                // (basename)만 넘긴다. iframe 의 타이틀 / 자체
+                                // 저장 suggestedName 이 전체 경로(`/`→`_` 뭉갬)
+                                // 가 되는 것을 방지. 실제 저장 경로는 ahwp 가
+                                // tab.path 로 관리.
+                                const fileName =
+                                  tab.path.split(/[/\\]/).pop() ?? tab.path;
+                                await bridge.loadFile(buf, fileName, true);
                               } catch (err) {
                                 console.error(
                                   '[AppShell] rhwp-editor doc load failed:',
