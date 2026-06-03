@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, session } from 'electron';
 import { existsSync, readFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import path from 'node:path';
@@ -231,6 +231,22 @@ void app.whenReady().then(() => {
   // Phase 7 — file 응답 handler. scheme privilege 는 위쪽에서 사전 등록.
   registerRhwpStudioProtocol();
   registerIpcHandlers();
+
+  // 0.7.46 — vendored rhwp-studio iframe 의 ⌘S/⌘⇧S 는 iframe 자체 저장
+  // 명령에 묶여 있다. custom-protocol iframe 에선 showSaveFilePicker 가
+  // 없어서 anchor `a.download`(blob:) 로 문서 바이트를 떨군다 → 원본을
+  // 덮어쓰지 않고, 문서명(우리가 넘긴 이름)을 파일명으로 한 별도 파일이
+  // 생긴다 (절대경로를 넘기면 `/`→`_` 로 뭉개짐). 저장 책임은 ahwp 가
+  // 진다 (file:save = @rhwp/core 로 in-place overwrite). 따라서 iframe 의
+  // .hwp/.hwpx 다운로드를 취소하고 우리 저장 흐름으로 라우팅한다.
+  session.defaultSession.on('will-download', (event, item, webContents) => {
+    if (!/\.hwpx?$/i.test(item.getFilename())) return;
+    event.preventDefault();
+    const win = BrowserWindow.fromWebContents(webContents);
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('menu:action', 'file:save');
+    }
+  });
   // Menu actions target the currently-focused window (chunk 65 —
   // multi-window). Falls back to the most recent window when nothing
   // has focus (e.g. after the user clicked outside the app).

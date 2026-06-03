@@ -136,11 +136,10 @@ export interface FileApi {
   loadDraft: (path: string) => Promise<ArrayBuffer | null>;
   clearDraft: (path: string) => Promise<void>;
   /**
-   * chunk 62 — version history. Each successful explicit save writes
-   * a versioned snapshot under `userData/versions/<hash>/<ISO>.hwp`.
-   * `listVersions` returns latest 50; `readVersion` reads bytes; the
-   * renderer pipes a chosen version through `save()` to commit a
-   * restore (so `.bak`, atomic write, watcher suppression all apply).
+   * chunk 62 — version history. Each successful explicit save writes a
+   * versioned snapshot under `userData/versions/<hash>/<ISO>.hwp` (latest
+   * 50 per file, FIFO). This is the pre-edit safety net; read-back/restore
+   * IPC is not currently wired.
    */
   createVersion: (req: {
     path: string;

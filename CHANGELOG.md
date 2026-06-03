@@ -6,6 +6,43 @@
 
 ## [Unreleased]
 
+## [0.7.48] - 2026-06-03
+
+### Removed — 저장 시 `.hwp.bak` 사이드카 백업 (사용자 요청)
+
+`file:save`/`file:save-as` 가 덮어쓰기 직전 원본 폴더에 `<파일>.hwp.bak` 을
+만들던 동작 제거 — 폴더 클러터. 편집 전 스냅샷은 앱 내부 버전 히스토리
+(`userData/versions/`, 매 저장 시 createVersion)가 그대로 담당. `.bak` 은
+쓰기만 하고 읽는(복구) 경로가 없어 안전하게 제거. (관련 stale 주석 +
+0.7.45 에서 제거된 listVersions/readVersion 언급도 정리.)
+
+## [0.7.47] - 2026-06-03
+
+### Fixed — ⌘S 저장이 원본을 덮어쓰지 않고 경로-뭉갠 파일을 만들던 버그
+
+증상: 편집기(iframe)에 포커스를 둔 채 ⌘S 를 누르면 원본을 덮어쓰지 않고
+`_Users_yunu_ahwp_examples_…(파일명).hwp` 처럼 **전체 경로의 `/` 가 `_` 로
+뭉개진 별도 파일**이 생성됨.
+
+원인: vendored `rhwp-studio` iframe 이 ⌘S/⌘⇧S 를 **자체 저장 명령**에 묶고
+있고, custom-protocol iframe 에선 `showSaveFilePicker` 가 없어 anchor
+`a.download`(blob:) 로 바이트를 떨군다. 게다가 AppShell 이 문서를 로드할 때
+iframe 에 **절대경로**를 문서명으로 넘겨서, 그 경로가 그대로 다운로드
+파일명이 되며 `/`→`_` 로 sanitize 됨.
+
+수정 (vendor 번들 수정 불가 → 부모/메인 측에서 처리):
+
+- `electron/main.ts`: `session.will-download` 에서 iframe 의 `.hwp/.hwpx`
+  다운로드를 **취소**하고 ahwp 의 in-place 저장(`file:save` = `@rhwp/core`
+  overwrite)으로 라우팅. → ⌘S·툴바 저장 모두 원본을 덮어씀, 별도 파일 X.
+- `AppShell`: `bridge.loadFile` 에 절대경로 대신 **basename** 전달 → iframe
+  타이틀/제안 파일명이 깔끔.
+
+### Note
+
+AI 폼-필 결과(이즈파크/코렌스/AI 예지보전 중간보고서) 자체는 저장 시 정상
+보존됨 — 렌더 검증으로 확인. 문제는 저장 위치/이름뿐이었음.
+
 ## [0.7.46] - 2026-06-03
 
 ### Removed — 죽은 ViewerHandle 클러스터 + 발췌/HTML-적용 기능 (iframe 이관 잔재)

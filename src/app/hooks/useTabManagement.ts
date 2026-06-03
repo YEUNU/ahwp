@@ -88,7 +88,7 @@ export function useTabManagement(): TabManagementHandle {
         );
         if (ok) {
           // Load the draft bytes, save them through the regular path so
-          // the file:save flow handles HWPX routing + .bak + watcher
+          // the file:save flow handles HWPX routing + watcher
           // suppression, then bump the tab key to remount the viewer
           // off the freshly-saved content.
           try {

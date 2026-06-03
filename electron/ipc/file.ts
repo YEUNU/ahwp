@@ -148,13 +148,9 @@ export function registerFileIpc(): void {
           `[file:save] auto-routing extension ${req.path} → ${target}`,
         );
       }
-      // Sidecar `.bak` of the prior on-disk content — written ONCE per
-      // path so we don't churn `.bak` on every save. If a `.bak` already
-      // exists from an earlier save, it stays put (preserves the
-      // pre-edit-session original). New files (no prior content) skip
-      // backup entirely.
-      // Write the prior on-disk content's `.bak` sidecar (return value unused).
-      await maybeWriteBackup(target);
+      // 0.7.47 — `.bak` 사이드카 백업 폐기 (사용자 요청 — 폴더 클러터).
+      // 편집 전 스냅샷은 앱 내부 버전 히스토리(userData/versions/, 매 저장
+      // 시 createVersion)가 담당한다.
       await writeAtomic(target, normalized);
       noteOwnWrite(target);
       await addRecent(target);
@@ -296,7 +292,6 @@ ${req.html}
           `[file:save-as] auto-routing extension ${picked} → ${target}`,
         );
       }
-      await maybeWriteBackup(target);
       await writeAtomic(target, normalized);
       noteOwnWrite(target);
       await addRecent(target);
@@ -310,8 +305,8 @@ ${req.html}
   // versioned snapshot under `userData/versions/<hash>/<ISO>.hwp`. We
   // keep the latest 50 per file (FIFO trim). Restore is a separate
   // user action — the dialog reads the bytes back and AppShell pipes
-  // them through the regular file:save flow so .bak / atomic write /
-  // watcher suppression still apply.
+  // them through the regular file:save flow so atomic write / watcher
+  // suppression still apply.
   ipcMain.handle(
     'file:create-version',
     async (
@@ -516,13 +511,6 @@ async function writeAtomic(target: string, data: Uint8Array): Promise<void> {
   await fs.rename(tmp, target);
 }
 
-/**
- * Side-car backup of the prior on-disk content. The first save of an
- * existing file produces `<target>.bak`; subsequent saves of the same path
- * leave the existing `.bak` alone so the pre-edit-session snapshot is
- * preserved across the entire run. New files (no prior content) return
- * null. Failures are non-fatal: a missing `.bak` shouldn't block a save.
- */
 /** Stable per-path hash → folder name under `userData/versions/`. We
  *  use the first 16 hex chars of SHA1(absolute path) as the directory
  *  key. Collisions are theoretically possible but irrelevant at the
@@ -530,17 +518,4 @@ async function writeAtomic(target: string, data: Uint8Array): Promise<void> {
  *  to hit one). */
 function versionDirHash(absPath: string): string {
   return createHash('sha1').update(absPath).digest('hex').slice(0, 16);
-}
-
-async function maybeWriteBackup(target: string): Promise<string | undefined> {
-  try {
-    if (!(await exists(target))) return undefined;
-    const backup = `${target}.bak`;
-    if (await exists(backup)) return backup; // keep existing
-    await fs.copyFile(target, backup);
-    return backup;
-  } catch (err) {
-    console.warn('[file] backup failed (non-fatal):', err);
-    return undefined;
-  }
 }
