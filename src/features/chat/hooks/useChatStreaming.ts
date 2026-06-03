@@ -29,14 +29,12 @@ import {
   validateToolCall,
   type AhwpToolCall,
 } from '@shared/ai-tools';
-import type { ExcerptAttachment } from '@shared/ai-excerpt';
 import {
   SYSTEM_PROMPT_DOC_CONTEXT,
   SYSTEM_PROMPT_AGENT_GUIDE,
   SYSTEM_PROMPT_PLAN_MODE_SUFFIX,
   collectReferenceOutlines,
   buildReferenceSystemBlock,
-  buildExcerptSystemPrompt,
   appendModePrompt,
 } from '../prompts';
 import type { SubAgentContext } from '../tools';
@@ -191,27 +189,17 @@ export interface UseChatStreamingOptions {
   provider: any;
   model: any;
   modelList: any;
-  attachDoc: boolean;
-  /** chunk 75 — clear the attach toggle after a successful send so the
-   *  user explicitly opts in for each context-attached turn. */
-  setAttachDoc: (v: boolean) => void;
-  excerpts: any;
-  setExcerptError: any;
-  setExcerpts: any;
   conversationId: number | null;
   setConversationId: any;
   referencePaths: string[];
   // props (from ChatPanel)
   onOpenSettings?: () => void;
-  getDocHtml?: () => string;
   runTools?: (
     items: any,
     targetPath?: string | null,
     subAgentContext?: SubAgentContext,
   ) => any;
-  captureExcerpt?: () => any;
   activeDocPath?: () => string | null;
-  verifyExcerpt?: (anchor: any, expected: string) => any;
   getOpenDocs?: () => Array<{ path: string; label: string; isActive: boolean }>;
   getDocOutline?: (path: string) => string;
   /** chunk 99 follow-up — switchTargetDoc 가 닫힌 탭 path 를 받았을 때
@@ -229,7 +217,7 @@ export interface UseChatStreamingOptions {
 }
 
 export interface ChatStreamingHandle {
-  fireChat: (history: any, verifiedExcerpts?: any) => void;
+  fireChat: (history: any) => void;
   send: () => Promise<void>;
   sendDirect: (text: string) => Promise<void>;
   regenerate: (assistantId: string) => void;
@@ -240,7 +228,6 @@ export interface ChatStreamingHandle {
   stop: () => void;
   agentToolUsesRef: MutableRefObject<any>;
   agentTurnDepthRef: MutableRefObject<number>;
-  agentVerifiedExcerptsRef: MutableRefObject<any>;
   /** 0.7.1 — 직전 turn 에서 detectMode 가 결정한 ModeContext. UI badge
    *  가 reactive 표시 위해 참조. send / fireChat 마다 갱신. */
   currentModeRef: MutableRefObject<
@@ -272,17 +259,10 @@ export function useChatStreaming(
     setAgentTurn,
     provider,
     model,
-    attachDoc,
-    setAttachDoc,
-    excerpts,
-    setExcerptError,
-    setExcerpts,
     setConversationId,
     referencePaths,
-    getDocHtml,
     runTools,
     activeDocPath,
-    verifyExcerpt,
     getOpenDocs,
     getDocOutline,
   } = opts;
@@ -305,7 +285,6 @@ export function useChatStreaming(
     { name: string; ok: boolean; summary?: string }[]
   >([]);
   const agentTurnDepthRef = useRef(0);
-  const agentVerifiedExcerptsRef = useRef<ExcerptAttachment[]>([]);
   /** 0.7.1 — 직전 turn 의 ModeContext. fireChat 가 detectMode 호출 후
    *  여기에 stash. ChatPanel 이 ModeBadge 에 표시. */
   const currentModeRef = useRef<import('@shared/ai-modes').ModeContext | null>(
@@ -370,10 +349,7 @@ export function useChatStreaming(
   };
   // fireChat 자체가 useCallback이라 onEvent에서 직접 호출하면 stale
   // closure. ref hop으로 회피.
-  const fireChatRef = useRef<
-    | ((history: UiMessage[], verifiedExcerpts?: ExcerptAttachment[]) => void)
-    | null
-  >(null);
+  const fireChatRef = useRef<((history: UiMessage[]) => void) | null>(null);
   // runTools prop을 ref로 mirror — onEvent 안에서 stale 없이 접근.
   const runToolsPropRef = useRef(runTools);
   useEffect(() => {
@@ -948,7 +924,7 @@ export function useChatStreaming(
               fired = true;
               queueMicrotask(() => {
                 if (agentStoppedRef.current) return;
-                fireChatRef.current?.(next, agentVerifiedExcerptsRef.current);
+                fireChatRef.current?.(next);
               });
             }
             return next;
@@ -963,7 +939,6 @@ export function useChatStreaming(
       agentToolUsesRef.current = [];
       agentToolHistoryRef.current = [];
       resetRouterCache();
-      agentVerifiedExcerptsRef.current = [];
       assistantBufferRef.current = '';
       setStreaming(false);
       handleRef.current = null;
@@ -991,17 +966,10 @@ export function useChatStreaming(
   /**
    * Append a fresh assistant bubble to `history` and start streaming the
    * provider's response into it. `history` should already end in the user
-   * message that the assistant is replying to. The optional
-   * `verifiedExcerpts` arg is the chip list after `send`'s stale check;
-   * passed in so we serialize exactly what the user is committing to,
-   * not whatever excerpts state happens to be by the time React has
-   * batched updates through.
+   * message that the assistant is replying to.
    */
   const fireChat = useCallback(
-    async (
-      history: UiMessage[],
-      verifiedExcerpts: ExcerptAttachment[] = [],
-    ) => {
+    async (history: UiMessage[]) => {
       setError(null);
       // chunk 99 follow-up — plan mode 결정. planSkipNextRef 가 set 이면
       // 1회 소비하고 false. 아니면 default 사용. flag 를 message 에 박제
@@ -1021,20 +989,11 @@ export function useChatStreaming(
       setMessages([...history, assistantMsg]);
       setStreaming(true);
 
-      // Build provider-bound message list. The system message
-      // composition picks one of three context strategies for the
-      // *target* doc (the active tab):
-      //   (1) excerpts present  → `[Excerpts]:` block, narrowly anchored
-      //   (2) attach toggle on  → `[Active doc]:` whole-doc HTML
-      //   (3) neither           → no target body in prompt (just refs)
-      // Excerpts win over the toggle when both are set, per
-      // memory/project_chat_context_pipeline.md priority rule.
-      //
-      // Reference docs (chunk 21) are appended as an additional
-      // `[Reference docs]:` block when the user has opted any in. They
-      // are read-only — write tools (chunk 19) still target the active
-      // doc by construction since the dispatcher hands them to the
-      // active viewer's IR.
+      // Build provider-bound message list. Reference docs (chunk 21) are
+      // added as a `[Reference docs]:` system block when the user has
+      // opted any in. They are read-only — write tools (chunk 19) still
+      // target the active doc by construction since the dispatcher hands
+      // them to the active doc's IR.
       // Phase 3 — Agent 모드는 toolUses / toolResult 도 같이 직렬화.
       // OpenAI 어댑터가 native (tool_calls / role='tool') 로 변환한다.
       const rawMessages: ChatMessage[] = history.map((m) => ({
@@ -1056,14 +1015,6 @@ export function useChatStreaming(
       );
 
       let systemContent: string | null = null;
-      if (verifiedExcerpts.length > 0) {
-        systemContent = buildExcerptSystemPrompt(verifiedExcerpts);
-      } else if (attachDoc && getDocHtml) {
-        const docHtml = getDocHtml();
-        if (docHtml.length > 0) {
-          systemContent = `${SYSTEM_PROMPT_DOC_CONTEXT}\n\n[Active doc]:\n${docHtml}`;
-        }
-      }
       if (refOutlines.length > 0) {
         const refBlock = buildReferenceSystemBlock(refOutlines);
         systemContent =
@@ -1149,15 +1100,9 @@ export function useChatStreaming(
       console.info(
         `[chunk99 tool-router] reason=${selection.reason} latency=${selection.latencyMs}ms isFull=${selection.isFullCatalog} tools=${request.tools.length}`,
       );
-      // Agent 루프 재진입에서도 verifiedExcerpts를 유지하려면 ref 에
-      // stash. 첫 turn 만 진짜 "사용자 의도"라 다음 turn 부터는 보통
-      // [] 로 진행해도 OK 지만 일관성을 위해 같은 칩을 그대로 유지.
-      agentVerifiedExcerptsRef.current = verifiedExcerpts;
       handleRef.current = window.api.ai.chat(request, { onEvent });
     },
     [
-      attachDoc,
-      getDocHtml,
       getDocOutline,
       getOpenDocs,
       model,
@@ -1187,42 +1132,6 @@ export function useChatStreaming(
     formStateRef.current = null;
     getPageSvgCalledRef.current = false;
     planItemsRef.current = [];
-
-    // Per-chip stale verification — chunk 20. Each chip's anchor is
-    // re-read from the IR. Fresh = pass through. Relocated = update
-    // anchor in place (silent). Missing = block send and surface a
-    // toast so the user can re-select. We reset to fresh chips so
-    // subsequent turns don't keep re-checking the same anchors.
-    const verified: ExcerptAttachment[] = [];
-    const stillMissing: string[] = [];
-    if (excerpts.length > 0 && verifyExcerpt) {
-      for (const ex of excerpts) {
-        const r = verifyExcerpt(ex.anchor, ex.text);
-        if (!r) {
-          stillMissing.push(ex.docLabel);
-          continue;
-        }
-        if (r.status === 'fresh') {
-          verified.push({ ...ex, status: 'fresh' });
-        } else if (r.status === 'stale-relocated' && r.newAnchor) {
-          verified.push({
-            ...ex,
-            anchor: r.newAnchor,
-            status: 'stale-relocated',
-          });
-        } else {
-          stillMissing.push(ex.docLabel);
-        }
-      }
-      if (stillMissing.length > 0) {
-        setExcerptError(
-          `발췌 위치를 찾을 수 없습니다 (${stillMissing.join(', ')}). 다시 선택해 주세요.`,
-        );
-        return;
-      }
-      setExcerpts(verified);
-      setExcerptError(null);
-    }
 
     const userMsg: UiMessage = { id: newId(), role: 'user', content: text };
     setInput('');
@@ -1255,28 +1164,12 @@ export function useChatStreaming(
       // the DB write threw.
     }
 
-    fireChat([...messages, userMsg], verified);
-    // chunk 75 — clear the attach toggle after a successful send so
-    // the user explicitly opts in for each context-attached turn (the
-    // doc HTML is already serialized into this turn's system prompt).
-    if (attachDoc) setAttachDoc(false);
-  }, [
-    activeDocPath,
-    attachDoc,
-    excerpts,
-    fireChat,
-    input,
-    messages,
-    setAttachDoc,
-    streaming,
-    verifyExcerpt,
-  ]);
+    fireChat([...messages, userMsg]);
+  }, [activeDocPath, fireChat, input, messages, streaming]);
 
   // chunk 56 — AI selection menu trigger. Builds and fires a chat turn
   // directly from `text` (the menu wraps the user's selection in a
-  // template prompt before calling), bypassing the input field. We
-  // skip the excerpt-chip verification path because the caller has
-  // already inlined the relevant text.
+  // template prompt before calling), bypassing the input field.
   const sendDirect = useCallback(
     async (text: string): Promise<void> => {
       const trimmed = text.trim();
@@ -1318,12 +1211,9 @@ export function useChatStreaming(
       } catch (err) {
         console.warn('[chat] history.append user (direct) failed', err);
       }
-      fireChat([...messages, userMsg], []);
-      // chunk 75 — same auto-unset as `send`. selection-menu invocation
-      // counts as one explicit attach turn.
-      if (attachDoc) setAttachDoc(false);
+      fireChat([...messages, userMsg]);
     },
-    [activeDocPath, attachDoc, fireChat, messages, setAttachDoc, streaming],
+    [activeDocPath, fireChat, messages, streaming],
   );
 
   // useImperativeHandle for ChatPanelHandle stays in ChatPanel — it
@@ -1410,7 +1300,6 @@ export function useChatStreaming(
     // sendDirect/regenerate 가 stale phase 로 mis-route 되는 것 방지).
     agentToolHistoryRef.current = [];
     resetRouterCache();
-    agentVerifiedExcerptsRef.current = [];
     assistantBufferRef.current = '';
     setStreaming(false);
     assistantIdRef.current = null;
@@ -1489,7 +1378,6 @@ export function useChatStreaming(
       );
       agentTurnDepthRef.current = 0;
       setAgentTurn?.(0);
-      agentVerifiedExcerptsRef.current = [];
       assistantBufferRef.current = '';
       setStreaming(false);
       handleRef.current = null;
@@ -1595,7 +1483,7 @@ export function useChatStreaming(
           // chunk 99 follow-up — stop 버튼이 mid-loop 에 눌리면 다음
           // turn 진입을 차단. tool 결과 메시지는 그대로 history 에 남음.
           if (agentStoppedRef.current) return;
-          fireChatRef.current?.(next, agentVerifiedExcerptsRef.current);
+          fireChatRef.current?.(next);
         });
       }
       return next;
@@ -1617,7 +1505,6 @@ export function useChatStreaming(
     stop,
     agentToolUsesRef,
     agentTurnDepthRef,
-    agentVerifiedExcerptsRef,
     currentModeRef,
     requestPlanSkip: () => {
       planSkipNextRef.current = true;

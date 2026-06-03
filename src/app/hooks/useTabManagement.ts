@@ -2,22 +2,17 @@
  * `useTabManagement` — Phase R3 (2차) refactor (REFACTORING_PLAN.md).
  *
  * AppShell.tsx 의 tab 관리 (open / close / pin / reorder /
- * close-others / close-right / copy-path / reveal / dirty-change /
- * ref callback) 를 hook 으로 분해. 외부 동작 1:1 동일 — chunk 52
- * autosave recovery / chunk 55 pin / drag-reorder 모두 보존.
- *
- * `viewerRefsRef` 는 hook 내부에서 보유 — close 시 자동 cleanup.
- * `activeViewerRef()` getter 와 `dirtyCallbacks` map 도 hook 이 노출.
+ * close-others / close-right / copy-path / reveal) 를 hook 으로 분해.
+ * 외부 동작 1:1 동일 — chunk 52 autosave recovery / chunk 55 pin /
+ * drag-reorder 모두 보존.
  */
 import {
   useCallback,
-  useRef,
   useState,
   type Dispatch,
   type SetStateAction,
 } from 'react';
 import { type TabDescriptor } from '@/app/TabBar';
-import type { ViewerHandle } from '@/features/chat/viewer-handle-types';
 
 export interface TabState extends TabDescriptor {
   /** Stable React key — survives re-orderings (tabs aren't reorderable
@@ -38,8 +33,6 @@ export interface TabManagementHandle {
   activeIndex: number;
   setActiveIndex: Dispatch<SetStateAction<number>>;
   activeTab: TabState | null;
-  viewerRefsRef: React.MutableRefObject<Map<string, ViewerHandle | null>>;
-  activeViewerRef: () => ViewerHandle | null;
   openTab: (path: string) => void;
   replaceTabPath: (oldPath: string, newPath: string) => void;
   closeTab: (index: number) => void;
@@ -49,22 +42,19 @@ export interface TabManagementHandle {
   closeTabsToRight: (index: number) => void;
   copyTabPath: (index: number) => void;
   revealTab: (index: number) => void;
+  /** 0.7.46 — 탭의 unsaved-dirty 플래그 설정. AI 쓰기 도구가 성공하면
+   *  true, 저장 시 false. 변경 없으면 no-op (re-render 회피). */
+  setTabDirty: (key: string, dirty: boolean) => void;
 }
 
 export function useTabManagement(): TabManagementHandle {
   const [tabsState, setTabsState] = useState<TabState[]>([]);
   const [activeIndex, setActiveIndex] = useState(-1);
-  const viewerRefsRef = useRef<Map<string, ViewerHandle | null>>(new Map());
 
   const activeTab: TabState | null =
     activeIndex >= 0 && activeIndex < tabsState.length
       ? tabsState[activeIndex]
       : null;
-
-  const activeViewerRef = useCallback((): ViewerHandle | null => {
-    if (!activeTab) return null;
-    return viewerRefsRef.current.get(activeTab.key) ?? null;
-  }, [activeTab]);
 
   // Add a new tab for `path` (or focus an existing one). Returns the
   // index of the resulting active tab.
@@ -152,7 +142,6 @@ export function useTabManagement(): TabManagementHandle {
         );
         if (!ok) return prev;
       }
-      viewerRefsRef.current.delete(tab.key);
       const next = prev.filter((_, i) => i !== index);
       // Activate the previous tab (or the next one if we closed the first).
       setActiveIndex((curIdx) => {
@@ -234,7 +223,6 @@ export function useTabManagement(): TabManagementHandle {
         );
         if (!ok) return prev;
       }
-      for (const t of willClose) viewerRefsRef.current.delete(t.key);
       // Re-locate the active tab (keep target) within the shrunken array.
       const newIdx = willKeep.findIndex((t) => t.key === keep.key);
       setActiveIndex(newIdx >= 0 ? newIdx : 0);
@@ -259,7 +247,6 @@ export function useTabManagement(): TabManagementHandle {
         );
         if (!ok) return prev;
       }
-      for (const t of willClose) viewerRefsRef.current.delete(t.key);
       const next = [...prev.slice(0, index + 1), ...pinnedRight];
       setActiveIndex((curIdx) => Math.min(curIdx, next.length - 1));
       return next;
@@ -286,14 +273,22 @@ export function useTabManagement(): TabManagementHandle {
     });
   }, []);
 
+  const setTabDirty = useCallback((key: string, dirty: boolean): void => {
+    setTabsState((prev) => {
+      const idx = prev.findIndex((t) => t.key === key);
+      if (idx < 0 || prev[idx].dirty === dirty) return prev;
+      const next = [...prev];
+      next[idx] = { ...next[idx], dirty };
+      return next;
+    });
+  }, []);
+
   return {
     tabsState,
     setTabsState,
     activeIndex,
     setActiveIndex,
     activeTab,
-    viewerRefsRef,
-    activeViewerRef,
     openTab,
     replaceTabPath,
     closeTab,
@@ -303,5 +298,6 @@ export function useTabManagement(): TabManagementHandle {
     closeTabsToRight,
     copyTabPath,
     revealTab,
+    setTabDirty,
   };
 }

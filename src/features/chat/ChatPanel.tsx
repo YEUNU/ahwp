@@ -35,14 +35,6 @@ import { createPortal } from 'react-dom';
 import { parsePatchBlock, type AhwpPatch } from '@shared/ai-patches';
 import { MultiPatchStack, type PatchStatus } from './DiffCard';
 import { GithubDiffPane } from './GithubDiffPane';
-import { markdownToHtml } from './markdownToHtml';
-import { findSectionToReplace } from './sectionMatcher';
-import {
-  EXCERPT_SOFT_CHAR_LIMIT,
-  type ExcerptAttachment,
-  type ExcerptStatus,
-  type TextRange,
-} from '@shared/ai-excerpt';
 import type { AiChatHandle } from '@shared/api';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -53,7 +45,6 @@ import {
   loadAgentMaxTurns,
   loadPlanModeDefault,
 } from './hooks/useChatStreaming';
-import { useExcerptAttachments } from './hooks/useExcerptAttachments';
 import { previewArgs } from './tools';
 import type { ModeContext } from '@shared/ai-modes';
 import { MODE_REGISTRY } from '@shared/ai-modes';
@@ -203,46 +194,6 @@ export interface ChatPanelProps {
    */
   onOpenSettings?: () => void;
   /**
-   * Active document HTML context — chunk 18. When attached, the
-   * panel includes a system message with the first N paragraphs as
-   * HTML so the AI can understand structure (paragraphs, alignment,
-   * font styles, tables). Returns null when no doc is loaded.
-   */
-  getDocHtml?: () => string;
-  /**
-   * Apply an AI-authored HTML fragment to the active doc — chunk 18.
-   * Wraps StudioViewer's applyHtmlAtCaret. Surfaced as a "문서에 적용"
-   * button on assistant messages that contain ```html``` code blocks.
-   */
-  applyHtml?: (html: string) => void;
-  /**
-   * Replace an existing outline section's body with the AI-authored
-   * HTML — chunk 99 follow-up. Surfaced as "기존 X.Y.Z 섹션 교체"
-   * button when the AI's heading matches an outline section number.
-   * Avoids the duplicate-section bug where pasteHtml-at-caret left
-   * the old heading + body intact next to the new one.
-   */
-  applyHtmlReplaceSection?: (
-    html: string,
-    target: { startParaIdx: number; endParaIdxExclusive: number },
-  ) => void;
-  /**
-   * Read the active document outline (heading paragraphs). Used by
-   * the apply button to detect when the AI heading matches an existing
-   * section so we can offer the replace path instead of paste-at-caret.
-   */
-  getOutline?: () => readonly {
-    paragraphIndex: number;
-    level: number;
-    text: string;
-  }[];
-  /**
-   * Active doc paragraph count cap — passed to `findSectionToReplace`
-   * so the matcher can compute end-of-document for the last outline
-   * entry. Optional; falls back to outline-end when missing.
-   */
-  getActiveParagraphCount?: () => number;
-  /**
    * Run a pre-flighted ahwp-tools op list against a target doc — chunk 19,
    * extended in chunk 59 to be docId-aware. `targetPath` is the absolute
    * path of the doc the turn was started on; AppShell looks up the matching
@@ -255,36 +206,10 @@ export interface ChatPanelProps {
     targetPath?: string | null,
   ) => Promise<AhwpToolResult[]> | AhwpToolResult[];
   /**
-   * Capture the active StudioViewer selection as a portable excerpt — chunk 20.
-   * `null` when no selection is active or the selection spans paragraphs.
-   * The chip lives in chat state until the user removes it or sends.
-   */
-  captureExcerpt?: () => {
-    sectionIndex: number;
-    startParagraphIndex: number;
-    startOffset: number;
-    endParagraphIndex: number;
-    endOffset: number;
-    text: string;
-  } | null;
-  /**
-   * Active document path — chunk 20. Used to label excerpt chips with
-   * the source filename and to differentiate chips by origin doc.
+   * Active document path — chunk 20. Used to scope chat history to the
+   * active doc and to pin the AI tool-routing target at turn start.
    */
   activeDocPath?: () => string | null;
-  /**
-   * Re-read the IR at a stored anchor — chunk 20. Returns whether the
-   * captured text is still where we left it, and a relocated anchor
-   * when the IR moved it. Called per-chip right before `fireChat` so
-   * we don't send stale anchors.
-   */
-  verifyExcerpt?: (
-    anchor: TextRange,
-    expected: string,
-  ) => {
-    status: ExcerptStatus;
-    newAnchor?: TextRange;
-  } | null;
   /**
    * Currently open document tabs — chunk 21. Used by the multi-doc
    * chip row to show target (active tab, locked) + reference candidates
@@ -305,14 +230,6 @@ export interface ChatPanelProps {
    * activating that tab.
    */
   getDocOutline?: (path: string) => string;
-  /**
-   * Roll back the most recent AI-applied change — chunk 29. Wraps the
-   * active viewer's `undo()`, which on AI-driven mutations covers an
-   * entire turn (chunk 27 grouped undo). Returns true when a change was
-   * actually undone. Surfaced as a "되돌리기" button next to the
-   * "✓ 적용됨" / "도구 실행" affordances for ~15 seconds after apply.
-   */
-  undoLastApply?: () => boolean;
   /** chunk 99 follow-up — switchTargetDoc 가 닫힌 탭 path 를 받았을 때
    *  자동으로 file:open-by-path → tab 추가 → mount. true=성공.
    *  AppShell 가 IPC + tabsState 갱신 책임. 미제공 시 닫힌 path 는
@@ -349,7 +266,6 @@ export interface ChatPanelHandle {
   prefillAndSend: (text: string) => void;
 }
 
-const HTML_BLOCK_RE = /```html\n?([\s\S]*?)```/i;
 const TOOLS_BLOCK_RE = /```ahwp-tools\n?([\s\S]*?)```/i;
 const PATCHES_BLOCK_RE = /```ahwp-patches\n?([\s\S]*?)```/i;
 
@@ -357,17 +273,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
   function ChatPanel(
     {
       onOpenSettings,
-      getDocHtml,
-      applyHtml,
-      applyHtmlReplaceSection,
-      getOutline,
       runTools,
-      captureExcerpt,
       activeDocPath,
-      verifyExcerpt,
       getOpenDocs,
       getDocOutline,
-      undoLastApply,
       openDocByPath,
       applyPatches,
       previewPatch,
@@ -443,22 +352,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       google: { kind: 'idle' },
       custom: { kind: 'idle' },
     });
-    // chunk 74 — default true. The user expectation when opening
-    // ChatPanel with an active doc is "AI knows what I'm looking at".
-    // Toggling off is for very long docs where token cost is a concern.
-    // Persisted via localStorage so the user's preference sticks.
-    // chunk 99 follow-up — 컨텍스트 자동 첨부 폐기 (사용자 요청).
-    // attachDoc 토글 UI 제거. 사용자가 매뉴얼로 발췌 chip 으로 첨부.
-    // attachDoc state 는 false 로 고정 — getDocHtml 자동 호출 차단.
-    // hook signature 호환을 위해 setter stub 유지.
-    const attachDoc = false;
-    const setAttachDoc = (): void => {};
-    // chunk 20 — excerpt chips. When non-empty, the system message
-    // injects a structured `[Excerpts]:` block instead of the whole-doc
-    // HTML (the toggle still appears but the docHtml path is suppressed).
-    const [excerpts, setExcerpts] = useState<ExcerptAttachment[]>([]);
-    // Toast for send-side blocking events (e.g. all chips went stale).
-    const [excerptError, setExcerptError] = useState<string | null>(null);
     // chunk 26 — chat history persistence. Conversation id is null until
     // the user sends the first message of a fresh chat; from then on
     // every send/assistant turn is appended via IPC. Switching to a
@@ -686,20 +579,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // read the latest binding without stale closure.
     const refreshHistoryRef = useRef<(() => Promise<void>) | null>(null);
 
-    // R2.2 — chunk 20 (excerpt 첨부) + chunk 22 (drag/drop) →
-    // useExcerptAttachments hook.
-    const {
-      onCaptureExcerpt,
-      onDropExcerpt,
-      onDragOverExcerpt,
-      removeExcerpt,
-    } = useExcerptAttachments({
-      activeDocPath,
-      captureExcerpt,
-      setExcerpts,
-      setExcerptError,
-    });
-
     // R2.1 — chunk 26 (history list) + chunk 30 (inline rename) →
     // useChatHistory hook.
     const {
@@ -723,8 +602,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       setMessages,
       setConversationId,
       setError,
-      setExcerpts,
-      setExcerptError,
       refreshHistoryRef,
     });
 
@@ -761,20 +638,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       provider,
       model,
       modelList,
-      attachDoc,
-      setAttachDoc,
-      excerpts,
-      setExcerptError,
-      setExcerpts,
       conversationId,
       setConversationId,
       referencePaths,
       onOpenSettings,
-      getDocHtml,
       runTools,
-      captureExcerpt,
       activeDocPath,
-      verifyExcerpt,
       getOpenDocs,
       getDocOutline,
       // chunk 99 follow-up — switchTargetDoc 의 cross-doc auto-open
@@ -1125,11 +994,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   onCopy={copyMessage}
                   onRegenerate={regenerate}
                   onDelete={deleteMessage}
-                  onApplyHtml={applyHtml}
-                  onApplyHtmlReplaceSection={applyHtmlReplaceSection}
-                  getOutline={getOutline}
                   onRunTools={runTools}
-                  onUndoApply={undoLastApply}
                   onApplyPatches={applyPatches}
                   onPreviewPatch={previewPatch}
                   onExecutePlan={() => executePlanFromMessage(m.id)}
@@ -1148,33 +1013,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
         <form
           onSubmit={onSubmit}
-          onDragOver={onDragOverExcerpt}
-          onDrop={onDropExcerpt}
           className="shrink-0 border-t border-border bg-card p-3"
           data-testid="chat-input-form"
         >
           {/* 0.7.29 — 모델 작업 계획(updatePlan) 진행 체크리스트. */}
           <PlanChecklist items={latestPlan} />
-          {/* chunk 99 follow-up — 멀티 문서 자동 chip 폐기 (사용자
-            요청, 매뉴얼만). MultiDocChips 컴포넌트는 keep — 향후 사용자
-            매뉴얼 토글 / cmd-K 같은 곳에서 재활용 가능. */}
-          {/* chunk 99 follow-up — 자동 첨부 토글 폐기 (사용자 요청).
-            컨텍스트는 사용자가 매뉴얼 발췌 chip 으로만 추가. captureExcerpt
-            버튼은 그대로 노출. */}
-          {captureExcerpt ? (
-            <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
-              <button
-                type="button"
-                onClick={onCaptureExcerpt}
-                disabled={streaming}
-                data-testid="chat-capture-excerpt"
-                className="rounded-md border border-input px-2 py-0.5 hover:bg-muted disabled:opacity-50"
-                title="에디터에서 선택한 텍스트를 칩으로 첨부 (selection rect 를 채팅 입력란으로 드래그해도 동일)"
-              >
-                📌 발췌 첨부
-              </button>
-            </div>
-          ) : null}
           {/* 0.7.19 — Inserty 데모 참고: 참고자료 토글 칩. 활성 탭을
             제외한 열린 문서를 read-only 참고자료로 첨부 → 시스템 프롬프트의
             [Reference docs] 블록. 닫히면 후보에서 사라지고 소비 측이
@@ -1221,72 +1064,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               </div>
             );
           })()}
-          {excerpts.length > 0 ? (
-            <ul
-              className="mb-2 flex flex-wrap gap-1.5"
-              data-testid="chat-excerpt-list"
-            >
-              {excerpts.map((ex) => {
-                const tooLong = ex.text.length > EXCERPT_SOFT_CHAR_LIMIT;
-                return (
-                  <li
-                    key={ex.id}
-                    data-testid="chat-excerpt-chip"
-                    data-status={ex.status}
-                    data-role={ex.role}
-                    className={cn(
-                      'flex max-w-full items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px]',
-                      ex.status === 'fresh' &&
-                        'border-input bg-muted text-foreground',
-                      ex.status === 'stale-relocated' &&
-                        'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400',
-                      ex.status === 'stale-missing' &&
-                        'border-destructive/40 bg-destructive/10 text-destructive',
-                    )}
-                    title={ex.text}
-                  >
-                    <span className="text-muted-foreground">
-                      {ex.docLabel}:¶{ex.anchor.startParagraphIndex}
-                      {ex.anchor.endParagraphIndex !==
-                      ex.anchor.startParagraphIndex
-                        ? `..${ex.anchor.endParagraphIndex}`
-                        : ''}
-                    </span>
-                    <span className="max-w-56 truncate">
-                      {ex.text.replace(/\s+/g, ' ').trim()}
-                    </span>
-                    {tooLong ? (
-                      <span
-                        className="text-amber-600"
-                        title={`긴 발췌 (${ex.text.length}자) — 토큰 사용량 주의`}
-                      >
-                        ⚠️
-                      </span>
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={() => removeExcerpt(ex.id)}
-                      disabled={streaming}
-                      aria-label="발췌 제거"
-                      data-testid="chat-excerpt-remove"
-                      className="rounded-full px-1 text-muted-foreground hover:bg-foreground/10 hover:text-foreground disabled:opacity-50"
-                    >
-                      ×
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : null}
-          {excerptError ? (
-            <div
-              role="alert"
-              data-testid="chat-excerpt-error"
-              className="mb-2 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-[11px] text-destructive"
-            >
-              {excerptError}
-            </div>
-          ) : null}
           <div className="flex items-end gap-2">
             <textarea
               ref={inputRef}
@@ -1558,30 +1335,10 @@ interface MessageProps {
   onCopy: (id: string) => Promise<boolean>;
   onRegenerate: (id: string) => void;
   onDelete: (id: string) => void;
-  /** Apply an HTML fragment to the active document (chunk 18). */
-  onApplyHtml?: (html: string) => void;
-  /** Replace an existing outline section's body with HTML (chunk 99 follow-up). */
-  onApplyHtmlReplaceSection?: (
-    html: string,
-    target: { startParaIdx: number; endParaIdxExclusive: number },
-  ) => void;
-  /** Read active document outline — used to detect section-replace candidate. */
-  getOutline?: () => readonly {
-    paragraphIndex: number;
-    level: number;
-    text: string;
-  }[];
   /** Run an `ahwp-tools` op list against the active document (chunk 19). */
   onRunTools?: (
     items: AhwpPreflightItem[],
   ) => Promise<AhwpToolResult[]> | AhwpToolResult[];
-  /**
-   * Roll back the last AI-applied change — chunk 29. Routes through the
-   * active viewer's undo stack which is grouped per AI turn (chunk 27),
-   * so a single click reverses all ops the model just ran. Returns true
-   * when something was actually undone.
-   */
-  onUndoApply?: () => boolean;
   /** Apply a batch of patches as a grouped-undo turn (Q5 diff viewer). */
   onApplyPatches?: (patches: AhwpPatch[]) => Promise<boolean[]>;
   /** Scroll the editor to a patch's location (Q5 확장). */
@@ -1606,11 +1363,7 @@ function Message({
   onCopy,
   onRegenerate,
   onDelete,
-  onApplyHtml,
-  onApplyHtmlReplaceSection,
-  getOutline,
   onRunTools,
-  onUndoApply,
   onApplyPatches,
   onPreviewPatch,
   onExecutePlan,
@@ -1641,137 +1394,9 @@ function Message({
   // and only show it on the bubble that finished its content.
   const actionsHidden = streaming || isAssistantStreaming;
 
-  // Apply-HTML affordance — only on completed assistant messages that
-  // contain a ```html``` fenced block AND when a viewer handle is
-  // available (onApplyHtml prop). Extract the first block; the Agent
-  // guide restricts code-block emission to a single ahwp-patches block,
-  // but legacy / off-spec html responses are still parsed as a fallback.
-  const htmlMatch =
-    !isUser && !streaming && onApplyHtml
-      ? HTML_BLOCK_RE.exec(message.content)
-      : null;
-  let htmlPayload = htmlMatch ? htmlMatch[1].trim() : null;
-  // chunk 99 fallback — 모델이 도구 호출 / ```html``` 블록 둘 다 안 쓰고
-  // 자유 markdown 으로 응답한 경우 (gpt-5.4-mini 의 한국어 conversational
-  // 응답 패턴). 마크다운 → HTML 변환해서 같은 적용 버튼으로 라우팅.
-  let markdownFallback = false;
-  if (!htmlPayload && !isUser && !streaming && onApplyHtml) {
-    const hasToolEntries =
-      message.toolEntries && message.toolEntries.length > 0;
-    if (!hasToolEntries) {
-      const md = markdownToHtml(message.content);
-      if (md) {
-        htmlPayload = md.html;
-        markdownFallback = true;
-      }
-    }
-  }
-  // chunk 29 — applied/toolsRun feedback persists ~15s instead of ~2s
-  // so the user has time to click "되돌리기" before the affordance hides.
-  // The badge collapses back to its original state once `undone` flips
-  // true (we keep the affordance idempotent — second undo click is a
-  // no-op).
+  // chunk 29 — toolsRun feedback persists ~15s instead of ~2s so the
+  // user has time to click "되돌리기" before the affordance hides.
   const APPLIED_TOAST_MS = 15000;
-  const [applied, setApplied] = useState(false);
-  const [undone, setUndone] = useState(false);
-  const appliedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    return () => {
-      if (appliedTimerRef.current) clearTimeout(appliedTimerRef.current);
-    };
-  }, []);
-  // chunk 99 follow-up — outline-aware section replace detection. When
-  // the AI's HTML starts with a heading whose section number ("2.7.4")
-  // matches an existing outline entry, we offer a replace path instead
-  // of paste-at-caret. Avoids duplicate sections.
-  const sectionMatch = useMemo(() => {
-    if (!htmlPayload || !onApplyHtmlReplaceSection || !getOutline) return null;
-    try {
-      const outline = getOutline();
-      if (!outline || outline.length === 0) return null;
-      return findSectionToReplace(outline, htmlPayload);
-    } catch (err) {
-      console.warn('[chat] findSectionToReplace failed:', err);
-      return null;
-    }
-  }, [htmlPayload, onApplyHtmlReplaceSection, getOutline]);
-  const handleApply = useCallback(() => {
-    if (!htmlPayload) return;
-    if (sectionMatch && onApplyHtmlReplaceSection) {
-      onApplyHtmlReplaceSection(htmlPayload, {
-        startParaIdx: sectionMatch.startParaIdx,
-        endParaIdxExclusive: sectionMatch.endParaIdxExclusive,
-      });
-    } else if (onApplyHtml) {
-      onApplyHtml(htmlPayload);
-    } else {
-      return;
-    }
-    setApplied(true);
-    setUndone(false);
-    if (appliedTimerRef.current) clearTimeout(appliedTimerRef.current);
-    appliedTimerRef.current = setTimeout(
-      () => setApplied(false),
-      APPLIED_TOAST_MS,
-    );
-  }, [
-    htmlPayload,
-    sectionMatch,
-    onApplyHtmlReplaceSection,
-    onApplyHtml,
-    appliedTimerRef,
-    APPLIED_TOAST_MS,
-  ]);
-  // chunk 99 follow-up — 자동 적용. plan mode 가 아닌 일반 응답에서
-  // ```html``` / markdown fallback / sectionMatch 가 결정되면 한 번만
-  // dispatch. 사용자가 만족 못하면 stop / undo (⌘Z).
-  //
-  // 0.4.6 fix: markdown fallback 은 sectionMatch (`### N.N.N ...` 같은
-  // 섹션 번호 heading) 가 매칭됐을 때만 자동 적용. read-only agent loop
-  // 의 informational 마무리 (옵션 나열 / 질문 / 안내 같은 conversational
-  // 답변) 가 markdownToHtml 변환을 통과해도 sectionMatch 가 없으면
-  // 적용되지 않음. 사용자 의도가 "조회" 였는데 doc 이 mutate 되던 회귀
-  // (사업계획서 "다 채워졌는지 확인해줘" 류) fix. 명시적 ```html``` 블록
-  // 은 의도적 payload 라 이전 동작 유지.
-  const autoAppliedRef = useRef(false);
-  // 0.4.23 — html preview 토글. ON 이면 자동 적용 차단, Accept 카드 렌더.
-  const htmlPreviewMode = loadHtmlPreview();
-  const [htmlPreviewDismissed, setHtmlPreviewDismissed] = useState(false);
-  useEffect(() => {
-    if (autoAppliedRef.current) return;
-    if (isUser || streaming) return;
-    if (message.planMode) return;
-    if (!htmlPayload) return;
-    if (markdownFallback && !sectionMatch) return;
-    // 0.4.23 — preview ON 이면 자동 적용 안 함, Accept 버튼 대기.
-    if (htmlPreviewMode) return;
-    autoAppliedRef.current = true;
-    // microtask 양보 — setState 가 effect 본체에서 직접 발생하지 않게.
-    queueMicrotask(handleApply);
-  }, [
-    isUser,
-    streaming,
-    message.planMode,
-    htmlPayload,
-    markdownFallback,
-    sectionMatch,
-    htmlPreviewMode,
-    handleApply,
-  ]);
-  const handleUndoApply = () => {
-    if (!onUndoApply || undone) return;
-    const ok = onUndoApply();
-    if (ok) {
-      setUndone(true);
-      // Keep the badge visible for a beat so the user sees the rollback
-      // confirmation, then collapse.
-      if (appliedTimerRef.current) clearTimeout(appliedTimerRef.current);
-      appliedTimerRef.current = setTimeout(() => {
-        setApplied(false);
-        setUndone(false);
-      }, 2000);
-    }
-  };
 
   // Diff Viewer affordance — Q5 (UI/UX align). The model emits a
   // ```ahwp-patches``` block when it has discrete, location-anchored
@@ -1809,19 +1434,6 @@ function Message({
   // applied; this just hides the visual diff so user can keep working
   // without the side panel cluttering the editor area.
   const [patchPaneDismissed, setPatchPaneDismissed] = useState(false);
-
-  // 0.6.14 — Accept 후 토스트 UI 는 GithubDiffPane 헤더로 흡수됨. 별도
-  // chat-side toast 상태는 없음 (적용 결과는 per-patch status 로 표시).
-  const handlePatchUndo = (): void => {
-    if (!onUndoApply) return;
-    if (onUndoApply()) {
-      // After undo, all accepted statuses revert visually to pending —
-      // we don't track which ones were just accepted vs. earlier, so
-      // wipe overrides entirely. (For multi-step accept flows the user
-      // can re-apply.)
-      setPatchStatusOverrides({});
-    }
-  };
 
   const handlePatchAcceptIdx = (idx: number): void => {
     if (!patchesParsed?.ok || !onApplyPatches) return;
@@ -1894,7 +1506,6 @@ function Message({
     ok: number;
     total: number;
   } | null>(null);
-  const [toolsUndone, setToolsUndone] = useState(false);
   const toolsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     return () => {
@@ -1907,27 +1518,13 @@ function Message({
     let ok = 0;
     for (const r of results) if (r.ok) ok += 1;
     setToolsRun({ ok, total: results.length });
-    setToolsUndone(false);
     if (toolsTimerRef.current) clearTimeout(toolsTimerRef.current);
-    // chunk 29 — keep the affordance visible for ~15s so the user has
-    // time to click 되돌리기. The runTools dispatcher already groups all
-    // ops into a single undo entry (chunk 27).
+    // chunk 29 — keep the affordance visible for ~15s. The runTools
+    // dispatcher already groups all ops into a single undo entry (chunk 27).
     toolsTimerRef.current = setTimeout(
       () => setToolsRun(null),
       APPLIED_TOAST_MS,
     );
-  };
-  const handleUndoTools = () => {
-    if (!onUndoApply || toolsUndone) return;
-    const ok = onUndoApply();
-    if (ok) {
-      setToolsUndone(true);
-      if (toolsTimerRef.current) clearTimeout(toolsTimerRef.current);
-      toolsTimerRef.current = setTimeout(() => {
-        setToolsRun(null);
-        setToolsUndone(false);
-      }, 2000);
-    }
   };
 
   return (
@@ -1996,166 +1593,6 @@ function Message({
             </span>
           </div>
         ) : null}
-        {/* chunk 99 follow-up — 자동 적용. plan mode 가 아니면 useEffect
-          가 한 번 자동 dispatch (no-op button). plan mode 에선 인디케이터
-          + execute button 으로 수동 흐름 유지. 자동 적용 후 ✓ 토스트만
-          간략히 표시 — 사용자가 ⌘Z 로 undo 가능. */}
-        {/* 0.4.23 — html preview mode. Settings 토글 ON 시 자동 적용 차단 +
-          Accept/Reject 카드 표시. OFF (default) 면 기존 자동 적용 흐름. */}
-        {htmlPayload &&
-        !message.planMode &&
-        htmlPreviewMode &&
-        !applied &&
-        !htmlPreviewDismissed ? (
-          <div
-            className="mt-2 rounded border border-border bg-muted/30 p-2 shadow-xs"
-            data-testid="chat-html-preview-card"
-            data-section-match={sectionMatch ? sectionMatch.sectionNumber : ''}
-          >
-            <div className="mb-1 flex items-center gap-2 text-xs font-semibold">
-              <span>✏️</span>
-              <span>
-                {sectionMatch
-                  ? `${sectionMatch.sectionNumber} 섹션 교체 제안`
-                  : '문서 변경 제안'}
-              </span>
-              {sectionMatch ? (
-                <span className="font-normal text-muted-foreground">
-                  · {sectionMatch.headingText}
-                </span>
-              ) : null}
-            </div>
-            <pre className="mb-2 max-h-32 overflow-auto rounded border border-border/40 bg-background p-1 text-[10px] leading-snug">
-              {htmlPayload.length > 800
-                ? `${htmlPayload.slice(0, 800)}…`
-                : htmlPayload}
-            </pre>
-            <div className="flex gap-1">
-              <Button
-                type="button"
-                size="sm"
-                variant="default"
-                onClick={handleApply}
-                data-testid="chat-html-preview-accept"
-                className="h-6 px-2 text-[11px]"
-              >
-                Accept
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => setHtmlPreviewDismissed(true)}
-                data-testid="chat-html-preview-reject"
-                className="h-6 px-2 text-[11px]"
-              >
-                Reject
-              </Button>
-            </div>
-          </div>
-        ) : null}
-        {htmlPayload && !message.planMode && !htmlPreviewMode ? (
-          <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2 text-[11px] text-muted-foreground">
-            {applied && !undone ? (
-              <>
-                <span data-testid="chat-action-applied-toast">
-                  ✓{' '}
-                  {sectionMatch
-                    ? `기존 ${sectionMatch.sectionNumber} 섹션 교체 적용됨`
-                    : markdownFallback
-                      ? '마크다운 자동 적용됨'
-                      : 'HTML 자동 적용됨'}
-                </span>
-                {onUndoApply ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={handleUndoApply}
-                    data-testid="chat-action-undo-apply"
-                    className="text-xs"
-                    title="방금 적용한 변경을 한 번에 되돌립니다 (⌘Z 묶음 undo)"
-                  >
-                    되돌리기
-                  </Button>
-                ) : null}
-              </>
-            ) : (
-              <span>적용 중…</span>
-            )}
-          </div>
-        ) : null}
-        {htmlPayload && !message.planMode && htmlPreviewMode && applied ? (
-          <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2 text-[11px] text-muted-foreground">
-            <span data-testid="chat-action-applied-toast">
-              ✓{' '}
-              {sectionMatch
-                ? `기존 ${sectionMatch.sectionNumber} 섹션 교체 적용됨`
-                : markdownFallback
-                  ? '마크다운 적용됨'
-                  : 'HTML 적용됨'}
-            </span>
-            {onUndoApply ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={handleUndoApply}
-                data-testid="chat-action-undo-apply"
-                className="text-xs"
-              >
-                되돌리기
-              </Button>
-            ) : null}
-          </div>
-        ) : null}
-        {htmlPayload && message.planMode ? (
-          /* plan mode 일 때만 명시적 버튼 — 사용자가 검토 후 적용. */
-          <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2">
-            <Button
-              type="button"
-              size="sm"
-              variant={applied ? 'secondary' : 'default'}
-              onClick={handleApply}
-              data-testid="chat-action-apply-html"
-              data-markdown-fallback={markdownFallback ? 'true' : 'false'}
-              data-section-match={
-                sectionMatch ? sectionMatch.sectionNumber : ''
-              }
-              className="text-xs"
-              title={
-                sectionMatch
-                  ? `기존 "${sectionMatch.headingText}" 섹션 을 응답 내용으로 교체합니다.`
-                  : markdownFallback
-                    ? '응답의 마크다운 형식을 HTML 로 변환해서 활성 문서에 적용합니다.'
-                    : '응답에 포함된 HTML 블록을 활성 문서에 적용합니다.'
-              }
-            >
-              {applied
-                ? undone
-                  ? '✓ 되돌림'
-                  : '✓ 적용됨'
-                : sectionMatch
-                  ? `기존 ${sectionMatch.sectionNumber} 섹션 교체`
-                  : markdownFallback
-                    ? '마크다운 적용'
-                    : '문서에 적용'}
-            </Button>
-            {applied && !undone && onUndoApply ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={handleUndoApply}
-                data-testid="chat-action-undo-apply"
-                className="text-xs"
-                title="방금 적용한 변경을 한 번에 되돌립니다 (⌘Z 묶음 undo)"
-              >
-                되돌리기
-              </Button>
-            ) : null}
-          </div>
-        ) : null}
         {/* Diff pane — 0.6.14 replacement for the card-heavy MultiPatchStack.
           GithubDiffPane portals to #ahwp-editor-diff-overlay (now a real
           side panel right of rhwp-editor, not a sticky overlay). In-chat
@@ -2171,7 +1608,6 @@ function Message({
                   statuses={patchStatuses}
                   onAccept={handlePatchAcceptIdx}
                   onReject={handlePatchRejectIdx}
-                  onUndoAll={onUndoApply ? handlePatchUndo : undefined}
                   onPreview={onPreviewPatch}
                   onDismiss={() => setPatchPaneDismissed(true)}
                 />
@@ -2192,16 +1628,6 @@ function Message({
                       <span className="font-medium">
                         {patchCount}개 변경 적용됨
                       </span>
-                      {onUndoApply ? (
-                        <button
-                          type="button"
-                          onClick={handlePatchUndo}
-                          className="ml-auto text-[10.5px] hover:underline"
-                          data-testid="chat-patches-undo"
-                        >
-                          되돌리기
-                        </button>
-                      ) : null}
                     </div>
                   </>
                 );
@@ -2272,24 +1698,9 @@ function Message({
                     className="text-xs"
                   >
                     {toolsRun
-                      ? toolsUndone
-                        ? `✓ 되돌림 (${toolsRun.ok}/${toolsRun.total})`
-                        : `✓ 적용됨 (${toolsRun.ok}/${toolsRun.total})`
+                      ? `✓ 적용됨 (${toolsRun.ok}/${toolsRun.total})`
                       : '도구 실행'}
                   </Button>
-                  {toolsRun && !toolsUndone && onUndoApply ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={handleUndoTools}
-                      data-testid="chat-action-undo-tools"
-                      className="text-xs"
-                      title="방금 실행한 모든 도구 호출을 한 번에 되돌립니다"
-                    >
-                      되돌리기
-                    </Button>
-                  ) : null}
                 </div>
               </>
             ) : (

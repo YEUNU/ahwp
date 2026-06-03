@@ -415,10 +415,21 @@ ahwp 의 form-fill 사용성을 그 수준으로 끌어올리는 라운드. 사�
   죽은 편집/서식/내보내기 메뉴 액션, 도달 불가 도구 승인 플로우, 미배선
   스캐폴딩(supportsTools/serpapi/staged IPC/ToolDef.modes 등).
 - **검증**: typecheck×2 + 546 unit + 23 chat e2e(fake AI) green.
-- **남은 결정**: #32 탭 dirty(vendor `rhwp-studio` 가 `document-dirty` emit
-  필요), ChatPanel 의 죽은 `activeViewerRef` 컨텍스트 props 복원-vs-제거(실앱
-  검증 필요 — `activeViewerRef()` 가 항상 null 이라 getOutline/captureExcerpt
-  등이 비기능).
+
+### 후속 (0.7.46) — ViewerHandle 클러스터 전체 제거 + 탭 dirty
+
+위 "남은 결정" 두 건 처리:
+
+- **ViewerHandle 클러스터 제거**: `activeViewerRef`/`viewerRefsRef` getter +
+  죽은 발췌(excerpt) 칩 기능(파이프라인 포함) + "문서에 적용" HTML 버튼 +
+  outline 섹션 교체 전부 삭제(~ -1390줄). `useExcerptAttachments`/
+  `sectionMatcher`/`shared/ai-excerpt` 파일 삭제. AI 네이티브 도구·패치는 live
+  `rhwpHandlesRef` bridge 라 그대로. tools.ts 의 `NULL_VIEWER_STUB` fail-fast +
+  `ViewerHandle` 타입은 유지(별개 안전망).
+- **#32 탭 dirty**: vendor 수정 불가 확인 → AI write 도구·패치 성공 시에만 활성
+  탭 dirty, 저장 시 해제. (vendor iframe 이 caret-changed/modifier-keydown 만
+  부모로 보내고 사용자 타이핑은 안 보냄 → AI 쓰기가 유일한 정확한 비-vendor
+  신호.) 검증: typecheck×2 + 529 unit + 32 e2e green.
 
 ## 향후 작업
 

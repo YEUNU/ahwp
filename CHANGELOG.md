@@ -6,6 +6,29 @@
 
 ## [Unreleased]
 
+## [0.7.46] - 2026-06-03
+
+### Removed — 죽은 ViewerHandle 클러스터 + 발췌/HTML-적용 기능 (iframe 이관 잔재)
+
+Phase 7 iframe 이관 후 `activeViewerRef()` 가 **항상 null** 이 되면서(StudioViewer
+제거 + RhwpEditor/rhwpHandlesRef 로 대체) 그에 묶인 ChatPanel 기능들이 모두
+비기능 상태였음. 전체 제거:
+
+- **발췌(excerpt) 칩 기능** 전체 — capture 버튼 / 칩 / drag-drop + streaming /
+  prompts / history 의 ExcerptAttachment 파이프라인까지. `useExcerptAttachments`,
+  `sectionMatcher`, `shared/ai-excerpt` 파일 삭제.
+- **"문서에 적용" HTML 버튼 + outline 섹션 교체** — applyHtml /
+  applyHtmlReplaceSection / getOutline / findSectionToReplace.
+- `activeViewerRef` / `viewerRefsRef` getter (useTabManagement) + useSaveFlow 의
+  죽은 fallback (저장은 live `exportOverride` 경유). AI 네이티브 도구 실행 ·
+  패치/Diff 적용은 live `rhwpHandlesRef` bridge 라 그대로 동작. (~ -1390 줄)
+
+### Added — 탭 unsaved-dirty 표시 (#32, AI 쓰기 기반)
+
+vendor `rhwp-studio` 번들 수정 없이 부모가 감지 가능한 신호로 dirty 구현: AI write
+도구·패치 적용이 성공하면 활성 탭에 dirty 점 표시, 저장 시 해제. (사용자 직접
+타이핑은 vendor 가 부모로 안 보내므로 미감지 — 이 앱은 AI 편집 중심이라 합리적.)
+
 ## [0.7.45] - 2026-06-03
 
 ### Changed — 일관성/데드코드/버그 대청소 (멀티 에이전트 리뷰 후속)

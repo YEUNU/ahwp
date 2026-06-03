@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 // lib upstream issue 추적 후 재시도.
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import type { PingResponse } from '@shared/api';
+import { isReadOnlyTool } from '@shared/ai-tools';
 import { dedupeCellTargets, patchFormatToLibProps } from '@shared/ai-patches';
 import { ChatPanel, type ChatPanelHandle } from '@/features/chat/ChatPanel';
 import { runTools } from '@/features/chat/tools';
@@ -120,8 +121,6 @@ export default function AppShell() {
     activeIndex,
     setActiveIndex,
     activeTab,
-    viewerRefsRef,
-    activeViewerRef,
     openTab,
     replaceTabPath,
     closeTab,
@@ -131,6 +130,7 @@ export default function AppShell() {
     closeTabsToRight,
     copyTabPath,
     revealTab,
+    setTabDirty,
   } = useTabManagement();
 
   useEffect(() => {
@@ -226,10 +226,11 @@ export default function AppShell() {
           if (tab.path.includes('/temp/') || tab.path.includes('\\temp\\')) {
             continue;
           }
-          const handle = viewerRefsRef.current.get(tab.key);
+          const handle = rhwpHandlesRef.current.get(tab.key);
           if (!handle) continue;
           try {
-            const bytes = await handle.exportBytes();
+            const bytes = await handle.exportHwp();
+            if (!bytes) continue;
             await window.api.file.saveDraft({ path: tab.path, bytes });
           } catch (err) {
             console.warn('[autosave] failed for', tab.path, err);
@@ -288,11 +289,12 @@ export default function AppShell() {
     saveAsCurrent,
   } = useSaveFlow({
     activeTab,
-    activeViewerRef,
     openTab,
     replaceTabPath,
     setFolderRoot,
     showNotice,
+    // 0.7.46 — 저장 성공 시 탭 dirty 해제 (AI 쓰기로 설정된 플래그).
+    setTabDirty,
     // Phase 7 E2 — 활성 탭의 RhwpEditor handle 에서 직접 bytes 추출.
     // legacy viewer.exportBytes() 경로는 폐기. handle 이 아직 ready 안
     // 됐으면 null → useSaveFlow 가 대체 에러 처리.
@@ -501,13 +503,25 @@ export default function AppShell() {
                     onClose={() => setSearchMode(false)}
                     onOpenAtParagraph={(p, paraIdx) => {
                       // Open (or focus) the file, then scroll to the
-                      // paragraph after the viewer mounts. We defer the
-                      // scroll to a microtask so React commits the new
-                      // active tab before we reach for the handle.
+                      // paragraph after the rhwp-editor bridge is ready.
+                      // We defer to a timeout so React commits the new
+                      // active tab and the iframe bridge mounts before we
+                      // reach for the handle.
                       openTab(p);
                       setTimeout(() => {
-                        const v = activeViewerRef();
-                        v?.scrollToParagraph(0, paraIdx);
+                        const tab = tabsState.find((t) => t.path === p);
+                        const bridge = tab
+                          ? (rhwpHandlesRef.current.get(tab.key)?.bridge ??
+                            null)
+                          : null;
+                        void bridge
+                          ?.invoke('scrollToParagraph', {
+                            sectionIdx: 0,
+                            paraIdx,
+                          })
+                          .catch(() => {
+                            /* 구버전 vendor build — case 미존재 시 무해 */
+                          });
                       }, 50);
                     }}
                   />
@@ -652,37 +666,6 @@ export default function AppShell() {
                 <ChatPanel
                   ref={chatRef}
                   onOpenSettings={() => setSettingsOpen(true)}
-                  getDocHtml={() =>
-                    // chunk 74 — `exportDocumentHtml()` defaults to 50
-                    // paragraphs which on a 100p+ doc only captures the
-                    // title page / TOC. The model then replies "문서를
-                    // 받지 못했습니다" because the body looks empty. Pass
-                    // 1000 to match the menu HTML-export and PDF paths.
-                    // The provider truncates at the token cap if the
-                    // payload is too large.
-                    activeViewerRef()?.exportDocumentHtml(1000) ?? ''
-                  }
-                  applyHtml={(html) => {
-                    // chunk 57 — bracket the AI apply with a
-                    // paragraph snapshot so we can highlight changed
-                    // paragraphs with an amber stripe for ~15s.
-                    const v = activeViewerRef();
-                    if (!v) return;
-                    const before = v.snapshotParagraphs();
-                    v.applyHtmlAtCaret(html);
-                    v.markChangedParagraphsSince(before);
-                  }}
-                  applyHtmlReplaceSection={(html, target) => {
-                    // chunk 99 follow-up — outline-aware section replace.
-                    // Same snapshot-bracket as applyHtml for the changed-
-                    // paragraph stripe.
-                    const v = activeViewerRef();
-                    if (!v) return;
-                    const before = v.snapshotParagraphs();
-                    v.applyHtmlReplaceSection(html, target);
-                    v.markChangedParagraphsSince(before);
-                  }}
-                  getOutline={() => activeViewerRef()?.getOutline() ?? []}
                   openDocByPath={async (path) => {
                     // chunk 99 follow-up — switchTargetDoc 의 cross-doc
                     // auto-open. useSaveFlow.openByPath 가 0.6.2 부터
@@ -705,21 +688,10 @@ export default function AppShell() {
                     targetPath?: string | null,
                     subAgentContext?: import('@/features/chat/tools').SubAgentContext,
                   ) => {
-                    // Phase 3 chunk 50 — docId-aware routing. If the
-                    // chat turn pinned a target path, look up the
-                    // matching mounted viewer (it stays mounted with
-                    // display:none even when the user switches tabs).
-                    // null targetPath = legacy / Manual "도구 실행"
-                    // button → fall back to active viewer.
-                    const lookupByPath = (p: string) => {
-                      const tab = tabsState.find((t) => t.path === p);
-                      return tab
-                        ? (viewerRefsRef.current.get(tab.key) ?? null)
-                        : null;
-                    };
-                    const v = targetPath
-                      ? lookupByPath(targetPath)
-                      : activeViewerRef();
+                    // Phase 3 chunk 50 — docId-aware routing. The chat
+                    // turn pins a target path; tools dispatch through the
+                    // active tab's live rhwp bridge (the BridgeIrHelper
+                    // path). null targetPath = legacy / Manual "도구 실행".
                     // Phase 7 E2 — 활성 탭의 RhwpEditor handle 에서 직접
                     // bridge 추출. legacy __rhwpDebug fallback 은 폐기.
                     let bridge: import('@/lib/rhwp-bridge').RhwpBridge | null =
@@ -729,8 +701,8 @@ export default function AppShell() {
                       const handle = rhwpHandlesRef.current.get(activeKey);
                       bridge = handle?.bridge ?? null;
                     }
-                    if (!v && !bridge) {
-                      // rhwp-mode 가 아니고 viewer 도 없음 → 호출 불가.
+                    if (!bridge) {
+                      // rhwp bridge 미마운트 → 호출 불가.
                       if (targetPath) {
                         return items.map((it) => ({
                           ok: false,
@@ -740,44 +712,41 @@ export default function AppShell() {
                       }
                       return [];
                     }
-                    const before = v?.snapshotParagraphs();
-                    const helper = bridge
-                      ? new (
-                          await import('@/features/rhwp-studio/bridge-ir-helper')
-                        ).BridgeIrHelper(bridge)
-                      : null;
+                    const helper = new (
+                      await import('@/features/rhwp-studio/bridge-ir-helper')
+                    ).BridgeIrHelper(bridge);
                     const results = await runTools(
-                      v,
+                      null,
                       items,
                       helper,
                       subAgentContext,
                       // 0.7.20 — Inserty 데모 참고: AI form-fill 실시간 편집
                       // 위치 표시. write op 마다 채워지는 문단으로 iframe
                       // 편집 영역을 스크롤 (caret/포커스는 그대로 — 채팅
-                      // 입력 포커스 유지). bridge 미마운트 시 skip.
-                      bridge
-                        ? (sec, para) => {
-                            void bridge!
-                              .invoke('scrollToParagraph', {
-                                sectionIdx: sec,
-                                paraIdx: para,
-                              })
-                              .catch(() => {
-                                /* 구버전 vendor build — case 미존재 시 무해 */
-                              });
-                          }
-                        : undefined,
+                      // 입력 포커스 유지).
+                      (sec, para) => {
+                        void bridge!
+                          .invoke('scrollToParagraph', {
+                            sectionIdx: sec,
+                            paraIdx: para,
+                          })
+                          .catch(() => {
+                            /* 구버전 vendor build — case 미존재 시 무해 */
+                          });
+                      },
                     );
-                    if (v && before) v.markChangedParagraphsSince(before);
+                    // 0.7.46 — AI write 도구가 성공하면 활성 탭 dirty 표시.
+                    // (vendor iframe 이 사용자 타이핑 dirty 를 부모로 안
+                    // 보내므로 AI 쓰기만 감지 — 가장 정확한 비-vendor 신호.)
+                    if (
+                      activeKey &&
+                      results.some((r) => r.ok && !isReadOnlyTool(r.tool))
+                    ) {
+                      setTabDirty(activeKey, true);
+                    }
                     return results;
                   }}
-                  captureExcerpt={() =>
-                    activeViewerRef()?.captureExcerpt() ?? null
-                  }
                   activeDocPath={() => activeTab?.path ?? null}
-                  verifyExcerpt={(anchor, expected) =>
-                    activeViewerRef()?.verifyExcerpt(anchor, expected) ?? null
-                  }
                   getOpenDocs={() =>
                     tabsState.map((tab, idx) => ({
                       path: tab.path,
@@ -785,28 +754,6 @@ export default function AppShell() {
                       isActive: idx === activeIndex,
                     }))
                   }
-                  getDocOutline={(path) => {
-                    // Look up the (still-mounted) viewer for this tab and
-                    // pull a short HTML outline. Inactive viewers stay
-                    // mounted (display:none), so reading their IR is just
-                    // a method call. 20 paragraphs trades cost vs context.
-                    const tab = tabsState.find((t) => t.path === path);
-                    if (!tab) return '';
-                    const ref = viewerRefsRef.current.get(tab.key);
-                    return ref?.exportDocumentHtml(20) ?? '';
-                  }}
-                  undoLastApply={() => {
-                    // chunk 29 — "되돌리기" button on apply/run-tools.
-                    // Routes through the active viewer's undo stack;
-                    // chunk 27 grouped undo guarantees the entire AI
-                    // turn collapses into one entry, so a single click
-                    // reverses every op the model just applied.
-                    const v = activeViewerRef();
-                    if (!v) return false;
-                    if (!v.canUndo()) return false;
-                    v.undo();
-                    return true;
-                  }}
                   applyPatches={async (patches) => {
                     // Q5 Diff Viewer — apply a batch of patches in rhwp-mode
                     // via BridgeIrHelper. Body: deleteRange + insertText.
@@ -1007,16 +954,25 @@ export default function AppShell() {
                         );
                       }
                     }
+                    // 0.7.46 — 패치 적용 성공 시 활성 탭 dirty 표시.
+                    if (key && results.some(Boolean)) setTabDirty(key, true);
                     return results;
                   }}
                   previewPatch={(patch) => {
-                    // Q5 확장 — "에디터에서 보기". 스크롤 + caret 이동.
-                    const v = activeViewerRef();
-                    if (!v) return;
-                    v.scrollToParagraph(
-                      patch.location.sectionIndex,
-                      patch.location.paragraphIndex,
-                    );
+                    // Q5 확장 — "에디터에서 보기". 활성 탭의 rhwp bridge 로
+                    // 해당 문단까지 스크롤.
+                    const key = activeTab?.key;
+                    const bridge = key
+                      ? (rhwpHandlesRef.current.get(key)?.bridge ?? null)
+                      : null;
+                    void bridge
+                      ?.invoke('scrollToParagraph', {
+                        sectionIdx: patch.location.sectionIndex,
+                        paraIdx: patch.location.paragraphIndex,
+                      })
+                      .catch(() => {
+                        /* 구버전 vendor build — case 미존재 시 무해 */
+                      });
                   }}
                 />
               </div>

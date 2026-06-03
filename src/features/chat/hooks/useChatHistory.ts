@@ -7,7 +7,7 @@
  * (chunk 30) / auto-title 마킹 자연 reset 모두 보존.
  *
  * 외부 의존: activeDocPath, conversationIdRef, streaming, message·
- * conversation·error·excerpt setters. 호출자는 refresh 콜백을
+ * conversation·error setters. 호출자는 refresh 콜백을
  * `refreshHistoryRef.current` 로 노출 — 자동 새로고침 (e.g. on send
  * 완료) 시 stale closure 없이 호출.
  */
@@ -20,7 +20,6 @@ import {
   type SetStateAction,
 } from 'react';
 import type { ChatMessage } from '@shared/ai';
-import type { ExcerptAttachment } from '@shared/ai-excerpt';
 
 export interface ChatHistoryRow {
   id: number;
@@ -41,8 +40,6 @@ export interface UseChatHistoryOptions {
   setMessages: Dispatch<SetStateAction<HistoryMessage[]>>;
   setConversationId: Dispatch<SetStateAction<number | null>>;
   setError: Dispatch<SetStateAction<string | null>>;
-  setExcerpts: Dispatch<SetStateAction<ExcerptAttachment[]>>;
-  setExcerptError: Dispatch<SetStateAction<string | null>>;
   /** Mirror slot for `refreshHistory`. The hook writes to
    * `current` so handlers (send completion, etc.) read latest. */
   refreshHistoryRef: MutableRefObject<(() => Promise<void>) | null>;
@@ -73,8 +70,6 @@ export function useChatHistory(opts: UseChatHistoryOptions): ChatHistoryHandle {
     setMessages,
     setConversationId,
     setError,
-    setExcerpts,
-    setExcerptError,
     refreshHistoryRef,
   } = opts;
 
@@ -115,20 +110,10 @@ export function useChatHistory(opts: UseChatHistoryOptions): ChatHistoryHandle {
     setConversationId(null);
     conversationIdRef.current = null;
     setError(null);
-    setExcerpts([]);
-    setExcerptError(null);
     setHistoryOpen(false);
     // chunk 31 — 새 대화 시작 시 auto-title 마킹은 conversation id 단위
     // 라 따로 clear할 필요 없음 (id가 새로 발급될 때 자연히 미마킹 상태).
-  }, [
-    streaming,
-    setMessages,
-    setConversationId,
-    conversationIdRef,
-    setError,
-    setExcerpts,
-    setExcerptError,
-  ]);
+  }, [streaming, setMessages, setConversationId, conversationIdRef, setError]);
 
   const loadConversation = useCallback(
     async (id: number): Promise<void> => {
