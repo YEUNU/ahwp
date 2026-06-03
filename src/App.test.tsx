@@ -44,8 +44,6 @@ describe('App', () => {
         loadDraft: vi.fn().mockResolvedValue(null),
         clearDraft: vi.fn().mockResolvedValue(undefined),
         createVersion: vi.fn().mockResolvedValue(undefined),
-        listVersions: vi.fn().mockResolvedValue([]),
-        readVersion: vi.fn().mockResolvedValue(null),
         openExternal: vi.fn().mockResolvedValue(''),
       },
       session: {
@@ -81,7 +79,6 @@ describe('App', () => {
           skipped: 0,
         }),
         readParagraph: vi.fn().mockResolvedValue({ ok: false, reason: 'mock' }),
-        resolveExternalImages: vi.fn().mockResolvedValue([]),
       },
       secrets: {
         set: vi.fn().mockResolvedValue(undefined),

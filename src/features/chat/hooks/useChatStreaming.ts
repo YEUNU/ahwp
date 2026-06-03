@@ -190,14 +190,12 @@ export interface UseChatStreamingOptions {
   hasKey: any;
   provider: any;
   model: any;
-  chatMode: any;
   modelList: any;
   attachDoc: boolean;
   /** chunk 75 — clear the attach toggle after a successful send so the
    *  user explicitly opts in for each context-attached turn. */
   setAttachDoc: (v: boolean) => void;
   excerpts: any;
-  excerptError: string | null;
   setExcerptError: any;
   setExcerpts: any;
   conversationId: number | null;
@@ -206,7 +204,6 @@ export interface UseChatStreamingOptions {
   // props (from ChatPanel)
   onOpenSettings?: () => void;
   getDocHtml?: () => string;
-  applyHtml?: (html: string) => void;
   runTools?: (
     items: any,
     targetPath?: string | null,
@@ -217,16 +214,11 @@ export interface UseChatStreamingOptions {
   verifyExcerpt?: (anchor: any, expected: string) => any;
   getOpenDocs?: () => Array<{ path: string; label: string; isActive: boolean }>;
   getDocOutline?: (path: string) => string;
-  undoLastApply?: () => boolean;
   /** chunk 99 follow-up — switchTargetDoc 가 닫힌 탭 path 를 받았을 때
    *  자동으로 file:open-by-path → tab 추가 → mount 까지 처리. true =
    *  성공 (탭이 mount 되어 후속 lookup 가능). caller (AppShell) 가
    *  실제 IPC + tabsState 갱신 책임. */
   openDocByPath?: (path: string) => Promise<boolean>;
-  /** chunk 99 follow-up — plan 응답 turn 종료 시 자동 호출. ChatPanel
-   *  이 React state 의 planMode 를 false 로 동기화 (localStorage 는
-   *  hook 안에서 이미 갱신). */
-  onPlanModeAutoDisengage?: () => void;
   /** 0.7.1 — 사용자가 ModeBadge 에서 명시 선택한 TaskMode. detection 보다
    *  우선. null/undefined 면 detection 결과 사용. */
   modeOverride?: import('@shared/ai-modes').TaskMode | null;
@@ -254,10 +246,6 @@ export interface ChatStreamingHandle {
   currentModeRef: MutableRefObject<
     import('@shared/ai-modes').ModeContext | null
   >;
-  /** chunk 97 — pending write tool 에 대한 사용자 결정. accept=true 면
-   *  dispatch + tool_result 'ok', false 면 'user-rejected'. 모든 pending
-   *  이 resolve 되면 자동으로 다음 turn 진입. */
-  resolveApproval: (toolUseId: string, accept: boolean) => Promise<void>;
   /** chunk 99 follow-up — plan mode 를 next send 1회만 우회. "이 계획
    *  대로 실행" 버튼 / "건너뛰기" 버튼이 호출. fireChat 가 1회 소비. */
   requestPlanSkip: () => void;
@@ -292,17 +280,12 @@ export function useChatStreaming(
     setConversationId,
     referencePaths,
     getDocHtml,
-    applyHtml,
     runTools,
     activeDocPath,
     verifyExcerpt,
     getOpenDocs,
     getDocOutline,
-    undoLastApply,
   } = opts;
-  void applyHtml;
-  void undoLastApply;
-  void getOpenDocs;
 
   /** Buffer the assistant's streamed text so we can persist it once
    * — chunk 26. setMessages would also work but reading state from
@@ -349,6 +332,11 @@ export function useChatStreaming(
   //   send / sendDirect / regenerate 시 reset.
   const FORM_GUARD_MAX_NUDGES = 2;
   const formGuardNudgeCountRef = useRef(0);
+  // 0.7.41 — 라우터가 이번 turn 분류한 사용자 intent. turn-start 의 router
+  // 호출에서 set 되어 turn-end 의 form-guard 가 읽는다 (audit 이면 완료
+  // nudge 통째로 비활성). 'unknown' = 분류 실패/폴백 → 기존 동작.
+  const routerIntentRef =
+    useRef<import('../toolRouter').RouterIntent>('unknown');
   const formStateRef = useRef<{
     emptyCellsRemaining: number;
     tableSummary: string;
@@ -380,12 +368,6 @@ export function useChatStreaming(
       label?: string;
     };
   };
-  const pendingTurnRef = useRef<{
-    toolUses: { id: string; name: string; args: unknown }[];
-    partialResults: Map<string, PartialToolResult>;
-    pendingCalls: Map<string, AhwpToolCall>;
-    assistantId: string | null;
-  } | null>(null);
   // fireChat 자체가 useCallback이라 onEvent에서 직접 호출하면 stale
   // closure. ref hop으로 회피.
   const fireChatRef = useRef<
@@ -576,17 +558,14 @@ export function useChatStreaming(
         );
         const dispatcher = runToolsPropRef.current;
         const partialResults = new Map<string, PartialToolResult>();
-        const pendingCalls = new Map<string, AhwpToolCall>();
 
         // chunk 99 follow-up — Phase 1 (validate + immediate-dispatch
-        // routing) split into 3 buckets:
+        // routing) split into 2 buckets (사용자 승인 게이트는 폐기됨):
         //   (a) immediate sync resolves: validation fail / dispatcher
         //       unavailable / switchTargetDoc (chat-ref mutation only) /
         //       cross-doc auto-open (file:open IPC chain)
-        //   (b) read-only or auto-approved writes  → parallel dispatch
-        //       via Promise.all (IPC reads — searchWorkspaceOutlines /
-        //       readParagraphByPath — get true concurrency)
-        //   (c) write tools in 검토 모드 → pendingCalls (사용자 승인 대기)
+        //   (b) every validated tool → parallelBatch (read = Promise.all
+        //       병렬, write = 직렬). 모두 즉시 dispatch — opt-out 은 stop/undo.
         const parallelBatch: {
           tu: { id: string; name: string };
           call: AhwpToolCall;
@@ -676,8 +655,6 @@ export function useChatStreaming(
             call: v.value,
           });
         }
-        // pendingCalls 는 더 이상 채워지지 않음 (legacy 호환 — 빈 Map
-        // 유지해 아래 size>0 분기가 자연 dead code).
 
         // 0.4.10 — 다중 dispatch 시 read 와 write 분리:
         //   reads  → Promise.allSettled (true 병렬, IR 무변경이라 안전)
@@ -874,9 +851,6 @@ export function useChatStreaming(
                       diff: r.diff,
                     };
                   }
-                  if (pendingCalls.has(te.id)) {
-                    return { ...te, status: 'pending' };
-                  }
                   return te;
                 }),
               };
@@ -884,25 +858,10 @@ export function useChatStreaming(
           );
         }
 
-        if (pendingCalls.size > 0) {
-          // Phase 2 — turn 보류. 사용자가 모든 pending 을 Accept/Reject 할
-          // 때 까지 fireChat 재귀 안 들어감.
-          pendingTurnRef.current = {
-            toolUses,
-            partialResults,
-            pendingCalls,
-            assistantId,
-          };
-          // 스트리밍은 종료 (assistant turn 자체는 끝났음). 사용자 결정
-          // 후 resolveApproval 안에서 setStreaming(true) + fireChat.
-          assistantBufferRef.current = '';
-          setStreaming(false);
-          handleRef.current = null;
-          assistantIdRef.current = null;
-          return;
-        }
-
-        // 모두 즉시 처리됨 — 다음 turn 으로 진행.
+        // 모두 즉시 처리됨 — 다음 turn 으로 진행. advanceAgentLoop 은 hoisted
+        // function declaration 이라 forward-reference 가 런타임 안전 (값이
+        // 렌더마다 바뀌지 않음).
+        // eslint-disable-next-line react-hooks/immutability
         await advanceAgentLoop(toolUses, partialResults, assistantId);
         return;
       }
@@ -951,6 +910,9 @@ export function useChatStreaming(
           ),
           // 0.7.37 — ask-for-missing nudge 1회 한정 (task 당).
           askForMissingDone: askForMissingNudgedRef.current,
+          // 0.7.41 — 라우터가 분류한 사용자 intent. 'audit'(읽고 검토/누락
+          // 확인)이면 완료 nudge machinery 를 통째로 끔 (proactive).
+          userIntent: routerIntentRef.current,
         });
         if (decision.reason === 'ask-for-missing') {
           askForMissingNudgedRef.current = true;
@@ -1137,7 +1099,6 @@ export function useChatStreaming(
       }
       const modeContext = detectMode({
         docSummaryPrefix,
-        lastUserMessage: '',
         userOverride: opts.modeOverride ?? null,
       });
       currentModeRef.current = modeContext;
@@ -1166,6 +1127,8 @@ export function useChatStreaming(
         // getPageSvg / getTextRange)를 router 선택과 무관하게 보장.
         mode: modeContext.primary,
       });
+      // 0.7.41 — 라우터 intent 를 ref 에 보관 → turn-end form-guard 가 읽음.
+      routerIntentRef.current = selection.intent;
       const allowed = new Set(selection.tools);
       request.tools = getAhwpToolCatalog(modeContext)
         .filter((d) => allowed.has(d.name))
@@ -1199,6 +1162,7 @@ export function useChatStreaming(
       getOpenDocs,
       model,
       onEvent,
+      opts.hasKey,
       provider,
       referencePaths,
     ],
@@ -1318,6 +1282,11 @@ export function useChatStreaming(
       const trimmed = text.trim();
       if (trimmed.length === 0 || streaming) return;
       agentStoppedRef.current = false;
+      // 0.7.45 — send 와 동일하게 새 user-task 시작 시 router 이력 + cache
+      // reset. 안 하면 직전 turn(특히 stop 으로 중단된)의 tool 이력이
+      // 라우터에 흘러들어 새 task 의 phase 판단을 오염.
+      agentToolHistoryRef.current = [];
+      resetRouterCache();
       // 0.7.2 — 새 user-task 시작 시 form guard 상태 reset.
       formGuardNudgeCountRef.current = 0;
       askForMissingNudgedRef.current = false;
@@ -1365,6 +1334,9 @@ export function useChatStreaming(
     (assistantId: string) => {
       if (streaming) return;
       agentStoppedRef.current = false;
+      // 0.7.45 — send 와 동일하게 router 이력 + cache reset (stale phase 오염 방지).
+      agentToolHistoryRef.current = [];
+      resetRouterCache();
       // 0.7.2 — 재생성 시에도 form guard reset.
       formGuardNudgeCountRef.current = 0;
       askForMissingNudgedRef.current = false;
@@ -1432,6 +1404,12 @@ export function useChatStreaming(
     // advanceAgentLoop 가 next turn 진입 전에 short-circuit.
     agentStoppedRef.current = true;
     agentTurnDepthRef.current = 0;
+    // 0.7.45 — turn-counter UI mirror 도 0 으로 리셋 (finalize/cap 경로와 동일).
+    setAgentTurn?.(0);
+    // 0.7.45 — 중단된 turn 이 router 이력을 남기지 않도록 reset (다음 send/
+    // sendDirect/regenerate 가 stale phase 로 mis-route 되는 것 방지).
+    agentToolHistoryRef.current = [];
+    resetRouterCache();
     agentVerifiedExcerptsRef.current = [];
     assistantBufferRef.current = '';
     setStreaming(false);
@@ -1447,8 +1425,8 @@ export function useChatStreaming(
 
   // chunk 97 — turn finalization helper. 모든 tool 결과가 모이면 호출되어
   // (1) UI tool-entry 상태 갱신 (2) tool_result 메시지 합성 (3) cap 검사
-  // (4) fireChat 재귀로 next turn 진입. 즉시 dispatch 경로 (read /
-  // autoApprove) 와 사용자 승인 경로 (resolveApproval) 가 같은 종착점.
+  // (4) fireChat 재귀로 next turn 진입. 모든 도구가 즉시 dispatch 되는
+  // 단일 경로의 종착점 (0.7.45 에서 사용자 승인 게이트 폐기).
   async function advanceAgentLoop(
     toolUses: { id: string; name: string; args: unknown }[],
     partialResults: Map<string, PartialToolResult>,
@@ -1473,9 +1451,6 @@ export function useChatStreaming(
             toolEntries: m.toolEntries.map((te: any) => {
               const r = toolResults.find((x) => x.id === te.id);
               if (!r) return te;
-              if (r.reason === 'user-rejected') {
-                return { ...te, status: 'rejected', reason: r.reason };
-              }
               // 0.4.11 — 결과 JSON 미리 stringify 해 UI 의 확장 패널이
               // 클릭 시 즉시 보여줄 수 있게. read tools 16k / write 4k cap
               // (advanceAgentLoop 의 tool-result 메시지 cap 정합).
@@ -1630,126 +1605,6 @@ export function useChatStreaming(
     assistantIdRef.current = null;
   }
 
-  // chunk 97 — pending write tool 사용자 결정 처리. accept=true: dispatch
-  // 후 결과 stash. false: rejected 결과 stash. 모든 pending 처리되면
-  // advanceAgentLoop 로 next turn 진입.
-  const resolveApproval = useCallback(
-    async (toolUseId: string, accept: boolean) => {
-      const turn = pendingTurnRef.current;
-      if (!turn) return;
-      if (!turn.pendingCalls.has(toolUseId)) return;
-      const call = turn.pendingCalls.get(toolUseId)!;
-      const tu = turn.toolUses.find((t) => t.id === toolUseId);
-      if (!tu) return;
-
-      // 입력 단계 UI: 즉시 status=running 으로 표기 (dispatch 중).
-      if (turn.assistantId && accept) {
-        setMessages((prev: any) =>
-          prev.map((m: any) => {
-            if (m.id !== turn.assistantId || !m.toolEntries) return m;
-            return {
-              ...m,
-              toolEntries: m.toolEntries.map((te: any) =>
-                te.id === toolUseId ? { ...te, status: 'running' } : te,
-              ),
-            };
-          }),
-        );
-      }
-
-      const dispatcher = runToolsPropRef.current;
-      if (accept) {
-        if (!dispatcher) {
-          turn.partialResults.set(toolUseId, {
-            id: tu.id,
-            name: tu.name,
-            ok: false,
-            reason: 'dispatcher-unavailable',
-          });
-        } else {
-          // 0.7.11 — pending 승인 dispatch 에도 sub-agent context 전달.
-          const subAgentContext: SubAgentContext = {
-            provider: providerRef.current,
-            model: modelRef.current,
-            parentMode: currentModeRef.current?.primary ?? 'free-authoring',
-            baseSystemPrompt: SYSTEM_PROMPT_AGENT_GUIDE,
-            targetPath: turnTargetPathRef.current,
-          };
-          const out = await dispatcher(
-            [{ ok: true, call }],
-            turnTargetPathRef.current,
-            subAgentContext,
-          );
-          const first = out[0];
-          if (first && first.ok) {
-            turn.partialResults.set(toolUseId, {
-              id: tu.id,
-              name: tu.name,
-              ok: true,
-              data: first.data,
-            });
-          } else {
-            turn.partialResults.set(toolUseId, {
-              id: tu.id,
-              name: tu.name,
-              ok: false,
-              reason: first?.ok === false ? first.reason : 'unknown',
-            });
-          }
-        }
-      } else {
-        turn.partialResults.set(toolUseId, {
-          id: tu.id,
-          name: tu.name,
-          ok: false,
-          reason: 'user-rejected',
-        });
-      }
-      turn.pendingCalls.delete(toolUseId);
-
-      if (turn.pendingCalls.size > 0) {
-        // 부분 갱신 — 이 entry 만 ok/failed/rejected 로 표기. 나머지 pending.
-        if (turn.assistantId) {
-          const r = turn.partialResults.get(toolUseId)!;
-          setMessages((prev: any) =>
-            prev.map((m: any) => {
-              if (m.id !== turn.assistantId || !m.toolEntries) return m;
-              return {
-                ...m,
-                toolEntries: m.toolEntries.map((te: any) =>
-                  te.id === toolUseId
-                    ? r.reason === 'user-rejected'
-                      ? { ...te, status: 'rejected', reason: r.reason }
-                      : {
-                          ...te,
-                          status: r.ok ? 'ok' : 'failed',
-                          reason: r.reason,
-                        }
-                    : te,
-                ),
-              };
-            }),
-          );
-        }
-        return;
-      }
-
-      // 모든 pending resolve — next turn 진입. streaming 다시 켜서 사용자
-      // 가 새 입력을 못 보내도록 하고 fireChat 재귀.
-      const finalized = turn;
-      pendingTurnRef.current = null;
-      setStreaming(true);
-      await advanceAgentLoop(
-        finalized.toolUses,
-        finalized.partialResults,
-        finalized.assistantId,
-      );
-    },
-    // setMessages / setError / setStreaming 은 안정 ref. 다른 deps 없음.
-
-    [],
-  );
-
   return {
     fireChat,
     send,
@@ -1764,7 +1619,6 @@ export function useChatStreaming(
     agentTurnDepthRef,
     agentVerifiedExcerptsRef,
     currentModeRef,
-    resolveApproval,
     requestPlanSkip: () => {
       planSkipNextRef.current = true;
     },

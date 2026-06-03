@@ -35,24 +35,12 @@ const STUDIO_URL = 'ahwp-studio://main/index.html';
 export interface RhwpEditorHandle {
   /** iframe.load + bridge.ready 가 둘 다 끝난 뒤에만 non-null. */
   bridge: RhwpBridge | null;
-  /** iframe DOM 직접 접근 (테스트 / 디버깅). */
-  iframe: HTMLIFrameElement | null;
   /**
    * Phase D3 — 현재 문서를 HWP 바이트로 내보내기. AppShell 의 file:save
    * 흐름이 본 메서드 결과를 main 의 file:save IPC 로 보낼 수 있다.
    * bridge 미마운트 시 null.
    */
   exportHwp(): Promise<Uint8Array | null>;
-  /** Phase D3 — HWPX 바이트로 내보내기. */
-  exportHwpx(): Promise<Uint8Array | null>;
-  /**
-   * Phase D3 — bytes 를 로드. AppShell 의 file:open 결과 (Uint8Array) 를
-   * 직접 보내거나, 다른 출처에서 받은 바이트를 띄울 때 사용.
-   */
-  loadBytes(
-    data: ArrayBuffer | Uint8Array | number[],
-    fileName?: string,
-  ): Promise<{ pageCount: number } | null>;
 }
 
 export interface RhwpEditorProps {
@@ -94,7 +82,6 @@ export const RhwpEditor = forwardRef<RhwpEditorHandle, RhwpEditorProps>(
       ref,
       () => ({
         bridge,
-        iframe: iframeRef.current,
         async exportHwp(): Promise<Uint8Array | null> {
           if (!bridge) return null;
           // rhwp-studio main.ts 의 named 'exportHwp' case 가 Array.from(...)
@@ -105,22 +92,6 @@ export const RhwpEditor = forwardRef<RhwpEditorHandle, RhwpEditorProps>(
             60_000,
           );
           return Uint8Array.from(arr);
-        },
-        async exportHwpx(): Promise<Uint8Array | null> {
-          if (!bridge) return null;
-          const arr = await bridge.invoke<number[]>(
-            'exportHwpx',
-            undefined,
-            60_000,
-          );
-          return Uint8Array.from(arr);
-        },
-        async loadBytes(
-          data: ArrayBuffer | Uint8Array | number[],
-          fileName?: string,
-        ): Promise<{ pageCount: number } | null> {
-          if (!bridge) return null;
-          return await bridge.loadFile(data, fileName, true);
         },
       }),
       [bridge],
@@ -136,8 +107,9 @@ export const RhwpEditor = forwardRef<RhwpEditorHandle, RhwpEditorProps>(
       // 0.7.5 — iframe 안의 keydown 을 parent 로 forward. iframe 의 main.ts
       // 가 capture 단계에서 모디파이어 / F-key 만 골라 postMessage 로 전송.
       // 본 effect 가 그 event 를 받아 KeyboardEvent 합성 후 window 에 dispatch
-      // → AppShell 의 글로벌 onKey 핸들러 (⌘K / ⌘W / ⌘⇧F / ⌘⇧O / F6 /
-      // Alt+L/T/P) 가 iframe 포커스 상태에서도 정상 동작.
+      // → AppShell 의 글로벌 onKey 핸들러 (⌘K / ⌘W / ⌘⇧F / Alt+P) 가 iframe
+      // 포커스 상태에서도 정상 동작. (F6 스타일 / Alt+L 글자모양 / Alt+T
+      // 문단모양 등 편집 다이얼로그는 iframe 내부 studio 가 직접 처리.)
       let unsubKeydown: (() => void) | null = null;
 
       const handleLoad = (): void => {

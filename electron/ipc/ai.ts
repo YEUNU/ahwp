@@ -129,13 +129,10 @@ export function registerAiIpc(): void {
     }
   });
 
-  // Phase 3 chunk 44 — provider-config (baseUrl, supportsTools) IPC.
+  // Phase 3 chunk 44 — provider-config (baseUrl) IPC.
   ipcMain.handle(
     'ai:provider-config-get',
-    (
-      _event,
-      providerId: unknown,
-    ): { baseUrl?: string; supportsTools?: boolean } => {
+    (_event, providerId: unknown): { baseUrl?: string } => {
       if (!isProviderId(providerId)) return {};
       return getProviderConfig(providerId);
     },
@@ -146,14 +143,11 @@ export function registerAiIpc(): void {
       const p = params as {
         providerId?: unknown;
         baseUrl?: unknown;
-        supportsTools?: unknown;
       };
       if (!isProviderId(p?.providerId as ProviderId | string))
         throw new Error('invalid providerId');
-      const next: { baseUrl?: string; supportsTools?: boolean } = {};
+      const next: { baseUrl?: string } = {};
       if (typeof p.baseUrl === 'string') next.baseUrl = p.baseUrl;
-      if (typeof p.supportsTools === 'boolean')
-        next.supportsTools = p.supportsTools;
       setProviderConfig(p.providerId as ProviderId, next);
       return { ok: true };
     },

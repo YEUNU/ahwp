@@ -53,7 +53,7 @@ export function extractSectionNumber(text: string): string | null {
  *   2. `<p style="font-weight:bold;font-size:Npt;...">...</p>` —
  *      markdownToHtml 이 `# H1` ~ `### H3` 를 변환하는 한컴 호환 형식.
  *      font-size 에서 markdownToHtml 의 공식 (`max(11, 22 - level*2)`)
- *      을 역산해 level 복원: 11→6, 13→5, 15→4, 17→3, 19→2, 21→1.
+ *      을 역산해 level 복원: 20→1, 18→2, 16→3, 14→4, 12→5, 11→6.
  *   3. `<p><strong>...</strong></p>` — 일반 굵은 첫 단락 fallback.
  *  매칭 못하면 null. */
 export function extractFirstHeading(

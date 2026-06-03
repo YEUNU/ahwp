@@ -20,6 +20,11 @@ import {
   registerRhwpStudioSchemeAsPrivileged,
 } from './rhwp-studio-protocol';
 
+// Replaced at build time by Vite's `define` (see vite.config.ts) with the
+// package.json version string. `undefined` only if the define didn't apply
+// (e.g. running the un-built source) — the IPC handler falls back then.
+declare const __APP_VERSION__: string | undefined;
+
 // chunk 63 — initialize crash reporter as early as possible. Native
 // minidumps are wired before any window opens; the JS handlers catch
 // errors that fire during startup.
@@ -133,7 +138,14 @@ function registerIpcHandlers(): void {
       arch: string;
       rhwpCore: string;
     } => ({
-      app: app.getVersion(),
+      // __APP_VERSION__ is replaced at build time with package.json's
+      // version (see vite.config.ts). app.getVersion() returns Electron's
+      // version when unpackaged, so prefer the build constant; fall back to
+      // app.getVersion() only if the define somehow didn't apply.
+      app:
+        typeof __APP_VERSION__ === 'string'
+          ? __APP_VERSION__
+          : app.getVersion(),
       electron: process.versions.electron ?? '?',
       chrome: process.versions.chrome ?? '?',
       node: process.versions.node ?? '?',
@@ -246,20 +258,33 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
+let quitting = false;
 app.on('will-quit', (e) => {
   // Release the chokidar watcher before exit. This is async so we
-  // gate the quit with `e.preventDefault()` and re-call `app.quit()`
+  // gate the quit with `e.preventDefault()` and re-call `app.exit()`
   // once teardown finishes. Also clear the userData/temp dir — file:new
   // creates `new-<timestamp>.hwp` files there as scratch buffers; the
   // user only persists them via Save As, after which the temp copy is
   // unreferenced.
+  if (quitting) return; // re-entrancy guard (will-quit can fire again)
+  quitting = true;
   e.preventDefault();
   const tempDir = path.join(app.getPath('userData'), 'temp');
-  void Promise.allSettled([
+  const cleanup = Promise.allSettled([
     shutdownFolderIpc(),
     teardownTabsWatcher(),
     rm(tempDir, { recursive: true, force: true }),
-  ]).finally(() => {
+  ]);
+  // Guarantee exit even if a watcher.close() never resolves — chokidar's
+  // fsevents backend can stall the close() promise on macOS, and with no
+  // ceiling the app would hang open forever ("앱이 안 닫힘"). Cleanup is
+  // best-effort; quitting is not optional. Race it against a short deadline
+  // so app.exit(0) always fires. The timer is unref'd so it never itself
+  // keeps the process alive.
+  const deadline = new Promise<void>((resolve) => {
+    setTimeout(resolve, 2000).unref();
+  });
+  void Promise.race([cleanup, deadline]).finally(() => {
     app.exit(0);
   });
 });

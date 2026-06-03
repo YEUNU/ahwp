@@ -5,7 +5,7 @@
  * `validateArgs` (별도 파일) 와 lockstep 유지해야 했다. 0.6.17 의
  * includeFilled strip 회귀는 정확히 이 lockstep 깨짐의 결과.
  *
- * **0.7.4**: 모든 55 도구가 `shared/ai-tools-defined/*.ts` 에서
+ * **0.7.4**: 모든 75 도구가 `shared/ai-tools-defined/*.ts` 에서
  * `defineTool` 로 정의된다. 본 파일은 그 registry 의 descriptors 를 mode
  * filter 와 함께 노출하는 thin wrapper. legacy `TOOL_DESCRIPTORS` 배열
  * 완전 제거.

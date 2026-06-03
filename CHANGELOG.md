@@ -6,6 +6,130 @@
 
 ## [Unreleased]
 
+## [0.7.45] - 2026-06-03
+
+### Changed — 일관성/데드코드/버그 대청소 (멀티 에이전트 리뷰 후속)
+
+8개 서브시스템 멀티 에이전트 리뷰에서 확정된 60+ findings 적용. 모든 변경은
+typecheck(2) + 546 unit + chat e2e(23) green.
+
+- **버그 수정**: send/sendDirect/regenerate/stop 의 router tool-history 리셋
+  불일치(중단 후 stale phase 오염), fireChat hasKey stale-closure,
+  findInDocument 케이스 민감도/표-셀 검색 누락, 멀티윈도우 watcher 싱글턴
+  (두 번째 창이 watcher 탈취) — 창별 keying 으로 수정.
+- **일관성**: isMac 3중 중복 → `@/lib/platform` 단일화, FolderTree 수정자
+  헬퍼화, 도구 수 카운트 정정(55 → 실제 75, CLAUDE.md 포함), model-cache
+  atomic write, 잘못된 주석 다수, format 도구 설명(selection → caret) 정정.
+- **데드코드 제거 (~ -1100줄)**: iframe 이관 전 로컬-렌더 모듈
+  (`rhwp-core/{wasm-bridge,coordinate-system,canvas-pool,page-layer-tree,
+text-layout}` + `safe-ir-call` + `shared/rhwp-types`) 일괄 삭제; 죽은
+  편집/서식/내보내기 네이티브 메뉴·⌘K 액션(Format 메뉴 전체 +
+  Undo/Redo/Find/Replace/Export — 모두 제거된 에디터 핸들로 dispatch 되어
+  무동작이었음); 도달 불가 도구 승인(approval) 플로우; `supportsTools`·
+  `serpapi`·staged IPC(`listVersions`/`readVersion`/`resolveExternalImages`)·
+  `ToolDef.modes`·`requiresProviderCapability` 등 미배선 스캐폴딩.
+
+### Known
+
+- 탭 dirty 플래그 미갱신(#32)은 vendor `rhwp-studio` 번들이 `document-dirty`
+  를 부모로 emit 해야 하므로 별도 작업으로 남김. ChatPanel 컨텍스트 props
+  (`getOutline`/`captureExcerpt` 등)는 `activeViewerRef` 가 항상 null 이라
+  비기능 — 복원/제거는 실앱 검증이 필요한 별도 결정.
+
+## [0.7.44] - 2026-06-02
+
+### Removed — 네이티브 메뉴 + ⌘K 의 죽은 다이얼로그 항목 10개
+
+기능 검증 후속(0.7.43): 네이티브 메뉴(보기) + 명령 팔레트 둘 다에 `페이지
+설정`·`머리말/꼬리말`·`책갈피`·`각주`·`스타일 관리`·`그림 속성`·`룰러 토글`·
+`버전 히스토리`·`수식`·`도형` 항목이 있었으나, 해당 다이얼로그가 rhwp-studio
+iframe 으로 이관되며 parent state 가 죽어(discarded) **클릭해도 무동작**이었다
+(경험적 확인). 이 기능들은 편집기 iframe 자체 메뉴바로 정상 접근 가능.
+
+- 죽은 10개 항목을 네이티브 메뉴(electron/menu.ts) + 명령 팔레트
+  (cmdk/items.ts) + dispatch(useDispatchMenuAction) + MenuAction 타입
+  (shared/api.ts) + AppShell discarded state 에서 모두 제거. 동작하는
+  `캐럿 위치의 각주 삭제`(delete:footnote-at-cursor)는 유지. 596 unit green,
+  typecheck OK, 명령 팔레트 클린 렌더 확인.
+
+## [0.7.43] - 2026-06-02
+
+### Removed — 죽은 단축키 핸들러 정리 (vestigial)
+
+기능 검증 중 발견: AppShell 의 F6(스타일)/Alt+L(글자모양)/Alt+T(문단모양)/
+⌘⇧O(아웃라인) 단축키 parent 핸들러가 **읽히지 않는 state(`const [, setX]`)**
+를 세팅하고 있었음 — 다이얼로그가 rhwp-studio iframe 으로 이관된 뒤(0.6.x)
+남은 잔재. F6/Alt+L/Alt+T 는 iframe 내부 studio 가 자체 처리하므로(편집 중
+정상 동작 — 스크린샷 검증) parent 핸들러는 무의미했고, ⌘⇧O 는 치트시트에
+없는 죽은 토글이었다.
+
+- 4개 단축키 핸들러 + 격리된 discarded state(setCharFormatOpen /
+  setCharFormatInitial / setParaFormatOpen / setOutlineOpen) 제거. 동작 변화
+  없음(편집 단축키는 iframe 이 처리). 단축키 기능 검증 스펙 추가
+  (`shortcuts-verify.spec.ts`).
+
+## [0.7.42] - 2026-06-02
+
+### Fixed — 정보(About) 화면의 앱 "버전" 오표시
+
+About pane 의 "버전" 이 앱 버전(0.7.x)이 아니라 Electron 버전(41.5.0)을
+보여줬음. 원인: `app.getVersion()` 은 앱이 unpackaged 로 실행될 때(dev / e2e
+launch — 앱 번들 매니페스트 없음) Electron 자체 버전을 반환.
+
+- 빌드 타임에 package.json 의 version 을 `__APP_VERSION__` 상수로 주입
+  (Vite `define`) → dev·packaged 모두 올바른 앱 버전 표시. define 미적용 시
+  `app.getVersion()` 으로 폴백.
+- UI 시각 점검용 스크린샷 캡처 스펙 추가(`tests/e2e/ui-audit.spec.ts`,
+  출력은 `.ui-audit/` — gitignore).
+
+## [0.7.41] - 2026-06-02
+
+### Changed — intent-aware 라우팅 (audit vs fill 근본 분리)
+
+0.7.39 는 "양식 읽고 누락 확인"(audit)을 채우기 루프가 하이재킹하던 걸 분량
+신호로 **사후** 차단했음. 이번엔 **근본 수정** — 모드를 문서 모양(빈 셀 수)이
+아니라 **사용자 의도**로 게이팅.
+
+- 기존 LLM tool-router(`selectToolsViaLlm`)가 도구와 함께 **coarse intent**
+  (`fill` / `audit` / `edit` / `author`)를 분류해 반환. 추가 LLM 호출/지연 0
+  (한 줄 `intent:` 만 응답에 덧붙임 — 도구 배열 파싱·폴백은 무손상).
+- form-guard: `userIntent === 'audit'` 이면 완료 nudge machinery 를 통째로
+  비활성(`audit-intent`) — 검토 요청에 "채워라" auto-continue / ask-for-missing
+  이 끼어들지 않음. 라우터가 분류 못 하면(`unknown`) 0.7.39 의 분량 기반
+  `deliberate-report` 가드가 reactive 로 받침(defense-in-depth).
+
+## [0.7.40] - 2026-06-02
+
+### Fixed — 앱이 닫히지 않던 문제 (quit hang)
+
+종료(Cmd+Q / 창 닫기) 시 `will-quit` 정리 단계가 chokidar 파일 워처의
+`.close()` 를 await 하는데, macOS fsevents 백엔드에서 이 promise 가 stall 하면
+`app.exit(0)` 가 영영 호출되지 않아 앱이 떠 있는 채로 안 닫혔음.
+
+- `will-quit` 정리를 2초 deadline 과 race — 워처 close 가 멈춰도 `app.exit(0)`
+  가 보장 발화. 정리는 best-effort, 종료는 필수. 타이머는 `unref()` 라 자체로
+  프로세스를 살려두지 않음. 재진입 가드도 추가.
+
+## [0.7.39] - 2026-06-02
+
+### Fixed — "양식 읽고 누락 확인/판단" 요청이 채우기 루프로 하이재킹되던 문제
+
+사용자 리포트: 중간보고서를 **읽고 누락된 칸을 확인·판단**해달라고 했는데,
+모델이 좋은 분석을 한 번 낸 뒤 거의 같은 "추가 정보 주세요"를 여러 번 반복
+("적용 중…" ×N)하고 표현도 모호("일부 비어 있음", "확인 필요")했음.
+
+- **원인**: 빈 셀이 많은 문서라 form-fill 모드로 자동 진입 → 감사(audit)
+  요청인데도 form-guard 의 empty-cells auto-continue(Case 2)가 "N개 남았으니
+  채워라"를 maxNudges 만큼 발화. `assistantRequestsInput` 이 물음표만 보는데
+  audit 답변은 서술형이라 awaiting-user-input 단락을 못 타고 루프에 빠짐.
+- form-guard: 모델이 **아무것도 안 쓰고 분량 있는 답**을 내면(audit/검토 보고)
+  empty-cells nudge 를 돌리지 않고 존중(`deliberate-report`). 짧은 거짓 완료
+  선언("완료했습니다")은 여전히 조기-종료로 보고 nudge — 분량(런타임 길이
+  신호)으로 가른다.
+- 프롬프트: form-fill 가이드에 **read-only audit 서브모드** 추가 — 검토/누락
+  확인 요청이면 쓰지 말고, 각 빈 셀을 slotKind·작성자 역할 신호로 "의도적
+  공란 vs 진짜 누락"으로 단정(셀 위치 명시, hedge 금지)하고 멈춘다.
+
 ## [0.7.38] - 2026-06-02
 
 ### Fixed — 최종 문서에 "(예시)" 안내 문구가 남던 문제

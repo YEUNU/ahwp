@@ -299,3 +299,6 @@ style_example/
 vendor/rhwp/pkg/
 vendor/rhwp/**/dist/
 vendor/rhwp/**/node_modules/
+
+# UI audit screenshots (tests/e2e/ui-audit.spec.ts)
+.ui-audit/

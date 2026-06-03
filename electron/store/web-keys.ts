@@ -8,8 +8,6 @@
  * 지원 backend:
  *   - `brave` — Brave Search API (https://api.search.brave.com/). 무료 tier
  *     2000 q/month. 가장 깔끔한 JSON 응답, 가장 빠른 응답.
- *   - `serpapi` — SerpAPI (https://serpapi.com/). Google 결과를 직접 받음.
- *     무료 tier 100 q/month. 향후 추가 — 본 chunk 에선 placeholder.
  *
  * **저장 방식**: secrets.ts 와 동일한 `safeStorage` 암호화 + JSON sidecar.
  * provider 키 store 와 분리한 이유는 ProviderId union 오염 회피 + UI
@@ -23,9 +21,9 @@ import { app, safeStorage } from 'electron';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
-export type WebSearchBackend = 'brave' | 'serpapi';
+export type WebSearchBackend = 'brave';
 
-const SUPPORTED: WebSearchBackend[] = ['brave', 'serpapi'];
+const SUPPORTED: WebSearchBackend[] = ['brave'];
 
 export function isWebSearchBackend(v: unknown): v is WebSearchBackend {
   return typeof v === 'string' && (SUPPORTED as string[]).includes(v);
@@ -154,12 +152,11 @@ export async function getWebSearchKeyPlaintext(
 }
 
 /**
- * 사용 가능한 backend 의 우선순위 자동 선택. brave > serpapi > null
+ * 사용 가능한 backend 의 우선순위 자동 선택. brave > null
  * (null 이면 caller 가 DDG fallback).
  */
 export async function pickActiveSearchBackend(): Promise<WebSearchBackend | null> {
   const available = await listBackendsWithKey();
   if (available.includes('brave')) return 'brave';
-  if (available.includes('serpapi')) return 'serpapi';
   return null;
 }

@@ -23,8 +23,6 @@ export interface DetectInput {
   /** active doc summary prefix (e.g. `[form: 9 tables, 212 empty cells]`).
    *  없으면 빈 문자열. */
   docSummaryPrefix?: string;
-  /** 마지막 사용자 메시지 (라우팅 의도 추정용). */
-  lastUserMessage?: string;
   /** 사용자가 UI 에서 명시 override 한 mode. 있으면 detection 결과 무시. */
   userOverride?: TaskMode | null;
 }

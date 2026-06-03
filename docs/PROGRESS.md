@@ -404,6 +404,22 @@ ahwp 의 form-fill 사용성을 그 수준으로 끌어올리는 라운드. 사�
   (turn 당 ~20셀, cap 내). 프롬프트로는 bulk 우선 지시 중.
 - 시각 검증 워크플로우(`getPageSvg`/PDF 렌더로 표·양식 정합 자동 확인) 도입 예정.
 
+## 정리 라운드 — 일관성/데드코드/버그 (0.7.45, 2026-06-03)
+
+8개 서브시스템 멀티 에이전트 리뷰 → 확정 60+ findings 적용. 디테일은 git log +
+`CHANGELOG.md [0.7.45]` 위임. 핵심:
+
+- **버그**: router tool-history 리셋 불일치(stop 후 stale phase), fireChat
+  hasKey stale-closure, findInDocument 케이스/표-셀, 멀티윈도우 watcher 싱글턴.
+- **데드코드 ~ -1100줄**: iframe 이관 전 `rhwp-core` 로컬-렌더 모듈 일괄 삭제,
+  죽은 편집/서식/내보내기 메뉴 액션, 도달 불가 도구 승인 플로우, 미배선
+  스캐폴딩(supportsTools/serpapi/staged IPC/ToolDef.modes 등).
+- **검증**: typecheck×2 + 546 unit + 23 chat e2e(fake AI) green.
+- **남은 결정**: #32 탭 dirty(vendor `rhwp-studio` 가 `document-dirty` emit
+  필요), ChatPanel 의 죽은 `activeViewerRef` 컨텍스트 props 복원-vs-제거(실앱
+  검증 필요 — `activeViewerRef()` 가 항상 null 이라 getOutline/captureExcerpt
+  등이 비기능).
+
 ## 향후 작업
 
 | 영역             | 항목                                                                                         | 상태             |

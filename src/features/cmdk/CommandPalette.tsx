@@ -29,7 +29,7 @@ import { cn } from '@/lib/utils';
  *   - Type         — incremental filter, auto-selects top match
  */
 
-export type CommandKind = 'action' | 'tab' | 'recent' | 'theme';
+export type CommandKind = 'action' | 'tab';
 
 export interface CommandItem {
   id: string;
@@ -237,23 +237,13 @@ export function CommandPalette({
 }
 
 function CategoryBadge({ kind }: { kind: CommandKind }): JSX.Element {
-  const label =
-    kind === 'action'
-      ? '명령'
-      : kind === 'tab'
-        ? '탭'
-        : kind === 'recent'
-          ? '최근'
-          : '테마';
+  const label = kind === 'action' ? '명령' : '탭';
   return (
     <span
       className={cn(
         'shrink-0 rounded px-1.5 py-0.5 text-[9px] uppercase tracking-wide',
         kind === 'action' && 'bg-primary/15 text-primary',
         kind === 'tab' && 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
-        kind === 'recent' && 'bg-sky-500/15 text-sky-700 dark:text-sky-400',
-        kind === 'theme' &&
-          'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
       )}
     >
       {label}

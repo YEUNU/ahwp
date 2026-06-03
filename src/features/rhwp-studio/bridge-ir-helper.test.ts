@@ -124,16 +124,13 @@ describe('BridgeIrHelper — Phase D2a', () => {
     expect(await h.insertText(0, 0, 0, 'hi')).toBe(false);
   });
 
-  it('deleteText / insertTextInCell forward args', async () => {
+  it('insertTextInCell forwards args', async () => {
     const { bridge, calls } = makeBridge({
-      deleteText: '{"ok":true}',
       insertTextInCell: '{"ok":true}',
     });
     const h = new BridgeIrHelper(bridge);
-    expect(await h.deleteText(0, 0, 0, 3)).toBe(true);
     expect(await h.insertTextInCell(0, 1, 2, 3, 4, 5, 'cell')).toBe(true);
     expect(calls.map((c) => [c.fn, c.args.length])).toEqual([
-      ['deleteText', 4],
       ['insertTextInCell', 7],
     ]);
   });

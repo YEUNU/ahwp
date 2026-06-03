@@ -58,9 +58,21 @@ const FORM_FILL_ESSENTIAL: readonly AhwpToolName[] = [
   'updatePlan',
 ];
 
+/**
+ * 0.7.41 — 사용자 task 의 coarse intent. 라우터가 도구와 함께 분류한다.
+ * 문서 모양(빈 셀 수)만 보는 detectMode 와 달리 **사용자 메시지의 실제
+ * 의도**를 읽어, 양식 문서에 대한 "읽고 검토/누락 확인"(audit)을 "채워줘"
+ * (fill)와 구분한다. form-guard 가 이 신호로 완료 nudge 를 게이팅 —
+ * audit 이면 채우기 auto-continue 를 아예 돌리지 않는다. 분류 실패/폴백 시
+ * 'unknown' → 기존 동작 보존(doc-shape 기반).
+ */
+export type RouterIntent = 'fill' | 'audit' | 'edit' | 'author' | 'unknown';
+
 export interface ToolSelectionResult {
   /** Selected tool name set. Non-empty (full catalog on fallback). */
   tools: AhwpToolName[];
+  /** 0.7.41 — 라우터가 분류한 coarse user intent. 폴백 시 'unknown'. */
+  intent: RouterIntent;
   /** True when fallback (router failed or no key). */
   isFullCatalog: boolean;
   /** Reason when fallback. 'router-ok' / 'router-empty' /
@@ -93,12 +105,20 @@ function buildRouterSystemPrompt(): string {
     return `- ${d.name}: ${trimmed}`;
   });
   return [
-    'You are the tool router for a Hancom HWP document-editing Agent. Given the user query plus the tool-call history so far, pick the subset of tool names needed for the *next* turn.',
+    'You are the tool router for a Hancom HWP document-editing Agent. Given the user query plus the tool-call history so far, pick the subset of tool names needed for the *next* turn, and classify the user intent.',
     '',
     'Response rules:',
-    '- Reply with a single JSON array, nothing else. No prose, no markdown, no explanation.',
-    '- Example: ["searchWorkspaceOutlines","insertText","applyHtml"]',
-    '- If user intent is ambiguous, return [] (full-catalog fallback).',
+    '- Reply with exactly two lines and nothing else (no prose, no markdown, no explanation).',
+    '- Line 1: `intent: <fill|audit|edit|author>` — classify what the user is asking for:',
+    '    - fill = complete / populate a form or template (fill cells, write the report into its slots).',
+    '    - audit = REVIEW or inspect the document WITHOUT changing it — identify which cells are unfilled, judge whether blanks are intentional or genuine omissions, check / verify / proof-read. The user wants a report, not edits.',
+    '    - edit = modify existing body text (rewrite, translate, polish, fix wording).',
+    '    - author = write new free-form content into an empty / non-form document.',
+    '- Line 2: a single JSON array of tool names.',
+    '- Example:',
+    '    intent: fill',
+    '    ["getEmptyFormFields","fillFormCells","getPageSvg"]',
+    '- If the intent is genuinely ambiguous, use `intent: fill` and return [] on line 2 (full-catalog fallback).',
     '- Use tool names exactly as listed below. Do not invent or transform names.',
     '- For clear-intent turns, narrow to 5-15 names. Picking too many hurts main-model accuracy.',
     '- If the user references a doc that is not attached, include search/read tools.',
@@ -199,6 +219,15 @@ function parseRouterResponse(raw: string): string[] | null {
     .map((s) => s.trim().replace(/^["']|["']$/g, ''))
     .filter((s) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(s));
   return ids.length > 0 ? ids : null;
+}
+
+/** 0.7.41 — 라우터 응답의 `intent: <...>` 줄을 스캔. 도구 배열 파싱
+ *  (parseRouterResponse) 과 독립적이라 배열 프로토콜·폴백을 건드리지 않는다.
+ *  intent 줄이 없거나 알 수 없는 값이면 'unknown'. */
+const INTENT_RE = /\bintent\s*[:=]\s*["']?(fill|audit|edit|author)\b/i;
+function parseRouterIntent(raw: string): RouterIntent {
+  const m = INTENT_RE.exec(raw);
+  return (m ? (m[1].toLowerCase() as RouterIntent) : 'unknown') as RouterIntent;
 }
 
 /** Filter raw names down to known AhwpToolName values + always-include
@@ -302,6 +331,7 @@ export async function selectToolsViaLlm(opts: {
   if (userText.trim().length === 0) {
     return {
       tools: FULL_CATALOG(),
+      intent: 'unknown',
       isFullCatalog: true,
       reason: 'empty-query',
       latencyMs: 0,
@@ -310,6 +340,7 @@ export async function selectToolsViaLlm(opts: {
   if (!opts.hasKey) {
     return {
       tools: FULL_CATALOG(),
+      intent: 'unknown',
       isFullCatalog: true,
       reason: 'no-key',
       latencyMs: 0,
@@ -343,6 +374,7 @@ export async function selectToolsViaLlm(opts: {
     const msg = (err as Error).message || String(err);
     return {
       tools: FULL_CATALOG(),
+      intent: 'unknown',
       isFullCatalog: true,
       reason: msg.startsWith('router-') ? msg : `router-error:${msg}`,
       latencyMs: Math.round(performance.now() - t0),
@@ -352,6 +384,7 @@ export async function selectToolsViaLlm(opts: {
   if (!parsed) {
     return {
       tools: FULL_CATALOG(),
+      intent: 'unknown',
       isFullCatalog: true,
       reason: 'router-parse-failed',
       latencyMs: Math.round(performance.now() - t0),
@@ -360,6 +393,7 @@ export async function selectToolsViaLlm(opts: {
   if (parsed.length === 0) {
     return {
       tools: FULL_CATALOG(),
+      intent: 'unknown',
       isFullCatalog: true,
       reason: 'router-empty',
       latencyMs: Math.round(performance.now() - t0),
@@ -368,6 +402,7 @@ export async function selectToolsViaLlm(opts: {
   const normalized = normalizeSelection(parsed, opts.mode);
   const result: ToolSelectionResult = {
     tools: normalized,
+    intent: parseRouterIntent(raw),
     isFullCatalog: false,
     reason: 'router-ok',
     latencyMs: Math.round(performance.now() - t0),

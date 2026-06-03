@@ -57,7 +57,7 @@ import { WelcomePane } from './WelcomePane';
 /**
  * chunk 66 — true when focus is inside an editable element (chat
  * input / rename input / dialog text fields). Used to suppress global
- * ⌘W / ⌘K / ⌘/ / ⌘⇧F / ⌘⇧O / F6 / Alt+L|T|P bindings so they don't
+ * ⌘W / ⌘K / ⌘/ / ⌘⇧F / Alt+P bindings so they don't
  * hijack keystrokes the user actually wants delivered to the field
  * (e.g. ⌘W = "delete word backward" in macOS text inputs).
  *
@@ -84,26 +84,10 @@ export default function AppShell() {
   const [settingsTab, setSettingsTab] = useState<
     'general' | 'ai' | 'shortcuts' | 'about'
   >('ai');
-  // Phase 7 E2 — pageSetup setter 만 유지 (메뉴 액션이 menu:page-setup
-  // 을 트리거할 수 있어서 stub. dialog 본체는 rhwp-studio 내부 UI 가 처리).
-  const [, setPageSetupOpen] = useState(false);
-  // 나머지 dialog open state 들은 모두 rhwp-studio 가 자체 UI 로 제공 —
-  // setters 만 메뉴 액션 호환용으로 stub.
-  const [, setHfOpen] = useState(false);
-  const [, setBookmarkOpen] = useState(false);
-  const [, setFootnoteOpen] = useState(false);
-  const [, setStyleManagerOpen] = useState(false);
-  const [, setCharFormatOpen] = useState(false);
-  const [, setCharFormatInitial] = useState<{
-    bold: boolean;
-    italic: boolean;
-    underline: boolean;
-    instance: number;
-  }>({ bold: false, italic: false, underline: false, instance: 0 });
-  const [, setParaFormatOpen] = useState(false);
-  const [, setEquationOpen] = useState(false);
-  const [, setShapeOpen] = useState(false);
-  const [, setPicturePropsOpen] = useState(false);
+  // 0.7.43 — 페이지 설정 / 머리말꼬리말 / 책갈피 / 각주 / 스타일 / 수식 /
+  // 도형 / 그림 속성 / 룰러 / 버전 히스토리 다이얼로그는 모두 rhwp-studio
+  // iframe 자체 메뉴바가 제공한다. 이전엔 ahwp 네이티브 메뉴 + ⌘K 에도 중복
+  // 항목이 있었으나 parent state 가 죽어(discarded) 클릭해도 무동작이라 제거.
   // R3 (2차) — notice → useNotice hook.
   const { notice, showNotice, dismissNotice } = useNotice();
   // chunk 50 — command palette (⌘K). Open state lives here so any
@@ -127,16 +111,6 @@ export default function AppShell() {
   // replaces the folder tree view; clicking a snippet opens the file
   // (existing tab if open) and scrolls to the matched paragraph.
   const [searchMode, setSearchMode] = useState(false);
-  // chunk 58 — outline sidebar (TOC). ⌘⇧O toggles the right-edge
-  // sidebar that lists "제목 1/2/3" headings extracted from the active
-  // doc. `outlineKey` bumps when any tab's dirty flips so the sidebar
-  // refreshes without polling.
-  const [, setOutlineOpen] = useState(false);
-  const [, setOutlineKey] = useState(0);
-  // showRuler 는 StudioViewer 전용이었음 — 폐기. setter stub.
-  const [, setShowRuler] = useState(false);
-  // versionHistoryOpen 도 폐기 — rhwp-studio 의 자체 history UI 사용.
-  const [, setVersionHistoryOpen] = useState(false);
   const sessionRestoredRef = useRef(false);
 
   // R3 (2차) — tab management → useTabManagement hook.
@@ -157,7 +131,7 @@ export default function AppShell() {
     closeTabsToRight,
     copyTabPath,
     revealTab,
-  } = useTabManagement({ setOutlineKey });
+  } = useTabManagement();
 
   useEffect(() => {
     void (async () => {
@@ -341,9 +315,11 @@ export default function AppShell() {
   // inputs / dialog form fields all sit inside the same window event
   // bubble, and a global ⌘W there used to close the active tab while
   // the user was typing (browser native ⌘W = close tab). Same for
-  // ⌘K, ⌘/, ⌘⇧F, ⌘⇧O, F6, Alt+L/T/P. Studio shortcuts (⌘B/I/U/A/F/H/Z)
-  // already short-circuit inside StudioViewer's own onKeyDown — those
-  // never bubbled to window. The viewer textarea/input is **not**
+  // ⌘K, ⌘/, ⌘⇧F, Alt+P. Editor shortcuts (⌘B/I/U/A/F/H/Z, F6 스타일,
+  // Alt+L 글자모양, Alt+T 문단모양) are handled INSIDE the rhwp-studio
+  // iframe — the parent no longer binds them (their old parent handlers
+  // set discarded state after the dialogs moved into the iframe; removed
+  // in 0.7.43). The viewer textarea/input is **not**
   // guarded out of bounds here because the user always wants ⌘W to
   // close the tab from the toolbar / page background; only editable
   // focus zones are excluded.
@@ -374,75 +350,6 @@ export default function AppShell() {
         // chunk 60 — ⌘⇧F opens cross-folder search.
         setSearchMode(true);
         e.preventDefault();
-      } else if (
-        primaryModifier(e) &&
-        e.shiftKey &&
-        !e.altKey &&
-        e.key.toLowerCase() === 'o'
-      ) {
-        // chunk 58 — ⌘⇧O toggles the outline (TOC) sidebar.
-        setOutlineOpen((v) => !v);
-        e.preventDefault();
-      } else if (
-        // Phase B-5 — 한글 호환 본문 도움 단축키.
-        e.key === 'F6' &&
-        !e.metaKey &&
-        !e.ctrlKey &&
-        !e.altKey &&
-        !e.shiftKey
-      ) {
-        // F6 = 스타일 관리 다이얼로그 (한글 reflex).
-        setStyleManagerOpen(true);
-        e.preventDefault();
-      } else if (
-        e.altKey &&
-        !e.metaKey &&
-        !e.ctrlKey &&
-        !e.shiftKey &&
-        e.key.toLowerCase() === 'l'
-      ) {
-        // Alt+L = 글자 모양 다이얼로그 (Hancom reflex)
-        const v = activeViewerRef();
-        const af = v?.getActiveFormat() ?? {};
-        setCharFormatInitial((prev) => ({
-          bold: !!af.bold,
-          italic: !!af.italic,
-          underline: !!af.underline,
-          instance: prev.instance + 1,
-        }));
-        setCharFormatOpen(true);
-        e.preventDefault();
-      } else if (
-        e.altKey &&
-        !e.metaKey &&
-        !e.ctrlKey &&
-        !e.shiftKey &&
-        e.key.toLowerCase() === 't'
-      ) {
-        // Alt+T = 문단 모양 다이얼로그 (Hancom reflex)
-        setParaFormatOpen(true);
-        e.preventDefault();
-      } else if (
-        e.altKey &&
-        !e.metaKey &&
-        !e.ctrlKey &&
-        !e.shiftKey &&
-        e.key.toLowerCase() === 'p'
-      ) {
-        // Alt+P = PDF 내보내기 (한글에선 인쇄 — 우리는 PDF로 매핑,
-        // 본 앱이 인쇄 자체 기능 없음). 동일 path로 dispatchMenuAction
-        // 호출하여 기존 export-pdf 핸들러 재사용.
-        const v = activeViewerRef();
-        const html = v?.exportDocumentHtml(1000) ?? '';
-        if (html.length === 0) {
-          window.alert('내보낼 문서가 없습니다.');
-        } else {
-          void window.api.file.exportPdf({
-            html,
-            defaultPath: activeTab?.path,
-          });
-        }
-        e.preventDefault();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -467,24 +374,12 @@ export default function AppShell() {
   );
 
   const dispatchMenuAction = useDispatchMenuAction({
-    activeViewerRef,
-    activeTab,
     newDocument,
     openFromDialog,
     saveCurrent,
     saveAsCurrent,
     setSettingsOpen,
     openSettingsTab,
-    setPageSetupOpen,
-    setHfOpen,
-    setBookmarkOpen,
-    setFootnoteOpen,
-    setStyleManagerOpen,
-    setEquationOpen,
-    setShapeOpen,
-    setPicturePropsOpen,
-    setShowRuler,
-    setVersionHistoryOpen,
   });
 
   // Build the command-palette item list. The lint rule `react-hooks/refs`

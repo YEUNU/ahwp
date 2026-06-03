@@ -77,16 +77,6 @@ export interface RhwpLoadResult {
 }
 
 /**
- * `exportHwpVerify` 의 응답 (rhwp #178).
- */
-export interface RhwpHwpVerifyResult {
-  bytesLen: number;
-  pageCountBefore: number;
-  pageCountAfter: number;
-  recovered: boolean;
-}
-
-/**
  * `getCaretPosition` 의 응답 모양 (rhwp `DocumentPosition`). 도큐먼트
  * 미로드 / caret 미정의 시 null.
  */

@@ -635,11 +635,6 @@ export type AhwpToolCall = {
   [K in AhwpToolName]: { tool: K; args: AhwpToolArgs[K] };
 }[AhwpToolName];
 
-/** Top-level shape of a parsed `ahwp-tools` block. */
-export interface AhwpToolBlock {
-  ops: AhwpToolCall[];
-}
-
 /** Outcome of running a single op. `ok=false` covers both pre-flight
  * validation failures and IR-side throws (caller distinguishes via
  * `reason`).

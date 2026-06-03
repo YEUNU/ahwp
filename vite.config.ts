@@ -1,7 +1,19 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import electron from 'vite-plugin-electron/simple';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
+
+// App version injected at build time so the About pane always shows the
+// real package.json version. `app.getVersion()` returns ELECTRON's version
+// when the app runs unpackaged (dev / e2e launch — no app bundle manifest),
+// so it can't be trusted there. A build-time constant is deterministic in
+// dev AND packaged.
+const APP_VERSION = (
+  JSON.parse(
+    readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8'),
+  ) as { version: string }
+).version;
 
 export default defineConfig({
   // chunk 80 — packaged Electron 은 `file://...../dist/index.html` 로
@@ -17,6 +29,9 @@ export default defineConfig({
       main: {
         entry: 'electron/main.ts',
         vite: {
+          define: {
+            __APP_VERSION__: JSON.stringify(APP_VERSION),
+          },
           build: {
             outDir: 'dist-electron',
             rollupOptions: {

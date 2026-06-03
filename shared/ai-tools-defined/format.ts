@@ -42,8 +42,7 @@ export const applyAlignment = defineTool<
   AhwpToolArgs['applyAlignment']
 >({
   name: 'applyAlignment',
-  description:
-    'Change the alignment of the active selection / caret paragraph.',
+  description: 'Change the alignment of the caret paragraph.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -69,8 +68,7 @@ export const applyFontSize = defineTool<
   AhwpToolArgs['applyFontSize']
 >({
   name: 'applyFontSize',
-  description:
-    'Change the font size (pt) of the active selection / caret. 1-999.',
+  description: 'Change the font size (pt) of the caret paragraph. 1-999.',
   inputSchema: {
     type: 'object',
     properties: { pt: { type: 'number', minimum: 1, maximum: 999 } },
@@ -92,7 +90,7 @@ export const applyTextColor = defineTool<
 >({
   name: 'applyTextColor',
   description:
-    'Change the text color of the active selection / caret to a #RRGGBB hex value.',
+    'Change the text color of the caret paragraph to a #RRGGBB hex value.',
   inputSchema: {
     type: 'object',
     properties: { hex: { type: 'string', pattern: '^#[0-9a-fA-F]{6}$' } },
@@ -111,8 +109,7 @@ export const toggleCharFormat = defineTool<
   AhwpToolArgs['toggleCharFormat']
 >({
   name: 'toggleCharFormat',
-  description:
-    'Toggle bold / italic / underline on the active selection / caret.',
+  description: 'Toggle bold / italic / underline on the caret paragraph.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -307,7 +304,7 @@ export const applyParaProps = defineTool<
 >({
   name: 'applyParaProps',
   description:
-    'Apply paragraph props to the active caret / selection paragraph. props keys (all optional): alignment (left / center / right / justify), lineSpacing (percent), lineSpacingType (Percent / Fixed / AtLeast), spacingBefore / spacingAfter (HWPUNIT), marginLeft / marginRight (HWPUNIT), indent (HWPUNIT; positive = first-line indent, negative = hanging indent).',
+    'Apply paragraph props to the caret paragraph. props keys (all optional): alignment (left / center / right / justify), lineSpacing (percent), lineSpacingType (Percent / Fixed / AtLeast), spacingBefore / spacingAfter (HWPUNIT), marginLeft / marginRight (HWPUNIT), indent (HWPUNIT; positive = first-line indent, negative = hanging indent).',
   inputSchema: {
     type: 'object',
     properties: { props: { type: 'object' } },

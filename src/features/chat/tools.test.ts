@@ -178,6 +178,8 @@ describe('runTools — insertText guards', () => {
         return 0;
       },
       applyHtmlAtCaret: applyMock,
+      async reflowLinesegs() {},
+      async notifyDocumentChanged() {},
     } as unknown as import('@/features/rhwp-studio/bridge-ir-helper').BridgeIrHelper;
     const items: AhwpPreflightItem[] = [
       {
@@ -207,6 +209,8 @@ describe('runTools — insertText guards', () => {
         return 30;
       },
       applyHtmlAtCaret: applyMock,
+      async reflowLinesegs() {},
+      async notifyDocumentChanged() {},
     } as unknown as import('@/features/rhwp-studio/bridge-ir-helper').BridgeIrHelper;
     const items: AhwpPreflightItem[] = [
       {
@@ -409,6 +413,8 @@ describe('runTools — Phase D2b helper routing', () => {
         calls.push(`insertTextInCell:${text}`);
         return true;
       },
+      async reflowLinesegs(): Promise<void> {},
+      async notifyDocumentChanged(): Promise<void> {},
     } as unknown as import('@/features/rhwp-studio/bridge-ir-helper').BridgeIrHelper;
     return { helper, calls };
   }
@@ -600,6 +606,10 @@ describe('runTools — Phase E2-finalize 24 restored composites', () => {
       }),
       insertPictureAtCaret: track('insertPictureAtCaret', true),
       applyHtmlAtCaret: track('applyHtmlAtCaret', true),
+      // 0.7.45 — 배치 write 후 reflow + repaint 통지. log 에 안 남김
+      // (assertion 은 실제 도구 호출만 검사).
+      reflowLinesegs: async (): Promise<void> => {},
+      notifyDocumentChanged: async (): Promise<void> => {},
       ...overrides,
     };
     return {

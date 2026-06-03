@@ -15,7 +15,11 @@
  *   3. emptyCellsRemaining === 0 → **nudge 안 함** (svg 단독 nudge 폐기)
  */
 import { describe, expect, it } from 'vitest';
-import { decideFormGuardNudge, assistantRequestsInput } from './form-guard';
+import {
+  decideFormGuardNudge,
+  assistantRequestsInput,
+  isSubstantiveReport,
+} from './form-guard';
 
 const BASE = {
   modePrimary: 'form-fill',
@@ -324,7 +328,61 @@ describe('decideFormGuardNudge — Form-Fill 완료 guard (0.7.6 tightened)', ()
     expect(r.shouldNudge).toBe(false);
   });
 
-  // 반면 쓴 게 전혀 없는데(=조기 give-up) 빈 셀 + 완료 선언이면 1회 nudge 유지.
+  // 0.7.41 — 근본 수정(proactive): 라우터가 사용자 메시지를 'audit' 으로
+  // 분류하면, 빈 셀이 많고 아무것도 안 쓴 짧은 응답이어도 form-fill 완료
+  // machinery 를 통째로 끔. 0.7.39 의 분량 기반 가드는 이게 'unknown' 일 때를
+  // 받치는 reactive backup. (사용자 리포트: audit 인데 "적용 중…" 반복.)
+  it('userIntent=audit → nudge 안 함 (빈셀 많고 짧은 응답이어도, audit-intent)', () => {
+    const r = decideFormGuardNudge({
+      ...BASE,
+      formState: { emptyCellsRemaining: 180, tableSummary: 'p=42 (180 empty)' },
+      getPageSvgCalled: true,
+      formWritesDone: false,
+      userIntent: 'audit',
+      // 분량 미달 + 질문 없음 — intent 신호 없으면 empty-cells-remain 일 텍스트.
+      assistantText: '확인했습니다.',
+    });
+    expect(r.shouldNudge).toBe(false);
+    expect(r.reason).toBe('audit-intent');
+  });
+
+  it('userIntent=fill → audit 면제 없음 (기존 empty-cells nudge 유지)', () => {
+    const r = decideFormGuardNudge({
+      ...BASE,
+      formState: { emptyCellsRemaining: 180, tableSummary: 'p=42 (180 empty)' },
+      getPageSvgCalled: true,
+      formWritesDone: false,
+      userIntent: 'fill',
+      assistantText: '양식 작성을 완료했습니다.',
+    });
+    expect(r.shouldNudge).toBe(true);
+    expect(r.reason).toBe('empty-cells-remain');
+  });
+
+  // 0.7.39 — audit/검토 요청: 모델이 아무것도 안 쓰고(formWritesDone=false)
+  // 분량 있는 보고를 내면 "채워라" auto-continue 를 돌리지 않는다. 사용자
+  // 리포트: "중간보고서 읽고 누락 확인해줘" = audit 인데 "적용 중…" 반복 +
+  // 같은 ask 를 maxNudges 만큼 되풀이. 짧은 거짓 완료 선언은 여전히 Case 2 가
+  // 잡음 — 분량(substance)이 둘을 가른다.
+  it('미채움 + 빈셀 많음 + 분량 있는 audit 보고 → nudge 안 함 (deliberate-report)', () => {
+    const r = decideFormGuardNudge({
+      ...BASE,
+      formState: { emptyCellsRemaining: 180, tableSummary: 'p=42 (180 empty)' },
+      getPageSvgCalled: true,
+      formWritesDone: false,
+      assistantText:
+        '점검위원 작성 칸은 지시문상 작성 불요라 의도적 공란으로 판단됩니다. ' +
+        '반면 1.5 주요설비 구축현황 표의 제조사·추정금액·도입 여부 칸은 보고자 ' +
+        '작성 영역인데 비어 있어 실제 누락 가능성이 높습니다. 표지의 컨소시엄 ' +
+        '참여 값도 비어 있어 확인이 필요합니다. 우선 보완해야 할 항목을 아래에 ' +
+        '정리했으니 원자료와 대조해 채우시는 것이 좋겠습니다.',
+    });
+    expect(r.shouldNudge).toBe(false);
+    expect(r.reason).toBe('deliberate-report');
+  });
+
+  // 반면 쓴 게 전혀 없는데(=조기 give-up) 빈 셀 + 짧은 완료 선언이면 1회
+  // nudge 유지 (분량 미달 → deliberate-report 아님).
   it('미채움 + 빈셀 많음 → empty-cells nudge 유지 (조기 give-up)', () => {
     const r = decideFormGuardNudge({
       ...BASE,
@@ -423,6 +481,24 @@ describe('decideFormGuardNudge — Form-Fill 완료 guard (0.7.6 tightened)', ()
       expect(assistantRequestsInput('양식을 모두 채웠습니다.')).toBe(false);
       expect(assistantRequestsInput('')).toBe(false);
       expect(assistantRequestsInput(undefined)).toBe(false);
+    });
+  });
+
+  describe('isSubstantiveReport — audit 보고 vs 조기 종료 판정 (0.7.39)', () => {
+    it('짧은 완료/ack 선언은 보고 아님', () => {
+      expect(isSubstantiveReport('양식 작성을 완료했습니다.')).toBe(false);
+      expect(isSubstantiveReport('다 채웠습니다.')).toBe(false);
+      expect(isSubstantiveReport('')).toBe(false);
+      expect(isSubstantiveReport(undefined)).toBe(false);
+    });
+    it('분량 있는 audit/분석 답변은 보고로 인정', () => {
+      const audit =
+        '점검위원 작성 칸은 지시문상 작성 불요라 의도적 공란으로 판단됩니다. ' +
+        '반면 1.5 주요설비 구축현황 표의 제조사·추정금액·도입 여부 칸은 보고자 ' +
+        '작성 영역인데 비어 있어 실제 누락 가능성이 높습니다. 표지의 컨소시엄 ' +
+        '참여 값도 비어 있어 확인이 필요합니다. 우선 보완해야 할 항목을 아래에 ' +
+        '정리했으니 원자료와 대조해 채우시는 것이 좋겠습니다.';
+      expect(isSubstantiveReport(audit)).toBe(true);
     });
   });
 });

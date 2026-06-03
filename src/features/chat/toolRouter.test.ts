@@ -125,4 +125,38 @@ describe('selectToolsViaLlm — mode-aware essentials (0.7.28)', () => {
     expect(formFill.tools).toContain('getPageSvg');
     expect(free.tools).not.toContain('getPageSvg');
   });
+
+  // 0.7.41 — 라우터가 도구와 함께 coarse intent 를 분류. `intent: <...>` 줄을
+  // 도구 배열과 독립적으로 파싱(배열 프로토콜·폴백 무손상).
+  describe('intent classification (0.7.41)', () => {
+    it('`intent: audit` 줄 → r.intent==="audit", 도구 배열은 그대로 파싱', async () => {
+      stubRouterChat('intent: audit\n["getEmptyFormFields","getPageSvg"]');
+      const r = await selectToolsViaLlm({ ...baseOpts, mode: 'form-fill' });
+      expect(r.intent).toBe('audit');
+      expect(r.isFullCatalog).toBe(false);
+      expect(r.tools).toContain('getEmptyFormFields');
+    });
+
+    it('`intent: fill` 줄 → r.intent==="fill"', async () => {
+      stubRouterChat('intent: fill\n["fillFormCells"]');
+      const r = await selectToolsViaLlm({ ...baseOpts, mode: 'form-fill' });
+      expect(r.intent).toBe('fill');
+    });
+
+    it('intent 줄 없는 legacy bare-array → "unknown" (하위호환)', async () => {
+      stubRouterChat('["insertText"]');
+      const r = await selectToolsViaLlm({ ...baseOpts, mode: 'form-fill' });
+      expect(r.intent).toBe('unknown');
+      expect(r.tools).toContain('insertText');
+    });
+
+    it('폴백(빈 query)도 intent "unknown"', async () => {
+      const r = await selectToolsViaLlm({
+        ...baseOpts,
+        history: [{ role: 'user', content: '   ' }],
+      });
+      expect(r.isFullCatalog).toBe(true);
+      expect(r.intent).toBe('unknown');
+    });
+  });
 });

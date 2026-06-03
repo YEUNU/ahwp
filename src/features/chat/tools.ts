@@ -1311,7 +1311,9 @@ async function runOne(
         // helper 경로일 때 필드명을 매핑하지 않으면 후속 insertText
         // 호출의 sectionIdx/paragraphIdx 가 undefined 가 됨.
         if (helper) {
-          const hits = await helper.searchAllText(a.query, false, false);
+          // Case-sensitive (matches the catalog contract) + include table
+          // cells so cellContext is populated and form-cell text is findable.
+          const hits = await helper.searchAllText(a.query, true, true);
           const sliced = hits.slice(0, a.maxResults ?? hits.length);
           const data = sliced.map((h) => ({
             sectionIdx: h.sec,
@@ -1840,54 +1842,17 @@ export async function runTools(
   if (helper) {
     const anyWrite = items.some((it) => it.ok && !isReadOnlyTool(it.call.tool));
     const anyOk = out.some((r) => r.ok);
-    if (anyWrite && anyOk) {
-      try {
-        // Access bridge through helper (private field via cast). Cheap
-        // call — just emits an event in the iframe.
-        const bridge = (
-          helper as unknown as {
-            bridge: { invoke: (m: string, p?: unknown) => Promise<unknown> };
-          }
-        ).bridge;
-        // 0.7.21 — 셀에 삽입한 텍스트가 "안 보이는" 문제 (실사용 리포트).
-        // bridge write (insertTextInCell 등) 는 native input-handler 의
-        // afterEdit() 를 우회하는데, afterEdit 가 바로 lineseg reflow 를
-        // 트리거하는 경로다. 우회하면 IR 엔 텍스트가 있지만 해당 문단의
-        // line_segs 가 미계산(height=0)으로 남아 클리핑/비표시된다. 배치
-        // 종료 후 reflowLinesegs 로 line_segs·페이지네이션을 재계산해야
-        // 삽입 텍스트가 제 높이로 보인다 (#177 의 "빈 line_segs + text
-        // 존재" 케이스). notify(repaint) 전에 reflow. generic 'wasm'
-        // dispatcher 경유 — fork 케이스 추가 불필요. 구버전 vendor build
-        // (메서드 부재) 면 무해하게 skip.
-        try {
-          await bridge.invoke('wasm', { fn: 'reflowLinesegs', args: [] });
-        } catch (err) {
-          console.warn(
-            '[tools] reflowLinesegs skipped (older vendor build?):',
-            err,
-          );
-        }
-        await bridge.invoke('notifyDocumentChanged', { reason: 'ahwp-tools' });
-      } catch (err) {
-        console.warn(
-          '[tools] notifyDocumentChanged failed (older vendor build?):',
-          err,
-        );
-      }
+    if (anyWrite && anyOk && helper) {
+      // 0.7.21 — 셀에 삽입한 텍스트가 "안 보이는" 문제 (실사용 리포트).
+      // bridge write 는 native input-handler 의 afterEdit() (= lineseg
+      // reflow 트리거)를 우회하므로 삽입 텍스트가 height=0 line_segs 로
+      // 남아 클리핑/비표시된다. 배치 종료 후 reflow → repaint 로 보정.
+      // 각 호출의 구버전 vendor build 가드는 helper 안에 있다.
+      await helper.reflowLinesegs();
+      await helper.notifyDocumentChanged('ahwp-tools');
     }
   }
   return out;
-}
-
-/** Compact tally for the post-run toast. */
-export function summarizeResults(results: AhwpToolResult[]): {
-  total: number;
-  ok: number;
-  failed: number;
-} {
-  let ok = 0;
-  for (const r of results) if (r.ok) ok += 1;
-  return { total: results.length, ok, failed: results.length - ok };
 }
 
 /** Short human-readable args summary for the preview list. Trimmed to

@@ -111,15 +111,18 @@ export function registerFileIpc(): void {
         throw new Error(`Unsupported extension: ${path.extname(filePath)}`);
       }
       const raw = await fs.readFile(filePath);
-      // Always hand HWPX bytes back to the renderer — converts HWP via
-      // @rhwp/core if needed. ARCHITECTURE.md §B: canonical internal = HWPX.
-      const hwpxBytes = await ensureHwpxBytes(
+      // Validate format, then pass the input bytes through UNCHANGED — the
+      // read path does NOT pre-convert. ensureHwpxBytes only magic-byte gates
+      // (HWP/HWPX/HWP3) and returns the bytes as-is; the renderer auto-detects
+      // format. (HWP→HWPX round-trip drops embedded images — KNOWN_ISSUES, see
+      // ensureHwpxBytes docstring — so conversion is deliberately avoided here.)
+      const bytes = await ensureHwpxBytes(
         new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength),
       );
       // Hand off as a fresh ArrayBuffer (renderer expects ArrayBuffer).
-      return hwpxBytes.buffer.slice(
-        hwpxBytes.byteOffset,
-        hwpxBytes.byteOffset + hwpxBytes.byteLength,
+      return bytes.buffer.slice(
+        bytes.byteOffset,
+        bytes.byteOffset + bytes.byteLength,
       ) as ArrayBuffer;
     },
   );
@@ -150,13 +153,13 @@ export function registerFileIpc(): void {
       // exists from an earlier save, it stays put (preserves the
       // pre-edit-session original). New files (no prior content) skip
       // backup entirely.
-      const backupPath = await maybeWriteBackup(target);
+      // Write the prior on-disk content's `.bak` sidecar (return value unused).
+      await maybeWriteBackup(target);
       await writeAtomic(target, normalized);
       noteOwnWrite(target);
       await addRecent(target);
       const result: FileOpenResult = { path: target };
       if (routed) result.routedFrom = req.path;
-      if (backupPath) result.backupPath = backupPath;
       return result;
     },
   );
@@ -293,13 +296,12 @@ ${req.html}
           `[file:save-as] auto-routing extension ${picked} → ${target}`,
         );
       }
-      const backupPath = await maybeWriteBackup(target);
+      await maybeWriteBackup(target);
       await writeAtomic(target, normalized);
       noteOwnWrite(target);
       await addRecent(target);
       const out: FileOpenResult = { path: target };
       if (routed) out.routedFrom = picked;
-      if (backupPath) out.backupPath = backupPath;
       return out;
     },
   );
@@ -343,77 +345,6 @@ ${req.html}
         }
       } catch (err) {
         console.warn('[file] create-version failed (non-fatal):', err);
-      }
-    },
-  );
-
-  ipcMain.handle(
-    'file:list-versions',
-    async (
-      _event,
-      p: unknown,
-    ): Promise<{ filename: string; size: number; createdAt: number }[]> => {
-      if (typeof p !== 'string' || !p) return [];
-      try {
-        const dir = path.join(
-          app.getPath('userData'),
-          'versions',
-          versionDirHash(p),
-        );
-        const entries = await fs.readdir(dir, { withFileTypes: true });
-        const items: { filename: string; size: number; createdAt: number }[] =
-          [];
-        for (const e of entries) {
-          if (!e.isFile() || !e.name.endsWith('.hwp')) continue;
-          const fp = path.join(dir, e.name);
-          try {
-            const st = await fs.stat(fp);
-            items.push({
-              filename: e.name,
-              size: st.size,
-              createdAt: st.mtimeMs,
-            });
-          } catch {
-            /* ignore */
-          }
-        }
-        items.sort((a, b) => b.createdAt - a.createdAt);
-        return items;
-      } catch {
-        return [];
-      }
-    },
-  );
-
-  ipcMain.handle(
-    'file:read-version',
-    async (
-      _event,
-      req: { path: string; filename: string },
-    ): Promise<ArrayBuffer | null> => {
-      if (
-        !req ||
-        typeof req.path !== 'string' ||
-        typeof req.filename !== 'string'
-      )
-        return null;
-      // Defense in depth: prevent path traversal in `filename`.
-      if (req.filename.includes('/') || req.filename.includes('\\'))
-        return null;
-      try {
-        const fp = path.join(
-          app.getPath('userData'),
-          'versions',
-          versionDirHash(req.path),
-          req.filename,
-        );
-        const buf = await fs.readFile(fp);
-        return buf.buffer.slice(
-          buf.byteOffset,
-          buf.byteOffset + buf.byteLength,
-        ) as ArrayBuffer;
-      } catch {
-        return null;
       }
     },
   );
@@ -486,23 +417,27 @@ ${req.html}
     },
   );
 
-  // External file watcher — chokidar instance shared across all open tabs.
-  // The renderer resends the full path list whenever its tabs change; we
-  // tear down the previous watcher and start a fresh one. Reload-during-
-  // save false positives are suppressed by `recentlySavedPaths` (we
-  // record each successful write here and ignore the next change event
-  // for that path within a short window).
+  // External file watcher — one chokidar instance PER window, keyed by
+  // BrowserWindow.id. The renderer resends the full path list whenever its
+  // tabs change; we tear down that window's previous watcher and start a
+  // fresh one. Per-window keying means a second window can't clobber the
+  // first's watcher. Reload-during-save false positives are suppressed by
+  // `recentlySavedPaths` (we record each successful write here and ignore
+  // the next change event for that path within a short window).
   ipcMain.handle(
     'file:watch-paths',
     async (event, paths: string[]): Promise<void> => {
       const window = BrowserWindow.fromWebContents(event.sender);
-      tabsWatcherWindow = window;
-      // Always tear down before reconfiguring — chokidar's `.unwatch()` +
-      // `.add()` is incremental but tracking incremental state at this
-      // small scale is more bug-prone than just rebuilding.
-      if (tabsWatcher) {
-        await tabsWatcher.close();
-        tabsWatcher = null;
+      if (!window) return;
+      const winId = window.id;
+      // Always tear down THIS window's watcher before reconfiguring —
+      // chokidar's `.unwatch()` + `.add()` is incremental but tracking
+      // incremental state at this small scale is more bug-prone than just
+      // rebuilding.
+      const existing = tabsWatchers.get(winId);
+      if (existing) {
+        await existing.close();
+        tabsWatchers.delete(winId);
       }
       const list = (paths ?? []).filter(
         (p) => typeof p === 'string' && p.length > 0,
@@ -519,21 +454,36 @@ ${req.html}
         // Suppress events for our own writes.
         const until = recentlySavedPaths.get(changedPath);
         if (until !== undefined && Date.now() < until) return;
-        if (!tabsWatcherWindow || tabsWatcherWindow.isDestroyed()) return;
+        // Gate on the captured window, not a module global.
+        if (window.isDestroyed()) return;
         const evt: ExternalFileChangeEvent = { type, path: changedPath };
-        tabsWatcherWindow.webContents.send('file:external-change', evt);
+        window.webContents.send('file:external-change', evt);
       };
       w.on('change', (p: string) => emit('change', p));
       w.on('unlink', (p: string) => emit('unlink', p));
-      tabsWatcher = w;
+      tabsWatchers.set(winId, w);
+      // Release this window's watcher when it closes (registered once per
+      // window — the handler fires repeatedly as tabs change).
+      if (!watcherClosedHooked.has(winId)) {
+        watcherClosedHooked.add(winId);
+        window.once('closed', () => {
+          const wt = tabsWatchers.get(winId);
+          if (wt) {
+            void wt.close();
+            tabsWatchers.delete(winId);
+          }
+          watcherClosedHooked.delete(winId);
+        });
+      }
     },
   );
 }
 
-// Module-scope state for the tab-watcher (one per main process; the app
-// has a single window in normal use).
-let tabsWatcher: FSWatcher | null = null;
-let tabsWatcherWindow: BrowserWindow | null = null;
+// Per-window tab watchers, keyed by BrowserWindow.id. Each renderer window
+// owns its own chokidar instance over its tab set, so multiple windows don't
+// clobber each other's watcher. The app is single-window in normal use.
+const tabsWatchers = new Map<number, FSWatcher>();
+const watcherClosedHooked = new Set<number>(); // winIds with a 'closed' hook
 const recentlySavedPaths = new Map<string, number>(); // path → epoch ms
 
 /** Mark a path as recently-saved by us so external-change events for the
@@ -547,13 +497,11 @@ function noteOwnWrite(p: string): void {
   }
 }
 
-/** Called from main during shutdown to release the tab watcher. */
+/** Called from main during shutdown to release all tab watchers. */
 export async function teardownTabsWatcher(): Promise<void> {
-  if (tabsWatcher) {
-    await tabsWatcher.close();
-    tabsWatcher = null;
-  }
-  tabsWatcherWindow = null;
+  await Promise.allSettled([...tabsWatchers.values()].map((w) => w.close()));
+  tabsWatchers.clear();
+  watcherClosedHooked.clear();
 }
 
 function toUint8(input: ArrayBuffer | Uint8Array): Uint8Array {

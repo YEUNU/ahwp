@@ -67,10 +67,6 @@ export interface AhwpPatch {
   reason?: string;
 }
 
-export interface AhwpPatchBlock {
-  ops: AhwpPatch[];
-}
-
 export const AHWP_PATCH_LIMITS = {
   maxOpsPerBlock: 20,
   maxTitleBytes: 200,

@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { isMac } from '@/lib/platform';
 import { useTheme } from './use-theme';
 
 export interface TitleBarProps {
@@ -27,9 +28,6 @@ export interface TitleBarProps {
   /** Open the Settings dialog. */
   onOpenSettings: () => void;
 }
-
-const isMac =
-  typeof navigator !== 'undefined' && navigator.platform.startsWith('Mac');
 
 export function TitleBar({
   activeFileName,
