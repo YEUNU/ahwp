@@ -61,10 +61,6 @@ export interface ModeContext {
  *
  * `promptFragment`: mode 진입 시 base system prompt 뒤에 append 되는
  * 짧은 가이드 (한 단락). 거대한 if-else 없이 mode 마다 자기 contract 만.
- *
- * `requiresProviderCapability`: 이 mode 가 의존하는 provider 능력
- * (예: 'vision'). 0.7.4 의 capability matrix 에서 사용 — provider 가
- * 부족하면 UI 경고. 0.7.0 은 정보만 기록.
  */
 export interface ModeDefinition {
   mode: TaskMode;
@@ -73,7 +69,6 @@ export interface ModeDefinition {
   description: string;
   tools: 'all' | readonly AhwpToolName[];
   promptFragment: string;
-  requiresProviderCapability?: readonly ('vision' | 'tool-use')[];
 }
 
 const FREE_AUTHORING: ModeDefinition = {
@@ -156,7 +151,6 @@ When a turn fills cells, pair the right tool to the right \`slotKind\`. If you u
 Leave a cell blank when the target has no real value for it — never invent filler (\`O\`/\`X\`, \`0\`, \`-\`, \`N/A\`, \`미운영\`) to fill space; a partly-filled form of real data beats a full one of filler. Overwrite filled cells that contradict the target with \`replaceTextInCell\`.
 
 If the user's intent clearly does not fit any slot, say so briefly and stop — do NOT invent body paragraphs.`,
-  requiresProviderCapability: ['vision', 'tool-use'],
 };
 
 const BODY_EDIT: ModeDefinition = {

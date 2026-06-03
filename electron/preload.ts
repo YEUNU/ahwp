@@ -45,8 +45,6 @@ const api: AhwpApi = {
     loadDraft: (p) => ipcRenderer.invoke('file:load-draft', p),
     clearDraft: (p) => ipcRenderer.invoke('file:clear-draft', p),
     createVersion: (req) => ipcRenderer.invoke('file:create-version', req),
-    listVersions: (p) => ipcRenderer.invoke('file:list-versions', p),
-    readVersion: (req) => ipcRenderer.invoke('file:read-version', req),
     openExternal: (p) => ipcRenderer.invoke('file:open-external', p),
     onExternalChange: (handler) => {
       const listener = (
@@ -92,8 +90,6 @@ const api: AhwpApi = {
     copy: (src, destDir) => ipcRenderer.invoke('folder:copy', src, destDir),
     listOutlines: (req) => ipcRenderer.invoke('folder:list-outlines', req),
     readParagraph: (req) => ipcRenderer.invoke('folder:read-paragraph', req),
-    resolveExternalImages: (basenames) =>
-      ipcRenderer.invoke('folder:resolve-external-images', basenames),
   },
   secrets: {
     set: (providerId, key) =>

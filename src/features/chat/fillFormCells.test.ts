@@ -46,6 +46,8 @@ describe('runTools — fillFormCells bulk dispatch', () => {
         calls.push(`replace#${cell}`);
         return true;
       },
+      async reflowLinesegs(): Promise<void> {},
+      async notifyDocumentChanged(): Promise<void> {},
     } as unknown as CellHelper;
     const items: AhwpPreflightItem[] = [
       {
@@ -105,6 +107,8 @@ describe('runTools — fillFormCells bulk dispatch', () => {
       async insertTextInCell(): Promise<boolean> {
         return false;
       },
+      async reflowLinesegs(): Promise<void> {},
+      async notifyDocumentChanged(): Promise<void> {},
     } as unknown as CellHelper;
     const items: AhwpPreflightItem[] = [
       {
@@ -144,6 +148,8 @@ describe('runTools — onWriteParagraph 실시간 스크롤 콜백', () => {
     async insertTextInCell(): Promise<boolean> {
       return true;
     },
+    async reflowLinesegs(): Promise<void> {},
+    async notifyDocumentChanged(): Promise<void> {},
   } as unknown as CellHelper;
 
   function fillItem(parentParaIdx: number): AhwpPreflightItem {
@@ -210,6 +216,8 @@ describe('runTools — onWriteParagraph 실시간 스크롤 콜백', () => {
       async insertTextInCell(): Promise<boolean> {
         return false;
       },
+      async reflowLinesegs(): Promise<void> {},
+      async notifyDocumentChanged(): Promise<void> {},
     } as unknown as CellHelper;
     const reveal = vi.fn();
     await runTools(mockViewer(), [fillItem(7)], failHelper, undefined, reveal);

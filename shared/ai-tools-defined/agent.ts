@@ -75,16 +75,6 @@ export const runAgent = defineTool<'runAgent', AhwpToolArgs['runAgent']>({
     required: ['prompt'],
   },
   readonly: false, // sub-agent 가 write 도구 사용 가능 (parent mode 가 허용 시)
-  // 모든 mode 에서 사용 가능 — sub-agent dispatch 는 mode-agnostic.
-  // cross-doc-research 도 노출 — research 안에서 더 깊은 research 가능.
-  modes: [
-    'free-authoring',
-    'body-edit',
-    'form-fill',
-    'cross-doc-research',
-    'table-manipulation',
-    'formatting',
-  ],
   validate(raw) {
     const prompt = raw.prompt;
     if (typeof prompt !== 'string')
@@ -135,14 +125,6 @@ export const updatePlan = defineTool<'updatePlan', AhwpToolArgs['updatePlan']>({
     required: ['items'],
   },
   readonly: true,
-  modes: [
-    'free-authoring',
-    'body-edit',
-    'form-fill',
-    'cross-doc-research',
-    'table-manipulation',
-    'formatting',
-  ],
   validate(raw) {
     if (!Array.isArray(raw.items))
       return { ok: false, reason: 'items-not-array' };

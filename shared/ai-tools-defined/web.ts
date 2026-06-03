@@ -37,7 +37,6 @@ export const webFetch = defineTool<'webFetch', AhwpToolArgs['webFetch']>({
     required: ['url'],
   },
   readonly: true,
-  modes: ['cross-doc-research', 'free-authoring', 'body-edit'],
   validate(raw) {
     const url = raw.url;
     if (typeof url !== 'string') return { ok: false, reason: 'url-not-string' };
@@ -76,7 +75,6 @@ export const webSearch = defineTool<'webSearch', AhwpToolArgs['webSearch']>({
     required: ['query'],
   },
   readonly: true,
-  modes: ['cross-doc-research', 'free-authoring', 'body-edit'],
   validate(raw) {
     const query = raw.query;
     if (typeof query !== 'string')

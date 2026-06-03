@@ -87,13 +87,8 @@ export type ValidateResult<TArgs> =
  * 회피.
  *
  * `readonly`: true 면 IR mutation 없음 (READONLY_TOOL_NAMES set 에
- * 자동 가입). 기본 false.
- *
- * `modes`: 이 도구가 노출되는 TaskMode subset. 빈 배열 또는 omit 시
- * 전체 mode 노출 (legacy 동작 — 0.7.0 default). mode 별 catalog filter
- * 에서 `MODE_REGISTRY[mode].tools` 가 'all' 아닌 array 면 자동 통합.
- *
- * `tags`: 임의 라벨. 디버깅 / future analytics. (0.7.4 에서는 미사용.)
+ * 자동 가입). 기본 false. (mode 별 catalog 노출은 ToolDef 가 아니라
+ * `MODE_REGISTRY[mode].tools` 가 결정한다.)
  */
 export interface ToolDef<TName extends string, TArgs> {
   readonly name: TName;
@@ -101,8 +96,6 @@ export interface ToolDef<TName extends string, TArgs> {
   readonly inputSchema: JsonSchema;
   readonly validate: (raw: Record<string, unknown>) => ValidateResult<TArgs>;
   readonly readonly?: boolean;
-  readonly modes?: readonly string[];
-  readonly tags?: readonly string[];
 }
 
 /**
@@ -131,11 +124,6 @@ export interface ToolRegistry {
   >;
   /** readonly 인 도구 이름 집합. READONLY_TOOL_NAMES 와 union. */
   readonlyNames: Set<string>;
-  /** name → ToolDef (full). 필요 시 mode / tags 조회용. */
-  byName: Map<string, ToolDef<string, unknown>>;
-  /** Migrated 도구 이름 집합. legacy 시스템이 이걸 보고 자기 entry 를
-   *  skip — 충돌 방지. */
-  migratedNames: Set<string>;
 }
 
 export function buildToolRegistry<
@@ -144,8 +132,6 @@ export function buildToolRegistry<
   const descriptors: ToolRegistry['descriptors'] = [];
   const validators: ToolRegistry['validators'] = new Map();
   const readonlyNames: ToolRegistry['readonlyNames'] = new Set();
-  const byName: ToolRegistry['byName'] = new Map();
-  const migratedNames: ToolRegistry['migratedNames'] = new Set();
   for (const d of defs) {
     descriptors.push({
       name: d.name,
@@ -157,8 +143,6 @@ export function buildToolRegistry<
       d.validate as (raw: Record<string, unknown>) => ValidateResult<unknown>,
     );
     if (d.readonly) readonlyNames.add(d.name);
-    byName.set(d.name, d as ToolDef<string, unknown>);
-    migratedNames.add(d.name);
   }
-  return { descriptors, validators, readonlyNames, byName, migratedNames };
+  return { descriptors, validators, readonlyNames };
 }

@@ -11,11 +11,9 @@
  */
 import {
   useCallback,
-  useMemo,
   useRef,
   useState,
   type Dispatch,
-  type RefCallback,
   type SetStateAction,
 } from 'react';
 import { type TabDescriptor } from '@/app/TabBar';
@@ -32,12 +30,6 @@ let tabKeyCounter = 0;
 export function makeTabKey(): string {
   tabKeyCounter += 1;
   return `tab-${tabKeyCounter}`;
-}
-
-export interface UseTabManagementOptions {
-  /** Side effect on dirty-change — bumps outline refresh signal so the
-   * TOC sidebar re-fetches without polling. */
-  setOutlineKey: Dispatch<SetStateAction<number>>;
 }
 
 export interface TabManagementHandle {
@@ -57,16 +49,9 @@ export interface TabManagementHandle {
   closeTabsToRight: (index: number) => void;
   copyTabPath: (index: number) => void;
   revealTab: (index: number) => void;
-  handleDirtyChange: (key: string, dirty: boolean) => void;
-  refCallbackFor: (key: string) => RefCallback<ViewerHandle>;
-  dirtyCallbacks: Map<string, (dirty: boolean) => void>;
 }
 
-export function useTabManagement(
-  opts: UseTabManagementOptions,
-): TabManagementHandle {
-  const { setOutlineKey } = opts;
-
+export function useTabManagement(): TabManagementHandle {
   const [tabsState, setTabsState] = useState<TabState[]>([]);
   const [activeIndex, setActiveIndex] = useState(-1);
   const viewerRefsRef = useRef<Map<string, ViewerHandle | null>>(new Map());
@@ -200,13 +185,11 @@ export function useTabManagement(
         return a.i - b.i;
       });
       const sorted = indexed.map((x) => x.t);
-      const newIdx = sorted.findIndex((t) => t.key === target.key);
       setActiveIndex((curIdx) => {
         const cur = next[curIdx];
         if (!cur) return curIdx;
         return sorted.findIndex((t) => t.key === cur.key);
       });
-      void newIdx;
       return sorted;
     });
   }, []);
@@ -303,48 +286,6 @@ export function useTabManagement(
     });
   }, []);
 
-  const handleDirtyChange = useCallback(
-    (key: string, dirty: boolean): void => {
-      setTabsState((prev) => {
-        const idx = prev.findIndex((t) => t.key === key);
-        if (idx < 0) return prev;
-        if (prev[idx].dirty === dirty) return prev;
-        const next = [...prev];
-        next[idx] = { ...next[idx], dirty };
-        return next;
-      });
-      // chunk 58 — bump the outline refresh signal so the TOC sidebar
-      // re-fetches without polling. The sidebar is cheap (single IR walk
-      // bounded to 1k paragraphs).
-      setOutlineKey((v) => v + 1);
-    },
-    [setOutlineKey],
-  );
-
-  // Stable ref-callback factory per tab key. Each StudioViewer's ref
-  // funnels into our Map.
-  const refCallbackFor = useCallback(
-    (key: string): RefCallback<ViewerHandle> =>
-      (handle) => {
-        if (handle) {
-          viewerRefsRef.current.set(key, handle);
-        } else {
-          viewerRefsRef.current.delete(key);
-        }
-      },
-    [],
-  );
-
-  // Memoized dirty-change callback per tab key (avoids re-attaching on
-  // every parent render).
-  const dirtyCallbacks = useMemo(() => {
-    const m = new Map<string, (dirty: boolean) => void>();
-    for (const t of tabsState) {
-      m.set(t.key, (dirty) => handleDirtyChange(t.key, dirty));
-    }
-    return m;
-  }, [tabsState, handleDirtyChange]);
-
   return {
     tabsState,
     setTabsState,
@@ -362,8 +303,5 @@ export function useTabManagement(
     closeTabsToRight,
     copyTabPath,
     revealTab,
-    handleDirtyChange,
-    refCallbackFor,
-    dirtyCallbacks,
   };
 }

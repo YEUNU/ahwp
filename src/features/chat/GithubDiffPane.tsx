@@ -17,9 +17,6 @@ import type { PatchStatus } from './DiffCard';
 export interface GithubDiffPaneProps {
   items: AhwpPatchPreflightItem[];
   statuses: PatchStatus[];
-  /** Accept-all is auto-fired on mount; this stays for the rare case
-   *  user dismissed via Reject and wants to re-apply. */
-  onAcceptAll?: () => void;
   /** Undo *all* applied patches in the turn (single-undo grouping). */
   onUndoAll?: () => void;
   /** Per-patch scroll-to-location. */

@@ -1,11 +1,11 @@
 /**
  * Defined tools registry — 0.7.4 full migration.
  *
- * 모든 56 도구가 본 dir 안의 카테고리별 파일에 defineTool 로 정의됨.
+ * 모든 75 도구가 본 dir 안의 카테고리별 파일에 defineTool 로 정의됨.
  * 이전 분산 구조 (TOOL_DESCRIPTORS array + validateArgs switch + per-tool
  * AhwpToolArgs entries) 는 본 chunk 에서 단일 source 로 통합되었다.
  *
- * **카테고리 (6 파일):**
+ * **카테고리 (9 파일):**
  *
  * - `format.ts` (13) — caret-based 서식 / 본문 텍스트 primitive /
  *   paragraph 서식 (applyHtml, applyAlignment, applyFontSize,
@@ -22,7 +22,7 @@
  * - `shape.ts` (7) — 도형 / 그림 (createRectShape, setShapeProperties,
  *   deleteShapeControl, changeShapeZOrder, setPictureProperties,
  *   deletePictureControl, insertPicture).
- * - `page.ts` (19) — page / section / header-footer / bookmark /
+ * - `page.ts` (21) — page / section / header-footer / bookmark /
  *   footnote / equation / style (applyPageDef, insertPageBreak,
  *   insertColumnBreak, setColumnDef, setSectionDef, setPageHide,
  *   getColumnDef, setHeaderFooterText, applyHfTemplate,
@@ -30,11 +30,14 @@
  *   insertFootnote, deleteFootnote, getFootnoteAtCursor, insertEquation,
  *   deleteEquationControl, createNamedStyle, getStyleListJson,
  *   getStyleAt).
- * - `read.ts` (10) — read-only 조회 / 시각 캡처 / 워크스페이스 검색 /
+ * - `read.ts` (11) — read-only 조회 / 시각 캡처 / 워크스페이스 검색 /
  *   라우팅 (getDocumentOutline, getDocumentSummary, getCaretPosition,
  *   getCharPropertiesAt, getParaPropertiesAt, getTextRange,
  *   findInDocument, getPageSvg, searchWorkspaceOutlines,
  *   readParagraphByPath, switchTargetDoc).
+ * - `web.ts` (2) — 웹 검색 / fetch (webFetch, webSearch).
+ * - `bash.ts` (1) — 셸 명령 실행 (runCommand).
+ * - `agent.ts` (2) — 서브에이전트 / 작업 계획 (runAgent, updatePlan).
  *
  * **단일 source 보장:**
  *

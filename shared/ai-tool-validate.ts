@@ -5,7 +5,7 @@
  * 모든 도구의 args 검증을 inline 으로 처리했다. catalog 와 분리되어 schema
  * 만 추가하고 validator 누락한 사례 (0.6.17 includeFilled) 가 회귀의 원인.
  *
- * **0.7.4**: 모든 55 도구가 `shared/ai-tools-defined/*.ts` 에서
+ * **0.7.4**: 모든 75 도구가 `shared/ai-tools-defined/*.ts` 에서
  * `defineTool` 로 정의되고 validate 함수가 거기 co-located. 본 파일은
  * registry 의 validator map 으로 dispatch 하는 thin wrapper 만 남았다.
  * legacy `validateArgs` switch 완전 제거.

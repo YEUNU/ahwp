@@ -34,9 +34,6 @@ export const runCommand = defineTool<'runCommand', AhwpToolArgs['runCommand']>({
   // (현재 dispatcher 는 confirm 게이트 폐기됐지만, 향후 0.7.x 에서 bash
   // 만의 confirm UI 추가 시 본 flag 활용.)
   readonly: false,
-  // cross-doc-research 는 read-only 라 제외. free-authoring / body-edit
-  // 에서만 노출 (사용자가 실제 작업 중일 때만 의미 있음).
-  modes: ['free-authoring', 'body-edit'],
   validate(raw) {
     const command = raw.command;
     if (typeof command !== 'string')

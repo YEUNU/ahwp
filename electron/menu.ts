@@ -46,15 +46,6 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
         click: () => send(getWindow(), 'app:new-window'),
       },
       { type: 'separator' },
-      {
-        label: 'HTML로 내보내기…',
-        click: () => send(getWindow(), 'file:export-html'),
-      },
-      {
-        label: 'PDF로 내보내기…',
-        click: () => send(getWindow(), 'file:export-pdf'),
-      },
-      { type: 'separator' },
       isMac
         ? { role: 'close', label: '창 닫기' }
         : { role: 'quit', label: '종료' },
@@ -64,17 +55,6 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
   const editMenu: MenuItemConstructorOptions = {
     label: '편집',
     submenu: [
-      {
-        label: '실행 취소',
-        accelerator: 'CmdOrCtrl+Z',
-        click: () => send(getWindow(), 'edit:undo'),
-      },
-      {
-        label: '다시 실행',
-        accelerator: 'Shift+CmdOrCtrl+Z',
-        click: () => send(getWindow(), 'edit:redo'),
-      },
-      { type: 'separator' },
       // chunk 71 — role-based cut/copy/paste. 기존 click handler 는
       // `edit:copy` IPC 로 라우팅 → 렌더러가 `document.execCommand` 로
       // 폴백했지만, password input (Settings API key 등) 은 보안상
@@ -88,49 +68,6 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
       { role: 'copy', label: '복사', accelerator: 'CmdOrCtrl+C' },
       { role: 'paste', label: '붙여넣기', accelerator: 'CmdOrCtrl+V' },
       { role: 'selectAll', label: '전체 선택' },
-      { type: 'separator' },
-      {
-        label: '찾기…',
-        accelerator: 'CmdOrCtrl+F',
-        click: () => send(getWindow(), 'edit:find'),
-      },
-      {
-        label: '바꾸기…',
-        accelerator: 'CmdOrCtrl+H',
-        click: () => send(getWindow(), 'edit:replace'),
-      },
-      { type: 'separator' },
-      {
-        label: '컨트롤로 복사',
-        accelerator: 'CmdOrCtrl+Shift+C',
-        click: () => send(getWindow(), 'edit:copy-control'),
-      },
-      {
-        label: '컨트롤로 붙여넣기',
-        accelerator: 'CmdOrCtrl+Shift+V',
-        click: () => send(getWindow(), 'edit:paste-control'),
-      },
-    ],
-  };
-
-  const formatMenu: MenuItemConstructorOptions = {
-    label: '서식',
-    submenu: [
-      {
-        label: '진하게',
-        accelerator: 'CmdOrCtrl+B',
-        click: () => send(getWindow(), 'format:bold'),
-      },
-      {
-        label: '기울임',
-        accelerator: 'CmdOrCtrl+I',
-        click: () => send(getWindow(), 'format:italic'),
-      },
-      {
-        label: '밑줄',
-        accelerator: 'CmdOrCtrl+U',
-        click: () => send(getWindow(), 'format:underline'),
-      },
     ],
   };
 
@@ -147,10 +84,6 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
       { type: 'separator' },
       { role: 'togglefullscreen', label: '전체 화면' },
       { type: 'separator' },
-      {
-        label: '캐럿 위치의 각주 삭제',
-        click: () => send(getWindow(), 'delete:footnote-at-cursor'),
-      },
       {
         label: '설정…',
         accelerator: 'CmdOrCtrl+,',
@@ -221,12 +154,11 @@ export function buildAppMenu(getWindow: () => BrowserWindow | null): Menu {
         },
         fileMenu,
         editMenu,
-        formatMenu,
         viewMenu,
         windowMenu,
         helpMenu,
       ]
-    : [fileMenu, editMenu, formatMenu, viewMenu, windowMenu, helpMenu];
+    : [fileMenu, editMenu, viewMenu, windowMenu, helpMenu];
 
   return Menu.buildFromTemplate(template);
 }

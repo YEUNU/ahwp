@@ -129,9 +129,7 @@ interface UiToolEntry {
   id: string;
   name: string;
   argsPreview: string;
-  /** chunk 97 — pending: write tool 사용자 승인 대기. rejected: 사용자가
-   *  거절 (dispatch 안 됨, tool_result 는 'user-rejected' 로 모델에 회신). */
-  status: 'running' | 'ok' | 'failed' | 'pending' | 'rejected';
+  status: 'running' | 'ok' | 'failed';
   reason?: string;
   /** 0.4.11 — JSON-stringified tool 결과 (확장 버튼 노출). */
   resultPreview?: string;
@@ -739,7 +737,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       onSubmit,
       onKeyDown,
       stop,
-      resolveApproval,
       requestPlanSkip,
     } = useChatStreaming({
       conversationIdRef,
@@ -763,12 +760,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       hasKey,
       provider,
       model,
-      chatMode: 'agent' as const,
       modelList,
       attachDoc,
       setAttachDoc,
       excerpts,
-      excerptError,
       setExcerptError,
       setExcerpts,
       conversationId,
@@ -776,14 +771,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       referencePaths,
       onOpenSettings,
       getDocHtml,
-      applyHtml,
       runTools,
       captureExcerpt,
       activeDocPath,
       verifyExcerpt,
       getOpenDocs,
       getDocOutline,
-      undoLastApply,
       // chunk 99 follow-up — switchTargetDoc 의 cross-doc auto-open
       // path. AppShell 이 prop 으로 주입 (file:open-by-path IPC + tab
       // mount 책임). 미주입 시 hook 은 단순 reject (현재 동작).
@@ -1139,7 +1132,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   onUndoApply={undoLastApply}
                   onApplyPatches={applyPatches}
                   onPreviewPatch={previewPatch}
-                  onResolveApproval={resolveApproval}
                   onExecutePlan={() => executePlanFromMessage(m.id)}
                 />
               ))
@@ -1594,8 +1586,6 @@ interface MessageProps {
   onApplyPatches?: (patches: AhwpPatch[]) => Promise<boolean[]>;
   /** Scroll the editor to a patch's location (Q5 확장). */
   onPreviewPatch?: (patch: AhwpPatch) => void;
-  /** chunk 97 — pending write tool 의 사용자 결정 콜백. */
-  onResolveApproval?: (toolUseId: string, accept: boolean) => Promise<void>;
   /** chunk 99 follow-up — plan mode 응답 직후 사용자가 "이 계획대로
    *  실행" 클릭 시 호출. plan mode 를 끄고 같은 prompt 를 새 turn 으로
    *  발사한다. */
@@ -1623,7 +1613,6 @@ function Message({
   onUndoApply,
   onApplyPatches,
   onPreviewPatch,
-  onResolveApproval,
   onExecutePlan,
 }: MessageProps): JSX.Element {
   const isUser = message.role === 'user';
@@ -1821,26 +1810,8 @@ function Message({
   // without the side panel cluttering the editor area.
   const [patchPaneDismissed, setPatchPaneDismissed] = useState(false);
 
-  // Q5 확장 — Accept 후 ~12s 토스트 ("N개 적용됨 · 되돌리기").
-  // 0.6.14 — toast UI 자체는 GithubDiffPane 의 헤더로 흡수돼서 더 이상
-  // 채팅 안에서 떠다니지 않음. state 는 유지 (handlePatchAcceptAll /
-  // handlePatchUndo 가 setPatchToast 호출). 향후 chat-side toast 가 필요
-  // 해지면 그때 read; 지금은 write-only.
-  const [, setPatchToast] = useState<{
-    appliedCount: number;
-  } | null>(null);
-  const patchToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    return () => {
-      if (patchToastTimerRef.current) clearTimeout(patchToastTimerRef.current);
-    };
-  }, []);
-  const showPatchToast = (count: number): void => {
-    if (count <= 0) return;
-    setPatchToast({ appliedCount: count });
-    if (patchToastTimerRef.current) clearTimeout(patchToastTimerRef.current);
-    patchToastTimerRef.current = setTimeout(() => setPatchToast(null), 12000);
-  };
+  // 0.6.14 — Accept 후 토스트 UI 는 GithubDiffPane 헤더로 흡수됨. 별도
+  // chat-side toast 상태는 없음 (적용 결과는 per-patch status 로 표시).
   const handlePatchUndo = (): void => {
     if (!onUndoApply) return;
     if (onUndoApply()) {
@@ -1849,8 +1820,6 @@ function Message({
       // wipe overrides entirely. (For multi-step accept flows the user
       // can re-apply.)
       setPatchStatusOverrides({});
-      if (patchToastTimerRef.current) clearTimeout(patchToastTimerRef.current);
-      setPatchToast(null);
     }
   };
 
@@ -1862,7 +1831,6 @@ function Message({
       const results = await onApplyPatches([item.patch]);
       if (results[0]) {
         setPatchStatusAt(idx, 'accepted');
-        showPatchToast(1);
       }
     })();
   };
@@ -1880,18 +1848,15 @@ function Message({
     if (pendingItems.length === 0) return;
     void (async () => {
       const results = await onApplyPatches(pendingItems.map((x) => x.patch));
-      let okCount = 0;
       setPatchStatusOverrides((prev) => {
         const next = { ...prev };
         pendingItems.forEach((it, k) => {
-          if (results[k]) okCount += 1;
           next[it.idx] = results[k] ? 'accepted' : 'rejected';
         });
         return next;
       });
-      showPatchToast(okCount);
     })();
-  }, [patchesParsed, onApplyPatches, patchStatuses, showPatchToast]);
+  }, [patchesParsed, onApplyPatches, patchStatuses]);
   // chunk 99 follow-up — patches 자동 acceptAll. plan mode 가 아닌
   // 일반 응답에서 ahwp-patches 블록이 도착하고 처음 mount 될 때 한 번
   // 만 dispatch. Diff 카드는 기록 + 되돌리기 용도로 노출 유지.
@@ -2002,59 +1967,11 @@ function Message({
           >
             {groupToolEntries(message.toolEntries).map((g) =>
               g.kind === 'read-group' ? (
-                <ReadGroup
-                  key={g.id}
-                  entries={g.entries}
-                  onResolveApproval={onResolveApproval ?? null}
-                />
+                <ReadGroup key={g.id} entries={g.entries} />
               ) : (
-                <ToolEntryRow
-                  key={g.entry.id}
-                  entry={g.entry}
-                  onResolveApproval={onResolveApproval ?? null}
-                />
+                <ToolEntryRow key={g.entry.id} entry={g.entry} />
               ),
             )}
-            {/* 모두 승인 / 거절 — pending 이 둘 이상일 때만 보임. */}
-            {(() => {
-              const pendingIds = (message.toolEntries ?? [])
-                .filter((te) => te.status === 'pending')
-                .map((te) => te.id);
-              if (pendingIds.length < 2 || !onResolveApproval) return null;
-              return (
-                <div
-                  className="mt-1 flex gap-1"
-                  data-testid="chat-tool-bulk-approve-bar"
-                >
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => {
-                      for (const id of pendingIds)
-                        void onResolveApproval(id, true);
-                    }}
-                    data-testid="chat-tool-approve-all"
-                    className="h-6 px-2 text-[10px]"
-                  >
-                    모두 승인 ({pendingIds.length})
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => {
-                      for (const id of pendingIds)
-                        void onResolveApproval(id, false);
-                    }}
-                    data-testid="chat-tool-reject-all"
-                    className="h-6 px-2 text-[10px]"
-                  >
-                    모두 거절
-                  </Button>
-                </div>
-              );
-            })()}
           </div>
         ) : null}
         {/* chunk 99 follow-up — plan mode 응답에 "이 계획대로 실행"
@@ -2463,13 +2380,7 @@ function groupToolEntries(entries: UiToolEntry[]): ToolEntryGroup[] {
  * 진행중: "🔍 자료 수집 중 (n)". 완료: "✓ 자료 수집 (n)" + 펼치기.
  * 펼치면 개별 ToolEntryRow (read 스타일).
  */
-function ReadGroup({
-  entries,
-  onResolveApproval,
-}: {
-  entries: UiToolEntry[];
-  onResolveApproval: ((id: string, accept: boolean) => void) | null;
-}): JSX.Element {
+function ReadGroup({ entries }: { entries: UiToolEntry[] }): JSX.Element {
   const [expanded, setExpanded] = useState(false);
   const running = entries.some((e) => e.status === 'running');
   const failed = entries.filter((e) => e.status === 'failed').length;
@@ -2509,11 +2420,7 @@ function ReadGroup({
           data-testid="chat-tool-read-group-detail"
         >
           {entries.map((e) => (
-            <ToolEntryRow
-              key={e.id}
-              entry={e}
-              onResolveApproval={onResolveApproval}
-            />
+            <ToolEntryRow key={e.id} entry={e} />
           ))}
         </div>
       ) : null}
@@ -2529,26 +2436,12 @@ function ReadGroup({
  *
  * 0.4.17 — kind='read' 는 dim한 muted 한 줄, kind='write' 는 강조 카드.
  */
-function ToolEntryRow({
-  entry,
-  onResolveApproval,
-}: {
-  entry: UiToolEntry;
-  onResolveApproval: ((id: string, accept: boolean) => void) | null;
-}): JSX.Element {
+function ToolEntryRow({ entry }: { entry: UiToolEntry }): JSX.Element {
   const [expanded, setExpanded] = useState(false);
   const hasDetail =
     entry.resultPreview !== undefined && entry.resultPreview.length > 0;
   const statusGlyph =
-    entry.status === 'running'
-      ? '⏳'
-      : entry.status === 'ok'
-        ? '✓'
-        : entry.status === 'pending'
-          ? '⏸'
-          : entry.status === 'rejected'
-            ? '↩'
-            : '✗';
+    entry.status === 'running' ? '⏳' : entry.status === 'ok' ? '✓' : '✗';
   const isWrite = entry.kind === 'write';
   return (
     <div
@@ -2616,30 +2509,6 @@ function ToolEntryRow({
           >
             {expanded ? '▼' : '▶'}
           </button>
-        ) : null}
-        {entry.status === 'pending' && onResolveApproval ? (
-          <span className="ml-auto flex shrink-0 gap-1">
-            <Button
-              type="button"
-              size="sm"
-              variant="default"
-              onClick={() => void onResolveApproval(entry.id, true)}
-              data-testid="chat-tool-approve"
-              className="h-6 px-2 text-[10px]"
-            >
-              승인
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => void onResolveApproval(entry.id, false)}
-              data-testid="chat-tool-reject"
-              className="h-6 px-2 text-[10px]"
-            >
-              거절
-            </Button>
-          </span>
         ) : null}
       </div>
       {/* 0.4.23 — write tool synthetic diff. 항상 보이도록 (확장 X). */}

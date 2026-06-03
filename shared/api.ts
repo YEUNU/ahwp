@@ -45,22 +45,10 @@ export type MenuAction =
   | 'file:open'
   | 'file:save'
   | 'file:save-as'
-  | 'file:export-html'
-  | 'file:export-pdf'
   | 'app:new-window'
-  | 'edit:undo'
-  | 'edit:redo'
   | 'edit:copy'
   | 'edit:cut'
   | 'edit:paste'
-  | 'edit:find'
-  | 'edit:replace'
-  | 'edit:copy-control'
-  | 'edit:paste-control'
-  | 'delete:footnote-at-cursor'
-  | 'format:bold'
-  | 'format:italic'
-  | 'format:underline'
   | 'view:settings'
   | 'view:about';
 
@@ -78,12 +66,6 @@ export interface FileOpenResult {
    * the renderer can surface a notice. Undefined when no rerouting happened.
    */
   routedFrom?: string;
-  /**
-   * Sidecar `.bak` path written before the save replaced the original.
-   * Undefined for new files (no original existed). Used by the renderer to
-   * tell the user a backup is available if they need to recover.
-   */
-  backupPath?: string;
 }
 
 export interface FileSaveRequest {
@@ -164,13 +146,6 @@ export interface FileApi {
     path: string;
     bytes: ArrayBuffer | Uint8Array;
   }) => Promise<void>;
-  listVersions: (
-    path: string,
-  ) => Promise<{ filename: string; size: number; createdAt: number }[]>;
-  readVersion: (req: {
-    path: string;
-    filename: string;
-  }) => Promise<ArrayBuffer | null>;
   /**
    * Subscribe to external (off-app) modifications of the watched files.
    * Returns an unsubscriber. Fires once per change event from chokidar.
@@ -389,15 +364,6 @@ export interface FolderApi {
    * unaffected (no IR mutation, no caret movement).
    */
   readParagraph: (req: ReadParagraphRequest) => Promise<ReadParagraphResult>;
-  /**
-   * 0.4.25 — HWP3 외부 이미지 inject 흐름용. 사용자가 폴더 선택 (dialog),
-   * 그 폴더 안에서 basenames 와 매칭되는 파일들의 bytes 를 일괄 반환.
-   * 매칭되지 않은 basename 은 결과 제외. 사용자 취소 / 폴더 read 실패
-   * 시 빈 배열.
-   */
-  resolveExternalImages: (
-    basenames: string[],
-  ) => Promise<{ basename: string; bytes: Uint8Array; fullPath: string }[]>;
 }
 
 export interface SessionState {
@@ -490,16 +456,13 @@ export interface AiApi {
   /** Drop the on-disk cache entry for `providerId`. Used by Settings'
    * 새로고침 button when the user wants a hard refresh. */
   clearModelsCache: (providerId: ProviderId) => Promise<void>;
-  /** Phase 3 chunk 44 — read per-provider config (baseUrl, supportsTools). */
-  getProviderConfig: (
-    providerId: ProviderId,
-  ) => Promise<{ baseUrl?: string; supportsTools?: boolean }>;
+  /** Phase 3 chunk 44 — read per-provider config (baseUrl). */
+  getProviderConfig: (providerId: ProviderId) => Promise<{ baseUrl?: string }>;
   /** Phase 3 chunk 44 — write per-provider config. Pass only the keys you
    * want to update (existing keys preserved). */
   setProviderConfig: (params: {
     providerId: ProviderId;
     baseUrl?: string;
-    supportsTools?: boolean;
   }) => Promise<{ ok: true }>;
 }
 
@@ -694,17 +657,15 @@ export interface WebSearchResult {
  *
  * `'brave'` = Brave Search API (https://api.search.brave.com). 무료
  * tier 2000 q/month. JSON 응답, 빠름.
- * `'serpapi'` = SerpAPI. Google 결과 직접. 무료 tier 100 q/month.
- *   (0.7.8 에서는 등록만, 실제 backend 구현은 follow-up.)
  *
  * 키 없으면 DDG HTML scraping fallback.
  */
-export type WebSearchBackend = 'brave' | 'serpapi';
+export type WebSearchBackend = 'brave';
 export type ActiveSearchBackend = WebSearchBackend | 'ddg';
 export interface WebApi {
   fetch: (req: WebFetchRequest) => Promise<WebFetchResult>;
   search: (req: WebSearchRequest) => Promise<WebSearchResult>;
-  /** 0.7.8 — search backend key 관리 (Brave / SerpAPI). */
+  /** 0.7.8 — search backend key 관리 (Brave). */
   setSearchKey: (backend: WebSearchBackend, key: string) => Promise<void>;
   hasSearchKey: (backend: WebSearchBackend) => Promise<boolean>;
   deleteSearchKey: (backend: WebSearchBackend) => Promise<void>;

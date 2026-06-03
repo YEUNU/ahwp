@@ -41,7 +41,6 @@ test.describe('Ollama (Custom OpenAI-compat) — live smoke', () => {
         await window.api.ai.setProviderConfig({
           providerId: 'custom',
           baseUrl: url,
-          supportsTools: true,
         });
       },
       { url: OLLAMA_URL! },

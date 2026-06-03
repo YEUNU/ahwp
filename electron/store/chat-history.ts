@@ -189,12 +189,3 @@ export function deleteConversation(id: number): void {
   d.pragma('foreign_keys = ON');
   d.prepare(`DELETE FROM conversations WHERE id = ?`).run(id);
 }
-
-/** Test-only: close the DB so a fresh instance can be opened on
- * next call. Production never closes — Electron lifetime owns it. */
-export function closeForTest(): void {
-  if (db) {
-    db.close();
-    db = null;
-  }
-}

@@ -17,7 +17,7 @@
  * 변경에 fragile 함. 정식 API 가 필요하면 Brave Search / SerpAPI 등을
  * Settings 에서 API 키 받아 별도 backend 로 추가 (future chunk).
  */
-import { BrowserWindow, ipcMain } from 'electron';
+import { ipcMain } from 'electron';
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
 import type {
@@ -399,15 +399,8 @@ export async function webSearchImpl(
       console.warn(`[web] brave failed (${r.error}), falling back to DDG`);
     }
   }
-  // serpapi: placeholder — 0.7.8 에선 DDG 로 fallthrough.
+  // No Brave key (or it failed) → DDG HTML scraping fallback.
   return await searchViaDdg(query, maxResults);
-}
-
-function broadcastBackendChanged(): void {
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (win.isDestroyed()) continue;
-    win.webContents.send('web:backend-changed');
-  }
 }
 
 export function registerWebIpc(): void {
@@ -434,7 +427,6 @@ export function registerWebIpc(): void {
         throw new Error('key-not-string');
       }
       await setWebSearchKey(backend as WebSearchBackend, key);
-      broadcastBackendChanged();
     },
   );
   ipcMain.handle(
@@ -451,7 +443,6 @@ export function registerWebIpc(): void {
         throw new Error(`unknown-backend:${String(backend)}`);
       }
       await deleteWebSearchKey(backend as WebSearchBackend);
-      broadcastBackendChanged();
     },
   );
   ipcMain.handle(

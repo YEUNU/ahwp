@@ -25,6 +25,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react';
 import type { FolderEntry } from '@shared/api';
+import { primaryModifier, plainPrimaryModifier } from '@/lib/platform';
 
 /**
  * 파일 family 별 lucide 아이콘 선택 — 0.6.0.
@@ -917,11 +918,7 @@ export function FolderTree({
 
       // Cmd/Ctrl + N → new file under the selected folder (or sibling parent).
       // Cmd/Ctrl + Shift + N → new folder. Use rootPath if no selection.
-      if (
-        (e.metaKey || e.ctrlKey) &&
-        !e.altKey &&
-        e.key.toLowerCase() === 'n'
-      ) {
+      if (primaryModifier(e) && !e.altKey && e.key.toLowerCase() === 'n') {
         e.preventDefault();
         const target = !sel
           ? rootPath
@@ -935,7 +932,7 @@ export function FolderTree({
       // Cmd/Ctrl + C / X / V — file clipboard (copy / cut / paste). The
       // editor's text-edit shortcuts run only inside the StudioViewer
       // scroll container, so they don't conflict here.
-      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
+      if (plainPrimaryModifier(e)) {
         const k = e.key.toLowerCase();
         if (k === 'c' && sel) {
           e.preventDefault();

@@ -178,6 +178,41 @@ export class BridgeIrHelper {
     ]);
   }
 
+  // ── 배치 write 후 보정 ───────────────────────────────────────────
+
+  /**
+   * 배치 write 후 line_segs·페이지네이션 재계산. bridge write 는 native
+   * input-handler 의 afterEdit() (= reflow 트리거)를 우회하므로, 삽입
+   * 텍스트가 height=0 line_segs 로 남아 비표시되는 것을 보정한다 (#177).
+   * generic 'wasm' dispatcher 경유 — 구버전 vendor build (메서드 부재) 면
+   * 무해하게 skip.
+   */
+  async reflowLinesegs(): Promise<void> {
+    try {
+      await this.bridge.invokeWasm('reflowLinesegs', []);
+    } catch (err) {
+      console.warn(
+        '[helper] reflowLinesegs skipped (older vendor build?):',
+        err,
+      );
+    }
+  }
+
+  /**
+   * iframe 에 문서 변경을 알려 repaint. top-level named iframe 메서드라
+   * wasm dispatch 가 아닌 `invoke` 로 호출한다.
+   */
+  async notifyDocumentChanged(reason: string): Promise<void> {
+    try {
+      await this.bridge.invoke('notifyDocumentChanged', { reason });
+    } catch (err) {
+      console.warn(
+        '[helper] notifyDocumentChanged failed (older vendor build?):',
+        err,
+      );
+    }
+  }
+
   // ── 텍스트 write ─────────────────────────────────────────────────
 
   /** body paragraph 에 텍스트 삽입. 성공 여부만 반환. */
@@ -192,22 +227,6 @@ export class BridgeIrHelper {
       para,
       charOffset,
       text,
-    ]);
-    return isOk(raw);
-  }
-
-  /** body paragraph 에서 N 글자 삭제. */
-  async deleteText(
-    sec: number,
-    para: number,
-    charOffset: number,
-    count: number,
-  ): Promise<boolean> {
-    const raw = await this.bridge.invokeWasm<string>('deleteText', [
-      sec,
-      para,
-      charOffset,
-      count,
     ]);
     return isOk(raw);
   }
@@ -553,7 +572,7 @@ export class BridgeIrHelper {
    * Para shape 적용 — alignment / 들여쓰기 / 줄간격 / 단락 spacing 등.
    * 기존 viewer.applyParaProps / applyAlignment 의 composite 동작 대체.
    *
-   * 동작: caret 또는 selection 의 paragraph 에 applyParaFormat 호출. props
+   * 동작: 주어진 (sec, para) paragraph 에 applyParaFormat 호출. props
    * 는 partial — wasm 측이 기존 값을 보존하며 덮어쓴다.
    */
   async applyParaProps(
@@ -585,8 +604,8 @@ export class BridgeIrHelper {
 
   /**
    * Caret 위치의 char shape 변경 — fontSize / textColor / bold·italic·
-   * underline. selection 이 있으면 selection 범위, 없으면 caret 의 paragraph
-   * 전체. 일관된 진입점.
+   * underline. caret 의 paragraph 전체 ([0, paraLen]) 에 적용 — 부분
+   * selection 범위는 적용 대상이 아님. 일관된 진입점.
    */
   async applyCharFormatAtCaret(
     props: Record<string, unknown>,

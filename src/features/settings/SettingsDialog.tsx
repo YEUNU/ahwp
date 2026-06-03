@@ -645,9 +645,7 @@ function WebSearchBackendSection(): JSX.Element {
           <span className="text-[10px] text-muted-foreground">
             {active === 'brave'
               ? 'Brave Search API — 정식 JSON, 무료 tier 2000 q/month.'
-              : active === 'serpapi'
-                ? 'SerpAPI (Google) — 정식 JSON.'
-                : 'DuckDuckGo HTML scraping — API key 없음. rate-limit / 품질 fallback.'}
+              : 'DuckDuckGo HTML scraping — API key 없음. rate-limit / 품질 fallback.'}
           </span>
         </div>
         <span
@@ -1111,7 +1109,6 @@ function ProviderCard({ meta }: { meta: ProviderMeta }): JSX.Element {
   const [pingState, setPingState] = useState<PingState>({ kind: 'idle' });
   const [busy, setBusy] = useState<'save' | 'delete' | null>(null);
   const [baseUrl, setBaseUrl] = useState('');
-  const [supportsTools, setSupportsTools] = useState(false);
 
   useEffect(() => {
     if (!meta.requiresBaseUrl) return;
@@ -1119,7 +1116,6 @@ function ProviderCard({ meta }: { meta: ProviderMeta }): JSX.Element {
     void window.api.ai.getProviderConfig(meta.id).then((cfg) => {
       if (cancelled) return;
       setBaseUrl(cfg.baseUrl ?? '');
-      setSupportsTools(cfg.supportsTools ?? false);
     });
     return () => {
       cancelled = true;
@@ -1160,7 +1156,6 @@ function ProviderCard({ meta }: { meta: ProviderMeta }): JSX.Element {
           await window.api.ai.setProviderConfig({
             providerId: meta.id,
             baseUrl: baseUrlTrimmed,
-            supportsTools,
           });
         }
         await refresh();
@@ -1173,7 +1168,7 @@ function ProviderCard({ meta }: { meta: ProviderMeta }): JSX.Element {
         setBusy(null);
       }
     },
-    [baseUrl, input, meta.id, meta.requiresBaseUrl, refresh, supportsTools],
+    [baseUrl, input, meta.id, meta.requiresBaseUrl, refresh],
   );
 
   const onTest = useCallback(async () => {
@@ -1279,19 +1274,6 @@ function ProviderCard({ meta }: { meta: ProviderMeta }): JSX.Element {
                 disabled={busy !== null}
               />
             </Field>
-            <label
-              className="flex items-center gap-2 text-xs text-muted-foreground"
-              data-testid={`settings-supports-tools-${meta.id}`}
-            >
-              <input
-                type="checkbox"
-                checked={supportsTools}
-                onChange={(e) => setSupportsTools(e.target.checked)}
-                disabled={busy !== null}
-                className="accent-primary"
-              />
-              이 모델은 tool calling 지원 (Agent 모드 활성)
-            </label>
           </>
         ) : null}
 

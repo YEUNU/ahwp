@@ -6,6 +6,36 @@
 
 ## [Unreleased]
 
+## [0.7.45] - 2026-06-03
+
+### Changed — 일관성/데드코드/버그 대청소 (멀티 에이전트 리뷰 후속)
+
+8개 서브시스템 멀티 에이전트 리뷰에서 확정된 60+ findings 적용. 모든 변경은
+typecheck(2) + 546 unit + chat e2e(23) green.
+
+- **버그 수정**: send/sendDirect/regenerate/stop 의 router tool-history 리셋
+  불일치(중단 후 stale phase 오염), fireChat hasKey stale-closure,
+  findInDocument 케이스 민감도/표-셀 검색 누락, 멀티윈도우 watcher 싱글턴
+  (두 번째 창이 watcher 탈취) — 창별 keying 으로 수정.
+- **일관성**: isMac 3중 중복 → `@/lib/platform` 단일화, FolderTree 수정자
+  헬퍼화, 도구 수 카운트 정정(55 → 실제 75, CLAUDE.md 포함), model-cache
+  atomic write, 잘못된 주석 다수, format 도구 설명(selection → caret) 정정.
+- **데드코드 제거 (~ -1100줄)**: iframe 이관 전 로컬-렌더 모듈
+  (`rhwp-core/{wasm-bridge,coordinate-system,canvas-pool,page-layer-tree,
+text-layout}` + `safe-ir-call` + `shared/rhwp-types`) 일괄 삭제; 죽은
+  편집/서식/내보내기 네이티브 메뉴·⌘K 액션(Format 메뉴 전체 +
+  Undo/Redo/Find/Replace/Export — 모두 제거된 에디터 핸들로 dispatch 되어
+  무동작이었음); 도달 불가 도구 승인(approval) 플로우; `supportsTools`·
+  `serpapi`·staged IPC(`listVersions`/`readVersion`/`resolveExternalImages`)·
+  `ToolDef.modes`·`requiresProviderCapability` 등 미배선 스캐폴딩.
+
+### Known
+
+- 탭 dirty 플래그 미갱신(#32)은 vendor `rhwp-studio` 번들이 `document-dirty`
+  를 부모로 emit 해야 하므로 별도 작업으로 남김. ChatPanel 컨텍스트 props
+  (`getOutline`/`captureExcerpt` 등)는 `activeViewerRef` 가 항상 null 이라
+  비기능 — 복원/제거는 실앱 검증이 필요한 별도 결정.
+
 ## [0.7.44] - 2026-06-02
 
 ### Removed — 네이티브 메뉴 + ⌘K 의 죽은 다이얼로그 항목 10개

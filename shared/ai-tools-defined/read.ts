@@ -149,7 +149,7 @@ export const findInDocument = defineTool<
 >({
   name: 'findInDocument',
   description:
-    'Return matching coordinates for a query within the body. Case-sensitive substring. maxResults 1-200 (default 50). Query capped at 1024 bytes.',
+    'Return matching coordinates for a query within the body, including inside table cells (each match carries cellContext when found in a cell). Case-sensitive substring. maxResults 1-200 (default 50). Query capped at 1024 bytes.',
   inputSchema: {
     type: 'object',
     properties: {

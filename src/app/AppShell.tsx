@@ -111,11 +111,6 @@ export default function AppShell() {
   // replaces the folder tree view; clicking a snippet opens the file
   // (existing tab if open) and scrolls to the matched paragraph.
   const [searchMode, setSearchMode] = useState(false);
-  // chunk 58 — `outlineKey` bumps when any tab's dirty flips. (The legacy
-  // parent-side outline sidebar + ⌘⇧O toggle were removed in 0.7.43 — the
-  // dialog/outline UI lives in the rhwp-studio iframe now; the parent
-  // toggle set discarded state and did nothing.)
-  const [, setOutlineKey] = useState(0);
   const sessionRestoredRef = useRef(false);
 
   // R3 (2차) — tab management → useTabManagement hook.
@@ -136,7 +131,7 @@ export default function AppShell() {
     closeTabsToRight,
     copyTabPath,
     revealTab,
-  } = useTabManagement({ setOutlineKey });
+  } = useTabManagement();
 
   useEffect(() => {
     void (async () => {
@@ -355,27 +350,6 @@ export default function AppShell() {
         // chunk 60 — ⌘⇧F opens cross-folder search.
         setSearchMode(true);
         e.preventDefault();
-      } else if (
-        e.altKey &&
-        !e.metaKey &&
-        !e.ctrlKey &&
-        !e.shiftKey &&
-        e.key.toLowerCase() === 'p'
-      ) {
-        // Alt+P = PDF 내보내기 (한글에선 인쇄 — 우리는 PDF로 매핑,
-        // 본 앱이 인쇄 자체 기능 없음). 동일 path로 dispatchMenuAction
-        // 호출하여 기존 export-pdf 핸들러 재사용.
-        const v = activeViewerRef();
-        const html = v?.exportDocumentHtml(1000) ?? '';
-        if (html.length === 0) {
-          window.alert('내보낼 문서가 없습니다.');
-        } else {
-          void window.api.file.exportPdf({
-            html,
-            defaultPath: activeTab?.path,
-          });
-        }
-        e.preventDefault();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -400,8 +374,6 @@ export default function AppShell() {
   );
 
   const dispatchMenuAction = useDispatchMenuAction({
-    activeViewerRef,
-    activeTab,
     newDocument,
     openFromDialog,
     saveCurrent,

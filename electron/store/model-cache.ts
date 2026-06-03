@@ -12,7 +12,7 @@ import type { ProviderId } from '../../shared/ai';
  * so the UI can keep its dropdown populated while flagging the issue.
  *
  * Disk shape:
- *   { "openai": { "fetchedAt": 173..., "models": [...] }, "nvidia": ... }
+ *   { "openai": { "fetchedAt": 173..., "models": [...] }, "google": ... }
  *
  * Failures (read or write) are non-fatal — the cache is best-effort and
  * a missing file just means the next fetch becomes the seed.
@@ -43,7 +43,12 @@ async function readFile(): Promise<CacheFile> {
 
 async function writeFile(data: CacheFile): Promise<void> {
   try {
-    await fs.writeFile(cachePath(), JSON.stringify(data, null, 2), 'utf8');
+    // Atomic write (tmp + rename) — matches secrets/session/recent stores so
+    // a crash mid-write can't leave a truncated/torn JSON file behind.
+    const target = cachePath();
+    const tmp = `${target}.tmp`;
+    await fs.writeFile(tmp, JSON.stringify(data, null, 2), 'utf8');
+    await fs.rename(tmp, target);
   } catch (err) {
     // Non-fatal — log and move on. Next save will retry.
     console.warn('[model-cache] write failed:', err);
