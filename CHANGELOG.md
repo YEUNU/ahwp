@@ -6,6 +6,16 @@
 
 ## [Unreleased]
 
+## [0.7.48] - 2026-06-03
+
+### Removed — 저장 시 `.hwp.bak` 사이드카 백업 (사용자 요청)
+
+`file:save`/`file:save-as` 가 덮어쓰기 직전 원본 폴더에 `<파일>.hwp.bak` 을
+만들던 동작 제거 — 폴더 클러터. 편집 전 스냅샷은 앱 내부 버전 히스토리
+(`userData/versions/`, 매 저장 시 createVersion)가 그대로 담당. `.bak` 은
+쓰기만 하고 읽는(복구) 경로가 없어 안전하게 제거. (관련 stale 주석 +
+0.7.45 에서 제거된 listVersions/readVersion 언급도 정리.)
+
 ## [0.7.47] - 2026-06-03
 
 ### Fixed — ⌘S 저장이 원본을 덮어쓰지 않고 경로-뭉갠 파일을 만들던 버그
