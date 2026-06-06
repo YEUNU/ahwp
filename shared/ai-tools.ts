@@ -95,6 +95,9 @@ export const AHWP_TOOL_NAMES = [
   // 0.7.14 — 쪽 테두리/배경 (@rhwp/core get/setPageBorderFill)
   'getPageBorderFill',
   'setPageBorderFill',
+  // 0.7.14 — 미주 모양/번호형식 (get/applyEndnoteShape)
+  'getEndnoteShape',
+  'applyEndnoteShape',
   'getFootnoteAtCursor',
   // 0.4.21 — empty form-field discovery (양식 채우기 baseline)
   'getEmptyFormFields',
@@ -161,6 +164,7 @@ export const READONLY_TOOL_NAMES = new Set<AhwpToolName>([
   'getCellInfo',
   'getColumnDef',
   'getPageBorderFill',
+  'getEndnoteShape',
   'getFootnoteAtCursor',
   'getEmptyFormFields',
   'getPageSvg',
@@ -445,6 +449,10 @@ export interface AhwpToolArgs {
     sectionIdx: number;
     props: Record<string, unknown>;
   };
+  applyEndnoteShape: {
+    sectionIdx: number;
+    props: Record<string, unknown>;
+  };
   setPageHide: {
     sectionIdx: number;
     paragraphIdx: number;
@@ -572,6 +580,7 @@ export interface AhwpToolArgs {
   };
   getColumnDef: { sectionIdx: number };
   getPageBorderFill: { sectionIdx: number };
+  getEndnoteShape: { sectionIdx: number };
   getFootnoteAtCursor: {
     sectionIdx: number;
     paragraphIdx: number;

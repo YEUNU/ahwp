@@ -382,6 +382,46 @@ describe('runTools — 0.7.11 신규 API dispatch', () => {
     ]);
   });
 
+  it('getEndnoteShape parses JSON; applyEndnoteShape stringifies props (0.7.14)', async () => {
+    const viewer = mockViewer();
+    const invokeRead = vi.fn(async () =>
+      JSON.stringify({ numberFormat: 'digit', startNumber: 1 }),
+    );
+    const invokeOk = vi.fn(async () => true);
+    const helper = {
+      invokeRead,
+      invokeOk,
+      async reflowLinesegs() {},
+      async notifyDocumentChanged() {},
+      beginUndoGroup() {},
+      endUndoGroup() {},
+    } as unknown as import('@/features/rhwp-studio/bridge-ir-helper').BridgeIrHelper;
+    const items: AhwpPreflightItem[] = [
+      { ok: true, call: { tool: 'getEndnoteShape', args: { sectionIdx: 0 } } },
+      {
+        ok: true,
+        call: {
+          tool: 'applyEndnoteShape',
+          args: { sectionIdx: 0, props: { numberFormat: 'circledDigit' } },
+        },
+      },
+    ];
+    const results = await runTools(viewer, items, helper);
+    expect(results[0].ok).toBe(true);
+    if (results[0].ok) {
+      expect(results[0].data).toEqual({
+        numberFormat: 'digit',
+        startNumber: 1,
+      });
+    }
+    expect(invokeRead).toHaveBeenCalledWith('getEndnoteShape', [0]);
+    expect(results[1].ok).toBe(true);
+    expect(invokeOk).toHaveBeenCalledWith('applyEndnoteShape', [
+      0,
+      JSON.stringify({ numberFormat: 'circledDigit' }),
+    ]);
+  });
+
   it('insertEndnote: routes to helper.insertEndnoteAtCaret (0.7.14)', async () => {
     const viewer = mockViewer();
     const insertEndnoteAtCaret = vi.fn(async () => true);

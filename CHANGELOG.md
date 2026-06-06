@@ -6,6 +6,15 @@
 
 ## [Unreleased]
 
+## [0.7.54] - 2026-06-06
+
+### Added — `getEndnoteShape` / `applyEndnoteShape` AI 도구 (미주 모양)
+
+구역 미주의 번호 형식 / 접두·접미 문자 / 시작 번호 / 구분선 설정을 읽고
+변경 (0.7.14 의 get/applyEndnoteShape, generic dispatcher → raw doc). 도구
+78 → **80** (read 22 + write 58). `getPageBorderFill`/`setPageBorderFill` 와
+동형 read/write 쌍. 서브모듈 변경 없음. API 실 문서 검증 + 단위 테스트.
+
 ## [0.7.53] - 2026-06-06
 
 ### Added — 표 셀 안 그림 삽입 (insertPicture cellPath)
