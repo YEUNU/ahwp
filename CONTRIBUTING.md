@@ -20,18 +20,20 @@ npm run dev
 
 두 개의 장기(long-lived) 브랜치를 사용합니다.
 
-| 브랜치 | 역할                                                                                                  | 보호                             |
-| ------ | ----------------------------------------------------------------------------------------------------- | -------------------------------- |
-| `main` | **배포(릴리스)용**. 사용자에게 나가는 빌드의 소스. 릴리스 태그(`v0.1.0` 등)는 항상 이 브랜치에서 찍힘 | 직접 push 금지. `dev`에서만 머지 |
-| `dev`  | **개발 통합 브랜치**. 모든 feature/fix PR의 타겟. 빌드는 항상 통과                                    | 직접 push 금지. PR을 통해서만    |
+| 브랜치 | 역할                                                                                                                         | 보호                                            |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| `main` | **배포(릴리스)용**. 사용자에게 나가는 빌드의 소스. 릴리스 태그(`v0.1.0` 등)는 항상 이 브랜치에서 찍힘. GitHub default branch | 직접 push 금지. 릴리스 시 `dev`에서 PR로만 머지 |
+| `dev`  | **개발 통합 브랜치**. 작업 커밋은 여기로 직접 push. 빌드는 항상 통과                                                         | 작업 커밋 직접 push OK (PR 불필요)              |
 
-작업 브랜치:
+작업 브랜치 (선택):
 
-- `feat/<topic>` — 기능 추가 (분기·타겟: `dev`)
-- `fix/<topic>` — 버그 수정 (분기·타겟: `dev`)
-- `chore/<topic>` — 빌드·문서·의존성 등 (분기·타겟: `dev`)
+- `feat/<topic>` — 기능 추가 (분기: `dev`, 머지백: `dev`)
+- `fix/<topic>` — 버그 수정 (분기: `dev`, 머지백: `dev`)
+- `chore/<topic>` — 빌드·문서·의존성 등 (분기: `dev`, 머지백: `dev`)
 - `release/<version>` — (선택) 릴리스 직전 안정화. `dev`에서 분기, 안정화 후 `main`과 `dev` 양쪽으로 머지
 - `hotfix/<topic>` — 운영 중 긴급 버그. `main`에서 분기, `main`과 `dev` 양쪽으로 머지
+
+> 작업 커밋은 **`dev`로 바로 push** 합니다 (작업 브랜치 + PR 은 선택). `main`은 릴리스 전용 — `dev`→`main` PR(릴리스)과 hotfix 만 들어갑니다.
 
 ### 일반 작업 흐름
 
@@ -40,11 +42,12 @@ npm run dev
 git checkout dev
 git pull origin dev
 
-# 2. 작업 브랜치
-git checkout -b feat/chat-streaming
+# 2. 작업·커밋
+git add -A
+git commit -m "feat(chat): add OpenAI streaming"
 
-# 3. 작업·커밋·푸시 후 PR 생성 (타겟: dev)
-gh pr create --base dev --title "feat(chat): add OpenAI streaming"
+# 3. dev로 바로 push (PR 불필요)
+git push origin dev
 ```
 
 ### 릴리스 흐름
@@ -67,9 +70,9 @@ git checkout -b dev
 git push -u origin dev
 
 # GitHub repo 설정에서:
-# - Default branch를 dev로 변경 (PR이 자동으로 dev를 타겟)
-# - Branch protection: main에 직접 push 금지, PR 필수
-# - Branch protection: dev에 직접 push 금지, status check 필수
+# - Default branch는 main 유지 (릴리스 전용)
+# - Branch protection: main에 직접 push 금지, dev→main PR(릴리스)로만 머지
+# - dev는 작업 커밋 직접 push 허용 (보호 불필요)
 ```
 
 ## 커밋 메시지
@@ -94,7 +97,8 @@ git push -u origin dev
 
 ## PR 체크리스트
 
-- [ ] **타겟 브랜치 = `dev`** (또는 hotfix면 `main`)
+> 작업 커밋은 `dev`로 바로 push 하므로 PR 은 릴리스(`dev`→`main`) / hotfix(`main`) 때만 필요합니다.
+
 - [ ] 관련 issue 또는 ROADMAP 항목 링크
 - [ ] `npm run lint && npm test` 통과
 - [ ] UI 변경 시 스크린샷/GIF 첨부

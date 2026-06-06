@@ -42,10 +42,10 @@ import { WelcomePane } from './WelcomePane';
 /**
  * Multi-tab editor shell.
  *
- * - One StudioViewer mounts per tab. Inactive tabs are hidden via CSS
+ * - One RhwpEditor mounts per tab. Inactive tabs are hidden via CSS
  *   (`display:none`) rather than unmounted, so each tab keeps its
  *   HwpDocument + undo history while the user switches around.
- * - Only the active tab claims `window.__studioDebug` (StudioViewer's
+ * - Only the active tab claims `window.__rhwpDebug` (RhwpEditor's
  *   `isActive` prop gates that effect).
  * - Per-tab dirty state lives in `tabsState`; viewers push updates via
  *   the `onDirtyChange` prop.

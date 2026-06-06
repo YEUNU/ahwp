@@ -26,7 +26,7 @@
 | C. (B)의 HWPX zip 내부 BinData 참조     | —      | 46개 (들어있긴 함) |
 | D. HWP → `exportHwp` → reload → render  | 40     | 25 ✅              |
 
-**우회**: 저장 경로를 `exportHwp` (HWP/CFB)로 통일. 자동 라우팅 `.hwpx → .hwp`. `save-as` 다이얼로그 HWPX 옵션 제거. 자동화된 회귀 게이트: `tests/e2e/studio-edit.spec.ts → "edit + save + reopen preserves embedded images"`
+**우회**: 저장 경로를 `exportHwp` (HWP/CFB)로 통일. 자동 라우팅 `.hwpx → .hwp`. `save-as` 다이얼로그 HWPX 옵션 제거. 자동화된 회귀 게이트: `tests/e2e/file-roundtrip.spec.ts` (저장 라운드트립 + `.hwpx → .hwp` 라우팅 검증). 0.7.14 에서도 여전히 재현됨
 
 **해결 조건**: `@rhwp/core` 라이브러리가 HWPX 라운드트립에서 BinData 참조를 보존하도록 fix. 그때 `normalizeToHwp` → `normalizeToHwpx` 되돌리고 dedup-friendly HWPX 캐노니컬로 복귀
 
@@ -37,6 +37,8 @@
 ## ✅ L-002 (Resolved) — `@rhwp/editor` 외부 iframe 의존
 
 **상태**: 2026-04-30 — chunk 6에서 완전 제거. iframe·CSP `frame-src`·`@rhwp/editor` 패키지·localStorage flag 모두 삭제
+
+> **이후 변경 (v0.5.0)**: 자체 마운트 `StudioViewer` 자체가 은퇴하고 편집기는 vendored `vendor/rhwp/rhwp-studio` iframe (`ahwp-studio://`)로 전환됨. 아래 언급되는 `src/features/studio/`·`StudioViewer`는 더 이상 존재하지 않으며, `ViewerHandle` 타입은 현재 `src/features/chat/viewer-handle-types.ts`에 위치.
 
 **해결 방식**:
 
@@ -62,7 +64,7 @@
 
 **상태**: chunk 4-C에서 해결 (2026-04-30)
 
-**해결 방식**: `compositionstart` / `compositionend` 이벤트 핸들러 추가. `keydown` 핸들러는 `e.nativeEvent.isComposing` (또는 `keyCode === 229`)이면 무시 — IME가 조합 중인 키를 가로챔. `compositionend.data`에 최종 조합 문자열이 들어오면 `HwpDocument.insertText`로 삽입. e2e용 `__studioDebug.injectComposedText(text)` 헬퍼로 검증 (Playwright는 실제 IME 시뮬레이션 X)
+**해결 방식**: `compositionstart` / `compositionend` 이벤트 핸들러 추가. `keydown` 핸들러는 `e.nativeEvent.isComposing` (또는 `keyCode === 229`)이면 무시 — IME가 조합 중인 키를 가로챔. `compositionend.data`에 최종 조합 문자열이 들어오면 `HwpDocument.insertText`로 삽입. (v0.5.0 이후 IME 처리는 rhwp-studio iframe 내부에서 담당.)
 
 **남은 작업**: composition **중간**의 시각 피드백(언더라인 등) 부재. 사용자가 한자 후보를 보거나 자모 진행을 즉각 보지는 못함. 조합 완료 후 한 번에 삽입됨 — 기능적 OK, UX는 보통
 
@@ -92,15 +94,15 @@
 
 ## L-005 — Visual snapshot CI Linux baseline 부재
 
-**상태**: 마이너. 기능 회귀에는 영향 없음
+**상태**: 마이너. 게이트 소실 (자체 마운트 StudioViewer 은퇴와 함께 spec 삭제됨)
 
-**증상**: `tests/e2e/studio-viewer.spec.ts`의 visual snapshot 테스트가 darwin baseline만 commit됨. CI(Linux ubuntu-latest)에서 visual 파트 skip
+**증상**: 과거 `tests/e2e/studio-viewer.spec.ts`의 visual snapshot 테스트가 darwin baseline만 commit됨. CI(Linux ubuntu-latest)에서 visual 파트 skip. 해당 spec은 self-mounted StudioViewer 제거 시 삭제됐고, `tests/e2e/studio-viewer.spec.ts-snapshots/` 디렉토리만 orphan으로 남아 있음
 
-**우회**: `test.skip(process.platform !== 'darwin', ...)`로 명시 skip
+**우회**: 게이트 자체가 없음 (구 spec의 `test.skip(process.platform !== 'darwin', ...)` 패턴은 더 이상 적용되지 않음)
 
-**해결 조건**: Linux 환경에서 `--update-snapshots` 1회 실행 후 baseline commit. CI 환경에서 한글 폰트 결정성 확인 필요. Phase 4 packaging 무렵에 정리
+**해결 조건**: rhwp-studio iframe 기준으로 visual snapshot 게이트를 다시 깔 경우 Linux 환경에서 `--update-snapshots` 1회 실행 후 baseline commit + 한글 폰트 결정성 확인. 그 전까지 orphan snapshot 디렉토리는 정리 대상
 
-**관련 파일**: `tests/e2e/studio-viewer.spec.ts`, `tests/e2e/studio-viewer.spec.ts-snapshots/`
+**관련 파일**: `tests/e2e/studio-viewer.spec.ts-snapshots/` (orphan)
 
 ---
 
@@ -116,39 +118,35 @@ WASM 패닉 `null pointer passed to rust`로 표면화. `HwpViewer` 사용 폐�
 
 ---
 
-## L-006 — 셀 배경색 / 테두리 직접 설정 API 부재
+## L-006 — 셀 배경색 / 테두리 직접 설정 API 부재 (부분 해결)
 
-**상태**: 우회 가이드만 제공. 대기 중
+**상태**: 부분 해결. 해결 조건 (b) 가 0.7.14 에서 전달됨, (a) 는 여전히 대기 중
 
-**증상**: `@rhwp/core` 0.7.9의 `setCellProperties`는 `paddingLeft/Right/Top/Bottom`, `verticalAlign`, `textDirection`, `isHeader`, `width`, `height`만 허용. 셀 배경색·테두리는 이 props 셋에 포함 안 됨. 노출되는 셀 색깔 API는 `applyCellStyle(sec, parent_para, ctrl, cell, cell_para, style_id)` 단 한 가지로, 미리 정의된 named style의 id를 받음.
+**증상**: `@rhwp/core` 0.7.14의 `setCellProperties`는 `paddingLeft/Right/Top/Bottom`, `verticalAlign`, `textDirection`, `isHeader`, `width`, `height`만 허용. 셀 배경색·테두리는 여전히 이 props 셋에 포함 안 됨 (`backgroundColor` / `border*` 키 미노출). 노출되는 셀 색깔 API는 `applyCellStyle(sec, parent_para, ctrl, cell, cell_para, style_id)` 단 한 가지로, 미리 정의된 named style의 id를 받음.
 
-**검증**: `tests/e2e/studio-table-props.spec.ts` (현재 paddingLeft round-trip만 검증). `@rhwp/core` 0.7.9 `rhwp.d.ts` 검토 결과 `Cell.*Color` / `Cell.*Background` 프로퍼티 일체 미노출
+**검증**: 회귀 게이트였던 `tests/e2e/studio-table-props.spec.ts`는 self-mounted StudioViewer 제거 시 삭제됨 — rhwp-studio iframe 기준 셀 props round-trip 게이트로 다시 깔아야 함. `@rhwp/core` 0.7.14 `rhwp.d.ts` 검토 결과 `setCellProperties` JSON 키에 `*Color` / `*Background` 일체 미노출
 
-**해결 조건**: 라이브러리에 (a) `setCellProperties` JSON 키 확장(`backgroundColor`, `borderTop/Right/Bottom/Left` 등) 또는 (b) named style의 char/para shape를 사후 update할 수 있는 `updateStyle` API. 현재 `createStyle`은 빈 셸만 생성 가능 (chunk 14 노트)
+**해결 조건**: 라이브러리에 (a) `setCellProperties` JSON 키 확장(`backgroundColor`, `borderTop/Right/Bottom/Left` 등). ~~(b) named style의 char/para shape를 사후 update할 수 있는 `updateStyle` API~~ → **0.7.14에서 `updateStyle(style_id, json)` + `updateStyleShapes(style_id, char_mods_json, para_mods_json)` 추가되어 createStyle 빈 셸 한계 해소됨**. 남은 건 (a) 직접 셀 set API뿐
 
-**우회**: chunk 23은 직접 set API 노출 보류. AI 에이전트 워크플로우 가이드만 문서화: ① `getStyleListJson`으로 색깔 있는 style 후보 검색 → ② 해당 style id를 `applyCellStyle`로 셀에 적용. 사용자 HWP 문서 안에 색깔 style이 이미 있을 때만 동작. chunk 28+에서 라이브러리 update 시 직접 setter로 전환
+**우회**: 직접 셀 배경/테두리 set API는 아직 보류. ① 0.7.14의 `updateStyle` / `updateStyleShapes`로 named style에 색깔/테두리 shape를 사후 주입 → ② 해당 style id를 `applyCellStyle`로 셀에 적용하는 워크플로우 가능. 또는 사용자 HWP 문서 안에 이미 있는 색깔 style을 `getStyleListJson`으로 찾아 `applyCellStyle`. (a) 직접 setter는 라이브러리 update 시 전환
 
 ---
 
-## L-007 — 셀 안 그림 삽입 API 부재
+## ✅ L-007 (해결됨) — 셀 안 그림 삽입 API 부재
 
-**상태**: 라이브러리 대기. Phase 1 잔여 항목으로 재분류
+**상태**: 해결됨 — `@rhwp/core` 0.7.14
 
-**증상**: `@rhwp/core` 0.7.9는 본문 caret용 `insertPicture(sec, para, charOffset, imageData, width, height, natWidth, natHeight, ext, desc)`만 노출. 셀 좌표(controlIdx, cellIdx, cellPara)를 받는 `insertPictureInCell` 등 동등 API 없음. 본문 `insertPicture`를 셀 caret 컨텍스트에서 호출하면 본문에 그림이 삽입되어 셀 안으로 안 들어감
+**원래 증상**: 0.7.9까지는 본문 caret용 `insertPicture(sec, para, charOffset, imageData, ...)`만 노출하고 셀 좌표를 받는 동등 API가 없어, 셀 caret 컨텍스트에서 호출해도 그림이 본문에 삽입됨
 
-**검증**: `rhwp.d.ts` 검토 — `*InCell` 변종 14개 중 picture 변종 미노출 (`insertTextInCell`, `applyCharFormatInCell`, `deleteTextInCell` 등은 있음)
-
-**해결 조건**: 라이브러리에 `insertPictureInCell(sec, parentPara, ctrl, cellIdx, cellPara, charOffset, imageData, ...)` 추가
-
-**우회**: 사용자 안내 — 표 셀 안 그림이 필요하면 본문에 그림 삽입 후 한컴오피스 본 앱에서 셀로 드래그. ahwp가 자체 지원은 라이브러리 업스트림 후
+**해결**: 0.7.14가 `insertPicture`에 `cell_path_json` 인자를 추가 — `insertPicture(sec, para, charOffset, cell_path_json, imageData, ...)` (rhwp.d.ts). `cell_path_json`에 `[{"controlIndex","cellIndex","cellParaIndex"}, ...]` 경로를 주면 셀 안에 직접 floating picture로 삽입. 추가로 셀 전용 그림 속성 API `getCellPicturePropertiesByPath` / `setCellPicturePropertiesByPath` / `deleteCellPictureControlByPath`도 노출. 본문-삽입-후-드래그 우회 불필요
 
 ---
 
 ## L-008 — 이미지/도형 통합 bbox API 부재 (selection highlight 제약)
 
-**상태**: 라이브러리 대기. `docs/SELECTION_UX.md` Phase C blocker
+**상태**: 부분 해결 — `@rhwp/core` 0.7.14가 `getShapeBBox` 추가. `docs/SELECTION_UX.md` Phase C 참고
 
-**증상**: `@rhwp/core` 0.7.9는 표용 `getTableBBox(sec, parentPara, controlIdx)` → `{pageIndex, x, y, width, height}` 만 통합 bbox API로 publish. 이미지·도형 컨트롤은 `getShapeProperties(sec, parentPara, controlIdx)` / `getPictureProperties` 등 종류별 별도 호출이 있지만 `width`/`height`만 반환하고 **페이지 좌표(pageIndex/x/y) 미포함**. `getFormObjectAt` 만 form 개체 한정으로 bbox 반환. 결과: 0.2.74의 control highlight가 표만 동작, 이미지·도형 위 드래그 시 객체 자체는 시각적으로 강조되지 않음
+**증상**: 0.7.9까지는 표용 `getTableBBox(sec, parentPara, controlIdx)` → `{pageIndex, x, y, width, height}` 만 통합 bbox API로 publish. 이미지·도형 컨트롤은 `getShapeProperties` / `getPictureProperties` 등 종류별 호출이 `width`/`height`만 반환하고 **페이지 좌표(pageIndex/x/y) 미포함**이라, 0.2.74의 control highlight가 표만 동작했음. **0.7.14 업데이트**: `getShapeBBox(sec, parentPara, controlIdx)` (rhwp.d.ts)가 추가되어 도형·이미지도 페이지 좌표 bbox 획득 가능 — 도형/이미지 highlight 구현 가능. 잔여: 모든 control 타입을 한 번에 cover하는 generic `getControlBBox`는 아직 부재 (타입별 호출 분기 필요)
 
 **검증**: `node_modules/@rhwp/core/rhwp.d.ts` 1차 grep (2026-05-02 0.2.74 작성 시) + 2차 재검증 (Phase C 작업 진입 시 0.2.80 직후) — `getPictureProperties` / `getShapeProperties` 모두 `{width, height, ...}`만 반환, 페이지 좌표 부재 확정
 

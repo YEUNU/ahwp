@@ -1,21 +1,30 @@
 # AI 통합 설계
 
+> **STATUS (0.7.50 기준)**: 이 문서는 Phase 2/3 설계 **초안**(대략 chunk 18-37)으로, 상당 부분이
+> 이후 구현으로 대체됨. 핵심 가치(BYOK·키는 main 만 보유, 도구 화이트리스트·eval 금지, multi-doc
+> target/reference, anti-heuristic)는 유효하나 구체적 타입/채널/도구명은 아래 권위 소스를 따른다 —
+> `shared/ai.ts` (ChatRequest / ChatStreamEvent / ProviderId), `shared/ai-tools-defined/` (도구 정의,
+> 75개), `src/features/chat/` (agent loop, 도구 디스패치), `src/features/rhwp-studio/` (iframe IR).
+> 주요 변경: 편집기 = vendored rhwp-studio **iframe** (StudioViewer 폐기), **provider-native tool calling
+> 이 라이브 주경로**(턴 cap 50), NIM 제거(0.6.18), Anthropic 어댑터 미구현, provider SDK 미사용(전부 fetch).
+
 ## 공급자 매트릭스
 
-| Provider             | SDK                            | 스트리밍 | Tool Use              | 단일 API 웹검색             | 비고                                                                                                                                      |
-| -------------------- | ------------------------------ | -------- | --------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| OpenAI               | `openai`                       | ✅       | ✅ (function/tool)    | ✅ Responses `web_search`   | GPT-4o, GPT-5 등. 가장 안정                                                                                                               |
-| Anthropic            | `@anthropic-ai/sdk`            | ✅       | ✅                    | ✅ `web_search` server tool | Claude. 긴 문서 편집 강점                                                                                                                 |
-| Google               | `@google/genai`                | ✅       | ✅ (function calling) | ✅ `googleSearch` grounding | Gemini 2.x                                                                                                                                |
-| NVIDIA NIM           | `fetch` (OpenAI 호환 endpoint) | ✅       | 모델별로 다름         | ❌                          | 호스티드(`https://integrate.api.nvidia.com/v1`) 또는 셀프호스트 NIM 컨테이너. 검색은 외부 처리                                            |
-| 커스텀 (OpenAI 호환) | `fetch` (OpenAI 호환)          | ✅       | 모델별로 다름         | ❌ (기본)                   | 사용자가 base URL + 키 입력 — 자체 호스팅 Ollama (`http://localhost:11434/v1`), vLLM, LM Studio, 사내 서빙 모두 한 슬롯에 통합 (chunk 49) |
+| Provider             | 어댑터         | 스트리밍 | Tool Use | 단일 API 웹검색             | 비고                                                                                          |
+| -------------------- | -------------- | -------- | -------- | --------------------------- | --------------------------------------------------------------------------------------------- |
+| OpenAI               | `fetch` (REST) | ✅       | ✅       | ✅ Responses `web_search`   | 구현됨. provider SDK 미사용                                                                   |
+| Google               | `fetch` (REST) | ✅       | ✅       | ✅ `googleSearch` grounding | 구현됨. Gemini 2.x                                                                            |
+| 커스텀 (OpenAI 호환) | `fetch`        | ✅       | 모델별   | ❌ (기본)                   | base URL + 키 — Ollama / vLLM / LM Studio / on-prem / **셀프호스트 NIM** 모두 한 슬롯 통합    |
+| Anthropic            | — (미구현)     | —        | —        | —                           | `ProviderId` union 에 예약돼 있으나 어댑터 없음 — 호출 시 "not implemented yet". 키 결정 대기 |
+
+> ~~NVIDIA NIM 전용 어댑터~~ 는 0.6.18 에서 제거 (vision 부재로 form-fill 시각 검증 비호환). 셀프호스트 NIM 은 OpenAI-호환이라 `custom` 슬롯으로 흡수.
 
 ## 오케스트레이션 — LangChain/LangGraph 미도입
 
 자체 `Provider` 인터페이스 + 한 turn 안의 단순 tool-call 루프로 구현. LangChain/LangGraph는 다음 이유로 채택하지 않음.
 
 - 각 provider의 server-side 기능(OpenAI Responses `web_search`, Anthropic `web_search_20250305`, Google `googleSearch` grounding)은 native SDK를 직접 호출해야 가장 빠르고 정확하게 활용 가능. 추상화를 한 단계 더 거치면 새 기능 반영이 늦어짐.
-- 화이트리스트 tool이 ~10여 개이며 `@rhwp/core` IR 호출에 1:1 매핑되는 단순 구조. graph orchestration의 가치가 작음.
+- 화이트리스트 tool이 **75개**(read-only 20 + mutating 55, `shared/ai-tools-defined/`)이며 대부분 `@rhwp/core` IR 호출에 매핑되는 단순 구조. graph orchestration(LangChain 등)의 가치가 작음 — 자체 라우팅으로 충분.
 - Electron 데스크탑 번들의 transitive 의존성·공급망 표면·업데이트 주기 부담.
 - 멀티 에이전트, 장기 체크포인트, 복잡한 분기 같은 LangGraph 강점이 필요해지면 Phase 5+에서 재평가.
 
@@ -26,12 +35,8 @@
 `shared/ai.ts`:
 
 ```ts
-export type ProviderId =
-  | 'openai'
-  | 'anthropic'
-  | 'google'
-  | 'nvidia'
-  | 'custom'; // OpenAI-compatible: Ollama / vLLM / LM Studio / on-prem 통합
+// 실제(shared/ai.ts): 'nvidia' 제거됨 (0.6.18). anthropic 은 union 에 있으나 어댑터 미구현.
+export type ProviderId = 'openai' | 'anthropic' | 'google' | 'custom'; // custom = OpenAI-compatible: Ollama / vLLM / LM Studio / on-prem / 셀프호스트 NIM
 
 export interface ChatRequest {
   conversationId: string;
