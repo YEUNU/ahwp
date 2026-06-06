@@ -140,6 +140,8 @@ WASM 패닉 `null pointer passed to rust`로 표면화. `HwpViewer` 사용 폐�
 
 **해결**: 0.7.14가 `insertPicture`에 `cell_path_json` 인자를 추가 — `insertPicture(sec, para, charOffset, cell_path_json, imageData, ...)` (rhwp.d.ts). `cell_path_json`에 `[{"controlIndex","cellIndex","cellParaIndex"}, ...]` 경로를 주면 셀 안에 직접 floating picture로 삽입. 추가로 셀 전용 그림 속성 API `getCellPicturePropertiesByPath` / `setCellPicturePropertiesByPath` / `deleteCellPictureControlByPath`도 노출. 본문-삽입-후-드래그 우회 불필요
 
+**ahwp 연결 (0.7.53)**: `insertPicture` AI 도구에 선택적 `cellPath` 인자를 추가해 양식 셀에 그림(도장/사진)을 직접 삽입 가능. vendored `rhwp-studio` 의 `WasmBridge.insertPicture` 래퍼가 후행 `cellPathJson` 을 raw doc 의 `cell_path` slot 으로 전달.
+
 ---
 
 ## L-008 — 이미지/도형 통합 bbox API 부재 (selection highlight 제약)

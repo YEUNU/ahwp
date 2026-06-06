@@ -906,6 +906,55 @@ export class BridgeIrHelper {
   }
 
   /**
+   * Endnote 삽입 (caret 위치, 본문 텍스트 포함). 0.7.14 신규 `insertEndnote`
+   * (빈 미주 + anchor 반환) + `insertTextInFootnote` (각주/미주 공용 본문 입력)
+   * composite — `insertFootnoteAtCaret` 와 동형, anchor 생성 API 만 다름.
+   */
+  async insertEndnoteAtCaret(text: string): Promise<boolean> {
+    const caret = await this.getCaretPosition();
+    if (!caret) return false;
+    let raw: unknown;
+    try {
+      raw = await this.bridge.invokeWasm<unknown>('insertEndnote', [
+        caret.sectionIndex,
+        caret.paragraphIndex,
+        caret.charOffset,
+      ]);
+    } catch {
+      return false;
+    }
+    type InsertNoteResult = {
+      ok?: boolean;
+      paraIdx?: number;
+      controlIdx?: number;
+    };
+    let result: InsertNoteResult | null = null;
+    if (typeof raw === 'string') {
+      try {
+        result = JSON.parse(raw) as InsertNoteResult;
+      } catch {
+        return false;
+      }
+    } else if (raw && typeof raw === 'object') {
+      result = raw as InsertNoteResult;
+    }
+    if (!result || result.ok === false) return false;
+    if (text.length === 0) return true;
+    const { paraIdx, controlIdx } = result;
+    if (typeof paraIdx !== 'number' || typeof controlIdx !== 'number') {
+      return false;
+    }
+    return await this.invokeOk('insertTextInFootnote', [
+      caret.sectionIndex,
+      paraIdx,
+      controlIdx,
+      0,
+      0,
+      text,
+    ]);
+  }
+
+  /**
    * 명명 style 생성. rhwp-studio 의 createStyle 은 JSON string 받는다.
    */
   async createNamedStyle(name: string, englishName: string): Promise<number> {
@@ -1902,6 +1951,9 @@ export class BridgeIrHelper {
     naturalHeightPx: number,
     extension: string,
     description: string,
+    /** 0.7.14 — '' = 본문, `[{controlIndex,cellIndex,cellParaIndex},...]` JSON =
+     *  표 셀 안 삽입. WasmBridge.insertPicture 의 후행 cellPathJson 인자로 전달. */
+    cellPathJson: string = '',
   ): Promise<boolean> {
     return await this.invokeOk('insertPicture', [
       sec,
@@ -1914,6 +1966,7 @@ export class BridgeIrHelper {
       naturalHeightPx,
       extension,
       description,
+      cellPathJson,
     ]);
   }
 }

@@ -10,7 +10,7 @@
 import type { AhwpToolArgs } from '../ai-tools';
 import { AHWP_TOOL_LIMITS } from '../ai-tools';
 import { defineTool } from '../ai-tool-def';
-import { isObj, nonNegInts } from '../ai-tool-validate';
+import { coerceNonNegInt, isObj, nonNegInts } from '../ai-tool-validate';
 
 export const createRectShape = defineTool<
   'createRectShape',
@@ -220,6 +220,20 @@ export const insertPicture = defineTool<
       naturalHeightPx: { type: 'integer', minimum: 1 },
       extension: { type: 'string' },
       description: { type: 'string' },
+      cellPath: {
+        type: 'array',
+        description:
+          'Optional — insert into a table cell. [{controlIndex, cellIndex, cellParaIndex}, ...]; paragraphIdx is the table paragraph. Omit for body insertion.',
+        items: {
+          type: 'object',
+          properties: {
+            controlIndex: { type: 'integer', minimum: 0 },
+            cellIndex: { type: 'integer', minimum: 0 },
+            cellParaIndex: { type: 'integer', minimum: 0 },
+          },
+          required: ['controlIndex', 'cellIndex', 'cellParaIndex'],
+        },
+      },
     },
     required: [
       'sectionIdx',
@@ -262,6 +276,24 @@ export const insertPicture = defineTool<
       return { ok: false, reason: 'extension-not-string' };
     if (typeof description !== 'string')
       return { ok: false, reason: 'description-not-string' };
+    // 0.7.14 — optional cell target (insert into a table cell).
+    let cellPath: AhwpToolArgs['insertPicture']['cellPath'];
+    if (raw.cellPath !== undefined) {
+      if (!Array.isArray(raw.cellPath) || raw.cellPath.length === 0)
+        return { ok: false, reason: 'cellPath-not-array' };
+      const parsed: NonNullable<AhwpToolArgs['insertPicture']['cellPath']> = [];
+      for (const entry of raw.cellPath) {
+        if (!isObj(entry))
+          return { ok: false, reason: 'cellPath-entry-not-object' };
+        const ci = coerceNonNegInt(entry.controlIndex);
+        const cell = coerceNonNegInt(entry.cellIndex);
+        const cp = coerceNonNegInt(entry.cellParaIndex);
+        if (ci === null || cell === null || cp === null)
+          return { ok: false, reason: 'cellPath-entry-invalid' };
+        parsed.push({ controlIndex: ci, cellIndex: cell, cellParaIndex: cp });
+      }
+      cellPath = parsed;
+    }
     return {
       ok: true,
       args: {
@@ -269,6 +301,7 @@ export const insertPicture = defineTool<
         base64Data,
         extension,
         description,
+        cellPath,
       } as AhwpToolArgs['insertPicture'],
     };
   },

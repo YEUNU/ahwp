@@ -23,6 +23,7 @@ export const AHWP_TOOL_NAMES = [
   'applyTextColor',
   'toggleCharFormat',
   'insertFootnote',
+  'insertEndnote',
   'addBookmark',
   'setHeaderFooterText',
   'applyPageDef',
@@ -94,6 +95,9 @@ export const AHWP_TOOL_NAMES = [
   // 0.7.14 — 쪽 테두리/배경 (@rhwp/core get/setPageBorderFill)
   'getPageBorderFill',
   'setPageBorderFill',
+  // 0.7.14 — 미주 모양/번호형식 (get/applyEndnoteShape)
+  'getEndnoteShape',
+  'applyEndnoteShape',
   'getFootnoteAtCursor',
   // 0.4.21 — empty form-field discovery (양식 채우기 baseline)
   'getEmptyFormFields',
@@ -160,6 +164,7 @@ export const READONLY_TOOL_NAMES = new Set<AhwpToolName>([
   'getCellInfo',
   'getColumnDef',
   'getPageBorderFill',
+  'getEndnoteShape',
   'getFootnoteAtCursor',
   'getEmptyFormFields',
   'getPageSvg',
@@ -204,6 +209,7 @@ export interface AhwpToolArgs {
   applyTextColor: { hex: string };
   toggleCharFormat: { key: 'bold' | 'italic' | 'underline' };
   insertFootnote: { text: string };
+  insertEndnote: { text: string };
   addBookmark: { name: string };
   setHeaderFooterText: {
     sectionIdx: number;
@@ -404,6 +410,15 @@ export interface AhwpToolArgs {
     naturalHeightPx: number;
     extension: string;
     description: string;
+    /** 0.7.14 — optional: insert into a TABLE CELL instead of the body.
+     *  Path from the table control down: [{controlIndex, cellIndex,
+     *  cellParaIndex}, ...] (controlIndex/cellIndex come from
+     *  getEmptyFormFields). paragraphIdx is the table's own paragraph. */
+    cellPath?: {
+      controlIndex: number;
+      cellIndex: number;
+      cellParaIndex: number;
+    }[];
   };
   // Phase 3 chunk 48 — page/section
   insertPageBreak: {
@@ -431,6 +446,10 @@ export interface AhwpToolArgs {
     props: Record<string, unknown>;
   };
   setPageBorderFill: {
+    sectionIdx: number;
+    props: Record<string, unknown>;
+  };
+  applyEndnoteShape: {
     sectionIdx: number;
     props: Record<string, unknown>;
   };
@@ -561,6 +580,7 @@ export interface AhwpToolArgs {
   };
   getColumnDef: { sectionIdx: number };
   getPageBorderFill: { sectionIdx: number };
+  getEndnoteShape: { sectionIdx: number };
   getFootnoteAtCursor: {
     sectionIdx: number;
     paragraphIdx: number;

@@ -285,6 +285,54 @@ export const setPageBorderFill = defineTool<
   },
 });
 
+// 0.7.14 — 미주 모양 (번호 형식 / 접두·접미 / 시작번호 / 구분선).
+export const getEndnoteShape = defineTool<
+  'getEndnoteShape',
+  AhwpToolArgs['getEndnoteShape']
+>({
+  name: 'getEndnoteShape',
+  description:
+    "Return a section's endnote shape as JSON (numberFormat, prefixChar/suffixChar, startNumber, separator settings). Paired read for applyEndnoteShape.",
+  inputSchema: {
+    type: 'object',
+    properties: { sectionIdx: { type: 'integer', minimum: 0 } },
+    required: ['sectionIdx'],
+  },
+  readonly: true,
+  validate(raw) {
+    const v = nonNegInts(raw, ['sectionIdx']);
+    if (!v.ok) return v;
+    return { ok: true, args: v.value as AhwpToolArgs['getEndnoteShape'] };
+  },
+});
+
+export const applyEndnoteShape = defineTool<
+  'applyEndnoteShape',
+  AhwpToolArgs['applyEndnoteShape']
+>({
+  name: 'applyEndnoteShape',
+  description:
+    "Set a section's endnote shape. props is the lib endnote-shape JSON (read the current shape via getEndnoteShape first, then change the keys you need).",
+  inputSchema: {
+    type: 'object',
+    properties: {
+      sectionIdx: { type: 'integer', minimum: 0 },
+      props: { type: 'object' },
+    },
+    required: ['sectionIdx', 'props'],
+  },
+  validate(raw) {
+    const v = nonNegInts(raw, ['sectionIdx']);
+    if (!v.ok) return v;
+    const props = raw.props;
+    if (!isObj(props)) return { ok: false, reason: 'props-not-object' };
+    return {
+      ok: true,
+      args: { ...v.value, props } as AhwpToolArgs['applyEndnoteShape'],
+    };
+  },
+});
+
 export const setHeaderFooterText = defineTool<
   'setHeaderFooterText',
   AhwpToolArgs['setHeaderFooterText']
@@ -479,6 +527,28 @@ export const insertFootnote = defineTool<
     if (byteLen(text) > AHWP_TOOL_LIMITS.maxTextBytes)
       return { ok: false, reason: 'text-too-large' };
     return { ok: true, args: { text } as AhwpToolArgs['insertFootnote'] };
+  },
+});
+
+// 0.7.14 — 미주(endnote). 각주와 동형 composite (insertEndnote + 본문 텍스트).
+export const insertEndnote = defineTool<
+  'insertEndnote',
+  AhwpToolArgs['insertEndnote']
+>({
+  name: 'insertEndnote',
+  description: 'Insert an endnote at the caret and fill its body text.',
+  inputSchema: {
+    type: 'object',
+    properties: { text: { type: 'string', maxLength: 4096 } },
+    required: ['text'],
+  },
+  validate(raw) {
+    const text = raw.text;
+    if (typeof text !== 'string')
+      return { ok: false, reason: 'text-not-string' };
+    if (byteLen(text) > AHWP_TOOL_LIMITS.maxTextBytes)
+      return { ok: false, reason: 'text-too-large' };
+    return { ok: true, args: { text } as AhwpToolArgs['insertEndnote'] };
   },
 });
 

@@ -6,6 +6,36 @@
 
 ## [Unreleased]
 
+## [0.7.54] - 2026-06-06
+
+### Added — `getEndnoteShape` / `applyEndnoteShape` AI 도구 (미주 모양)
+
+구역 미주의 번호 형식 / 접두·접미 문자 / 시작 번호 / 구분선 설정을 읽고
+변경 (0.7.14 의 get/applyEndnoteShape, generic dispatcher → raw doc). 도구
+78 → **80** (read 22 + write 58). `getPageBorderFill`/`setPageBorderFill` 와
+동형 read/write 쌍. 서브모듈 변경 없음. API 실 문서 검증 + 단위 테스트.
+
+## [0.7.53] - 2026-06-06
+
+### Added — 표 셀 안 그림 삽입 (insertPicture cellPath)
+
+`insertPicture` AI 도구에 선택적 `cellPath` 인자 추가 — `[{controlIndex,
+cellIndex, cellParaIndex}, ...]` 를 주면 본문이 아니라 **표 셀 안에** floating
+picture 로 삽입(한컴 정합). 생략 시 기존 본문 삽입과 동일. 양식 셀에 도장/사진을
+AI 가 직접 채울 수 있게 됨 (KNOWN_ISSUES L-007 의 lib 해결을 ahwp 도구로 연결).
+
+vendored `rhwp-studio` 의 `WasmBridge.insertPicture` 래퍼에 후행 optional
+`cellPathJson` 인자를 추가해 0.7.14 raw doc 의 `cell_path` slot 으로 전달 (기존
+10-arg 호출부 무변경). API 동작은 실 표 셀로 직접 검증 + 단위 테스트.
+
+## [0.7.52] - 2026-06-06
+
+### Added — `insertEndnote` AI 도구 (미주)
+
+caret 위치에 미주 삽입 + 본문 텍스트 채우기 (`insertFootnote` 와 동형 composite —
+0.7.14 의 `insertEndnote` + 각주/미주 공용 `insertTextInFootnote`). 도구 77 → **78**.
+서브모듈 변경 없음 (generic dispatcher → raw doc). API 실 문서 검증 + 단위 테스트.
+
 ## [0.7.51] - 2026-06-06
 
 ### Added — `pageBorderFill` AI 도구 (0.7.14 신규 API 연결)

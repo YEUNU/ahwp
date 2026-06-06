@@ -160,6 +160,14 @@ async function runOne(
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'insertFootnote-failed' };
       }
+      case 'insertEndnote': {
+        // 0.7.14 — helper-only (legacy ViewerHandle 에 endnote 메서드 없음).
+        if (!helper) return { ok: false, tool: call.tool, reason: 'no-helper' };
+        const ok = await helper.insertEndnoteAtCaret(call.args.text);
+        return ok
+          ? { ok: true, tool: call.tool }
+          : { ok: false, tool: call.tool, reason: 'insertEndnote-failed' };
+      }
       case 'addBookmark': {
         const ok = helper
           ? await helper.addBookmarkAtCaret(call.args.name)
@@ -1021,6 +1029,7 @@ async function runOne(
               a.naturalHeightPx,
               a.extension,
               a.description,
+              a.cellPath ? JSON.stringify(a.cellPath) : '',
             )
           : viewer.irInsertPicture(
               a.sectionIdx,
@@ -1140,6 +1149,41 @@ async function runOne(
         return ok
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'setPageBorderFill-failed' };
+      }
+      case 'getEndnoteShape': {
+        // 0.7.14 — generic dispatcher → raw doc; parse the JSON string.
+        if (!helper) return { ok: false, tool: call.tool, reason: 'no-helper' };
+        const a = call.args;
+        const raw = await helper.invokeRead<string>('getEndnoteShape', [
+          a.sectionIdx,
+        ]);
+        if (raw == null)
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: 'getEndnoteShape-failed',
+          };
+        let data: unknown = raw;
+        if (typeof raw === 'string') {
+          try {
+            data = JSON.parse(raw);
+          } catch {
+            /* keep raw string */
+          }
+        }
+        return { ok: true, tool: call.tool, data };
+      }
+      case 'applyEndnoteShape': {
+        // raw doc.applyEndnoteShape takes a JSON STRING — serialize props here.
+        if (!helper) return { ok: false, tool: call.tool, reason: 'no-helper' };
+        const a = call.args;
+        const ok = await helper.invokeOk('applyEndnoteShape', [
+          a.sectionIdx,
+          JSON.stringify(a.props),
+        ]);
+        return ok
+          ? { ok: true, tool: call.tool }
+          : { ok: false, tool: call.tool, reason: 'applyEndnoteShape-failed' };
       }
       case 'setPageHide': {
         const a = call.args;
@@ -1917,7 +1961,8 @@ export function previewArgs(call: AhwpToolCall): string {
       return call.args.hex;
     case 'toggleCharFormat':
       return call.args.key;
-    case 'insertFootnote': {
+    case 'insertFootnote':
+    case 'insertEndnote': {
       const t = call.args.text.replace(/\s+/g, ' ').trim();
       return t.length > 40 ? `${t.slice(0, 40)}…` : t;
     }
@@ -1984,6 +2029,7 @@ export function previewArgs(call: AhwpToolCall): string {
     case 'setPictureProperties':
     case 'setSectionDef':
     case 'setPageBorderFill':
+    case 'applyEndnoteShape':
       return Object.keys(call.args.props).join(', ') || '(empty)';
     case 'setCellProperties':
       return `cell=${call.args.cellIdx} ${Object.keys(call.args.props).join(',')}`;
@@ -2048,6 +2094,7 @@ export function previewArgs(call: AhwpToolCall): string {
       return `ctrl=${call.args.controlIdx}`;
     case 'getColumnDef':
     case 'getPageBorderFill':
+    case 'getEndnoteShape':
       return `sec=${call.args.sectionIdx}`;
     case 'getFootnoteAtCursor':
       return `(${call.args.paragraphIdx},${call.args.charOffset}) ${call.args.direction}`;
