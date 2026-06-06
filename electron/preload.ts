@@ -162,6 +162,11 @@ const api: AhwpApi = {
         role,
         content,
       }),
+    replaceMessages: (conversationId, messages) =>
+      ipcRenderer.invoke('chat-history:replace-messages', {
+        conversationId,
+        messages,
+      }),
     rename: (id, title) =>
       ipcRenderer.invoke('chat-history:rename', { id, title }),
     delete: (id) => ipcRenderer.invoke('chat-history:delete', { id }),

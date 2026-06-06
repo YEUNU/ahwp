@@ -40,12 +40,14 @@ export const applyPageDef = defineTool<
   validate(raw) {
     const props = raw.props;
     if (!isObj(props)) return { ok: false, reason: 'props-not-object' };
-    const sectionIdx = raw.sectionIdx;
-    if (
-      sectionIdx !== undefined &&
-      (typeof sectionIdx !== 'number' || !Number.isInteger(sectionIdx))
-    )
-      return { ok: false, reason: 'sectionIdx-not-int' };
+    let sectionIdx: number | undefined;
+    if (raw.sectionIdx !== undefined) {
+      // schema declares minimum:0 — enforce the non-negative bound (the
+      // bare Number.isInteger check let -1 through to the WASM bridge).
+      const n = coerceNonNegInt(raw.sectionIdx);
+      if (n === null) return { ok: false, reason: 'sectionIdx-not-int' };
+      sectionIdx = n;
+    }
     return {
       ok: true,
       args: { props, sectionIdx } as AhwpToolArgs['applyPageDef'],
@@ -253,15 +255,16 @@ export const setHeaderFooterText = defineTool<
     required: ['sectionIdx', 'isHeader', 'applyTo', 'text'],
   },
   validate(raw) {
-    const sectionIdx = raw.sectionIdx;
     const isHeader = raw.isHeader;
-    const applyTo = raw.applyTo;
     const text = raw.text;
-    if (typeof sectionIdx !== 'number' || !Number.isInteger(sectionIdx))
-      return { ok: false, reason: 'sectionIdx-not-int' };
+    // schema declares sectionIdx minimum:0 and applyTo 0..2 — enforce both
+    // bounds (bare Number.isInteger let negatives / out-of-range enum through).
+    const sectionIdx = coerceNonNegInt(raw.sectionIdx);
+    if (sectionIdx === null) return { ok: false, reason: 'sectionIdx-not-int' };
     if (typeof isHeader !== 'boolean')
       return { ok: false, reason: 'isHeader-not-bool' };
-    if (typeof applyTo !== 'number' || !Number.isInteger(applyTo))
+    const applyTo = coerceNonNegInt(raw.applyTo);
+    if (applyTo === null || applyTo > 2)
       return { ok: false, reason: 'applyTo-not-int' };
     if (typeof text !== 'string')
       return { ok: false, reason: 'text-not-string' };

@@ -49,8 +49,11 @@ const OUTPUT_CAP_BYTES = 32 * 1024;
 const BLOCKLIST_PATTERNS: readonly RegExp[] = [
   /\bsudo\b/, // 권한 상승
   /\bsu\b\s/, // user 전환
-  /\brm\s+-[a-z]*r[a-z]*f/i, // rm -rf 변종
-  /\brm\s+-[a-z]*f[a-z]*r/i, // rm -fr 변종
+  // rm with BOTH a recursive and a force flag, in any order / separate tokens
+  // (catches `rm -rf`, `rm -fr`, `rm -r -f`, `rm -f -r`, `rm -r --force`).
+  /\brm\b(?=\s)(?=.*-[a-z]*r)(?=.*(-[a-z]*f|--force))/i,
+  /\brm\b(?=\s)(?=.*--recursive)(?=.*(-[a-z]*f|--force))/i,
+  /\bfind\b.*\s-delete\b/i, // find … -delete (대량 삭제)
   /:\(\)\s*\{.*&\s*\}\s*;\s*:/, // fork bomb :(){:|:&};:
   /\bcurl\b[^|]*\|[^|]*\b(sh|bash|zsh)\b/, // curl ... | sh (remote exec)
   /\bwget\b[^|]*\|[^|]*\b(sh|bash|zsh)\b/, // wget ... | sh
@@ -99,6 +102,20 @@ function checkBlocklist(command: string): string | null {
     }
   }
   return null;
+}
+
+/**
+ * Shell operators that could CHAIN or INJECT a *second* command onto an
+ * allowlisted prefix: `;` `|` `||` `&` `&&` backtick, command substitution
+ * `$(`, process substitution `<(` `>(`, and newlines. (Plain redirects `>` `<`
+ * `>>` are intentionally allowed — they don't run another command; dangerous
+ * device redirects are still caught by the blocklist.) Quoting/escaping is NOT
+ * parsed — we err on the side of rejecting. A command containing any of these
+ * only runs if the FULL string is an exact allowlist entry (a user who
+ * deliberately registered a compound command).
+ */
+function hasShellControlOperators(command: string): boolean {
+  return /[;|&`\n\r]|\$\(|<\(|>\(/.test(command);
 }
 
 /**
@@ -164,6 +181,13 @@ export async function validateBashRun(
   // 4. allowlist match
   const allowlist = await getBashAllowlist();
   if (allowlist.length === 0) return { ok: false, reason: 'allowlist-empty' };
+  // The allowlist is a PREFIX match, but exec runs through a shell — so a
+  // benign allowlisted prefix (`git log`) chained with a control operator
+  // (`git log; rm -r -f ~`) would otherwise pass. Reject any command with
+  // shell control operators unless the FULL command is an exact allowlist
+  // entry (so users can still register a deliberate `foo | bar` verbatim).
+  if (hasShellControlOperators(command) && !allowlist.includes(command))
+    return { ok: false, reason: 'shell-operator-not-allowlisted' };
   if (!matchesAllowlist(command, allowlist))
     return { ok: false, reason: 'not-in-allowlist' };
 

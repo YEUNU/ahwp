@@ -1633,6 +1633,8 @@ async function runOne(
             baseSystemPrompt: subAgentContext.baseSystemPrompt,
             dispatcher: subDispatcher,
             targetPath: subAgentContext.targetPath,
+            shouldStop: subAgentContext.shouldStop,
+            registerAbort: subAgentContext.registerAbort,
           });
           return { ok: true, tool: call.tool, data: r };
         } catch (e) {
@@ -1784,6 +1786,13 @@ export interface SubAgentContext {
   parentMode: TaskMode;
   baseSystemPrompt: string;
   targetPath: string | null;
+  /** Polled by the sub-agent loop before each turn + before dispatching tools
+   *  so the parent's Stop terminates it (otherwise it keeps writing the doc and
+   *  burning API calls for up to its remaining turns). */
+  shouldStop?: () => boolean;
+  /** Lets the parent's Stop abort the sub-agent's in-flight LLM stream
+   *  immediately. Called with the abort fn at turn start, null at turn end. */
+  registerAbort?: (abort: (() => void) | null) => void;
 }
 
 export async function runTools(

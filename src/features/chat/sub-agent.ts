@@ -63,6 +63,12 @@ export interface RunSubAgentOptions {
   targetPath?: string | null;
   /** Sub-agent 가 사용할 base system prompt (parent 의 SYSTEM_PROMPT_AGENT_GUIDE 등). */
   baseSystemPrompt: string;
+  /** Polled before each turn + before dispatching tools; true → 루프 즉시 종료.
+   *  parent 의 Stop 이 sub-agent 까지 도달하게 하는 신호 (없으면 stop 무시). */
+  shouldStop?: () => boolean;
+  /** 현재 turn 의 in-flight LLM abort handle 을 parent 에 등록 (turn 종료 시
+   *  null). parent stop() 이 이걸 호출해 streaming turn 을 즉시 취소. */
+  registerAbort?: (abort: (() => void) | null) => void;
 }
 
 export interface RunSubAgentResult {
@@ -98,7 +104,10 @@ function buildSubAgentSystemPrompt(
  * Streaming `window.api.ai.chat` → Promise. 매 turn 의 응답을 한 번에
  * 받아서 next turn 결정.
  */
-function callLlmAwaitable(req: ChatRequest): Promise<{
+function callLlmAwaitable(
+  req: ChatRequest,
+  registerHandle?: (handle: { abort: () => void }) => void,
+): Promise<{
   text: string;
   toolCalls: { id: string; name: string; args: unknown }[];
   finishReason: string;
@@ -108,7 +117,7 @@ function callLlmAwaitable(req: ChatRequest): Promise<{
     const toolCalls: { id: string; name: string; args: unknown }[] = [];
     let finishReason = 'stop';
     try {
-      window.api.ai.chat(req, {
+      const handle = window.api.ai.chat(req, {
         onEvent: (evt: ChatStreamEvent) => {
           if (evt.type === 'text-delta') {
             text += evt.text;
@@ -122,6 +131,7 @@ function callLlmAwaitable(req: ChatRequest): Promise<{
           }
         },
       });
+      registerHandle?.(handle);
     } catch (err) {
       reject(err as Error);
     }
@@ -181,6 +191,11 @@ export async function runSubAgent(
   let turnsUsed = 0;
 
   for (let turn = 0; turn < maxTurns; turn++) {
+    // Parent pressed Stop — don't start another turn (no more LLM calls / no
+    // more doc-mutating tools).
+    if (opts.shouldStop?.()) {
+      return { ok: false, error: 'stopped', turnsUsed, toolHistory };
+    }
     turnsUsed = turn + 1;
     const req: ChatRequest = {
       provider: opts.provider,
@@ -200,14 +215,29 @@ export async function runSubAgent(
       finishReason: string;
     };
     try {
-      response = await callLlmAwaitable(req);
+      response = await callLlmAwaitable(req, (h) =>
+        opts.registerAbort?.(h.abort),
+      );
     } catch (err) {
+      opts.registerAbort?.(null);
+      // A Stop-triggered abort surfaces here as an llm-error — report it as a
+      // clean stop rather than an error.
+      if (opts.shouldStop?.()) {
+        return { ok: false, error: 'stopped', turnsUsed, toolHistory };
+      }
       return {
         ok: false,
         error: `llm-error:${(err as Error).message ?? String(err)}`,
         turnsUsed,
         toolHistory,
       };
+    }
+    opts.registerAbort?.(null);
+
+    // Parent pressed Stop while the turn streamed — don't dispatch its tools
+    // (which would mutate the document after the user cancelled).
+    if (opts.shouldStop?.()) {
+      return { ok: false, error: 'stopped', turnsUsed, toolHistory };
     }
 
     // Tool 호출 없음 + text 있음 → 종료

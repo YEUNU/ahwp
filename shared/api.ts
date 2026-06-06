@@ -499,6 +499,13 @@ export interface ChatHistoryApi {
     role: 'system' | 'user' | 'assistant',
     content: string,
   ) => Promise<{ id: number }>;
+  /** Replace ALL messages of a conversation with the given list (transactional).
+   * Used by regenerate to drop a superseded assistant turn the in-memory list
+   * no longer shows, so a reloaded transcript matches the screen. */
+  replaceMessages: (
+    conversationId: number,
+    messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+  ) => Promise<{ ok: true }>;
   rename: (id: number, title: string) => Promise<{ ok: true }>;
   delete: (id: number) => Promise<{ ok: true }>;
 }

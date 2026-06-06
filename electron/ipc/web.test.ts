@@ -18,6 +18,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { webFetchImpl, webSearchImpl } from './web';
 import * as webKeys from '../store/web-keys';
 
+// webFetchImpl resolves the host (SSRF guard) before fetching. Mock DNS so the
+// unit tests stay hermetic (no real network) and resolve to a public IP by
+// default; specific tests override for private-IP / failure cases.
+vi.mock('node:dns/promises', () => ({
+  default: {
+    lookup: vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]),
+  },
+}));
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -56,6 +65,24 @@ describe('webFetchImpl — URL scheme 검증', () => {
     const r = await webFetchImpl({ url: 'file:///etc/passwd' });
     expect(r.ok).toBe(false);
     expect(r.error).toBe('url-not-http-https');
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it('loopback IP 거부 (SSRF guard, fetch 안 함)', async () => {
+    const f = vi.spyOn(globalThis, 'fetch');
+    const r = await webFetchImpl({ url: 'http://127.0.0.1:8080/admin' });
+    expect(r.ok).toBe(false);
+    expect(r.error).toBe('blocked-host');
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it('cloud metadata IP 거부 (SSRF guard, fetch 안 함)', async () => {
+    const f = vi.spyOn(globalThis, 'fetch');
+    const r = await webFetchImpl({
+      url: 'http://169.254.169.254/latest/meta-data/',
+    });
+    expect(r.ok).toBe(false);
+    expect(r.error).toBe('blocked-host');
     expect(f).not.toHaveBeenCalled();
   });
 

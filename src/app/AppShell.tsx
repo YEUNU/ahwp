@@ -113,6 +113,7 @@ export default function AppShell() {
   // (existing tab if open) and scrolls to the matched paragraph.
   const [searchMode, setSearchMode] = useState(false);
   const sessionRestoredRef = useRef(false);
+  const restoreStartedRef = useRef(false);
 
   // R3 (2차) — tab management → useTabManagement hook.
   const {
@@ -146,46 +147,55 @@ export default function AppShell() {
 
   // Workspace restoration.
   useEffect(() => {
-    if (sessionRestoredRef.current) return;
-    sessionRestoredRef.current = true;
+    if (restoreStartedRef.current) return;
+    restoreStartedRef.current = true;
     void (async () => {
-      const session = await window.api.session.get();
-      if (session.lastFolderPath) {
-        setFolderRoot(session.lastFolderPath);
-      }
-      const open = (session.openTabPaths ?? []).filter(Boolean);
-      if (open.length > 0) {
-        // Verify each path; drop any that are gone.
-        const verified: string[] = [];
-        for (const p of open) {
-          const r = await window.api.file.openByPath(p);
-          if (r) verified.push(r.path);
+      try {
+        const session = await window.api.session.get();
+        if (session.lastFolderPath) {
+          setFolderRoot(session.lastFolderPath);
         }
-        const restored: TabState[] = verified.map((p) => ({
-          path: p,
-          dirty: false,
-          key: makeTabKey(),
-        }));
-        if (restored.length > 0) {
-          setTabsState(restored);
-          // Pick the previously active path; fallback to the first tab.
-          const activePath = session.lastActivePath ?? null;
-          const activeIdx =
-            activePath != null
-              ? Math.max(
-                  0,
-                  restored.findIndex((t) => t.path === activePath),
-                )
-              : 0;
-          setActiveIndex(activeIdx);
+        const open = (session.openTabPaths ?? []).filter(Boolean);
+        if (open.length > 0) {
+          // Verify each path; drop any that are gone.
+          const verified: string[] = [];
+          for (const p of open) {
+            const r = await window.api.file.openByPath(p);
+            if (r) verified.push(r.path);
+          }
+          const restored: TabState[] = verified.map((p) => ({
+            path: p,
+            dirty: false,
+            key: makeTabKey(),
+          }));
+          if (restored.length > 0) {
+            setTabsState(restored);
+            // Pick the previously active path; fallback to the first tab.
+            const activePath = session.lastActivePath ?? null;
+            const activeIdx =
+              activePath != null
+                ? Math.max(
+                    0,
+                    restored.findIndex((t) => t.path === activePath),
+                  )
+                : 0;
+            setActiveIndex(activeIdx);
+          }
+        } else if (session.lastActivePath) {
+          // Legacy session (pre-tabs) — promote it into a single tab.
+          const r = await window.api.file.openByPath(session.lastActivePath);
+          if (r) {
+            setTabsState([{ path: r.path, dirty: false, key: makeTabKey() }]);
+            setActiveIndex(0);
+          }
         }
-      } else if (session.lastActivePath) {
-        // Legacy session (pre-tabs) — promote it into a single tab.
-        const r = await window.api.file.openByPath(session.lastActivePath);
-        if (r) {
-          setTabsState([{ path: r.path, dirty: false, key: makeTabKey() }]);
-          setActiveIndex(0);
-        }
+      } finally {
+        // Open the persist gate ONLY after restore completes. Flipping it
+        // synchronously at effect entry (the old behavior) let the persist
+        // effect — which runs in the same mount commit — fire immediately with
+        // empty state and overwrite session.json before the restored tabs
+        // landed (a crash in that window would lose all tabs).
+        sessionRestoredRef.current = true;
       }
     })();
   }, []);

@@ -425,51 +425,66 @@ ${req.html}
       const window = BrowserWindow.fromWebContents(event.sender);
       if (!window) return;
       const winId = window.id;
-      // Always tear down THIS window's watcher before reconfiguring —
-      // chokidar's `.unwatch()` + `.add()` is incremental but tracking
-      // incremental state at this small scale is more bug-prone than just
-      // rebuilding.
-      const existing = tabsWatchers.get(winId);
-      if (existing) {
-        await existing.close();
-        tabsWatchers.delete(winId);
-      }
-      const list = (paths ?? []).filter(
-        (p) => typeof p === 'string' && p.length > 0,
-      );
-      if (list.length === 0) return;
-      const w = chokidar.watch(list, {
-        ignoreInitial: true,
-        awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 },
-      });
-      const emit = (
-        type: ExternalFileChangeEvent['type'],
-        changedPath: string,
-      ): void => {
-        // Suppress events for our own writes.
-        const until = recentlySavedPaths.get(changedPath);
-        if (until !== undefined && Date.now() < until) return;
-        // Gate on the captured window, not a module global.
+
+      // The reconfigure below reads `tabsWatchers.get(winId)` then `await`s
+      // `existing.close()` before replacing the entry. That await is a yield
+      // point: two concurrent invocations for the same window (the renderer
+      // fires this fire-and-forget on every tabsState change) would both read
+      // the same watcher, then both create+set a new one — orphaning one
+      // watcher (its fsevents handle + change/unlink listeners stay alive,
+      // sending duplicate external-change events and surviving teardown).
+      // Serialize per-window so the read→close→replace sequence stays atomic
+      // and the LAST-dispatched path list wins.
+      const reconfigure = async (): Promise<void> => {
+        const existing = tabsWatchers.get(winId);
+        if (existing) {
+          await existing.close();
+          tabsWatchers.delete(winId);
+        }
         if (window.isDestroyed()) return;
-        const evt: ExternalFileChangeEvent = { type, path: changedPath };
-        window.webContents.send('file:external-change', evt);
-      };
-      w.on('change', (p: string) => emit('change', p));
-      w.on('unlink', (p: string) => emit('unlink', p));
-      tabsWatchers.set(winId, w);
-      // Release this window's watcher when it closes (registered once per
-      // window — the handler fires repeatedly as tabs change).
-      if (!watcherClosedHooked.has(winId)) {
-        watcherClosedHooked.add(winId);
-        window.once('closed', () => {
-          const wt = tabsWatchers.get(winId);
-          if (wt) {
-            void wt.close();
-            tabsWatchers.delete(winId);
-          }
-          watcherClosedHooked.delete(winId);
+        const list = (paths ?? []).filter(
+          (p) => typeof p === 'string' && p.length > 0,
+        );
+        if (list.length === 0) return;
+        const w = chokidar.watch(list, {
+          ignoreInitial: true,
+          awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 },
         });
-      }
+        const emit = (
+          type: ExternalFileChangeEvent['type'],
+          changedPath: string,
+        ): void => {
+          // Suppress events for our own writes.
+          const until = recentlySavedPaths.get(changedPath);
+          if (until !== undefined && Date.now() < until) return;
+          // Gate on the captured window, not a module global.
+          if (window.isDestroyed()) return;
+          const evt: ExternalFileChangeEvent = { type, path: changedPath };
+          window.webContents.send('file:external-change', evt);
+        };
+        w.on('change', (p: string) => emit('change', p));
+        w.on('unlink', (p: string) => emit('unlink', p));
+        tabsWatchers.set(winId, w);
+        // Release this window's watcher when it closes (registered once per
+        // window — the handler fires repeatedly as tabs change).
+        if (!watcherClosedHooked.has(winId)) {
+          watcherClosedHooked.add(winId);
+          window.once('closed', () => {
+            const wt = tabsWatchers.get(winId);
+            if (wt) {
+              void wt.close();
+              tabsWatchers.delete(winId);
+            }
+            watcherClosedHooked.delete(winId);
+            watcherReconfigureChains.delete(winId);
+          });
+        }
+      };
+
+      const prev = watcherReconfigureChains.get(winId) ?? Promise.resolve();
+      const run = prev.catch(() => {}).then(reconfigure);
+      watcherReconfigureChains.set(winId, run);
+      await run;
     },
   );
 }
@@ -479,6 +494,10 @@ ${req.html}
 // clobber each other's watcher. The app is single-window in normal use.
 const tabsWatchers = new Map<number, FSWatcher>();
 const watcherClosedHooked = new Set<number>(); // winIds with a 'closed' hook
+// Per-window serialization chain for file:watch-paths reconfiguration so
+// concurrent invocations can't interleave at the close() await and orphan a
+// watcher. Keyed by winId; cleared on window close / teardown.
+const watcherReconfigureChains = new Map<number, Promise<void>>();
 const recentlySavedPaths = new Map<string, number>(); // path → epoch ms
 
 /** Mark a path as recently-saved by us so external-change events for the
@@ -497,6 +516,7 @@ export async function teardownTabsWatcher(): Promise<void> {
   await Promise.allSettled([...tabsWatchers.values()].map((w) => w.close()));
   tabsWatchers.clear();
   watcherClosedHooked.clear();
+  watcherReconfigureChains.clear();
 }
 
 function toUint8(input: ArrayBuffer | Uint8Array): Uint8Array {

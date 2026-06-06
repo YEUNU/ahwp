@@ -33,6 +33,19 @@ export function registerChatHistoryIpc(): void {
     }),
   );
   ipcMain.handle(
+    'chat-history:replace-messages',
+    (
+      _e,
+      req: {
+        conversationId: number;
+        messages: { role: 'system' | 'user' | 'assistant'; content: string }[];
+      },
+    ) => {
+      store.replaceMessages(req.conversationId, req.messages);
+      return { ok: true };
+    },
+  );
+  ipcMain.handle(
     'chat-history:rename',
     (_e, req: { id: number; title: string }) => {
       store.renameConversation(req.id, req.title);

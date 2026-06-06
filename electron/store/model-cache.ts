@@ -62,23 +62,39 @@ export async function readCachedModels(
   return file[providerId] ?? null;
 }
 
+// Serialize the read-modify-write of the whole-file cache. Without this, two
+// concurrent prefetch runs (mount + secrets:changed) for DIFFERENT providers
+// both read the same baseline, each adds only its own key, and the second
+// rename clobbers the first's freshly-written entry. Matches secrets.ts's
+// writeChain pattern.
+let writeChain: Promise<unknown> = Promise.resolve();
+function serializeWrite<T>(fn: () => Promise<T>): Promise<T> {
+  const run = writeChain.then(fn, fn);
+  writeChain = run.catch(() => {});
+  return run;
+}
+
 export async function writeCachedModels(
   providerId: ProviderId,
   models: string[],
 ): Promise<CacheEntry> {
-  const file = await readFile();
-  const entry: CacheEntry = { fetchedAt: Date.now(), models };
-  file[providerId] = entry;
-  await writeFile(file);
-  return entry;
+  return serializeWrite(async () => {
+    const file = await readFile();
+    const entry: CacheEntry = { fetchedAt: Date.now(), models };
+    file[providerId] = entry;
+    await writeFile(file);
+    return entry;
+  });
 }
 
 export async function clearCachedModels(providerId: ProviderId): Promise<void> {
-  const file = await readFile();
-  if (file[providerId]) {
-    delete file[providerId];
-    await writeFile(file);
-  }
+  return serializeWrite(async () => {
+    const file = await readFile();
+    if (file[providerId]) {
+      delete file[providerId];
+      await writeFile(file);
+    }
+  });
 }
 
 export function isFresh(entry: CacheEntry, now = Date.now()): boolean {

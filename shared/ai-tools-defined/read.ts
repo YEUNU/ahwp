@@ -165,15 +165,15 @@ export const findInDocument = defineTool<
       return { ok: false, reason: 'query-not-string' };
     if (query.length === 0) return { ok: false, reason: 'query-empty' };
     if (byteLen(query) > 1024) return { ok: false, reason: 'query-too-large' };
-    const maxResults = raw.maxResults;
-    if (
-      maxResults !== undefined &&
-      (typeof maxResults !== 'number' ||
-        !Number.isInteger(maxResults) ||
-        maxResults < 1 ||
-        maxResults > 200)
-    )
-      return { ok: false, reason: 'maxResults-out-of-range' };
+    let maxResults: number | undefined;
+    if (raw.maxResults !== undefined) {
+      // coerceNonNegInt to accept string-encoded ints ("50") like every
+      // sibling read tool — providers routinely stringify integer args.
+      const n = coerceNonNegInt(raw.maxResults);
+      if (n === null || n < 1 || n > 200)
+        return { ok: false, reason: 'maxResults-out-of-range' };
+      maxResults = n;
+    }
     return {
       ok: true,
       args: { query, maxResults } as AhwpToolArgs['findInDocument'],

@@ -176,6 +176,33 @@ export function appendMessage(
   return Number(ins.lastInsertRowid);
 }
 
+/** Replace ALL messages of a conversation with the given list, transactionally
+ * (DELETE then re-INSERT in order). Used by regenerate to drop a superseded
+ * assistant turn that the in-memory message list no longer shows, so a reloaded
+ * transcript matches what's on screen. */
+export function replaceMessages(
+  conversationId: number,
+  messages: { role: MessageRow['role']; content: string }[],
+): void {
+  const d = getDb();
+  const now = Date.now();
+  const ins = d.prepare(
+    `INSERT INTO messages (conversation_id, role, content, created_at)
+     VALUES (?, ?, ?, ?)`,
+  );
+  const tx = d.transaction(() => {
+    d.prepare(`DELETE FROM messages WHERE conversation_id = ?`).run(
+      conversationId,
+    );
+    for (const m of messages) ins.run(conversationId, m.role, m.content, now);
+    d.prepare(`UPDATE conversations SET updated_at = ? WHERE id = ?`).run(
+      now,
+      conversationId,
+    );
+  });
+  tx();
+}
+
 export function renameConversation(id: number, title: string): void {
   const d = getDb();
   d.prepare(

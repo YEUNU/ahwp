@@ -305,6 +305,7 @@ export const googleProvider: Provider = {
 
     let usage: ChatUsage | undefined;
     let finishReason: ChatFinishReason = 'stop';
+    let rawFinishReason: string | undefined;
     // Gemini 의 functionCall 은 stream 중간에 통째로 한 번에 도착 (OpenAI
     // 처럼 chunk 분할 안 됨). 그래서 누적 슬롯 대신 즉시 emit.
     let toolEmitted = 0;
@@ -334,6 +335,7 @@ export const googleProvider: Provider = {
           }
         }
         if (cand?.finishReason) {
+          rawFinishReason = cand.finishReason;
           finishReason = mapFinishReason(cand.finishReason);
         }
         if (chunk.usageMetadata) {
@@ -347,6 +349,25 @@ export const googleProvider: Provider = {
       // 의미상 tool_calls. emitted > 0 이면 재정의.
       if (toolEmitted > 0 && finishReason === 'stop') {
         finishReason = 'tool_calls';
+      }
+      // Gemini emits MALFORMED_FUNCTION_CALL / OTHER when it tried to call a
+      // tool but produced unparseable output (no functionCall part reaches us,
+      // so toolEmitted stays 0). mapFinishReason collapses these to 'stop',
+      // which the agent loop reads as a clean, empty turn — the failure would
+      // be swallowed silently. Surface it as an error instead.
+      if (
+        toolEmitted === 0 &&
+        (rawFinishReason === 'MALFORMED_FUNCTION_CALL' ||
+          rawFinishReason === 'OTHER')
+      ) {
+        yield {
+          type: 'error',
+          message:
+            rawFinishReason === 'MALFORMED_FUNCTION_CALL'
+              ? 'Gemini: malformed function call — the model produced an unparseable tool call. Try again or rephrase.'
+              : 'Gemini: response ended unexpectedly (finishReason=OTHER).',
+        };
+        return;
       }
       yield { type: 'done', usage, finishReason };
     } catch (err) {

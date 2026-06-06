@@ -6,6 +6,38 @@
 
 ## [Unreleased]
 
+## [0.7.50] - 2026-06-06
+
+### Fixed — 다중 에이전트 적대적 검증으로 발굴한 잔존 버그 19건
+
+멀티 에이전트 버그 헌트(8개 영역 finder → 발견마다 skeptic 적대적 검증)로
+찾아 수정. 심각도별:
+
+- **보안/데이터(high)** — (1) `web:fetch` SSRF 차단: host DNS resolve 후
+  loopback/private/link-local/metadata IP 거부 + redirect 매 hop 재검증.
+  (2) `web:fetch` 응답 본문 streaming cap(전체 버퍼링 → OOM 회피, body read
+  까지 timeout). (3) `file:watch-paths` 동시 호출 race 로 chokidar watcher
+  누수 + 외부변경 이벤트 중복 → per-window 직렬화. (4) 열린 파일 위로
+  Save As → 같은 path 탭 2개(invariant 위반) → replaceTabPath dedup.
+- **medium** — (5) Gemini `MALFORMED_FUNCTION_CALL`/`OTHER` 가 조용히 'stop'
+  → 에러로 노출. (6) bash 체이닝 우회(`git log; rm -rf`): 쉘 연산자는 정확-
+  허용목록일 때만 허용 + 분리 플래그 `rm -r -f`/`find -delete` 차단. (7) Stop
+  이 in-flight `runAgent` 서브에이전트를 중단 못 함 → shouldStop + abort 전파.
+  (8) `replaceTextInCell` delete 후 insert 실패 시 원본 소실 → 롤백 복원.
+  (9) send/sendDirect 더블파이어 race(await 창) → 동기 in-flight 가드. (10)
+  `closeTabsToRight` 가 고정 탭 보존 시 활성 탭 오인 → key 추적. (11) 세션
+  복원 완료 전 persist 가 빈 상태로 덮어씀 → 복원 finally 후 게이트 오픈.
+  (12)(13) 검색 패널 spinner 영구 회전(쿼리 비움/검색 실패) → 분기마다 pending
+  해제 + `.catch`.
+- **low** — (14) model-cache RMW race → write 직렬화. (15) regenerate 가 교체된
+  assistant 를 DB 에 남겨 reload 시 stale → `replaceMessages` 로 재기록. (16)
+  auto-title stream 미종료 시 listener 누수 → 타임아웃 abort. (17)(18)(19)
+  툴 인자 검증 drift(string 정수 거부/음수 sectionIdx/applyTo 범위) → 공통
+  coerce 적용.
+
+검증: typecheck(양 tsconfig) + 단위 534 통과(SSRF/operator-gate/분리플래그 rm
+회귀 테스트 추가) + e2e(127 pass).
+
 ## [0.7.49] - 2026-06-06
 
 ### Changed — `@rhwp/core` 0.7.13 → 0.7.14 (WASM 엔진 업데이트)
