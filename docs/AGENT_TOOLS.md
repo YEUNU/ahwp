@@ -24,15 +24,17 @@ Phase 3 Agent 모드의 도구 카탈로그. **`shared/ai-tools.ts`의 `AHWP_TOO
 
 ---
 
-## 카탈로그 (75 tools — 55 write + 20 read)
+## 카탈로그 (80 tools — 58 write + 22 read)
 
 > 권위 소스는 `shared/ai-tools-defined/*.ts` (defineTool) 이며 `shared/ai-tools.ts` 의
-> `AHWP_TOOL_NAMES`(75) + `READONLY_TOOL_NAMES`(20) 가 단일 화이트리스트. 아래 A–H 표는
-> 초기(0.3.x) 스냅샷이라 다음 ~19개가 빠져 있다 — 셀 쓰기(`insertTextInCell` / `replaceTextInCell` /
+> `AHWP_TOOL_NAMES`(80) + `READONLY_TOOL_NAMES`(22) 가 단일 화이트리스트. 아래 A–H 표는
+> 초기(0.3.x) 스냅샷이라 다음이 빠져 있다 — 셀 쓰기(`insertTextInCell` / `replaceTextInCell` /
 > `fillFormCells`), 읽기(`getDocumentSummary` / `getColumnDef` / `getFootnoteAtCursor` /
-> `getEmptyFormFields` / `getPageSvg`), 수식·각주(`insertEquation` / `deleteFootnote` /
-> `deleteEquationControl`), 워크스페이스·교차문서(`searchWorkspaceOutlines` / `readParagraphByPath` /
-> `switchTargetDoc`), 외부·에이전트(`webFetch` / `webSearch` / `runCommand` / `runAgent` / `updatePlan`).
+> `getEmptyFormFields` / `getPageSvg`), 수식·각주·미주(`insertEquation` / `deleteFootnote` /
+> `deleteEquationControl` / `insertEndnote`), 워크스페이스·교차문서(`searchWorkspaceOutlines` /
+> `readParagraphByPath` / `switchTargetDoc`), 외부·에이전트(`webFetch` / `webSearch` / `runCommand` /
+> `runAgent` / `updatePlan`), **0.7.14 신규**(`getPageBorderFill` / `setPageBorderFill` /
+> `getEndnoteShape` / `applyEndnoteShape`; `insertPicture` 는 `cellPath` 로 표 셀 이미지 삽입 지원).
 
 ### A. 본문 편집 — 텍스트/단락 primitives (5)
 
@@ -240,10 +242,11 @@ mutation 0. Agent 가 turn 안에서 능동적으로 문서 상태를 검사 →
 
 ---
 
-## 통계 (0.7.50 기준)
+## 통계 (0.7.54 기준)
 
-- 총 도구: **75개** = write 55 + read 20 (`AHWP_TOOL_NAMES` 75 / `READONLY_TOOL_NAMES` 20)
+- 총 도구: **80개** = write 58 + read 22 (`AHWP_TOOL_NAMES` 80 / `READONLY_TOOL_NAMES` 22)
 - 카테고리 파일 (`shared/ai-tools-defined/`): format / cell / table / shape / page / read / web / bash / agent
 - 한컴 한글 lib (`@rhwp/core` 0.7.14) 의 주요 mutation API 광범위 커버
-- 능동 검사 (read) 20개로 Agent 가 양식 매칭 / 위치 결정 / 인용 탐색 / 시각 검증(`getPageSvg`) 가능
+- 능동 검사 (read) 22개로 Agent 가 양식 매칭 / 위치 결정 / 인용 탐색 / 시각 검증(`getPageSvg`) 가능
 - 외부·에이전트 도구: `webFetch`/`webSearch` (0.7.7), `runCommand` (0.7.9 bash, 기본 OFF), `runAgent` 서브에이전트 (0.7.11), `updatePlan` (0.7.29)
+- 0.7.14 신규: `getPageBorderFill`/`setPageBorderFill` (쪽 테두리·배경, 0.7.51), `insertEndnote` (미주, 0.7.52), `insertPicture` 의 `cellPath` (표 셀 이미지, 0.7.53), `getEndnoteShape`/`applyEndnoteShape` (미주 번호형식, 0.7.54)

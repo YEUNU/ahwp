@@ -448,6 +448,17 @@ ahwp 의 form-fill 사용성을 그 수준으로 끌어올리는 라운드. 사�
 - **정리**: `setup-rhwp-studio.mjs` 크기-기반 copy-skip 풋건 제거(항상 복사), probe-script
   lint 정리, orphan e2e snapshot 디렉토리 삭제.
 
+## 0.7.14 신규 API → AI 도구 연결 라운드 (0.7.51~0.7.54, 2026-06-06)
+
+0.7.14 가 추가한 generic-dispatch 가능 API 를 AI 도구로 배선 (도구 75 → **80**, read 22 + write 58). 패턴: 래퍼 없는 raw-doc 메서드는 스튜디오 generic dispatcher fallback 으로 자동 라우팅(서브모듈 무변경), write 는 dispatch 에서 `JSON.stringify`, read 는 raw JSON parse. 각 API 는 `examples/*.hwp` 로 node probe 직접 검증 + 단위 테스트.
+
+- **0.7.51** `getPageBorderFill` / `setPageBorderFill` — 쪽 테두리·배경.
+- **0.7.52** `insertEndnote` — 미주 삽입 + 본문(각주 composite 동형, `insertFootnoteAtCaret` 미러).
+- **0.7.53** `insertPicture` 의 `cellPath` — 표 셀 안 그림(도장/사진) 삽입. 유일하게 서브모듈 변경: `WasmBridge.insertPicture` 에 후행 optional `cellPathJson` (기존 10-arg 호출부 무변경, ahwp-bridge `ae9c590d`). **KNOWN_ISSUES L-007 실해결**.
+- **0.7.54** `getEndnoteShape` / `applyEndnoteShape` — 미주 번호형식·구분선.
+
+미연결 잔여(전부 multi-coord: cell-path + inner control 또는 note 좌표 4~6개): 셀 그림/도형 **속성** by-path, 주석 본문 서식·수식, 셀 paste, 외부이미지 렌더(새 IPC+studio). 별도 작업 후보. 패턴은 메모리 `project_wiring_0714_ai_tools` 참고.
+
 ## 향후 작업
 
 | 영역             | 항목                                                                                         | 상태             |
