@@ -23,6 +23,7 @@ export const AHWP_TOOL_NAMES = [
   'applyTextColor',
   'toggleCharFormat',
   'insertFootnote',
+  'insertEndnote',
   'addBookmark',
   'setHeaderFooterText',
   'applyPageDef',
@@ -204,6 +205,7 @@ export interface AhwpToolArgs {
   applyTextColor: { hex: string };
   toggleCharFormat: { key: 'bold' | 'italic' | 'underline' };
   insertFootnote: { text: string };
+  insertEndnote: { text: string };
   addBookmark: { name: string };
   setHeaderFooterText: {
     sectionIdx: number;

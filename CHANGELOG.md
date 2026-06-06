@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+## [0.7.52] - 2026-06-06
+
+### Added — `insertEndnote` AI 도구 (미주)
+
+caret 위치에 미주 삽입 + 본문 텍스트 채우기 (`insertFootnote` 와 동형 composite —
+0.7.14 의 `insertEndnote` + 각주/미주 공용 `insertTextInFootnote`). 도구 77 → **78**.
+서브모듈 변경 없음 (generic dispatcher → raw doc). API 실 문서 검증 + 단위 테스트.
+
 ## [0.7.51] - 2026-06-06
 
 ### Added — `pageBorderFill` AI 도구 (0.7.14 신규 API 연결)

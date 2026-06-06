@@ -482,6 +482,28 @@ export const insertFootnote = defineTool<
   },
 });
 
+// 0.7.14 — 미주(endnote). 각주와 동형 composite (insertEndnote + 본문 텍스트).
+export const insertEndnote = defineTool<
+  'insertEndnote',
+  AhwpToolArgs['insertEndnote']
+>({
+  name: 'insertEndnote',
+  description: 'Insert an endnote at the caret and fill its body text.',
+  inputSchema: {
+    type: 'object',
+    properties: { text: { type: 'string', maxLength: 4096 } },
+    required: ['text'],
+  },
+  validate(raw) {
+    const text = raw.text;
+    if (typeof text !== 'string')
+      return { ok: false, reason: 'text-not-string' };
+    if (byteLen(text) > AHWP_TOOL_LIMITS.maxTextBytes)
+      return { ok: false, reason: 'text-too-large' };
+    return { ok: true, args: { text } as AhwpToolArgs['insertEndnote'] };
+  },
+});
+
 export const deleteFootnote = defineTool<
   'deleteFootnote',
   AhwpToolArgs['deleteFootnote']

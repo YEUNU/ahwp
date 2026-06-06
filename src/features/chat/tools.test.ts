@@ -382,6 +382,27 @@ describe('runTools — 0.7.11 신규 API dispatch', () => {
     ]);
   });
 
+  it('insertEndnote: routes to helper.insertEndnoteAtCaret (0.7.14)', async () => {
+    const viewer = mockViewer();
+    const insertEndnoteAtCaret = vi.fn(async () => true);
+    const helper = {
+      insertEndnoteAtCaret,
+      async reflowLinesegs() {},
+      async notifyDocumentChanged() {},
+      beginUndoGroup() {},
+      endUndoGroup() {},
+    } as unknown as import('@/features/rhwp-studio/bridge-ir-helper').BridgeIrHelper;
+    const items: AhwpPreflightItem[] = [
+      {
+        ok: true,
+        call: { tool: 'insertEndnote', args: { text: '미주 본문' } },
+      },
+    ];
+    const results = await runTools(viewer, items, helper);
+    expect(results[0].ok).toBe(true);
+    expect(insertEndnoteAtCaret).toHaveBeenCalledWith('미주 본문');
+  });
+
   it('getFootnoteAtCursor: passes direction through', async () => {
     const get = vi.fn(() => ({ controlIdx: 1, paragraphIdx: 3 }));
     const viewer = mockViewer({ irGetFootnoteAtCursor: get });

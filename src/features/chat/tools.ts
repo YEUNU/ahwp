@@ -160,6 +160,14 @@ async function runOne(
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'insertFootnote-failed' };
       }
+      case 'insertEndnote': {
+        // 0.7.14 — helper-only (legacy ViewerHandle 에 endnote 메서드 없음).
+        if (!helper) return { ok: false, tool: call.tool, reason: 'no-helper' };
+        const ok = await helper.insertEndnoteAtCaret(call.args.text);
+        return ok
+          ? { ok: true, tool: call.tool }
+          : { ok: false, tool: call.tool, reason: 'insertEndnote-failed' };
+      }
       case 'addBookmark': {
         const ok = helper
           ? await helper.addBookmarkAtCaret(call.args.name)
@@ -1917,7 +1925,8 @@ export function previewArgs(call: AhwpToolCall): string {
       return call.args.hex;
     case 'toggleCharFormat':
       return call.args.key;
-    case 'insertFootnote': {
+    case 'insertFootnote':
+    case 'insertEndnote': {
       const t = call.args.text.replace(/\s+/g, ' ').trim();
       return t.length > 40 ? `${t.slice(0, 40)}…` : t;
     }
