@@ -6,6 +6,25 @@
 
 ## [Unreleased]
 
+## [0.7.49] - 2026-06-06
+
+### Changed — `@rhwp/core` 0.7.13 → 0.7.14 (WASM 엔진 업데이트)
+
+`@rhwp/core` 를 0.7.14 로 올림. 0.7.14 는 미주/각주 편집, 쪽 테두리/배경,
+셀-경로 그림·도형 속성, 외부 파일경로 이미지 주입 등 21개 API 를 추가하고,
+5개 메서드(`copyControl` / `exportControlHtml` / `getControlImageData` /
+`getControlImageMime` / `insertPicture`)에 `cell_path_json` 인자를 끼워넣는
+시그니처 변경(breaking)을 포함.
+
+vendored `rhwp-studio` 의 `WasmBridge` 래퍼 5곳에서 raw doc 호출 시
+`cell_path_json=''`(본문 컨텍스트, 0.7.13 동작과 동일) 을 주입 — 래퍼 public
+시그니처는 그대로라 ahwp 디스패처/스튜디오 호출부는 무변경. `pkg/` WASM 갱신.
+
+사이드 이펙트 검증: typecheck(양 tsconfig) + 스튜디오 tsc/vite 빌드 + 단위
+529 + e2e 통과. `exportHwp` 라운드트립 무손실(페이지/이미지 수 보존) 직접
+확인. HWPX 라운드트립의 임베드 이미지 드롭(L-001)은 0.7.14 에서도 재현 →
+저장 canonical=HWP 유지.
+
 ## [0.7.48] - 2026-06-03
 
 ### Removed — 저장 시 `.hwp.bak` 사이드카 백업 (사용자 요청)
