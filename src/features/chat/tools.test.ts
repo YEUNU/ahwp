@@ -915,6 +915,56 @@ describe('runTools — Phase E2-finalize 24 restored composites', () => {
     ]);
   });
 
+  it('insertPicture into a table cell — cellPath serialized to JSON (0.7.14)', async () => {
+    const viewer = mockViewer();
+    const insertPictureAtCaret = vi.fn(async () => true);
+    const helper = {
+      insertPictureAtCaret,
+      async reflowLinesegs() {},
+      async notifyDocumentChanged() {},
+      beginUndoGroup() {},
+      endUndoGroup() {},
+    } as unknown as import('@/features/rhwp-studio/bridge-ir-helper').BridgeIrHelper;
+    const cellPath = [{ controlIndex: 0, cellIndex: 2, cellParaIndex: 0 }];
+    const items: AhwpPreflightItem[] = [
+      {
+        ok: true,
+        call: {
+          tool: 'insertPicture',
+          args: {
+            sectionIdx: 0,
+            paragraphIdx: 1,
+            charOffset: 0,
+            base64Data: 'AAAA',
+            widthHwpunit: 1500,
+            heightHwpunit: 1500,
+            naturalWidthPx: 1,
+            naturalHeightPx: 1,
+            extension: 'png',
+            description: 'cell img',
+            cellPath,
+          },
+        },
+      },
+    ];
+    const results = await runTools(viewer, items, helper);
+    expect(results[0].ok).toBe(true);
+    // cellPath is serialized to a JSON string and passed as the 11th arg.
+    expect(insertPictureAtCaret).toHaveBeenCalledWith(
+      0,
+      1,
+      0,
+      'AAAA',
+      1500,
+      1500,
+      1,
+      1,
+      'png',
+      'cell img',
+      JSON.stringify(cellPath),
+    );
+  });
+
   it('applyParaProps — composite (getCaretPosition + applyParaProps)', async () => {
     const viewer = mockViewer();
     const { helper, log } = makeFullHelperStub();

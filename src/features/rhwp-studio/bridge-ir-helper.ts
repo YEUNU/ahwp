@@ -1951,6 +1951,9 @@ export class BridgeIrHelper {
     naturalHeightPx: number,
     extension: string,
     description: string,
+    /** 0.7.14 — '' = 본문, `[{controlIndex,cellIndex,cellParaIndex},...]` JSON =
+     *  표 셀 안 삽입. WasmBridge.insertPicture 의 후행 cellPathJson 인자로 전달. */
+    cellPathJson: string = '',
   ): Promise<boolean> {
     return await this.invokeOk('insertPicture', [
       sec,
@@ -1963,6 +1966,7 @@ export class BridgeIrHelper {
       naturalHeightPx,
       extension,
       description,
+      cellPathJson,
     ]);
   }
 }

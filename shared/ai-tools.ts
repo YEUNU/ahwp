@@ -406,6 +406,15 @@ export interface AhwpToolArgs {
     naturalHeightPx: number;
     extension: string;
     description: string;
+    /** 0.7.14 — optional: insert into a TABLE CELL instead of the body.
+     *  Path from the table control down: [{controlIndex, cellIndex,
+     *  cellParaIndex}, ...] (controlIndex/cellIndex come from
+     *  getEmptyFormFields). paragraphIdx is the table's own paragraph. */
+    cellPath?: {
+      controlIndex: number;
+      cellIndex: number;
+      cellParaIndex: number;
+    }[];
   };
   // Phase 3 chunk 48 — page/section
   insertPageBreak: {

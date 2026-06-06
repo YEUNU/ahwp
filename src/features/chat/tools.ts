@@ -1029,6 +1029,7 @@ async function runOne(
               a.naturalHeightPx,
               a.extension,
               a.description,
+              a.cellPath ? JSON.stringify(a.cellPath) : '',
             )
           : viewer.irInsertPicture(
               a.sectionIdx,
