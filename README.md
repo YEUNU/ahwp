@@ -92,7 +92,7 @@ npm run build:all
 - **Phase 0** ✅ 부트스트랩 (Electron + Vite + Tailwind 기본 셸)
 - **Phase 1** ✅ 3-Pane 레이아웃 + rhwp-studio iframe 에디터 + 풀 편집 + 폴더 트리 + 탭 시스템
 - **Phase 2** ✅ AI 챗봇 (Manual/Plan, BYOK, 파일별 히스토리, 멀티 문서 라우팅)
-- **Phase 3** ✅ Agent 모드 (75 tools — write 55 + read 20, provider-native tool calling, 묶음 undo, Diff Viewer, Plan mode, sub-agent)
+- **Phase 3** ✅ Agent 모드 (80 tools — write 58 + read 22, provider-native tool calling, 묶음 undo, Diff Viewer, Plan mode, sub-agent)
 - **Phase 4** ✅ 패키징·자동 업데이트 (electron-builder mac/win/linux + electron-updater + GitHub Releases)
 - **Phase 5** 진행 중 — 안정화: Crash Reporter / 접근성 / USER_GUIDE / 성능 측정 인프라 / 한·영 i18n / 한컴 매뉴얼 매핑 완료. 베타 피드백 채널 / macOS notarization / Windows 코드 사이닝 미정
 

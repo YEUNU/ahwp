@@ -4,7 +4,7 @@
 > 이후 구현으로 대체됨. 핵심 가치(BYOK·키는 main 만 보유, 도구 화이트리스트·eval 금지, multi-doc
 > target/reference, anti-heuristic)는 유효하나 구체적 타입/채널/도구명은 아래 권위 소스를 따른다 —
 > `shared/ai.ts` (ChatRequest / ChatStreamEvent / ProviderId), `shared/ai-tools-defined/` (도구 정의,
-> 75개), `src/features/chat/` (agent loop, 도구 디스패치), `src/features/rhwp-studio/` (iframe IR).
+> 80개), `src/features/chat/` (agent loop, 도구 디스패치), `src/features/rhwp-studio/` (iframe IR).
 > 주요 변경: 편집기 = vendored rhwp-studio **iframe** (StudioViewer 폐기), **provider-native tool calling
 > 이 라이브 주경로**(턴 cap 50), NIM 제거(0.6.18), Anthropic 어댑터 미구현, provider SDK 미사용(전부 fetch).
 
@@ -24,7 +24,7 @@
 자체 `Provider` 인터페이스 + 한 turn 안의 단순 tool-call 루프로 구현. LangChain/LangGraph는 다음 이유로 채택하지 않음.
 
 - 각 provider의 server-side 기능(OpenAI Responses `web_search`, Anthropic `web_search_20250305`, Google `googleSearch` grounding)은 native SDK를 직접 호출해야 가장 빠르고 정확하게 활용 가능. 추상화를 한 단계 더 거치면 새 기능 반영이 늦어짐.
-- 화이트리스트 tool이 **75개**(read-only 20 + mutating 55, `shared/ai-tools-defined/`)이며 대부분 `@rhwp/core` IR 호출에 매핑되는 단순 구조. graph orchestration(LangChain 등)의 가치가 작음 — 자체 라우팅으로 충분.
+- 화이트리스트 tool이 **80개**(read-only 22 + mutating 58, `shared/ai-tools-defined/`)이며 대부분 `@rhwp/core` IR 호출에 매핑되는 단순 구조. graph orchestration(LangChain 등)의 가치가 작음 — 자체 라우팅으로 충분.
 - Electron 데스크탑 번들의 transitive 의존성·공급망 표면·업데이트 주기 부담.
 - 멀티 에이전트, 장기 체크포인트, 복잡한 분기 같은 LangGraph 강점이 필요해지면 Phase 5+에서 재평가.
 
@@ -131,7 +131,7 @@ ChatPanel 상단에 "이 대화에 포함할 문서" 칩 — 활성 탭은 자�
 
 ### Tool 분류 (read는 모든 doc, write는 target)
 
-도구는 `shared/ai-tools-defined/*.ts` 에서 `defineTool` 로 정의(75개 = read-only 20 + mutating 55)되고 **camelCase** 이름을 쓴다. 대표 예:
+도구는 `shared/ai-tools-defined/*.ts` 에서 `defineTool` 로 정의(80개 = read-only 22 + mutating 58)되고 **camelCase** 이름을 쓴다. 대표 예:
 
 | 종류          | 예 (권위 목록은 `shared/ai-tools-defined/`)                                                                                                                              |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
