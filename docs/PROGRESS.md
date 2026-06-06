@@ -431,6 +431,23 @@ ahwp 의 form-fill 사용성을 그 수준으로 끌어올리는 라운드. 사�
   부모로 보내고 사용자 타이핑은 안 보냄 → AI 쓰기가 유일한 정확한 비-vendor
   신호.) 검증: typecheck×2 + 529 unit + 32 e2e green.
 
+## rhwp 0.7.14 + 잔존 버그 + 문서 정합 라운드 (0.7.49~0.7.50, 2026-06-06)
+
+- **`@rhwp/core` 0.7.13 → 0.7.14 (0.7.49)**: API `.d.ts` diff 로 breaking 시그니처
+  5건(`copyControl`/`exportControlHtml`/`getControlImageData`/`getControlImageMime`/
+  `insertPicture` 에 `cell_path_json` 인자 추가) 식별 → vendored rhwp-studio `WasmBridge`
+  래퍼 5곳에서 `''`(본문) 주입으로 흡수, 호출부 무변경. 서브모듈 커밋 + 푸시. `exportHwp`
+  라운드트립 무손실 직접 검증, L-001(HWPX 이미지 드롭)은 0.7.14 에서도 재현 → 저장 HWP 유지.
+- **잔존 버그 19건 (0.7.50)**: 8영역 finder → 발견마다 skeptic 적대적 검증. high — `web:fetch`
+  SSRF/스트리밍-cap, `file:watch-paths` watcher 누수 race, Save-As 중복 path 탭. medium —
+  Gemini 무음 stop, bash 체이닝 우회, Stop 이 서브에이전트 미중단, `replaceTextInCell` 롤백,
+  send 더블파이어, 세션 복원 race 등. 검증: typecheck×2 + 534 unit + e2e green.
+- **문서 정합 (post-release)**: 살아있는 스펙 9종을 코드와 대조 — StudioViewer→rhwp-studio
+  iframe, 도구 54→75, NIM 제거, 0.7.9→0.7.14, KNOWN_ISSUES **L-007 해결됨** 재분류
+  (0.7.14 셀-경로 그림 API). ARCHITECTURE/AI_INTEGRATION 는 STATUS 배너 + 전면 정정.
+- **정리**: `setup-rhwp-studio.mjs` 크기-기반 copy-skip 풋건 제거(항상 복사), probe-script
+  lint 정리, orphan e2e snapshot 디렉토리 삭제.
+
 ## 향후 작업
 
 | 영역             | 항목                                                                                         | 상태             |
@@ -438,12 +455,12 @@ ahwp 의 form-fill 사용성을 그 수준으로 끌어올리는 라운드. 사�
 | 2차 UX 라운드    | chunks 56~60 — AI 우클릭 메뉴 / AI inline diff / 목차 사이드바 / PDF 미리보기 / 검색 in 폴더 | 다음             |
 | 3차 UX 라운드    | chunks 61~65 — 룰러 / 버전 히스토리 / 한국어 맞춤법 / 슬래시 명령 / 다중 창                  | 후속             |
 | Phase 2 deferred | chunk 31 자동 title summary, chunk 32 셀 selection v4                                        | 보류 (대형/복잡) |
-| Phase 2-B        | Anthropic / Google / `custom` 어댑터 잠금 해제                                               | 키 결정 대기     |
-| Phase 3          | provider tool-use API 정식 통합, docId-aware 라우팅, Agent 모드                              | 후속             |
-| Phase 4          | 아이콘, notarization, electron-updater, rhwp 자산 로컬 번들링                                | 후속             |
-| Phase 5          | crash reporter, 사용자 가이드, 다국어, 접근성                                                | 후속             |
+| Phase 2-B        | Anthropic 어댑터 잠금 해제 (Google / `custom` 은 완료)                                       | 키 결정 대기     |
+| Phase 3          | provider tool-use API 통합, Agent 모드, sub-agent, Plan mode                                 | ✅ 완료 (0.7.x)  |
+| Phase 4          | 패키징, notarization, electron-updater, rhwp 자산 로컬 번들링                                | ✅ 완료          |
+| Phase 5          | crash reporter, 사용자 가이드, 다국어(ko/en), 접근성                                         | ✅ 대부분 완료   |
 
-라이브러리 의존: chunk 33 (도형 라인/곡선/그룹) + chunk 36 (스타일 char/para shape) — `@rhwp/core` 0.8 대기.
+라이브러리 의존: chunk 33 (도형 라인/곡선/그룹) — `@rhwp/core` 대기. chunk 36 (스타일 char/para shape) 은 0.7.14 의 `updateStyle` / `updateStyleShapes` 로 **해소됨**.
 
 ## 트래킹
 

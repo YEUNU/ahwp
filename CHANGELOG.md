@@ -6,6 +6,23 @@
 
 ## [Unreleased]
 
+## [0.7.51] - 2026-06-06
+
+### Added — `pageBorderFill` AI 도구 (0.7.14 신규 API 연결)
+
+`getPageBorderFill` (read) / `setPageBorderFill` (write) AI 도구 추가 — 0.7.14 의
+`@rhwp/core` get/setPageBorderFill 을 generic dispatcher 로 연결 (쪽 테두리/배경).
+도구 75 → **77** (read-only 21 + mutating 56). API 동작은 실 문서로 직접 검증.
+
+### Changed / Fixed — 정리
+
+- `setup-rhwp-studio.mjs`: WASM 복사 skip 을 **파일 크기 기반 → 항상 복사**로 변경 —
+  향후 `@rhwp/core` 가 내용만 바뀌고 byte 크기가 같은 릴리즈에서 stale WASM 으로
+  버전 skew 가 생기던 잠재 footgun 제거.
+- 잔존 lint 에러 정리(`scripts/probe-*.mjs` 빈 catch / unused var), `converter.ts`
+  의 stale `v0.7.8` 주석 → 현행화, `check-image-pipeline.mjs` SEED 를 현존 fixture 로,
+  orphan e2e 스냅샷 디렉토리 삭제, `docs/PROGRESS.md` 향후-작업 테이블 현행화.
+
 ## [0.7.50] - 2026-06-06
 
 ### Fixed — 다중 에이전트 적대적 검증으로 발굴한 잔존 버그 19건

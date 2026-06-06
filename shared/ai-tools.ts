@@ -91,6 +91,9 @@ export const AHWP_TOOL_NAMES = [
   'deleteFootnote',
   'deleteEquationControl',
   'getColumnDef',
+  // 0.7.14 — 쪽 테두리/배경 (@rhwp/core get/setPageBorderFill)
+  'getPageBorderFill',
+  'setPageBorderFill',
   'getFootnoteAtCursor',
   // 0.4.21 — empty form-field discovery (양식 채우기 baseline)
   'getEmptyFormFields',
@@ -156,6 +159,7 @@ export const READONLY_TOOL_NAMES = new Set<AhwpToolName>([
   'findInDocument',
   'getCellInfo',
   'getColumnDef',
+  'getPageBorderFill',
   'getFootnoteAtCursor',
   'getEmptyFormFields',
   'getPageSvg',
@@ -426,6 +430,10 @@ export interface AhwpToolArgs {
     sectionIdx: number;
     props: Record<string, unknown>;
   };
+  setPageBorderFill: {
+    sectionIdx: number;
+    props: Record<string, unknown>;
+  };
   setPageHide: {
     sectionIdx: number;
     paragraphIdx: number;
@@ -552,6 +560,7 @@ export interface AhwpToolArgs {
     controlIdx: number;
   };
   getColumnDef: { sectionIdx: number };
+  getPageBorderFill: { sectionIdx: number };
   getFootnoteAtCursor: {
     sectionIdx: number;
     paragraphIdx: number;

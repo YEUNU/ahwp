@@ -96,16 +96,16 @@ for (let s = 0; s < doc2.getSectionCount(); s++) {
             empty++;
             if (!firstLabel) {
               if (d.colCount > 0 && c % d.colCount > 0) {
-                try { firstLabel = doc2.getTextInCell(s, p, ctrl, c-1, 0, 0, 100).trim().slice(0,40); } catch {}
+                try { firstLabel = doc2.getTextInCell(s, p, ctrl, c-1, 0, 0, 100).trim().slice(0,40); } catch { /* ignore */ }
               }
               if (!firstLabel && d.colCount > 0 && c >= d.colCount) {
-                try { firstLabel = doc2.getTextInCell(s, p, ctrl, c-d.colCount, 0, 0, 100).trim().slice(0,40); } catch {}
+                try { firstLabel = doc2.getTextInCell(s, p, ctrl, c-d.colCount, 0, 0, 100).trim().slice(0,40); } catch { /* ignore */ }
               }
             }
           }
         }
         if (empty > 0) allTables.push({ s, p, ctrl, total: d.cellCount, empty, firstLabel });
-      } catch {}
+      } catch { /* ignore */ }
     }
   }
 }

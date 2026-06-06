@@ -10,7 +10,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const SEED =
-  '/Users/yunu/ahwp/examples/4. [사업계획서] 제조AI특화 스마트공장 사업계획서_양식_260326_01_데이터수집검증 중복화.hwp';
+  "/Users/yunu/ahwp/examples/(참고)(양식) ★'25년 제조AI특화 중간보고서, 완료보고서 서식자료_260127_01.hwp";
 
 const wasmPath = require.resolve('@rhwp/core/rhwp_bg.wasm');
 const wasmBytes = await fs.readFile(wasmPath);

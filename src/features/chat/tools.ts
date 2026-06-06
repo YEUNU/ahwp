@@ -1104,6 +1104,43 @@ async function runOne(
           ? { ok: true, tool: call.tool }
           : { ok: false, tool: call.tool, reason: 'setSectionDef-failed' };
       }
+      case 'getPageBorderFill': {
+        // 0.7.14 — no WasmBridge wrapper; generic dispatcher → raw doc returns
+        // a JSON string. Parse it for clean tool data.
+        if (!helper) return { ok: false, tool: call.tool, reason: 'no-helper' };
+        const a = call.args;
+        const raw = await helper.invokeRead<string>('getPageBorderFill', [
+          a.sectionIdx,
+        ]);
+        if (raw == null)
+          return {
+            ok: false,
+            tool: call.tool,
+            reason: 'getPageBorderFill-failed',
+          };
+        let data: unknown = raw;
+        if (typeof raw === 'string') {
+          try {
+            data = JSON.parse(raw);
+          } catch {
+            /* keep raw string */
+          }
+        }
+        return { ok: true, tool: call.tool, data };
+      }
+      case 'setPageBorderFill': {
+        // raw doc.setPageBorderFill takes a JSON STRING (no wrapper to
+        // stringify) — serialize the props object here.
+        if (!helper) return { ok: false, tool: call.tool, reason: 'no-helper' };
+        const a = call.args;
+        const ok = await helper.invokeOk('setPageBorderFill', [
+          a.sectionIdx,
+          JSON.stringify(a.props),
+        ]);
+        return ok
+          ? { ok: true, tool: call.tool }
+          : { ok: false, tool: call.tool, reason: 'setPageBorderFill-failed' };
+      }
       case 'setPageHide': {
         const a = call.args;
         const ok = helper
@@ -1946,6 +1983,7 @@ export function previewArgs(call: AhwpToolCall): string {
     case 'setShapeProperties':
     case 'setPictureProperties':
     case 'setSectionDef':
+    case 'setPageBorderFill':
       return Object.keys(call.args.props).join(', ') || '(empty)';
     case 'setCellProperties':
       return `cell=${call.args.cellIdx} ${Object.keys(call.args.props).join(',')}`;
@@ -2009,6 +2047,7 @@ export function previewArgs(call: AhwpToolCall): string {
     case 'deleteEquationControl':
       return `ctrl=${call.args.controlIdx}`;
     case 'getColumnDef':
+    case 'getPageBorderFill':
       return `sec=${call.args.sectionIdx}`;
     case 'getFootnoteAtCursor':
       return `(${call.args.paragraphIdx},${call.args.charOffset}) ${call.args.direction}`;

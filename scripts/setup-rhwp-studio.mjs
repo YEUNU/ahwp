@@ -13,7 +13,7 @@
  *
  * Phase A1 (chunk 100+) 의 일부.
  */
-import { existsSync, mkdirSync, copyFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, copyFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -37,17 +37,13 @@ if (!existsSync(join(REPO_ROOT, 'vendor', 'rhwp', '.git'))) {
 mkdirSync(DST, { recursive: true });
 
 let copied = 0;
-let skipped = 0;
+// Always copy — a size-based skip would silently leave a stale WASM in place if
+// a future @rhwp/core release changed file CONTENT without changing byte size
+// (causing a version skew between node_modules and the studio build). The files
+// are small and this runs once per build, so an unconditional copy is cheap and
+// correct.
 for (const name of FILES) {
-  const s = join(SRC, name);
-  const d = join(DST, name);
-  if (existsSync(d) && statSync(s).size === statSync(d).size) {
-    skipped++;
-    continue;
-  }
-  copyFileSync(s, d);
+  copyFileSync(join(SRC, name), join(DST, name));
   copied++;
 }
-console.log(
-  `[setup-rhwp-studio] ${copied} file(s) copied, ${skipped} unchanged → ${DST}`,
-);
+console.log(`[setup-rhwp-studio] ${copied} file(s) copied → ${DST}`);

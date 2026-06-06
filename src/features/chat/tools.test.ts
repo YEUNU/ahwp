@@ -340,6 +340,48 @@ describe('runTools — 0.7.11 신규 API dispatch', () => {
     }
   });
 
+  it('getPageBorderFill parses the JSON string; setPageBorderFill stringifies props (0.7.14)', async () => {
+    const viewer = mockViewer();
+    const invokeRead = vi.fn(async () =>
+      JSON.stringify({ basis: 'page', borderFillId: 1 }),
+    );
+    const invokeOk = vi.fn(async () => true);
+    const helper = {
+      invokeRead,
+      invokeOk,
+      async reflowLinesegs() {},
+      async notifyDocumentChanged() {},
+      beginUndoGroup() {},
+      endUndoGroup() {},
+    } as unknown as import('@/features/rhwp-studio/bridge-ir-helper').BridgeIrHelper;
+    const items: AhwpPreflightItem[] = [
+      {
+        ok: true,
+        call: { tool: 'getPageBorderFill', args: { sectionIdx: 1 } },
+      },
+      {
+        ok: true,
+        call: {
+          tool: 'setPageBorderFill',
+          args: { sectionIdx: 1, props: { borderFillId: 2 } },
+        },
+      },
+    ];
+    const results = await runTools(viewer, items, helper);
+    // read: raw JSON string parsed into an object
+    expect(results[0].ok).toBe(true);
+    if (results[0].ok) {
+      expect(results[0].data).toEqual({ basis: 'page', borderFillId: 1 });
+    }
+    expect(invokeRead).toHaveBeenCalledWith('getPageBorderFill', [1]);
+    // write: props serialized to a JSON string (no wasm-bridge wrapper)
+    expect(results[1].ok).toBe(true);
+    expect(invokeOk).toHaveBeenCalledWith('setPageBorderFill', [
+      1,
+      JSON.stringify({ borderFillId: 2 }),
+    ]);
+  });
+
   it('getFootnoteAtCursor: passes direction through', async () => {
     const get = vi.fn(() => ({ controlIdx: 1, paragraphIdx: 3 }));
     const viewer = mockViewer({ irGetFootnoteAtCursor: get });

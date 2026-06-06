@@ -237,6 +237,54 @@ export const getColumnDef = defineTool<
   },
 });
 
+// 0.7.14 — 쪽 테두리/배경 (@rhwp/core getPageBorderFill / setPageBorderFill)
+export const getPageBorderFill = defineTool<
+  'getPageBorderFill',
+  AhwpToolArgs['getPageBorderFill']
+>({
+  name: 'getPageBorderFill',
+  description:
+    "Return a section's page border/fill settings as JSON (basis, spacing*, borderFillId, headerInside/footerInside, fillArea, hide flags). Paired read for setPageBorderFill.",
+  inputSchema: {
+    type: 'object',
+    properties: { sectionIdx: { type: 'integer', minimum: 0 } },
+    required: ['sectionIdx'],
+  },
+  readonly: true,
+  validate(raw) {
+    const v = nonNegInts(raw, ['sectionIdx']);
+    if (!v.ok) return v;
+    return { ok: true, args: v.value as AhwpToolArgs['getPageBorderFill'] };
+  },
+});
+
+export const setPageBorderFill = defineTool<
+  'setPageBorderFill',
+  AhwpToolArgs['setPageBorderFill']
+>({
+  name: 'setPageBorderFill',
+  description:
+    "Set a section's page border/fill. props is the lib page-border-fill JSON (read the current shape via getPageBorderFill first, then change the keys you need).",
+  inputSchema: {
+    type: 'object',
+    properties: {
+      sectionIdx: { type: 'integer', minimum: 0 },
+      props: { type: 'object' },
+    },
+    required: ['sectionIdx', 'props'],
+  },
+  validate(raw) {
+    const v = nonNegInts(raw, ['sectionIdx']);
+    if (!v.ok) return v;
+    const props = raw.props;
+    if (!isObj(props)) return { ok: false, reason: 'props-not-object' };
+    return {
+      ok: true,
+      args: { ...v.value, props } as AhwpToolArgs['setPageBorderFill'],
+    };
+  },
+});
+
 export const setHeaderFooterText = defineTool<
   'setHeaderFooterText',
   AhwpToolArgs['setHeaderFooterText']
