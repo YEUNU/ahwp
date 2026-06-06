@@ -295,6 +295,15 @@ export function useChatStreaming(
   // 매 send / sendDirect / regenerate / acceptDirect 시작 시 false 로
   // reset.
   const agentStoppedRef = useRef(false);
+  // Synchronous in-flight guard for send / sendDirect. `streaming` (React
+  // state) only flips true inside fireChat AFTER the chatHistory.create +
+  // append IPC round-trips, so a second call entering during that await window
+  // would see streaming===false and double-fire two overlapping streams.
+  // Cleared when streaming returns to false (effect below).
+  const inFlightRef = useRef(false);
+  // Abort fn for a currently-streaming runAgent sub-agent turn, so stop() can
+  // cancel it (the sub-agent runs its own loop the parent handle can't reach).
+  const subAgentAbortRef = useRef<(() => void) | null>(null);
   // 0.7.2 — Form-Fill mode completion guard. AI 가 본문 dump 회귀 차단
   // 이후 또 다른 회귀 패턴: cover-sheet 만 채우고 ~15 cells 후 조기 종료
   // (200+ 셀 form 의 ~8% 만 채움) + getPageSvg 한 번도 안 부름. 이 guard
@@ -399,14 +408,28 @@ export function useChatStreaming(
         ],
       };
       let buf = '';
+      let settled = false;
+      let handle: { abort: () => void } | undefined;
+      // The preload per-request listener only self-removes on a terminal
+      // (done/error) event. A title stream that stalls without one would leak
+      // that listener for the app's lifetime, so abort it after a timeout to
+      // force cleanup.
+      const timer = window.setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        handle?.abort();
+      }, 20_000);
       try {
-        window.api.ai.chat(req, {
+        handle = window.api.ai.chat(req, {
           onEvent: (evt) => {
+            if (settled) return;
             if (evt.type === 'text-delta') {
               buf += evt.text;
               return;
             }
             if (evt.type === 'done') {
+              settled = true;
+              window.clearTimeout(timer);
               const title = buf
                 .split('\n')[0]
                 .replace(/^["'`「『\s]+|["'`」』.\s]+$/g, '')
@@ -419,11 +442,15 @@ export function useChatStreaming(
                   console.warn('[chat] auto-title rename failed', err),
                 );
             } else if (evt.type === 'error') {
+              settled = true;
+              window.clearTimeout(timer);
               console.warn('[chat] auto-title stream error', evt.message);
             }
           },
         });
       } catch (err) {
+        settled = true;
+        window.clearTimeout(timer);
         console.warn('[chat] auto-title chat failed', err);
       }
     },
@@ -650,6 +677,12 @@ export function useChatStreaming(
             parentMode: currentModeRef.current?.primary ?? 'free-authoring',
             baseSystemPrompt: SYSTEM_PROMPT_AGENT_GUIDE,
             targetPath: turnTargetPathRef.current,
+            // Let the parent's Stop reach an in-flight runAgent sub-agent:
+            // it polls this and we register its current LLM abort handle.
+            shouldStop: () => agentStoppedRef.current,
+            registerAbort: (abort) => {
+              subAgentAbortRef.current = abort;
+            },
           };
           // 0.7.34 — 병렬-안전 분류. read-only 도구에 더해, mode 가
           // 'cross-doc-research' 인 runAgent (research sub-agent) 도 병렬.
@@ -1118,9 +1151,16 @@ export function useChatStreaming(
     fireChatRef.current = fireChat;
   }, [fireChat]);
 
+  // Release the in-flight guard once a stream finishes (or is stopped). Set in
+  // send/sendDirect, held across the pre-stream IPC await window.
+  useEffect(() => {
+    if (!streaming) inFlightRef.current = false;
+  }, [streaming]);
+
   const send = useCallback(async () => {
     const text = input.trim();
-    if (text.length === 0 || streaming) return;
+    if (text.length === 0 || streaming || inFlightRef.current) return;
+    inFlightRef.current = true; // synchronous: blocks a second fire in the await window
     // chunk 99 follow-up — 매 턴 시작 시 stop flag clear.
     agentStoppedRef.current = false;
     // 0.4.19 — 새 user turn 시작 시 router 이력 + cache reset.
@@ -1173,7 +1213,8 @@ export function useChatStreaming(
   const sendDirect = useCallback(
     async (text: string): Promise<void> => {
       const trimmed = text.trim();
-      if (trimmed.length === 0 || streaming) return;
+      if (trimmed.length === 0 || streaming || inFlightRef.current) return;
+      inFlightRef.current = true; // synchronous double-fire guard (await window)
       agentStoppedRef.current = false;
       // 0.7.45 — send 와 동일하게 새 user-task 시작 시 router 이력 + cache
       // reset. 안 하면 직전 turn(특히 stop 으로 중단된)의 tool 이력이
@@ -1222,7 +1263,7 @@ export function useChatStreaming(
 
   const regenerate = useCallback(
     (assistantId: string) => {
-      if (streaming) return;
+      if (streaming || inFlightRef.current) return;
       agentStoppedRef.current = false;
       // 0.7.45 — send 와 동일하게 router 이력 + cache reset (stale phase 오염 방지).
       agentToolHistoryRef.current = [];
@@ -1239,6 +1280,29 @@ export function useChatStreaming(
       // Need a preceding user turn to regenerate from.
       if (history.length === 0 || history[history.length - 1].role !== 'user')
         return;
+      // Rewrite the persisted transcript to the kept history so the superseded
+      // assistant turn doesn't re-appear on reload (the new turn re-appends its
+      // assistant on done). Mirror the normal persistence: user turns + only
+      // non-empty assistant turns.
+      const convId = conversationIdRef.current;
+      if (convId !== null) {
+        const persistable = history
+          .filter(
+            (m: any) =>
+              m.role === 'user' ||
+              (m.role === 'assistant' && (m.content ?? '').length > 0),
+          )
+          .map((m: any) => ({
+            role: m.role as 'user' | 'assistant',
+            content: m.content as string,
+          }));
+        void window.api.chatHistory
+          .replaceMessages(convId, persistable)
+          .catch((err: unknown) =>
+            console.warn('[chat] history.replaceMessages failed', err),
+          );
+      }
+      inFlightRef.current = true; // set only once we're committed to firing
       fireChat(history);
     },
     [fireChat, messages, streaming],
@@ -1287,6 +1351,10 @@ export function useChatStreaming(
   const stop = useCallback(() => {
     handleRef.current?.abort();
     handleRef.current = null;
+    // Also cancel an in-flight runAgent sub-agent stream (the parent handle
+    // above doesn't cover it — the sub-agent drives its own ai.chat calls).
+    subAgentAbortRef.current?.();
+    subAgentAbortRef.current = null;
     // chunk 99 follow-up — Agent loop 도 강제 종료. abort 만으로는
     // (a) 이미 dispatch 된 tool 의 결과 메시지가 들어가고
     // (b) queueMicrotask 로 예약된 fireChat 재귀가 순서대로 실행돼

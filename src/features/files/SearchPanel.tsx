@@ -45,24 +45,30 @@ export function SearchPanel({
   // Debounced search — wait 300ms after the last keystroke before
   // hitting the IPC. Empty query clears the result without a round-trip.
   useEffect(() => {
-    if (!rootPath) {
+    if (!rootPath || query.trim().length === 0) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setResult(null);
-      return;
-    }
-    if (query.trim().length === 0) {
-      setResult(null);
+      setPending(false); // clear any spinner from a now-cancelled query
       return;
     }
     const myId = ++reqIdRef.current;
 
     setPending(true);
     const t = window.setTimeout(() => {
-      void window.api.folder.searchText({ rootPath, query }).then((r) => {
-        if (reqIdRef.current !== myId) return; // a newer query superseded
-        setResult(r);
-        setPending(false);
-      });
+      window.api.folder
+        .searchText({ rootPath, query })
+        .then((r) => {
+          if (reqIdRef.current !== myId) return; // a newer query superseded
+          setResult(r);
+        })
+        .catch((err: unknown) => {
+          // surface nothing to the user, but never leave the spinner stuck
+          // or the rejection unhandled (folder:search can throw on fs/WASM).
+          console.error('[SearchPanel] search failed:', err);
+        })
+        .finally(() => {
+          if (reqIdRef.current === myId) setPending(false);
+        });
     }, 300);
     return () => window.clearTimeout(t);
   }, [rootPath, query]);

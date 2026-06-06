@@ -118,9 +118,33 @@ export function useTabManagement(): TabManagementHandle {
   const replaceTabPath = useCallback(
     (oldPath: string, newPath: string): void => {
       if (oldPath === newPath) return;
-      setTabsState((prev) =>
-        prev.map((t) => (t.path === oldPath ? { ...t, path: newPath } : t)),
-      );
+      setTabsState((prev) => {
+        const srcIdx = prev.findIndex((t) => t.path === oldPath);
+        if (srcIdx === -1) return prev;
+        // If another tab already holds newPath (Save As onto an already-open
+        // file), it now points at the file we just overwrote. Drop it so the
+        // one-tab-per-path invariant holds, keeping the renamed source tab as
+        // the canonical tab for newPath. (Without this, two tabs share a path
+        // and every path-keyed lookup silently resolves to only the first.)
+        const dupIdx = prev.findIndex(
+          (t, i) => i !== srcIdx && t.path === newPath,
+        );
+        const renamed = prev.map((t, i) =>
+          i === srcIdx ? { ...t, path: newPath } : t,
+        );
+        const next =
+          dupIdx === -1 ? renamed : renamed.filter((_, i) => i !== dupIdx);
+        if (dupIdx !== -1) {
+          const srcKey = prev[srcIdx].key;
+          setActiveIndex((curIdx) => {
+            const prevActiveKey = prev[curIdx]?.key;
+            const byKey = next.findIndex((t) => t.key === prevActiveKey);
+            if (byKey >= 0) return byKey; // active tab survived
+            return next.findIndex((t) => t.key === srcKey); // it was the dropped dup
+          });
+        }
+        return next;
+      });
     },
     [],
   );
@@ -248,7 +272,14 @@ export function useTabManagement(): TabManagementHandle {
         if (!ok) return prev;
       }
       const next = [...prev.slice(0, index + 1), ...pinnedRight];
-      setActiveIndex((curIdx) => Math.min(curIdx, next.length - 1));
+      // Chase the active tab by identity (a preserved pinned tab to the right
+      // survives but shifts position) — a bare clamp would silently focus a
+      // different surviving tab. Mirrors closeOtherTabs.
+      setActiveIndex((curIdx) => {
+        const activeKey = prev[curIdx]?.key;
+        const ni = next.findIndex((t) => t.key === activeKey);
+        return ni >= 0 ? ni : Math.min(curIdx, next.length - 1);
+      });
       return next;
     });
   }, []);

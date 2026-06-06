@@ -320,7 +320,26 @@ export class BridgeIrHelper {
       0,
       text,
     ]);
-    if (!isOk(insRaw)) return false;
+    if (!isOk(insRaw)) {
+      // The delete already committed — if the insert fails the cell is now
+      // empty and the original content would be silently lost. Restore it so
+      // the replace is all-or-nothing (best-effort; better stale-original than
+      // a wiped cell the caller is only told 'replace-failed' about).
+      if (current.length > 0) {
+        await this.bridge
+          .invokeWasm<string>('insertTextInCell', [
+            sec,
+            parentPara,
+            controlIdx,
+            cellIdx,
+            cellParaIdx,
+            0,
+            current,
+          ])
+          .catch(() => {});
+      }
+      return false;
+    }
     if (placeholderShape) {
       // Best-effort typography normalization — never fail the replace over it.
       try {

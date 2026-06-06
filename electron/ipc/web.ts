@@ -7,9 +7,13 @@
  *
  * **보안:**
  * - URL scheme http / https 만 허용. file:// / ftp:// 등 거부.
- * - 응답 본문 size cap + 30s timeout — DoS / memory blowup 회피.
+ * - SSRF 차단: hostname 을 DNS resolve 후 loopback / private / link-local /
+ *   metadata(169.254.169.254) IP 면 거부. redirect 는 manual 로 따라가며 매 hop
+ *   host 를 재검증 (302 → internal 우회 방지).
+ * - 응답 본문 streaming size cap (maxBytes 초과 시 즉시 중단, 전체 버퍼링 X) +
+ *   30s timeout(body read 까지 포함) — DoS / memory blowup 회피.
  * - User-Agent 명시 (anon ahwp).
- * - Redirect 자동 추적 (Node fetch 기본 동작), 단 max 5 hop.
+ * - Redirect 최대 5 hop.
  *
  * **webSearch backend:** DuckDuckGo HTML interface (no API key).
  * `https://html.duckduckgo.com/html/?q=QUERY` 가 HTML 결과 페이지를
@@ -18,6 +22,8 @@
  * Settings 에서 API 키 받아 별도 backend 로 추가 (future chunk).
  */
 import { ipcMain } from 'electron';
+import dns from 'node:dns/promises';
+import net from 'node:net';
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
 import type {
@@ -56,6 +62,108 @@ function ensureHttpUrl(url: unknown): URL {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
     throw new Error('url-not-http-https');
   return parsed;
+}
+
+const MAX_REDIRECTS = 5;
+
+/** True if an IP literal is loopback / private / link-local / unique-local /
+ *  unspecified / CGNAT — i.e. an address the AI fetch tool must never reach
+ *  (SSRF: cloud metadata 169.254.169.254, localhost services, LAN hosts). */
+function isBlockedIp(ip: string): boolean {
+  const fam = net.isIP(ip);
+  if (fam === 4) {
+    const o = ip.split('.').map(Number);
+    if (
+      o.length !== 4 ||
+      o.some((n) => !Number.isInteger(n) || n < 0 || n > 255)
+    )
+      return true;
+    const [a, b] = o;
+    if (a === 0) return true; // 0.0.0.0/8 (incl. "this host")
+    if (a === 10) return true; // 10/8 private
+    if (a === 127) return true; // loopback
+    if (a === 169 && b === 254) return true; // link-local incl. 169.254.169.254 metadata
+    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16/12 private
+    if (a === 192 && b === 168) return true; // 192.168/16 private
+    if (a === 100 && b >= 64 && b <= 127) return true; // 100.64/10 CGNAT
+    return false;
+  }
+  if (fam === 6) {
+    const lc = ip.toLowerCase().replace(/^\[|\]$/g, '');
+    if (lc === '::1' || lc === '::') return true; // loopback / unspecified
+    if (lc.startsWith('fe80')) return true; // link-local
+    if (lc.startsWith('fc') || lc.startsWith('fd')) return true; // fc00::/7 ULA
+    const mapped = lc.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/); // IPv4-mapped
+    if (mapped) return isBlockedIp(mapped[1]);
+    return false;
+  }
+  return true; // not a valid IP literal → block when used as a connect target
+}
+
+/** Reject a host that resolves to a private/loopback/link-local/metadata
+ *  address. Resolves ALL A/AAAA records so a hostname pointing at an internal
+ *  IP is caught. (Residual: a fast-flip DNS-rebind between this check and the
+ *  socket connect is not closed here — that would need a pinned-IP dispatcher;
+ *  direct-IP, localhost, and redirect-to-internal — the practical vectors —
+ *  are all blocked.) */
+async function assertPublicHost(hostname: string): Promise<void> {
+  const bare = hostname.replace(/^\[|\]$/g, '');
+  if (net.isIP(bare)) {
+    if (isBlockedIp(bare)) throw new Error('blocked-host');
+    return;
+  }
+  let addrs: { address: string }[];
+  try {
+    addrs = await dns.lookup(hostname, { all: true });
+  } catch {
+    throw new Error('dns-failed');
+  }
+  if (addrs.length === 0) throw new Error('dns-empty');
+  for (const a of addrs) {
+    if (isBlockedIp(a.address)) throw new Error('blocked-host');
+  }
+}
+
+/** Read a response body, streaming and STOPPING once `maxBytes` is exceeded —
+ *  never buffers the full payload (a multi-GB / chunked body would OOM the
+ *  main process). Returns the capped slice plus best-effort original size. */
+async function readCappedBody(
+  res: Response,
+  maxBytes: number,
+): Promise<{ slice: Uint8Array; originalBytes: number; truncated: boolean }> {
+  const reader = res.body?.getReader();
+  if (!reader)
+    return { slice: new Uint8Array(0), originalBytes: 0, truncated: false };
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let truncated = false;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value && value.byteLength > 0) {
+      chunks.push(value);
+      total += value.byteLength;
+      if (total >= maxBytes) {
+        truncated = true; // there may be more — stop and discard the rest
+        await reader.cancel().catch(() => {});
+        break;
+      }
+    }
+  }
+  const all = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) {
+    all.set(c, off);
+    off += c.byteLength;
+  }
+  const slice = all.byteLength > maxBytes ? all.slice(0, maxBytes) : all;
+  const clen = Number(res.headers.get('content-length'));
+  const originalBytes = Number.isFinite(clen) && clen > total ? clen : total;
+  return {
+    slice,
+    originalBytes,
+    truncated: truncated || originalBytes > maxBytes,
+  };
 }
 
 /**
@@ -171,23 +279,55 @@ export async function webFetchImpl(
     HARD_MAX_BYTES,
   );
   const ctrl = new AbortController();
+  // The timeout stays armed through the BODY read (cleared only in finally) so
+  // a slow-drip body can't run forever — clearing it right after headers (the
+  // old behavior) left the body read unbounded.
   const timeout = setTimeout(() => ctrl.abort('timeout'), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(url.toString(), {
-      signal: ctrl.signal,
-      headers: {
-        'User-Agent': USER_AGENT,
-        Accept: 'text/html,text/plain,application/json;q=0.9,*/*;q=0.5',
-      },
-      redirect: 'follow',
-    });
-    clearTimeout(timeout);
+    // Manual redirect handling: re-validate the host on EVERY hop. With
+    // redirect:'follow' a benign public URL could 302 to http://localhost or
+    // the cloud-metadata IP, bypassing the SSRF check that only ran on the
+    // initial URL.
+    let current = url;
+    let res: Response | undefined;
+    for (let hop = 0; ; hop++) {
+      if (hop > MAX_REDIRECTS)
+        return { ok: false, error: 'too-many-redirects' };
+      await assertPublicHost(current.hostname); // SSRF guard, per hop
+      const r = await fetch(current.toString(), {
+        signal: ctrl.signal,
+        headers: {
+          'User-Agent': USER_AGENT,
+          Accept: 'text/html,text/plain,application/json;q=0.9,*/*;q=0.5',
+        },
+        redirect: 'manual',
+      });
+      if (r.status >= 300 && r.status < 400 && r.headers.has('location')) {
+        let next: URL;
+        try {
+          next = new URL(r.headers.get('location') as string, current);
+        } catch {
+          await r.body?.cancel().catch(() => {});
+          return { ok: false, error: 'redirect-not-parseable' };
+        }
+        if (next.protocol !== 'http:' && next.protocol !== 'https:') {
+          await r.body?.cancel().catch(() => {});
+          return { ok: false, error: 'redirect-not-http-https' };
+        }
+        await r.body?.cancel().catch(() => {}); // drain before next hop
+        current = next;
+        continue;
+      }
+      res = r;
+      break;
+    }
+    if (!res) return { ok: false, error: 'fetch-error:no-response' };
     const status = res.status;
     const contentType = res.headers.get('content-type') ?? undefined;
-    const ab = await res.arrayBuffer();
-    const originalBytes = ab.byteLength;
-    const slice = originalBytes > maxBytes ? ab.slice(0, maxBytes) : ab;
-    const truncated = originalBytes > maxBytes;
+    const { slice, originalBytes, truncated } = await readCappedBody(
+      res,
+      maxBytes,
+    );
     const rawText = new TextDecoder('utf-8', { fatal: false }).decode(slice);
     // 0.7.10 — content-type 이 html 이면 Readability 로 article 추출.
     // 그 외 (JSON / plain text) 는 raw 그대로. text/html 인데 article 이
@@ -220,12 +360,15 @@ export async function webFetchImpl(
       error: res.ok ? undefined : `http-${status}`,
     };
   } catch (e) {
-    clearTimeout(timeout);
     const msg = (e as Error).message ?? String(e);
+    if (msg === 'blocked-host' || msg === 'dns-failed' || msg === 'dns-empty')
+      return { ok: false, error: msg };
     return {
       ok: false,
       error: msg.includes('aborted') ? 'timeout' : `fetch-error:${msg}`,
     };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

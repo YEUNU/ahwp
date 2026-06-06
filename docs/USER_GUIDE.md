@@ -57,19 +57,17 @@ ahwp 는 **단일 워크스페이스 폴더** 모델입니다. 첫 실행에서 
 ### 2-2. 저장 / 자동 저장
 
 - `⌘S` 저장 — atomic write (tmp → rename) 라 도중 크래시에도 원본
-  손실 없음. 첫 덮어쓰기 시 한 번 `<file>.bak` 사이드카가 생성되어
-  pre-edit-session 본문이 보존됩니다.
+  손실 없음. 편집 전 본문 스냅샷은 앱 내부 버전 히스토리
+  (`userData/versions/`) 로 보존됩니다.
 - `⌘⇧S` 다른 이름으로 저장 — `.hwpx` 를 선택해도 `@rhwp/core`
   v0.7.x 의 round-trip 한계 (이미지 참조 손실) 때문에 `.hwp` 로
   자동 라우팅됩니다. (lib 수정 후 HWPX 복귀 예정.)
 - **60초 자동 초안** — 모든 dirty 탭이 `userData/ahwp-drafts/<sha1>
 .ahwp-draft` 에 60초마다 백업. 앱이 비정상 종료되면 다음 실행에서
   복원 옵션 제공.
-- **버전 히스토리** (메뉴 → 보기 → "버전 히스토리…" 또는 `⌘K` 명령
-  팔레트) —
-  명시적 저장 시마다 `userData/versions/<hash>/<ISO>.hwp` 에 50개
-  스냅샷 보관. 다이얼로그에서 "복원" 클릭 → 현재 본문은 `.bak` 로
-  내려간 뒤 선택 버전이 복원됩니다.
+- **버전 히스토리** — 명시적 저장 시마다 `userData/versions/<hash>/<ISO>.hwp`
+  에 스냅샷이 자동 보관됩니다 (최근 50개 유지). 편집 전 본문 보존은 이
+  버전 히스토리가 담당합니다 — 별도 `.hwp.bak` 사이드카는 0.7.47 에서 폐기.
 
 ### 2-3. dirty 표시 + 외부 변경 감지
 
@@ -91,8 +89,8 @@ ahwp 는 **BYOK (bring-your-own-key)** 모델입니다. API 키는 OS 키체인
 
 ### 3-1. 키 등록
 
-`⌘,` 로 Settings → "AI 공급자" 탭 → 사용할 provider (OpenAI / NVIDIA
-NIM / Custom) 카드에서 키 입력 → "저장". "연결 테스트" 로 즉시 검증
+`⌘,` 로 Settings → "AI 공급자" 탭 → 사용할 provider (OpenAI / Google /
+Custom) 카드에서 키 입력 → "저장". "연결 테스트" 로 즉시 검증
 가능합니다.
 
 **Custom (OpenAI 호환)** 슬롯 = baseUrl + key 만 입력하면 Ollama,
@@ -111,40 +109,21 @@ vLLM, LM Studio, on-prem 게이트웨이 어디든 사용 가능. Tool calling
   "문서에 적용" / "도구 실행" / "Accept" 버튼이 뜸. 사용자가 누르기
   전엔 본문 변경 없음. 안전 모드.
 - **Agent (자동 실행)** — AI 가 도구를 직접 호출. 한 turn 안에서 read
-  → reason → write 루프 (최대 10 turn) 가 자동 진행됩니다. ⌘Z 한 번
-  으로 turn 전체 롤백 가능 — 모든 op 가 grouped undo 로 묶입니다.
+  → reason → write 루프 (기본 50 turn — Settings 에서 최대 200 까지
+  조절) 가 자동 진행됩니다. ⌘Z 한 번으로 turn 전체 롤백 가능 — 모든
+  op 가 grouped undo 로 묶입니다.
 
 **언제 어느 쪽**: 처음에는 Manual 로 시작 권장. 도구 사용에 익숙해지면
 반복 작업 (양식 메우기 / 표 합계 / 머리말 일괄 변경) 을 Agent 로 전환.
 
-### 3-3. 발췌 첨부 (Manual 모드)
+### 3-3. 문서 컨텍스트
 
-본문 일부만 컨텍스트로 보내고 싶을 때:
+AI 컨텍스트는 **현재 활성 문서에서 자동**으로 채워집니다 — 별도로
+발췌를 첨부할 필요가 없습니다. (이전의 `📌 발췌 첨부` 칩 / selection
+드래그, 그리고 🎯 target / 📚 reference 멀티 문서 chip strip 은
+폐기되었습니다.)
 
-1. 에디터에서 텍스트 / 셀 / 여러 단락 선택.
-2. 채팅 입력란 위 `📌 발췌 첨부` 버튼 클릭 (또는 selection rect 를
-   채팅 입력란으로 드래그).
-3. 칩이 생성됨. 여러 발췌 첨부 가능 (multi-paragraph 도 지원).
-4. 전송 시 모든 칩의 anchor 가 stale 검증 — 위치가 바뀌었으면 자동
-   재바인딩, 사라졌으면 송신 차단 + "다시 선택해 주세요" 안내.
-
-발췌 첨부 시 시스템 프롬프트의 `[현재 문서]:` 전체 HTML 첨부는
-**자동 비활성화** 됩니다 (좁은 컨텍스트 우선).
-
-### 3-4. 멀티 문서 컨텍스트
-
-여러 탭이 열려 있으면 채팅 패널 상단에 chip strip 이 뜹니다:
-
-- 🎯 **target** — 현재 활성 탭. 잠금 (Agent write 의 도착지).
-- 📚 **reference** — 다른 탭의 체크박스를 켜면 첫 20 단락의 outline
-  이 시스템 프롬프트의 `[참조 문서]:` 블록에 첨부됨. **읽기 전용** —
-  Agent 가 reference 에 write 시도해도 dispatcher 가 거절합니다.
-
-> mid-turn 에 탭을 전환해도 write 는 **턴 시작 시점의 target** 으로
-> 라우팅됩니다 (chunk 50). 의도와 다른 doc 에 변경이 들어가는 사고
-> 방지.
-
-### 3-5. Diff Viewer (`ahwp-patches`)
+### 3-4. Diff Viewer (`ahwp-patches`)
 
 Manual 모드에서 모델이 위치 한정 미세 수정 (오타 / 톤 / 표현) 을
 제안할 때 사용하는 세 번째 응답 형식입니다.
@@ -156,7 +135,7 @@ Manual 모드에서 모델이 위치 한정 미세 수정 (오타 / 톤 / 표현
   (grouped undo).
 - 카드의 "보기 →" 클릭 → 에디터가 해당 단락으로 자동 스크롤.
 
-### 3-6. 채팅 히스토리
+### 3-5. 채팅 히스토리
 
 `📚` 버튼 → popover 에 활성 문서 기준 대화 목록. 인라인 이름 변경
 (✎ 또는 더블클릭). 4 메시지 누적 후 자동 제목 요약 1회 한정.

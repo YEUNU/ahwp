@@ -6,6 +6,74 @@
 
 ## [Unreleased]
 
+## [0.7.51] - 2026-06-06
+
+### Added — `pageBorderFill` AI 도구 (0.7.14 신규 API 연결)
+
+`getPageBorderFill` (read) / `setPageBorderFill` (write) AI 도구 추가 — 0.7.14 의
+`@rhwp/core` get/setPageBorderFill 을 generic dispatcher 로 연결 (쪽 테두리/배경).
+도구 75 → **77** (read-only 21 + mutating 56). API 동작은 실 문서로 직접 검증.
+
+### Changed / Fixed — 정리
+
+- `setup-rhwp-studio.mjs`: WASM 복사 skip 을 **파일 크기 기반 → 항상 복사**로 변경 —
+  향후 `@rhwp/core` 가 내용만 바뀌고 byte 크기가 같은 릴리즈에서 stale WASM 으로
+  버전 skew 가 생기던 잠재 footgun 제거.
+- 잔존 lint 에러 정리(`scripts/probe-*.mjs` 빈 catch / unused var), `converter.ts`
+  의 stale `v0.7.8` 주석 → 현행화, `check-image-pipeline.mjs` SEED 를 현존 fixture 로,
+  orphan e2e 스냅샷 디렉토리 삭제, `docs/PROGRESS.md` 향후-작업 테이블 현행화.
+
+## [0.7.50] - 2026-06-06
+
+### Fixed — 다중 에이전트 적대적 검증으로 발굴한 잔존 버그 19건
+
+멀티 에이전트 버그 헌트(8개 영역 finder → 발견마다 skeptic 적대적 검증)로
+찾아 수정. 심각도별:
+
+- **보안/데이터(high)** — (1) `web:fetch` SSRF 차단: host DNS resolve 후
+  loopback/private/link-local/metadata IP 거부 + redirect 매 hop 재검증.
+  (2) `web:fetch` 응답 본문 streaming cap(전체 버퍼링 → OOM 회피, body read
+  까지 timeout). (3) `file:watch-paths` 동시 호출 race 로 chokidar watcher
+  누수 + 외부변경 이벤트 중복 → per-window 직렬화. (4) 열린 파일 위로
+  Save As → 같은 path 탭 2개(invariant 위반) → replaceTabPath dedup.
+- **medium** — (5) Gemini `MALFORMED_FUNCTION_CALL`/`OTHER` 가 조용히 'stop'
+  → 에러로 노출. (6) bash 체이닝 우회(`git log; rm -rf`): 쉘 연산자는 정확-
+  허용목록일 때만 허용 + 분리 플래그 `rm -r -f`/`find -delete` 차단. (7) Stop
+  이 in-flight `runAgent` 서브에이전트를 중단 못 함 → shouldStop + abort 전파.
+  (8) `replaceTextInCell` delete 후 insert 실패 시 원본 소실 → 롤백 복원.
+  (9) send/sendDirect 더블파이어 race(await 창) → 동기 in-flight 가드. (10)
+  `closeTabsToRight` 가 고정 탭 보존 시 활성 탭 오인 → key 추적. (11) 세션
+  복원 완료 전 persist 가 빈 상태로 덮어씀 → 복원 finally 후 게이트 오픈.
+  (12)(13) 검색 패널 spinner 영구 회전(쿼리 비움/검색 실패) → 분기마다 pending
+  해제 + `.catch`.
+- **low** — (14) model-cache RMW race → write 직렬화. (15) regenerate 가 교체된
+  assistant 를 DB 에 남겨 reload 시 stale → `replaceMessages` 로 재기록. (16)
+  auto-title stream 미종료 시 listener 누수 → 타임아웃 abort. (17)(18)(19)
+  툴 인자 검증 drift(string 정수 거부/음수 sectionIdx/applyTo 범위) → 공통
+  coerce 적용.
+
+검증: typecheck(양 tsconfig) + 단위 534 통과(SSRF/operator-gate/분리플래그 rm
+회귀 테스트 추가) + e2e(127 pass).
+
+## [0.7.49] - 2026-06-06
+
+### Changed — `@rhwp/core` 0.7.13 → 0.7.14 (WASM 엔진 업데이트)
+
+`@rhwp/core` 를 0.7.14 로 올림. 0.7.14 는 미주/각주 편집, 쪽 테두리/배경,
+셀-경로 그림·도형 속성, 외부 파일경로 이미지 주입 등 21개 API 를 추가하고,
+5개 메서드(`copyControl` / `exportControlHtml` / `getControlImageData` /
+`getControlImageMime` / `insertPicture`)에 `cell_path_json` 인자를 끼워넣는
+시그니처 변경(breaking)을 포함.
+
+vendored `rhwp-studio` 의 `WasmBridge` 래퍼 5곳에서 raw doc 호출 시
+`cell_path_json=''`(본문 컨텍스트, 0.7.13 동작과 동일) 을 주입 — 래퍼 public
+시그니처는 그대로라 ahwp 디스패처/스튜디오 호출부는 무변경. `pkg/` WASM 갱신.
+
+사이드 이펙트 검증: typecheck(양 tsconfig) + 스튜디오 tsc/vite 빌드 + 단위
+529 + e2e 통과. `exportHwp` 라운드트립 무손실(페이지/이미지 수 보존) 직접
+확인. HWPX 라운드트립의 임베드 이미지 드롭(L-001)은 0.7.14 에서도 재현 →
+저장 canonical=HWP 유지.
+
 ## [0.7.48] - 2026-06-03
 
 ### Removed — 저장 시 `.hwp.bak` 사이드카 백업 (사용자 요청)

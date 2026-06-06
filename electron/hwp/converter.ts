@@ -93,15 +93,16 @@ export async function loadRhwpCore(): Promise<RhwpCoreModule> {
 /**
  * Read-side: returns the input bytes verbatim.
  *
- * **Why no longer pre-converting HWP→HWPX**: `@rhwp/core` v0.7.8's
+ * **Why no longer pre-converting HWP→HWPX**: `@rhwp/core`'s
  * `HwpDocument(hwp).exportHwpx() → HwpDocument(...)` round-trip drops image
  * references — `BinData/*` blobs land in the zip but the IR can't relocate
  * them on the subsequent load. Verified via scripts/check-image-pipeline.mjs:
  *   A) HWP direct load → renderPageSvg: 25 <image> across 40 pages
  *   B) HWP → exportHwpx → re-load → renderPageSvg: 0 <image> across 53 pages
  *   C) HWPX zip from (B) still contains 46 BinData/* references
- * Reported upstream. Until fixed, the renderer loads HWP/HWPX bytes directly
- * via HwpDocument's auto-detect, which preserves image rendering on read.
+ * Reported upstream; still reproduces on 0.7.14 (KNOWN_ISSUES L-001). Until
+ * fixed, the renderer loads HWP/HWPX bytes directly via HwpDocument's
+ * auto-detect, which preserves image rendering on read.
  *
  * Save-side `normalizeToHwpx` still round-trips because we have no choice —
  * the point of save is to serialize the in-memory edits. That means **save
@@ -125,7 +126,7 @@ export async function ensureHwpxBytes(input: Uint8Array): Promise<Uint8Array> {
 /**
  * Write-side normalization: parse via @rhwp/core then re-serialize as **HWP**.
  *
- * **Why HWP (CFB) and not HWPX (zip)**: `@rhwp/core` v0.7.8's `exportHwpx →
+ * **Why HWP (CFB) and not HWPX (zip)**: `@rhwp/core`'s `exportHwpx →
  * HwpDocument` round-trip drops image references on the next load (see
  * `ensureHwpxBytes` comment + scripts/check-image-pipeline.mjs). The
  * `exportHwp` round-trip preserves images and even page count:

@@ -58,7 +58,7 @@ outer: for (let s = 0; s < sectionCount; s++) {
       const { colCount, cellCount } = dims;
       for (let c = 0; c < cellCount; c++) {
         if (cellFields.length >= MAX_FIELDS) { truncated = true; break outer; }
-        let txt = '';
+        let txt;
         try { txt = doc.getTextInCell(s, p, ctrl, c, 0, 0, 1024); } catch { continue; }
         const isEmpty = txt === '' || /^[\s_]*$/.test(txt) || /placeholder|<.*>/i.test(txt);
         if (!isEmpty) continue;
@@ -72,10 +72,10 @@ outer: for (let s = 0; s < sectionCount; s++) {
           try {
             const shapeRaw = doc.getCellCharPropertiesAt(s, p, ctrl, label.cellIdx, 0, 0);
             let shape;
-            if (typeof shapeRaw === 'string') { try { shape = JSON.parse(shapeRaw); } catch {} }
+            if (typeof shapeRaw === 'string') { try { shape = JSON.parse(shapeRaw); } catch { /* ignore */ } }
             else if (shapeRaw && typeof shapeRaw === 'object') shape = shapeRaw;
             if (shape && shape.ok !== false) labelCharShape = shape;
-          } catch {}
+          } catch { /* ignore */ }
         }
 
         cellFields.push({

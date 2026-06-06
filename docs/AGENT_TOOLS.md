@@ -16,15 +16,23 @@ Phase 3 Agent 모드의 도구 카탈로그. **`shared/ai-tools.ts`의 `AHWP_TOO
 ## 안전성 가드
 
 - **whitelist only** — `AHWP_TOOL_NAMES` 외 호출 거부 (`unknown_tool`)
-- **schema validate** — 모든 args 는 dispatch 전 `validateArgs` 통과 (`ok: false` 면 거절)
-- **sandbox 안에서 실행** — viewer IR 호출만, fetch/eval/process 접근 없음
+- **schema validate** — 모든 args 는 dispatch 전 `validateToolCall` (`shared/ai-tool-validate.ts` — defineTool 레지스트리의 per-tool validator) 통과 (`ok: false` 면 거절)
+- **sandbox** — 대부분 viewer IR 호출만. 외부 세계 도구(`webFetch` / `webSearch` / `runCommand` / `runAgent`)는 별도 게이트·허용목록 + 자체 cap 으로 분리 (`runCommand` 는 기본 OFF + allowlist)
 - **부분 성공 모델** — 한 op 실패해도 다음 op 계속 (Agent turn 자체는 안 멈춤)
 - **묶음 undo** — `runTools` 가 `beginUndoGroup` / `endUndoGroup` bracket → ⌘Z 1회로 turn 전체 롤백
-- **op 상한** — 블록당 50, Agent turn cap 10 (provider 호출 횟수)
+- **op 상한** — 블록당 50, Agent turn cap 기본 50 (사용자 조정 가능, hard cap 200)
 
 ---
 
-## 카탈로그 (54 tools — 45 write + 9 read)
+## 카탈로그 (75 tools — 55 write + 20 read)
+
+> 권위 소스는 `shared/ai-tools-defined/*.ts` (defineTool) 이며 `shared/ai-tools.ts` 의
+> `AHWP_TOOL_NAMES`(75) + `READONLY_TOOL_NAMES`(20) 가 단일 화이트리스트. 아래 A–H 표는
+> 초기(0.3.x) 스냅샷이라 다음 ~19개가 빠져 있다 — 셀 쓰기(`insertTextInCell` / `replaceTextInCell` /
+> `fillFormCells`), 읽기(`getDocumentSummary` / `getColumnDef` / `getFootnoteAtCursor` /
+> `getEmptyFormFields` / `getPageSvg`), 수식·각주(`insertEquation` / `deleteFootnote` /
+> `deleteEquationControl`), 워크스페이스·교차문서(`searchWorkspaceOutlines` / `readParagraphByPath` /
+> `switchTargetDoc`), 외부·에이전트(`webFetch` / `webSearch` / `runCommand` / `runAgent` / `updatePlan`).
 
 ### A. 본문 편집 — 텍스트/단락 primitives (5)
 
@@ -207,35 +215,35 @@ mutation 0. Agent 가 turn 안에서 능동적으로 문서 상태를 검사 →
 ### selection vs caret
 
 - `applyCharFormat` 은 명시적 (paragraphIdx, startOffset, endOffset) 받음 — selection 없어도 작동
-- `applyParaProps`, `applyAlignment`, `applyFontSize`, `applyTextColor`, `toggleCharFormat` — 활성 selection 또는 caret 단락에 적용 (renderer 측 ViewerHandle 가 라우팅)
+- `applyParaProps`, `applyAlignment`, `applyFontSize`, `applyTextColor`, `toggleCharFormat` — 활성 selection 또는 caret 단락에 적용 (`BridgeIrHelper` 가 iframe 내부 rhwp-studio 의 `WasmBridge` 로 라우팅)
 
 ### lib 한계 / KNOWN_ISSUES
 
-- **L-006**: 셀 배경색 직접 setter 없음 — `applyCellStyle` 로 스타일 경유
-- **L-008**: 이미지/도형 통합 bbox API 없음 — selection 반응 일부 제약
-- **chunk 36 대기**: `createNamedStyle` 은 빈 셸만 — char/para shape 파라미터는 rhwp 0.8 대기
+- **L-006** (부분 해결): 셀 배경색 직접 setter 없음 — `applyCellStyle` 로 스타일 경유. 0.7.14 의 `updateStyle` / `updateStyleShapes` 로 named style 사후 update 가능
+- **L-008** (부분 해결): 0.7.14 가 `getShapeBBox` 추가 — 도형/이미지 bbox 획득 가능 (generic `getControlBBox` 는 아직 부재)
+- `createNamedStyle` 빈 셸 한계는 0.7.14 `updateStyle` / `updateStyleShapes` 로 해소
 
 ---
 
-## 신규 도구 추가 절차
+## 신규 도구 추가 절차 (0.7.4+ — defineTool)
 
-1. `shared/ai-tools.ts` 의 `AHWP_TOOL_NAMES` 에 이름 추가
-2. `AhwpToolArgs` 인터페이스에 args 타입 추가
-3. `validateArgs` switch 에 케이스 추가 (validation 규칙)
-4. `TOOL_DESCRIPTORS` 에 descriptor 추가 (provider catalog용 JSON Schema + description)
-5. `ViewerHandle` (`src/features/studio/types.ts`) 에 `ir*` 메서드 시그니처 추가 (필요 시)
-6. `StudioViewer.tsx` 의 `useImperativeHandle` 에서 `ir*` 메서드 구현
-7. `src/features/chat/tools.ts` 의 `runOne` switch 에 dispatch 케이스 + `previewArgs` 케이스 추가
-8. e2e 회귀 가드 추가 (`tests/e2e/chat-agent*.spec.ts` 또는 fake provider TOOL: 모드)
+1. 해당 카테고리 파일 `shared/ai-tools-defined/<category>.ts` 에 `defineTool({...})` 항목 추가 — JSON Schema + `validate` + `readonly`/mode 메타를 한 곳에 co-located
+2. 그 모듈의 named export + `shared/ai-tools-defined/index.ts` 의 수집에 포함
+3. `shared/ai-tools.ts` 의 `AHWP_TOOL_NAMES` 에 이름 추가 (read-only 면 `READONLY_TOOL_NAMES` 에도)
+4. `AhwpToolArgs` 인터페이스에 args 타입 추가
+5. `src/features/chat/tools.ts` 의 `runOne` switch 에 dispatch 케이스 추가 — 디스패처가 `BridgeIrHelper` 로 iframe 내부 rhwp-studio 의 `WasmBridge` 를 호출 (구 self-mounted `StudioViewer`/`ViewerHandle` 아님)
+6. e2e 회귀 가드 추가 (`tests/e2e/chat-*.spec.ts` 또는 fake provider TOOL: 모드)
 
-세 군데 (validator + descriptor + dispatcher) drift 방지 — exhaustive switch로 컴파일러가 강제.
+> 0.7.3 까지의 `TOOL_DESCRIPTORS` 배열 + `validateArgs` switch 는 0.7.4 에서 완전 제거됨
+> (schema 만 추가하고 validator 누락하는 drift 회귀 방지). `shared/edit-protocol.ts` 도 없음 —
+> diff/patch 스키마는 `shared/ai-patches.ts`, 도구 정의는 defineTool 레지스트리가 단일 source.
 
 ---
 
-## 통계 (0.3.4 기준)
+## 통계 (0.7.50 기준)
 
-- 총 도구: **54개** = write 45 + read 9 (Phase 2 chunk 19 시 12개 → Phase 3 chunks 45~49 +33 → chunk 51 +9 read)
-- 카테고리: A(5) + B(8) + C(12) + D(7) + E(6) + F(4) + G(5) + H(9) — 합 **56** (cross-listed 2 = 54 unique)
-- 한컴 한글 lib (`@rhwp/core` 0.7.9) 의 주요 mutation API 약 50개 중 **~90% 커버**
-- 능동 검사 (read) 9개 추가로 Agent 가 양식 매칭 / 위치 결정 / 인용 탐색 가능
-- 미커버: numbering/bullet 자동화 (lib API 복잡), insertEquation (수식 엔진), HF para format (`applyParaFormatInHf`), formField setActive 류 (편집 모델 외)
+- 총 도구: **75개** = write 55 + read 20 (`AHWP_TOOL_NAMES` 75 / `READONLY_TOOL_NAMES` 20)
+- 카테고리 파일 (`shared/ai-tools-defined/`): format / cell / table / shape / page / read / web / bash / agent
+- 한컴 한글 lib (`@rhwp/core` 0.7.14) 의 주요 mutation API 광범위 커버
+- 능동 검사 (read) 20개로 Agent 가 양식 매칭 / 위치 결정 / 인용 탐색 / 시각 검증(`getPageSvg`) 가능
+- 외부·에이전트 도구: `webFetch`/`webSearch` (0.7.7), `runCommand` (0.7.9 bash, 기본 OFF), `runAgent` 서브에이전트 (0.7.11), `updatePlan` (0.7.29)

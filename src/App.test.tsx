@@ -102,6 +102,7 @@ describe('App', () => {
         get: vi.fn().mockResolvedValue({ messages: [] }),
         create: vi.fn().mockResolvedValue({ id: 1 }),
         append: vi.fn().mockResolvedValue({ id: 1 }),
+        replaceMessages: vi.fn().mockResolvedValue({ ok: true }),
         rename: vi.fn().mockResolvedValue({ ok: true }),
         delete: vi.fn().mockResolvedValue({ ok: true }),
       },
