@@ -28,84 +28,45 @@
 - Electron 데스크탑 번들의 transitive 의존성·공급망 표면·업데이트 주기 부담.
 - 멀티 에이전트, 장기 체크포인트, 복잡한 분기 같은 LangGraph 강점이 필요해지면 Phase 5+에서 재평가.
 
-대신 `electron/ipc/ai.ts`에 ~80–150줄짜리 turn 루프를 직접 작성하고, provider별 어댑터가 SDK 스트림을 공통 `ChatStreamEvent`로 정규화.
+대신 `electron/ipc/ai.ts`에 turn 루프를 직접 작성하고, provider별 어댑터가 HTTP(fetch) SSE 스트림을 공통 `ChatStreamEvent`로 정규화.
 
 ## 공통 인터페이스
 
 `shared/ai.ts`:
 
 ```ts
-// 실제(shared/ai.ts): 'nvidia' 제거됨 (0.6.18). anthropic 은 union 에 있으나 어댑터 미구현.
+// shared/ai.ts (0.7.50 실제). 'nvidia' 제거(0.6.18), anthropic 은 union 에만 있고 어댑터 미구현.
 export type ProviderId = 'openai' | 'anthropic' | 'google' | 'custom'; // custom = OpenAI-compatible: Ollama / vLLM / LM Studio / on-prem / 셀프호스트 NIM
 
 export interface ChatRequest {
-  conversationId: string;
-  requestId: string; // 스트림/툴콜 매칭용
-  mode: 'manual' | 'agent';
-  messages: ChatMessage[]; // user/assistant/tool
-  context: ChatContext;
-  webSearch: 'off' | 'on'; // provider 지원 시에만 효력
-}
-
-export interface ChatContext {
-  target: DocRef; // 편집 대상 (활성 탭이 디폴트)
-  references: DocRef[]; // 읽기 전용 참조
-}
-
-export interface DocRef {
-  docId: string; // 메모리상 UUID
-  path: string | null; // 새 빈 문서면 null
-  outline: HeadingNode[]; // 항상 포함 (저렴)
-  selection?: TextRange; // target 전용
-  role: 'target' | 'reference';
-}
-
-export interface ChatMessage {
-  role: 'user' | 'assistant' | 'tool';
-  content: string;
-  excerpts?: ExcerptAttachment[]; // 사용자 드래그 첨부 (§발췌 드래그)
-  toolCalls?: ToolCall[]; // assistant 메시지의 tool 요청
-  toolCallId?: string; // tool 메시지의 매칭 id
-}
-
-export interface ExcerptAttachment {
-  id: string;
-  docId: string;
-  path: string | null;
-  role: 'target' | 'reference';
-  anchor: TextRange; // {paragraphIndex, startOffset, endOffset}
-  text: string; // 드롭 시점 박제 본문
-  hash: string; // 전송 직전 stale 검증용 (sha1(text))
+  provider: ProviderId;
+  model: string;
+  messages: ChatMessage[]; // system / user / assistant / tool
+  temperature?: number;
+  tools?: ChatTool[]; // provider-native tool 스키마 (Agent — 있으면 tool-use 경로)
+  toolChoice?: ChatToolChoice;
+  reasoningEffort?: 'low' | 'medium' | 'high';
+  modeContext?: ModeContext; // task mode (form-fill / audit / edit / author)
 }
 
 export type ChatStreamEvent =
-  | { type: 'token'; text: string }
-  | { type: 'tool-call'; callId: string; name: string; args: unknown }
-  | {
-      type: 'tool-result';
-      callId: string;
-      ok: boolean;
-      value?: unknown;
-      error?: string;
-    }
-  | { type: 'edit-proposal'; patch: AhwpEdit } // Manual 모드
-  | { type: 'web-search'; query: string; sources: WebSource[] } // 인용 표시용
-  | { type: 'done'; usage?: TokenUsage }
+  | { type: 'text-delta'; text: string }
+  | { type: 'tool-use'; id: string; name: string; args: unknown }
+  | { type: 'done'; usage?: ChatUsage; finishReason?: ChatFinishReason }
   | { type: 'error'; message: string };
 
 export interface Provider {
-  id: ProviderId;
-  capabilities: {
-    toolUse: boolean;
-    webSearch: boolean; // 단일 API 웹검색 지원 여부
-    streaming: boolean;
-  };
-  listModels(): Promise<ModelInfo[]>;
-  chat(req: ChatRequest, signal: AbortSignal): AsyncIterable<ChatStreamEvent>;
+  meta: { id: ProviderId; label: string; requiresApiKey: boolean };
+  listModels(opts: ProviderRuntimeOptions): Promise<ModelInfo[]>;
+  // opts = { apiKey?, baseUrl?, signal } — main 이 요청 시점에 주입
+  chat(
+    req: ChatRequest,
+    opts: ProviderRuntimeOptions,
+  ): AsyncIterable<ChatStreamEvent>;
 }
 ```
 
-`capabilities.webSearch`는 정적 플래그로 시작: OpenAI/Anthropic/Google = `true`, NIM/`custom` = `false`. 셀프호스트 환경의 `custom` 엔드포인트가 검색 도구를 지원하면 사용자 설정에서 override.
+> 위 초안의 `conversationId`/`requestId`/`mode`/`context`/`webSearch` 필드와 `token`/`tool-call`/`tool-result`/`edit-proposal`/`web-search` 스트림 이벤트는 **구현되지 않음**. 실제로는 — 요청별 매칭은 IPC 채널 이름의 `id`(`ai:chat-event:<id>`)로, manual↔agent 구분은 `tools?` 유무 + `modeContext` 로, 멀티 문서 target/reference 는 렌더러의 `turnTargetPath` + `switchTargetDoc` 도구로 처리한다. 발췌 첨부(`ExcerptAttachment`)와 `analyze_style` 도구는 폐기/미구현. 웹검색은 별도 `webFetch`/`webSearch` 도구(렌더러 → `web:*` IPC)로.
 
 ## 웹검색 (Built-in)
 
@@ -118,7 +79,7 @@ export interface Provider {
 | OpenAI               | Responses API의 `tools: [{ type: "web_search" }]` (또는 Chat Completions의 `web_search_preview`)       |
 | Anthropic            | Messages API의 `tools: [{ type: "web_search_20250305", name: "web_search" }]` 서버 도구                |
 | Google               | `tools: [{ googleSearch: {} }]` grounding (Gemini 2.x)                                                 |
-| NVIDIA NIM           | 미지원 — 추론 전용                                                                                     |
+| ~~NVIDIA NIM~~       | 어댑터 0.6.18 제거 (셀프호스트는 `custom` 슬롯)                                                        |
 | 커스텀 (OpenAI 호환) | 엔드포인트 구현체에 따라 다름. 기본 미지원 가정 (Ollama / vLLM / LM Studio 등 로컬 추론은 모두 미지원) |
 
 ### 어댑터 라우팅 규칙
@@ -130,7 +91,7 @@ export interface Provider {
 
 ### Agent tool 루프와의 관계
 
-웹검색 server tool은 provider 측에서 **자동 호출**됨. ahwp의 화이트리스트 tool 루프(`insert_text`, `read_range` 등)와는 **별개 채널**:
+웹검색 server tool은 provider 측에서 **자동 호출**됨. ahwp의 화이트리스트 tool 루프(`insertText`, `getTextRange` 등)와는 **별개 채널**:
 
 - OpenAI/Anthropic: 검색 결과가 본문/citations로 들어옴 → 어댑터가 `{type:'web-search', query, sources}` 이벤트로 정규화 후 토큰 스트림 이어짐
 - Google grounding: `groundingMetadata`의 source URL 동일하게 정규화
@@ -164,117 +125,54 @@ ChatPanel 상단에 "이 대화에 포함할 문서" 칩 — 활성 탭은 자�
 
 ### 컨텍스트 주입 전략 (토큰 절약)
 
-- target: outline + selection 주변 ±N 단락
-- reference: **outline만**. 본문은 모델이 `read_range(refDocId, ...)` / `analyze_style(refDocId)`로 필요 시 fetch
-- 예외: reference가 짧고(<1500자) 사용자가 명시적 "통째로 참고" 토글 시 인라인
+- target: outline + 현재 문서 컨텍스트
+- reference: **outline만**. 본문은 모델이 `readParagraphByPath` / `searchWorkspaceOutlines` 로 필요 시 fetch
+- 멀티 문서 target/reference 는 `switchTargetDoc` + 워크스페이스 read 도구로 처리 (초안의 chip strip UI 는 폐기)
 
 ### Tool 분류 (read는 모든 doc, write는 target)
 
-| 종류  | 도구                                                                                                                                                                    | docId 인자         |
-| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
-| write | `insert_text`, `replace_text`, `delete_range`, `apply_para_style`, `apply_char_style`, `insert_table`, `set_cell_text`, `delete_row`, `delete_column`, `insert_heading` | 없음 (target 고정) |
-| read  | `read_range`, `read_outline`, `find`, `get_style_at`, `get_paragraph_text`                                                                                              | 필수 (target/ref)  |
-| 분석  | `analyze_style(docId, range?)` — 평균 문장 길이, 격식·구어 종결어 비율, 한자어 비율, 정렬·들여쓰기 분포, 자주 쓰는 접속사 통계 + 샘플 발췌                              | 필수               |
+도구는 `shared/ai-tools-defined/*.ts` 에서 `defineTool` 로 정의(75개 = read-only 20 + mutating 55)되고 **camelCase** 이름을 쓴다. 대표 예:
 
-`analyze_style`이 멀티 doc 시나리오 핵심. 모델이 "B의 톤"을 직접 추정하지 않고 IR 기반 정량 지표를 받아 결정성·재현성↑.
+| 종류          | 예 (권위 목록은 `shared/ai-tools-defined/`)                                                                                                                              |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| write         | `insertText`, `replaceText`, `deleteRange`, `applyStyle`, `applyParaProps`, `createTable`, `insertTextInCell`, `fillFormCells`, `insertPicture`, `setHeaderFooterText` … |
+| read          | `getTextRange`, `getDocumentOutline`, `findInDocument`, `getStyleAt`, `getCharPropertiesAt`, `getEmptyFormFields`, `getPageSvg`, `readParagraphByPath` …                 |
+| 외부·에이전트 | `webFetch`, `webSearch`, `runCommand`(게이트·allowlist), `runAgent`(서브에이전트), `updatePlan`                                                                          |
 
-### Tool 실행 위치
+> 초안의 snake_case 이름(`insert_text` / `read_range` / `get_style_at` …)과 `analyze_style` 도구는 실제 코드에 **없다**. write 도구는 턴 시작 시 고정된 active target doc 의 IR 에만 작용.
 
-`@rhwp/core`의 살아있는 IR은 렌더러의 `StudioViewer`가 보유 (`docs/ARCHITECTURE.md` L62). 따라서:
+### Tool 실행 위치 — 렌더러-로컬
 
-```
-Renderer (IR 보유)              Main (키·SDK·오케스트레이션)
-─────────────────              ───────────────────────────
-ChatPanel ──ai:chat-start──►   Provider 어댑터
-                                 │ SDK 스트림 → tool-call 감지
-   ai:tool-execute  ◄──────────  │
-   ToolRouter                    │
-   (docId로 HwpDocument dispatch)│
-   ai:tool-result  ───────────►  결과를 모델에 피드백
-                                 │ ...
-                                 └─ ai:chat-stream {type:'done'}
-```
-
-이 분리로 (a) API 키는 main에만, (b) IR 일관성은 렌더러에만 유지.
-
-### IPC 채널
+`@rhwp/core` 의 살아있는 편집 IR 은 **vendored rhwp-studio iframe**(의 `WasmBridge`)이 보유한다. 도구는 main↔renderer 왕복 없이 렌더러에서 직접 실행된다:
 
 ```
-ai:chat-start    R→M    { reqId, ctx, mode, messages, webSearch }   ack
-ai:chat-cancel   R→M    { reqId }                                   void
-ai:chat-stream   M→R    { reqId, event: ChatStreamEvent }           event
-ai:tool-execute  M→R    { reqId, callId, name, args }               event
-ai:tool-result   R→M    { reqId, callId, ok, value|error }          ack
-ai:apply-diff    R→M    { docId, patch }                            { ok }
+Renderer                                   Main (키·스트리밍만)
+────────                                   ────────────────────
+ChatPanel / useChatStreaming               Provider 어댑터 (fetch)
+  │ ai:chat-start {id, request} ───────►     │ HTTP 스트림 정규화
+  │ ◄──── ai:chat-event:<id> ───────────────  │  text-delta / tool-use / done
+  │ tool-use 수신 → runTools (tools.ts)
+  │   └ BridgeIrHelper → iframe WasmBridge (IR mutate)
+  │ tool 결과를 다음 턴 messages 에 role:'tool' 로 추가
+  │ ai:chat-start (다음 턴) …  (turn cap 50)
 ```
 
-`docs/ARCHITECTURE.md`의 IPC 테이블도 동기화할 것.
+분리: API 키·provider 호출은 main 에만, 편집 IR·도구 실행은 렌더러에만.
 
-## 발췌 드래그 첨부
-
-문서에서 드래그한 텍스트를 채팅 입력의 1급 첨부(`ExcerptAttachment`)로 받음. 명령 + 발췌가 한 메시지로 묶여서 가는 형태.
-
-### 드래그 발생 — `StudioViewer`
-
-기존 selection 모델 위에 HTML5 드래그 훅 추가:
-
-```ts
-e.dataTransfer.setData(
-  'application/x-ahwp-excerpt',
-  JSON.stringify({
-    docId,
-    path,
-    anchor: selectionRange,
-    text,
-    hash: sha1(text),
-  }),
-);
-e.dataTransfer.setData('text/plain', text); // 외부 앱 폴백
-```
-
-`text/plain` 폴백 덕에 메모장·브라우저 등으로 끌어도 일반 텍스트로 떨어짐. 채팅 입력만이 `application/x-ahwp-excerpt`를 인식해서 칩으로 승격.
-
-### 드롭 — `ChatInput`
-
-- 드롭 → 칩으로 변환. 활성 탭 출처면 기본 `target`, 다른 탭이면 `reference` (클릭 토글)
-- 외부 탭에서 끌어왔는데 그 탭이 reference 칩 목록에 없으면 자동 추가
-- 칩 X로 제거. 길이 큰 발췌(>2000자)는 ⚠️ 토큰 경고
-- 입력란 텍스트(명령) + 칩 배열이 함께 한 메시지로 전송
-
-### anchor stale 처리
-
-드래그 시점과 전송 시점 사이에 사용자가 그 단락을 편집하면 offset 어긋남:
-
-1. 드롭 시 `hash = sha1(text)` 박제
-2. 전송 직전 ToolRouter가 anchor에서 다시 읽어 hash 비교
-3. 일치 → 사용
-4. 불일치 → IR 전체에서 `text` 재탐색(1회) → 찾으면 anchor 자동 갱신 + 칩 "위치 갱신됨" 표시
-5. 못 찾음 → 칩 빨강, 전송 차단, 사용자에 "다시 선택" 요구
-
-### 프롬프트 직렬화
-
-발췌는 user 메시지 본문 뒤에 구조화 블록으로 부착:
+### AI IPC 채널 (실제)
 
 ```
-{user.content}
-
-첨부:
-[1] role=target  doc="제안서.hwp"  anchor={para:4, [12,58]}
-    "현행 문안을 다음과 같이 변경합니다."
-[2] role=reference doc="규정집.hwp" anchor={para:12, [0,87]}
-    "이에 따라 본 위원회는 다음과 같이 의결한다."
+ai:chat-start       R→M   { id, request: ChatRequest }   ack (스트림은 아래 채널로)
+ai:chat-event:<id>  M→R   ChatStreamEvent                event (요청별 채널)
+ai:chat-abort       R→M   id                             void (해당 id AbortController)
+ai:ping / ai:list-models / ai:provider-config-get·set    reachability / 모델 / 설정
 ```
 
-시스템 프롬프트 규칙:
+> `ai:tool-execute` / `ai:tool-result` / `ai:apply-diff` / `ai:chat-stream` / `ai:chat-cancel` 채널은 **없다** — 도구는 렌더러-로컬, diff Accept 도 렌더러에서 patch 적용(`shared/ai-patches.ts`). 전체 채널은 `electron/preload.ts` 가 권위.
 
-- target 발췌 = 수정 대상. 패치/도구 호출의 anchor로 직접 사용
-- reference 발췌 = 읽기 전용 인용. 절대 수정 대상 아님
-- 사용자가 "이 단락"이라 쓰면 첨부의 target 발췌를 가리킴
+## 발췌 드래그 첨부 (폐기됨)
 
-### 모드별 동작
-
-- **Manual**: target 발췌의 anchor를 `ahwp-edit` 패치에 그대로 사용 → 매칭/find 단계 생략
-- **Agent**: target anchor → `replace_text(anchor, with=...)` 직접 호출. reference 본문이 첨부에 충분하면 추가 `read_range` 호출 없이 끝나는 경우가 많음 → tool 호출↓, 비용↓, 지연↓
+> 이 초안의 발췌-드래그 칩 모델(`ExcerptAttachment`, `application/x-ahwp-excerpt` 드롭 → target/reference 칩, anchor stale 재탐색)은 **폐기됨** (0.7.46 라운드 — ViewerHandle 발췌/HTML-적용 클러스터 제거). 편집기가 vendored rhwp-studio iframe 으로 바뀌며 자체 selection-drag 훅이 사라졌고, AI 컨텍스트는 이제 active 문서에서 자동 공급된다(`turnTargetPath`). 멀티 문서 참조가 필요하면 `switchTargetDoc` + `searchWorkspaceOutlines` / `readParagraphByPath` 도구로 처리.
 
 ## 키 관리
 
@@ -309,10 +207,10 @@ AI가 일반 텍스트 응답 안에 변경 제안을 JSON 블록으로 반환:
 렌더러는:
 
 1. 마크다운 렌더 시 ```ahwp-edit` 블록을 별도 컴포넌트로 치환
-2. Accept 버튼 → `ai:apply-diff` IPC 호출
-3. 메인에서 `@rhwp/core` API로 patch 적용 후 새 hwpx 반환
+2. Accept 버튼 → 렌더러가 직접 patch 적용 (`shared/ai-patches.ts` → `BridgeIrHelper` → iframe `WasmBridge`). main 왕복·`ai:apply-diff` 채널 **없음** — 편집 IR 은 iframe 이 보유
+3. (구) "메인에서 patch 적용 후 hwpx 반환" 경로는 폐기
 
-> 명세는 `shared/edit-protocol.ts`에 zod 스키마로 박제 — 모델 응답 검증 + 프롬프트에서도 같은 스키마 인용.
+> patch 스키마·정규화는 `shared/ai-patches.ts`. 초안의 `shared/edit-protocol.ts`(zod) 는 **미구현** — defineTool 레지스트리 + ai-patches 로 대체됨.
 
 target 발췌가 첨부된 경우 모델은 발췌의 `anchor`를 그대로 패치 anchor로 사용해야 함 (시스템 프롬프트에 명시). 따라서 렌더러는 fuzzy 매칭 없이 즉시 적용 가능.
 
@@ -409,9 +307,9 @@ AI는 변경 의도를 다음 한 블록 안에 직렬화:
 - **표 셀 병합 / 셀 배경 / 그림 삽입** — Phase 2 시리즈 13~ 별도 청크
 - **각 op 별 진단 위치 (anchor)** — 현재는 caret 기반. paragraph anchor는 chunk 20+ Edit Proposal 합쳐서
 
-## Phase 3 진입 정비 (chunk 37+)
+## Phase 3 진입 정비 (chunk 37+) — ✅ 구현 완료
 
-청크 19~28까지 결정론적 응답-텍스트 dispatcher로 Manual 모드를 완성. Phase 3 Agent 모드 진입 전 다음 정비 필요:
+> 아래 항목은 모두 **구현됨** (0.7.x). provider-native tool calling + 다중 턴 자동 실행(turn cap 50)이 라이브 주경로다. `runTools` 는 path-기반(`switchTargetDoc` 로 target 전환), 도구 카탈로그는 `shared/ai-tools-defined/`. 아래는 당시 진입 체크리스트의 역사적 기록.
 
 1. **provider tool-use API 바인딩** — Anthropic / OpenAI function calling 정식 통합. 같은 `AhwpToolName` 카탈로그(`shared/ai-tools.ts`)를 양 진입점에서 공유 — 응답 파싱 경로 vs SDK tool_calls 경로
 2. **docId-aware 라우팅** — 현재 `runTools(viewer, items)`는 single-target dispatch. Phase 3에서 `runTools(docId, items)`로 확장하고 reference docId 대상 write 시도는 `write-on-reference` 거절 결과 반환
@@ -423,31 +321,34 @@ AI는 변경 의도를 다음 한 블록 안에 직렬화:
 각 provider의 tool 정의로 hwpctl 호환 함수를 노출. 화이트리스트 정의는 §멀티 다큐먼트 모델의 표 참고. 예시 schema:
 
 ```ts
+// 실제 도구는 shared/ai-tools-defined/*.ts 의 defineTool 항목 (camelCase). 예:
 {
-  name: "replace_text",
-  description: "Replace text in the target document at the given anchor.",
-  parameters: {
+  name: "insertText",
+  description: "Insert text at (sectionIdx, paragraphIdx, charOffset) in the target document.",
+  inputSchema: {
     type: "object",
     properties: {
-      anchor: { $ref: "#/$defs/Anchor" },
-      with: { type: "string" }
+      sectionIdx: { type: "integer", minimum: 0 },
+      paragraphIdx: { type: "integer", minimum: 0 },
+      charOffset: { type: "integer", minimum: 0 },
+      text: { type: "string" }
     },
-    required: ["anchor", "with"]
+    required: ["sectionIdx", "paragraphIdx", "charOffset", "text"]
   }
 }
 ```
 
-`read_*` / `analyze_*` 도구는 추가로 `docId: string` 파라미터를 받음.
+> 도구는 항상 active target doc 에 작용 — 별도 `docId` 인자는 없다 (멀티 문서는 `switchTargetDoc` 로 target 을 전환). `analyze_style` / `read_range` 등 snake_case 도구는 미구현.
 
 ### 안전 장치
 
-- **턴당 화이트리스트 tool 호출 상한**: 기본 20회
-- **턴당 웹검색 호출 상한**: 기본 5회 (별개 카운터)
-- 한 번 호출에 영향 받는 텍스트 길이 상한 (기본 5000자)
-- 모든 write tool 호출은 한 turn = 한 묶음 undo로 grouping
-- 사용자 "중단" 클릭 → `AbortSignal` 즉시 전파 (SDK stream + tool dispatch 동시 취소)
-- destructive 액션(전체 문서 삭제, 파일 저장 등)은 화이트리스트에서 제외 — 저장은 항상 사용자 명시 액션
-- write tool은 `target` doc에만 dispatch. ToolRouter가 이를 enforce하며, reference에 write 시도 시 tool-result에 에러 반환 후 모델에 재시도 기회 1회
+- **Agent 턴 상한**: 기본 50회 (사용자 조정 가능, hard cap 200) — `AGENT_MAX_TURNS_DEFAULT`
+- 블록당 op 상한 50; destructive 액션(전체 삭제·저장)은 카탈로그에서 제외 — 저장은 항상 사용자 명시
+- 모든 write tool 호출은 한 turn = 한 묶음 undo 로 grouping
+- 사용자 "중단" 클릭 → `AbortSignal` 즉시 전파 (provider stream + tool dispatch 동시 취소; in-flight 서브에이전트도 abort)
+- **Plan mode**: 기본 ON 가능한 Claude Code 식 dry-run — read-only 도구만 허용, write 차단
+- write tool 은 턴 시작 시 고정된 `target` doc 에만 dispatch (렌더러 `runTools` 디스패처가 enforce)
+- 외부 도구(`runCommand`/`webFetch`/`webSearch`)·서브에이전트(`runAgent`)는 별도 게이트·cap (`runCommand` 기본 OFF + allowlist)
 
 ## 두 가지 시작 시나리오
 
@@ -458,17 +359,19 @@ ahwp는 **빈 문서 작성**과 **기존 문서 수정** 두 워크플로우를
 - `target.outline`이 비어있고 본문도 비어있음
 - AI에게 "이번 분기 매출 보고서 양식 만들어줘" 같은 요청 가능
 - Manual 모드: AI가 처음에는 큰 구조(제목·소제목·표 골격)를 `ahwp-edit` 패치로 제안 → 승인 후 점진적으로 채움
-- Agent 모드: AI가 `insert_heading`, `insert_text`, `insert_table` 등을 연쇄 호출. 사용자는 결과 보고 수정 요청
+- Agent 모드: AI가 `applyStyle`(제목 스타일), `insertText`, `createTable` 등을 연쇄 호출. 사용자는 결과 보고 수정 요청
 
 ### 기존 문서 수정
 
 - `target.outline`에 제목 트리, `selection`이 있으면 사용자가 가리킨 영역, 발췌 칩이 있으면 그것이 1차 컨텍스트
 - "이 단락 더 격식 있게" / "표 두 번째 행 합계 다시 계산" 등 **국소 편집** 위주
-- "B의 뉘앙스로 A 다듬어" 같은 cross-document 요청 시 reference 칩 + `analyze_style(B)` / `read_range(B, ...)` 조합
+- "B의 뉘앙스로 A 다듬어" 같은 cross-document 요청 시 `switchTargetDoc` + 워크스페이스 read 도구(`searchWorkspaceOutlines` / `readParagraphByPath`) 조합 (초안의 `analyze_style` 도구는 미구현)
 
 > 모드(Manual/Agent), 시작 시나리오(빈/기존), 문서 수(단일/다중)는 직교(orthogonal). 어느 조합도 가능.
 
 ## 시스템 프롬프트 (초안)
+
+> 아래 영문 블록은 Phase 2/3 **초안**이다. 실제 라이브 system prompt 는 `src/features/chat/prompts.ts` (mode 별 fragment + form-guard) 가 권위. 아래의 EXCERPTS 규칙·`shared/edit-protocol.ts`·snake_case 도구명(`read_range`/`replace_text`/`analyze_style`)은 현재 구현과 다르다 (발췌 폐기, ai-patches + defineTool, camelCase).
 
 ````
 You are ahwp, an editing assistant for Korean (HWP) documents.
@@ -514,7 +417,7 @@ Document context:
 
 - 모든 doc의 outline은 항상 포함 (저렴)
 - target의 selection 부근만 본문 인라인
-- target 외 본문은 `read_range` / `analyze_style`로 fetch
+- target 외 본문은 워크스페이스 read 도구(`readParagraphByPath` / `searchWorkspaceOutlines`)로 fetch
 - Manual 모드에서 사용자가 "이 단락" 같은 표현을 쓰면 클라이언트가 caret/selection 부근 N단락 자동 첨부
 
 ## 토큰 비용·성능
